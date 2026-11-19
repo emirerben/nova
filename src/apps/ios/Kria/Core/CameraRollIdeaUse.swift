@@ -8,9 +8,9 @@ import Foundation
         case originals, clips, chat
         var title: String {
             switch self {
-            case .originals: "Checking originals"
-            case .clips: "Uploading clips"
-            case .chat: "Starting your chat"
+            case .originals: String(localized: "Checking originals")
+            case .clips: String(localized: "Uploading clips")
+            case .chat: String(localized: "Starting your chat")
             }
         }
     }
@@ -90,7 +90,7 @@ import Foundation
                                                                threadID: threadID, threadRevision: thread.revision, eventID: "choose-\(story.id)-\(story.revision)")
             if let heldTurnID = accepted.recoverableHeldTurnID {
                 held = (threadID, heldTurnID, accepted.threadRevision)
-                phase = .failed(.chat, "This idea stopped before a draft was prepared. Try again to get a new draft.")
+                phase = .failed(.chat, String(localized: "This idea stopped before a draft was prepared. Try again to get a new draft."))
                 return
             }
             await finish(threadID)
@@ -147,7 +147,7 @@ import Foundation
         do {
             let current = try await api.project(threadID: threadID)
             phase = await open(current) ? .opened
-                : .blocked("The chat for this idea was deleted, so it can't open again. Ask for another idea to start a new chat.")
+                : .blocked(String(localized: "The chat for this idea was deleted, so it can't open again. Ask for another idea to start a new chat."))
         } catch {
             phase = .failed(.chat, CameraRollCollectionFailure.message(error))
         }

@@ -1,0 +1,1776 @@
+"""Replay a production creation job end to end from its job id (KRI-1375).
+
+    make kria-replay-job JOB=<job id>
+
+Done for a creation bug means the same prompt and footage produced a finished video under
+production settings with the real models. This command does that from a failed job id:
+
+1. Reads the job debug, the plan-item debug and, for a job the app's chat made (runtime v2),
+   the thread's events from production with ``scripts/admin.py --prod GET`` (GET only), and
+   copies the item's footage out of the storage bucket with ``gcloud storage cp gs://...
+   <local>`` (read only; nothing is ever written to it).
+2. Writes the source manifest ``replay_creator.py`` consumes.
+3. Recreates the scratch database, starts a Celery worker on its own queue namespace, and runs
+   ``replay_creator.py --render`` under ``tests/prod_flags.snapshot.json``, with the Main
+   Creator on the model production planned the job on (``--main-creator``). A chat job is
+   replayed message by message through the Kria runtime, each with the app build's client
+   protocol, approving where the creator approved; an older job through the Main Creator.
+4. Prints the rendered video path or device plan, or the status and failure reason of the
+   replayed job, and whether it failed where production did.
+
+Everything the replay writes is local: scratch Postgres database, Redis database 14 under a
+private key namespace, and a directory below /private/tmp. ``replay_creator`` refuses any other
+target, and this driver hands it a clean environment so no production credential can reach it.
+
+Fidelity limits are listed in ``docs/runbooks/replay-from-job-id.md``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import mimetypes
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote, urlsplit, urlunsplit
+
+from sqlalchemy.exc import OperationalError
+
+API_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = API_ROOT.parents[2]
+SNAPSHOT = API_ROOT / "tests" / "prod_flags.snapshot.json"
+WORK_ROOT = Path("/private/tmp/nova-replay-job")
+SCRATCH_DATABASE_PREFIX = "nova_creator_fidelity_test_"
+WORKER_QUEUES = (
+    "celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,agent-control,"
+    "creator-fidelity-v1,speech-analysis,maintenance"
+)
+LOCAL_POSTGRES_PORT = 5432
+KEPT_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "SHELL")
+MODEL_KEY = re.compile(r"^(?:GEMINI|OPENAI|ANTHROPIC)_API_KEY$")
+REDIS_URL = "redis://localhost:6379/14"
+REDIS_KEY_PREFIX = "nova-dev"
+MIN_FREE_DB_CONNECTIONS = 20
+MEDIA_KINDS = {"video", "image"}
+DURATION_TOLERANCE_S = 0.15
+
+
+class ReplayJobError(RuntimeError):
+    pass
+
+
+class ReplayInfrastructureError(ReplayJobError):
+    """The local machine could not host the replay; says nothing about the production job."""
+
+
+def _load_dotenv(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if value[:1] in {'"', "'"} and value[-1:] == value[:1] and len(value) > 1:
+            value = value[1:-1]
+        else:
+            value = re.split(r"\s#", value, maxsplit=1)[0].rstrip()
+        values[key.strip()] = value
+    return values
+
+
+def prod_get(path: str) -> dict[str, Any]:
+    """The only way this driver talks to production: a GET through the admin CLI."""
+
+    completed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "admin.py"), "--prod", "GET", path],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ReplayJobError(f"prod GET {path} failed: {completed.stdout.strip()[:300]}")
+    return json.loads(completed.stdout)
+
+
+def _bucket(explicit: str | None) -> str:
+    bucket = explicit or _load_dotenv(REPO_ROOT / ".env").get("STORAGE_BUCKET") or ""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,221}", bucket):
+        raise ReplayJobError("Pass --bucket (production STORAGE_BUCKET); none found in .env")
+    return bucket
+
+
+def _owned_object_path(object_path: str, user_id: str) -> str:
+    """A bucket path the job's owner holds; anything else is refused before it is fetched."""
+
+    prefix = f"users/{user_id}/"
+    rest = object_path[len(prefix) :]
+    if (
+        not object_path.startswith(prefix)
+        or "\\" in object_path
+        or any(part in {"", ".", ".."} for part in rest.split("/"))
+    ):
+        raise ReplayJobError(
+            f"Refusing a storage path outside the job owner's prefix: {object_path}"
+        )
+    return object_path
+
+
+def storage_copy(
+    bucket: str, object_path: str, destination: Path, generation: str | None = None
+) -> None:
+    """Read-only copy out of the bucket. The destination is always a local path.
+
+    A recorded generation pins the exact bytes the production job analysed.
+    """
+
+    if destination.is_file() and destination.stat().st_size > 0:
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pinned = f"#{generation}" if generation and str(generation).isdigit() else ""
+    try:
+        subprocess.run(
+            [
+                "gcloud",
+                "storage",
+                "cp",
+                "--no-clobber",
+                f"gs://{bucket}/{object_path}{pinned}",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.CalledProcessError as exc:
+        what = f"generation {generation} of {object_path}" if pinned else object_path
+        raise ReplayJobError(
+            f"Could not copy {what} from the bucket ({exc.stderr.strip()[-200:]}); "
+            "a pinned generation production analysed may no longer exist"
+        ) from exc
+
+
+def storage_list(bucket: str, prefix: str) -> list[str]:
+    completed = subprocess.run(
+        ["gcloud", "storage", "ls", f"gs://{bucket}/{prefix}"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return [
+        line.strip().removeprefix(f"gs://{bucket}/")
+        for line in completed.stdout.splitlines()
+        if line.strip()
+    ]
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _source(
+    path: Path, *, source_id: str, kind: str, object_path: str, pool: bool = False
+) -> dict[str, Any]:
+    return {
+        **({"pool": True} if pool else {}),
+        "id": source_id,
+        "kind": kind,
+        "local_path": str(path),
+        "size": path.stat().st_size,
+        "sha256": _sha256(path),
+        "content_type": mimetypes.guess_type(path.name)[0] or "",
+        "source_filename": path.name,
+        "production_object": object_path,
+    }
+
+
+THREAD_EVENT_PAGES = 10
+
+
+def production_thread_events(thread_id: str) -> list[dict[str, Any]]:
+    """Every event of the production creation thread, oldest first (GET only)."""
+
+    events: list[dict[str, Any]] = []
+    cursor: str | None = None
+    for _ in range(THREAD_EVENT_PAGES):
+        suffix = f"&cursor={quote(cursor, safe='')}" if cursor else ""
+        page = prod_get(f"/admin/creation-threads/{uuid.UUID(thread_id)}/events?limit=500{suffix}")
+        events.extend(page.get("events") or [])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return events
+    raise ReplayJobError(f"Thread {thread_id} has more than {THREAD_EVENT_PAGES * 500} events")
+
+
+def _queuing_turn(job_id: str, thread_events: list[dict[str, Any]]) -> str:
+    """The turn whose approval queued the job, from the thread's ``render_queued`` events."""
+
+    turns = {
+        str(payload.get("turn_id"))
+        for event in thread_events
+        if event.get("kind") == "render_queued"
+        and str((payload := event.get("payload") or {}).get("job_id")) == job_id
+        and payload.get("turn_id")
+    }
+    if len(turns) != 1:
+        found = (
+            "no render_queued event" if not turns else f"render_queued events of {len(turns)} turns"
+        )
+        raise ReplayJobError(
+            f"The job debug records no Kria turn id and the thread has {found} for job "
+            f"{job_id}, so the turn that queued it is unknown"
+        )
+    return turns.pop()
+
+
+def collect_inputs(job_id: str, inputs_dir: Path, bucket: str) -> dict[str, Any]:
+    job_debug = prod_get(f"/admin/jobs/{job_id}/debug")
+    job = job_debug["job"]
+    thread_events: list[dict[str, Any]] | None = None
+    target_turn: dict[str, str] | None = None
+    if job_debug.get("runtime_version") == 2:
+        # The app's chat thread made this job: its messages, not the compiled request, are
+        # what the replay sends.
+        if not job_debug.get("thread_id"):
+            raise ReplayJobError(
+                "A runtime-v2 job without a thread cannot be replayed turn by turn"
+            )
+        thread_events = production_thread_events(str(job_debug["thread_id"]))
+        if job_debug.get("kria_turn_id"):
+            target_turn = {"turn_id": str(job_debug["kria_turn_id"]), "from": "job_debug"}
+        else:
+            # The job debug finds the turn through a Creator execution targeting the job; 11
+            # failed chat jobs of 2026-10-08 to 10-15 have none, but their threads name it.
+            target_turn = {"turn_id": _queuing_turn(job_id, thread_events), "from": "render_queued"}
+            job_debug["kria_turn_id"] = target_turn["turn_id"]
+    item_id = job.get("content_plan_item_id")
+    if not item_id:
+        raise ReplayJobError(
+            f"Job {job_id} has no content_plan_item_id (job_type={job.get('job_type')}); "
+            "only plan-item creation jobs can be replayed"
+        )
+    creator_request = str((job.get("all_candidates") or {}).get("creator_request") or "").strip()
+    if not creator_request:
+        raise ReplayJobError("The job records no creator_request to replay")
+    item_debug = prod_get(f"/admin/plan-items/{item_id}/debug")
+    item = item_debug["item"]
+    # replay_creator seeds the item with this status; a finished one would skip planning.
+    item_debug["item"] = {**item, "item_status": "awaiting_clips"}
+
+    sources: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    user_id = str(job["user_id"])
+    recorded = _recorded_media(job)
+    clip_rows = [
+        a
+        for a in item_debug.get("clip_assignments") or []
+        if a.get("media_id") and a.get("gcs_path") and (a.get("kind") or "video") in MEDIA_KINDS
+    ]
+    pool_rows = [
+        a
+        for a in item_debug.get("pool_assets") or []
+        if a.get("kind") in MEDIA_KINDS and a.get("status") == "ready"
+    ]
+    chosen = _select_recorded_media(recorded, clip_rows, pool_rows, job)
+    _name_unnamed_binding_rows(job_debug, chosen)
+    bound = _bound_rows(job)
+    unpinned: list[str] = []
+
+    def copy(object_path: str, local: Path, generation: object) -> None:
+        if not generation:
+            unpinned.append(object_path)
+        storage_copy(bucket, object_path, local, generation)
+
+    for assignment in clip_rows:
+        media_id = str(assignment["media_id"])
+        kind = str(assignment.get("kind") or "video")
+        object_path = str(assignment["gcs_path"])
+        if media_id in seen or _media_key(media_id) not in chosen.clips:
+            continue
+        seen.add(media_id)
+        local = inputs_dir / "media" / media_id
+        # The binding pins the bytes production analysed; the item debug often has no generation.
+        binding_row = bound.get(_media_key(media_id), {})
+        copy(
+            _owned_object_path(object_path, user_id),
+            local,
+            assignment.get("generation") or binding_row.get("storage_generation"),
+        )
+        sources.append(_source(local, source_id=media_id, kind=kind, object_path=object_path))
+    pool_prefix = f"users/{user_id}/plan/{item_id}/pool/"
+    pool_objects: list[str] | None = None
+    for asset in pool_rows:
+        kind = str(asset["kind"])
+        if _media_key(str(asset["id"])) not in chosen.pool:
+            continue
+        object_path = asset.get("gcs_path")
+        generation = asset.get("gcs_generation")
+        if not object_path:
+            # A production API from before the item debug exposed pool paths: the item's own
+            # pool prefix is the only place to look, and library assets are not under it.
+            if pool_objects is None:
+                pool_objects = storage_list(bucket, pool_prefix)
+            object_path = next(
+                (o for o in pool_objects if o.removeprefix(pool_prefix).startswith(asset["id"])),
+                None,
+            )
+            if object_path is None:
+                raise ReplayJobError(
+                    f"Pool {kind} {asset['id']} has no storage path in the item debug and is "
+                    f"not under {pool_prefix}; it is a media-library asset and this production "
+                    "API predates the gcs_path field on /admin/plan-items/<id>/debug"
+                )
+        local = inputs_dir / "media" / f"{asset['id']}-{Path(object_path).name}"
+        binding_row = bound.get(_media_key(str(asset["id"])), {})
+        copy(
+            _owned_object_path(object_path, user_id),
+            local,
+            generation or binding_row.get("storage_generation") or binding_row.get("generation"),
+        )
+        source = _source(
+            local, source_id=str(asset["id"]), kind=kind, object_path=object_path, pool=True
+        )
+        if isinstance(binding_row.get("capture"), dict):
+            source["capture"] = binding_row["capture"]
+        sources.append(source)
+    voiceover_path = item.get("voiceover_gcs_path")
+    snapshot = _binding_snapshot(job)
+    job_used_voiceover = bool(snapshot.get("voiceover") or snapshot.get("voiceover_path"))
+    if voiceover_path and (recorded is None or job_used_voiceover):
+        voiceover_path = _owned_object_path(str(voiceover_path), user_id)
+        local = inputs_dir / "media" / Path(voiceover_path).name
+        bound_voiceover = snapshot.get("voiceover_path") == voiceover_path
+        copy(
+            voiceover_path, local, snapshot.get("voiceover_generation") if bound_voiceover else None
+        )
+        sources.append(
+            _source(
+                local, source_id=Path(voiceover_path).stem, kind="audio", object_path=voiceover_path
+            )
+        )
+    if not sources:
+        raise ReplayJobError("The plan item holds no footage in storage to replay")
+    coverage = {
+        **_check_source_coverage(job, sources, recorded, chosen),
+        # The latest bytes stand in where neither the binding nor the item debug pins one.
+        "copied_unpinned": len(unpinned),
+    }
+
+    manifest = {"job_id": job_id, "creator_request": creator_request, "sources": sources}
+    stamps = [job.get("created_at"), *(e.get("created_at") for e in thread_events or [])]
+    began = min(filter(None, map(_parse_time, stamps)), default=None)
+    for name, value in (
+        ("source-manifest.json", manifest),
+        ("job-debug.json", job_debug),
+        ("item-debug.json", item_debug),
+        *((("thread-events.json", {"events": thread_events}),) if thread_events else ()),
+    ):
+        (inputs_dir / name).write_text(
+            json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    return {
+        "job": job,
+        "item": item,
+        "item_id": str(item_id),
+        "unseeded_state": _unseeded_state(job, recorded, thread_events, chosen),
+        "thread_events": inputs_dir / "thread-events.json" if thread_events else None,
+        "target_turn": target_turn,
+        "creator_messages": sum(1 for e in thread_events or [] if e.get("kind") == "user_message"),
+        "began_at": began.isoformat() if began else None,
+        "job_agent_runs": list(job_debug.get("agent_runs") or []),
+        "source_count": len(sources),
+        "source_coverage": coverage,
+        "creator_request": creator_request,
+    }
+
+
+def _unseeded_state(
+    job: dict[str, Any],
+    recorded: RecordedMedia | None,
+    thread_events: list[dict[str, Any]] | None,
+    chosen: ChosenMedia,
+) -> dict[str, int]:
+    """Production state the job's media leaned on that the replay does not recreate."""
+
+    snapshot = _binding_snapshot(job)
+    thread_media = [
+        entry
+        for event in thread_events or []
+        if event.get("kind") == "media_added"
+        for entry in (event.get("payload") or {}).get("media") or []
+        if isinstance(entry, dict)
+    ]
+    library_backed = {
+        str(row.get("media_id"))
+        for row in [*(snapshot.get("clip_assignments") or []), *thread_media]
+        if isinstance(row, dict) and row.get("library_asset_id")
+    }
+    return {
+        # Media-library catalogue rows (and the facts on them) are not seeded.
+        "media_library_backed_media": len(library_backed),
+        # A visual recorded without a media id keeps its capture time only on the binding row,
+        # and which pool asset it belongs to is unknown, so its capture time is not restored.
+        "visual_capture_times_not_restored": sum(
+            1 for row in (recorded.unnamed_visuals if recorded else ()) if row.get("capture")
+        ),
+        # Pool media the binding did not record, replayed because the item held it then.
+        "pool_visuals_not_recorded": len(chosen.pool_inferred),
+    }
+
+
+def _media_key(media_id: str) -> str:
+    """Pool assets are recorded as ``asset-<uuid>`` in the brief binding and bare in the debug."""
+
+    return media_id.removeprefix("asset-")
+
+
+def _binding_snapshot(job: dict[str, Any]) -> dict[str, Any]:
+    plan = job.get("assembly_plan") or {}
+    return ((plan.get("creator_brief_binding") or {}).get("media_snapshot")) or {}
+
+
+def _bound_rows(job: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The binding's clip and visual rows that name their medium, by media key."""
+
+    snapshot = _binding_snapshot(job)
+    return {
+        _media_key(str(row["media_id"])): row
+        for row in [*(snapshot.get("clip_assignments") or []), *(snapshot.get("visuals") or [])]
+        if isinstance(row, dict) and row.get("media_id")
+    }
+
+
+@dataclass(frozen=True)
+class RecordedMedia:
+    """The media a job was approved against, as its brief binding recorded it.
+
+    The admin job debug strips media ids, and every value naming a media file, from a job
+    whose speech cleanup is still ``required_v1`` with no finished variant
+    (``_mask_active_speech_rerender``): such a row keeps only the kind, duration and upload
+    receipt of a clip and the kind and capture time of a visual, so it is matched to the
+    item's media by shape instead of by id. A binding without a ``visuals`` key (written
+    before KRI-1069, or by a turn that snapshots clips only) does not say which pool media
+    the plan saw.
+    """
+
+    named: frozenset[str]
+    unnamed_clips: tuple[dict[str, Any], ...]
+    unnamed_visuals: tuple[dict[str, Any], ...]
+    visuals_recorded: bool
+
+    @property
+    def total(self) -> int:
+        return len(self.named) + len(self.unnamed_clips) + len(self.unnamed_visuals)
+
+
+@dataclass(frozen=True)
+class ChosenMedia:
+    clips: frozenset[str]
+    pool: frozenset[str]
+    matched_clip_rows: tuple[tuple[dict[str, Any], str], ...]
+    # Pool assets taken without a binding record, and the item's pool rows left out as added
+    # after the job ran; both stay zero when the binding recorded the pool.
+    pool_inferred: frozenset[str] = frozenset()
+    pool_added_after_job: int = 0
+
+
+def _recorded_media(job: dict[str, Any]) -> RecordedMedia | None:
+    """What the job was approved against, or None when it recorded no media at all.
+
+    The item's pool and clip rows may have changed since the job ran (assets added later),
+    so the replay takes exactly these and nothing else.
+    """
+
+    snapshot = _binding_snapshot(job)
+    clips = [r for r in snapshot.get("clip_assignments") or [] if isinstance(r, dict)]
+    visuals = [r for r in snapshot.get("visuals") or [] if isinstance(r, dict)]
+    named = frozenset(
+        _media_key(str(r["media_id"])) for r in [*clips, *visuals] if r.get("media_id")
+    )
+    recorded = RecordedMedia(
+        named=named,
+        unnamed_clips=tuple(r for r in clips if not r.get("media_id")),
+        unnamed_visuals=tuple(r for r in visuals if not r.get("media_id")),
+        visuals_recorded="visuals" in snapshot,
+    )
+    return recorded if recorded.total else None
+
+
+def _parse_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _pool_held_when_job_ran(
+    job: dict[str, Any], pool_rows: list[dict[str, Any]]
+) -> tuple[set[str], int]:
+    """The item's ready pool assets created before the job, and how many came after.
+
+    A binding that does not record its visuals, or no binding at all, leaves this as the best
+    record of the pool the plan saw (the manifest lists every visible pool row); an asset
+    deleted since is caught only when the job's plan names it (``_referenced_pool_ids``).
+    """
+
+    ran_at = _parse_time(job.get("created_at"))
+    if ran_at is None and pool_rows:
+        raise ReplayJobError(
+            "The job records no pool media and has no created_at, so which of the item's "
+            "pool assets it saw is unknown"
+        )
+    held: set[str] = set()
+    for row in pool_rows:
+        created = _parse_time(row.get("created_at"))
+        if created is None:
+            raise ReplayJobError(
+                f"Pool {row.get('kind')} {row['id']} has no created_at in the item debug, so "
+                "whether the job saw it is unknown"
+            )
+        if created <= ran_at:
+            held.add(_media_key(str(row["id"])))
+    return held, len(pool_rows) - len(held)
+
+
+POOL_REFERENCE = re.compile(r"asset-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+
+def _referenced_pool_ids(job: dict[str, Any]) -> frozenset[str]:
+    """Pool assets the job's own plan names: brief scopes (``clip:asset-<id>``), render
+    requirements, resolved clip intents. Each must be replayed."""
+
+    return frozenset(POOL_REFERENCE.findall(json.dumps(job, ensure_ascii=False)))
+
+
+def _select_recorded_media(
+    recorded: RecordedMedia | None,
+    clip_rows: list[dict[str, Any]],
+    pool_rows: list[dict[str, Any]],
+    job: dict[str, Any],
+) -> ChosenMedia:
+    """Pick the item's media rows the job used; refuse when they cannot be told apart.
+
+    A clip row without an id matches an item clip of the same kind whose duration agrees
+    within ``DURATION_TOLERANCE_S``; two equally close candidates are ambiguous. Visuals
+    without ids are item pool assets, matched by kind: the item must hold exactly as many ready
+    assets of that kind as the binding recorded, otherwise which ones the job used is unknown.
+    A binding that does not record its visuals, or a job with no binding, keeps the pool assets
+    the item held when the job ran. Without a binding every clip row is kept: the item debug
+    does not date them.
+    """
+
+    if recorded is None:
+        held_then, added_after = _pool_held_when_job_ran(job, pool_rows)
+        every_clip = frozenset(_media_key(str(r["media_id"])) for r in clip_rows)
+        return ChosenMedia(every_clip, frozenset(held_then), (), frozenset(held_then), added_after)
+    clips = {_media_key(str(r["media_id"])) for r in clip_rows} & recorded.named
+    pool = {_media_key(str(r["id"])) for r in pool_rows} & recorded.named
+    matched: list[tuple[dict[str, Any], str]] = []
+    for row in recorded.unnamed_clips:
+        kind = str(row.get("kind") or "video")
+        duration = row.get("duration_s")
+        scored = sorted(
+            (
+                abs(float(candidate.get("duration_s") or 0) - float(duration or 0)),
+                str(candidate["media_id"]),
+            )
+            for candidate in clip_rows
+            if str(candidate.get("kind") or "video") == kind
+            and _media_key(str(candidate["media_id"])) not in clips
+            and (
+                duration is None
+                or abs(float(candidate.get("duration_s") or 0) - float(duration))
+                <= DURATION_TOLERANCE_S
+            )
+        )
+        if not scored:
+            raise ReplayJobError(
+                f"The job recorded a {kind} clip of {duration} s without a media id and the "
+                "item holds no unclaimed clip of that kind and length; refusing to replay on "
+                "different footage"
+            )
+        if len(scored) > 1 and abs(scored[0][0] - scored[1][0]) < 0.01:
+            raise ReplayJobError(
+                f"Two item clips match the recorded {kind} clip of {duration} s equally; "
+                "which one the job used is unknown"
+            )
+        clips.add(_media_key(scored[0][1]))
+        matched.append((row, scored[0][1]))
+    for kind in sorted({str(r.get("kind") or "") for r in recorded.unnamed_visuals}):
+        wanted = sum(1 for r in recorded.unnamed_visuals if str(r.get("kind") or "") == kind)
+        held = [r for r in pool_rows if r["kind"] == kind and _media_key(str(r["id"])) not in pool]
+        if len(held) != wanted:
+            raise ReplayJobError(
+                f"The job recorded {wanted} pool {kind}s without media ids and the item holds "
+                f"{len(held)} ready ones now; which ones the job used is unknown, so the replay "
+                "would run on different footage"
+            )
+        pool |= {_media_key(str(r["id"])) for r in held}
+    inferred: set[str] = set()
+    added_after = 0
+    if not recorded.visuals_recorded:
+        held_then, added_after = _pool_held_when_job_ran(job, pool_rows)
+        inferred = held_then - pool
+        pool |= inferred
+    return ChosenMedia(
+        frozenset(clips), frozenset(pool), tuple(matched), frozenset(inferred), added_after
+    )
+
+
+def _name_unnamed_binding_rows(job_debug: dict[str, Any], chosen: ChosenMedia) -> None:
+    """Give matched binding clip rows back the identity the admin debug stripped.
+
+    The clip row writer sets ``manifest_identity`` to the media id
+    (``creation_threads._clip_assignment_row``) and ``bind_phone_sources`` requires the two to
+    agree; the debug drops it with the id because its value is the proxy's file name.
+    """
+
+    for row, media_id in chosen.matched_clip_rows:
+        row["media_id"] = media_id
+        row["manifest_identity"] = media_id
+        row["replay_matched_by"] = "kind_and_duration"
+
+
+def _check_source_coverage(
+    job: dict[str, Any],
+    sources: list[dict[str, Any]],
+    recorded: RecordedMedia | None,
+    chosen: ChosenMedia,
+) -> dict[str, Any]:
+    """Refuse a replay that would run on different inputs than the production job.
+
+    The job's brief binding records the media it was approved against. Every one of them
+    must have a replayed source, and a creator song or voiceover the replay cannot reproduce
+    stops the run: a green replay on partial footage is stand-in evidence. So does a pool
+    asset the job's own plan names that the replay would not hold. A job without a binding
+    replays everything the item holds, and the coverage says so.
+    """
+
+    snapshot = _binding_snapshot(job)
+    visuals = [s for s in sources if s["kind"] in MEDIA_KINDS]
+    if recorded is not None:
+        missing = sorted(recorded.named - {_media_key(s["id"]) for s in visuals})
+        if missing:
+            raise ReplayJobError(
+                f"The job was approved against {recorded.total} visuals and clips but "
+                f"{len(missing)} are not recoverable ({', '.join(missing[:5])}); refusing to "
+                "replay on different footage"
+            )
+    unheld = sorted(_referenced_pool_ids(job) - {s["id"] for s in visuals if s.get("pool")})
+    if unheld:
+        raise ReplayJobError(
+            f"The job's plan names pool media the replay would not hold ({', '.join(unheld[:5])}):"
+            " not a ready asset of the item, or added after the job ran; refusing to replay on "
+            "different footage"
+        )
+    if any(snapshot.get(key) for key in ("song_analysis", "song_alignment", "song_generation")):
+        raise ReplayJobError(
+            "The job used a creator song; replay_creator does not seed songs, so a replay "
+            "would not reproduce the production inputs"
+        )
+    if snapshot.get("voiceover") and not any(s["kind"] == "audio" for s in sources):
+        raise ReplayJobError("The job recorded a voiceover but the item holds none in storage")
+    return {
+        "bound_to_recorded_media": recorded is not None,
+        "recorded_visuals_and_clips": recorded.total if recorded is not None else None,
+        "replayed_visuals_and_clips": len(visuals),
+        "matched_without_media_id": {
+            "clips": len(chosen.matched_clip_rows),
+            "pool_visuals": len(recorded.unnamed_visuals) if recorded else 0,
+        },
+        "pool_visuals_recorded": recorded.visuals_recorded if recorded is not None else None,
+        "pool_visuals_inferred": len(chosen.pool_inferred),
+        "pool_visuals_added_after_job": chosen.pool_added_after_job,
+        # Without a binding the clip rows are taken whole: the item debug does not date them.
+        "clips_not_dated": 0 if recorded is not None else len(chosen.clips),
+        "pool_images": sum(1 for s in visuals if s.get("pool") and s["kind"] == "image"),
+        "pool_videos": sum(1 for s in visuals if s.get("pool") and s["kind"] == "video"),
+        "voiceover": any(s["kind"] == "audio" for s in sources),
+    }
+
+
+def replay_environment(
+    dotenv: dict[str, str], scratch_url: str, namespace: str, *, max_cost_usd: float
+) -> dict[str, str]:
+    """Clean environment: model provider keys from .env, local scratch targets, nothing else.
+
+    The paid-call ledger runs in the scratch database as a development manual-QA run capped
+    at ``max_cost_usd``. Without that envelope every OpenAI planning reservation is refused
+    and a Main Creator configured on Sol (production since 2026-11-14) silently answers on its
+    Gemini fallback (``docs/reviews/kri-1384/sol-main-creator.md``, Gaps).
+    """
+
+    env = {key: os.environ[key] for key in KEPT_ENV if key in os.environ}
+    for key, value in dotenv.items():
+        if MODEL_KEY.fullmatch(key):
+            env[key] = value
+    if dotenv.get("TOKEN_ENCRYPTION_KEY"):
+        env["TOKEN_ENCRYPTION_KEY"] = dotenv["TOKEN_ENCRYPTION_KEY"]
+    cap = f"{max_cost_usd:.2f}"
+    env.update(
+        {
+            "AI_USAGE_ENVIRONMENT": "development",
+            "AI_MANUAL_QA_TEST_RUN_ID": namespace,
+            "AI_MANUAL_QA_MAX_COST_USD": cap,
+            "AI_MANUAL_QA_RESERVATION_APPROVED": "true",
+            "AI_OPENAI_MONTHLY_BUDGET_USD": cap,
+            "AI_OPENAI_PLANNING_BUDGET_USD": cap,
+            "AI_ANTHROPIC_MONTHLY_BUDGET_USD": cap,
+            "AI_ANTHROPIC_PLANNING_BUDGET_USD": cap,
+        }
+    )
+    env["DATABASE_URL"] = scratch_url
+    env["NOVA_CELERY_QUEUE_NAMESPACE"] = namespace
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONPATH"] = str(API_ROOT)
+    return env
+
+
+def scratch_database_url(dotenv: dict[str, str], database: str) -> str:
+    """A local PostgreSQL URL for the scratch database that accepts a connection.
+
+    Tries the credentials in ``.env`` first, then the operating-system account (a Homebrew
+    Postgres has no ``postgres`` role). Anything not on localhost is refused, and the derived
+    URL never keeps the ``.env`` query string, which libpq lets override the host.
+    """
+
+    from sqlalchemy import create_engine, text
+
+    configured = urlsplit(dotenv.get("DATABASE_URL") or os.environ.get("DATABASE_URL") or "")
+    if (configured.hostname or "").lower() not in {"localhost", "127.0.0.1", "::1"}:
+        raise ReplayJobError("DATABASE_URL in .env is not local; refusing to derive a scratch URL")
+    if (configured.port or LOCAL_POSTGRES_PORT) != LOCAL_POSTGRES_PORT:
+        raise ReplayJobError(
+            f"DATABASE_URL in .env uses port {configured.port}, not the local dev server's "
+            f"{LOCAL_POSTGRES_PORT}; a tunnel (fly proxy) also listens on localhost, so the "
+            "scratch database is not created there"
+        )
+    host = f"localhost:{LOCAL_POSTGRES_PORT}"
+    candidates = [
+        configured._replace(scheme="postgresql", path=f"/{database}", query="", fragment="")
+    ]
+    candidates.append(urlsplit(f"postgresql://{os.environ.get('USER', '')}@{host}/{database}"))
+    for candidate in candidates:
+        engine = create_engine(urlunsplit(candidate._replace(path="/postgres")))
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+                free = _free_connections(connection)
+            if free < MIN_FREE_DB_CONNECTIONS:
+                raise ReplayInfrastructureError(
+                    f"Local PostgreSQL has only {free} free connections (the worker and the "
+                    f"replay need {MIN_FREE_DB_CONNECTIONS}); other sessions hold the rest"
+                )
+            return urlunsplit(candidate)
+        except OperationalError:
+            continue
+        finally:
+            engine.dispose()
+    raise ReplayInfrastructureError(
+        "No local PostgreSQL role from .env or $USER can connect to `postgres`"
+    )
+
+
+def _free_connections(connection: Any) -> int:
+    from sqlalchemy import text
+
+    row = connection.execute(
+        text("SELECT current_setting('max_connections')::int - count(*) FROM pg_stat_activity")
+    ).one()
+    return int(row[0])
+
+
+def _scratch_name(url: str) -> str:
+    name = urlsplit(url).path.lstrip("/")
+    if not re.fullmatch(rf"{SCRATCH_DATABASE_PREFIX}[a-z0-9]{{1,16}}", name):
+        raise ReplayJobError(f"Refusing to drop or create database {name!r}")
+    return name
+
+
+def _maintenance_engine(url: str):  # noqa: ANN202 - sqlalchemy Engine, imported lazily
+    from sqlalchemy import create_engine
+
+    return create_engine(
+        urlunsplit(urlsplit(url)._replace(path="/postgres", query="")),
+        isolation_level="AUTOCOMMIT",
+    )
+
+
+def recreate_scratch_database(url: str, env: dict[str, str]) -> None:
+    from sqlalchemy import text
+
+    name = _scratch_name(url)
+    engine = _maintenance_engine(url)
+    with engine.connect() as connection:
+        connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        connection.execute(text(f'CREATE DATABASE "{name}"'))
+    engine.dispose()
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=API_ROOT,
+        env={**env, "STORAGE_BUCKET": "replay-scratch"},
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+
+
+def drop_scratch_database(url: str, attempts: int = 5) -> None:
+    """Drop the run's scratch database; a busy server (connection limit) is retried."""
+
+    from sqlalchemy import text
+
+    for attempt in range(1, attempts + 1):
+        engine = _maintenance_engine(url)
+        try:
+            with engine.connect() as connection:
+                connection.execute(
+                    text(f'DROP DATABASE IF EXISTS "{_scratch_name(url)}" WITH (FORCE)')
+                )
+            return
+        except OperationalError:
+            if attempt == attempts:
+                raise
+            time.sleep(3 * attempt)
+        finally:
+            engine.dispose()
+
+
+def delete_queue_namespace(namespace: str) -> int:
+    """Remove the Redis keys (broker bindings, unacked index) this run's worker left behind."""
+
+    if not re.fullmatch(r"replay-[0-9a-f]{8}-[0-9a-z]+", namespace):
+        raise ReplayJobError(f"Refusing to delete Redis keys for namespace {namespace!r}")
+    import redis
+
+    client = redis.Redis.from_url(REDIS_URL)
+    try:
+        keys = list(client.scan_iter(match=f"{REDIS_KEY_PREFIX}:{namespace}:*", count=500))
+        return int(client.delete(*keys)) if keys else 0
+    finally:
+        client.close()
+
+
+def start_worker(env: dict[str, str], run_dir: Path, namespace: str) -> subprocess.Popen[bytes]:
+    log = (run_dir / "worker.log").open("ab")
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "celery",
+            "-A",
+            "app.worker:celery_app",
+            "worker",
+            "--loglevel=info",
+            "--concurrency=4",
+            "--pool=threads",
+            "-Q",
+            WORKER_QUEUES,
+            "-n",
+            f"{namespace}@%h",
+        ],
+        cwd=API_ROOT,
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+
+# Every way `app.worker._prewarm_clip_font_matcher` ends. A first turn that runs while torch
+# and CLIP still load lost its 15 s lease in verifier run 1 on 1cb33402 (2026-11-14 13:53).
+WORKER_WARM = re.compile(
+    r"\[worker_ready\] (?:CLIP font matcher prewarmed|CLIP matcher prewarm failed"
+    r"|no render queue consumed|queue introspection failed)"
+)
+WORKER_WARM_TIMEOUT_S = 600.0
+
+
+def wait_until_worker_warm(
+    worker: subprocess.Popen[bytes], log_path: Path, timeout_s: float = WORKER_WARM_TIMEOUT_S
+) -> float:
+    """Block until the worker finished its startup prewarm; return the seconds it took."""
+
+    started = time.monotonic()
+    while time.monotonic() - started < timeout_s:
+        if worker.poll() is not None:
+            raise ReplayInfrastructureError(
+                f"The replay worker exited with {worker.returncode} before it was ready; "
+                f"see {log_path}"
+            )
+        if log_path.is_file() and WORKER_WARM.search(log_path.read_text(errors="replace")):
+            return round(time.monotonic() - started, 1)
+        time.sleep(1.0)
+    raise ReplayInfrastructureError(
+        f"The replay worker did not finish its CLIP prewarm within {timeout_s:.0f} s "
+        f"(expected a `[worker_ready]` prewarm line in {log_path})"
+    )
+
+
+SPEND_POLL_S = 5.0
+
+
+def settled_spend_usd(url: str) -> float:
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection:
+            query = text("SELECT coalesce(sum(cost_usd), 0) FROM agent_run")
+            return float(connection.execute(query).scalar_one())
+    finally:
+        engine.dispose()
+
+
+def run_under_spend_cap(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    scratch_url: str,
+    cap_usd: float,
+    poll_s: float = SPEND_POLL_S,
+) -> tuple[int, float | None]:
+    """Run ``command``; interrupt it once the replay's agent runs settled more than the cap.
+
+    The paid-call ledger reserves only OpenAI and Anthropic planning while
+    AI_COST_CONTROL_ENABLED stays off as in production, so Gemini spend is watched here. A call
+    counts once it settled, so the run can pass the cap by the call that crossed it. Returns
+    the exit code and, when the cap stopped the run, the spend that did.
+    """
+
+    process = subprocess.Popen(command, cwd=API_ROOT, env=env)
+    try:
+        while True:
+            try:
+                return process.wait(timeout=poll_s), None
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                spent = settled_spend_usd(scratch_url)
+            except OperationalError:
+                continue
+            if spent > cap_usd:
+                process.send_signal(signal.SIGINT)
+                try:
+                    return process.wait(timeout=120), spent
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    return process.wait(), spent
+    except BaseException:
+        # The driver is stopping (SIGTERM, Ctrl-C) and its worker and database go next, so
+        # the replay must not keep sending messages.
+        process.kill()
+        process.wait()
+        raise
+
+
+def mark_spend_cap(result: dict[str, Any], spent: float, cap_usd: float) -> None:
+    result["replay_failure"] = {
+        "failure_reason": result["failure_reason"],
+        "error_detail": result["error_detail"],
+    }
+    result["outcome"] = "spend_cap_reached"
+    result["failure_reason"] = (
+        f"Stopped: the replay's agent runs settled ${spent:.4f}, over --max-cost-usd "
+        f"{cap_usd:.2f}. Nothing was learned about the production job."
+    )
+
+
+def stop_worker(worker: subprocess.Popen[bytes]) -> None:
+    if worker.poll() is None:
+        os.killpg(worker.pid, signal.SIGTERM)
+        try:
+            worker.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(worker.pid, signal.SIGKILL)
+
+
+PRODUCTION_TRACE_PAGES = 10
+AGENT_RUNS_CODE = """
+import json, sys
+sys.path.insert(0, "scripts")
+import replay_job
+print(json.dumps(replay_job.recorded_agent_runs(sys.argv[1] if len(sys.argv) > 1 else None)))
+"""
+
+
+def recorded_agent_runs(item_id: str | None) -> dict[str, Any]:
+    """Every agent run in the replay's database, each marked whether production could list it.
+
+    Production's side is the plan item's proposal trace (runs linked to the item) and the
+    job's own runs. The clip-intent agents run on the Creator session alone
+    (``creator_agent.py``), so production never lists them: comparing them would name them as
+    agents production never ran. They still count toward the spend.
+    """
+
+    from app.agents._runtime import SUCCESS_OUTCOMES
+    from app.database import sync_session
+    from app.models import AgentRun, PlanItem
+
+    item = uuid.UUID(item_id) if item_id else None
+    with sync_session() as db:
+        plan_item = db.get(PlanItem, item) if item else None
+        job = plan_item.current_job_id if plan_item else None
+        runs = [
+            {
+                "agent_name": r.agent_name,
+                "outcome": r.outcome,
+                "cost_usd": float(r.cost_usd or 0),
+                "model": r.model,
+                "prompt_version": r.prompt_version,
+                "comparable": item is not None
+                and (r.plan_item_id == item or (job is not None and r.job_id == job)),
+            }
+            for r in db.query(AgentRun).order_by(AgentRun.created_at)
+        ]
+    return {"runs": runs, "success": sorted(SUCCESS_OUTCOMES)}
+
+
+# When production began storing each agent's runs on the chat path (the Fly Deploy run that
+# shipped the fix ended). Before #1737 the song match bound the thread id as job_id and every
+# insert failed the FK; before #1973 the clip-intent agents ran with no plan item and were not
+# stored. A job's trace from before cannot show them, so their absence proves nothing.
+RECORDED_IN_PRODUCTION_FROM = {
+    "nova.audio.music_matcher": "2026-10-22T06:02:03Z",
+    "nova.plan.clip_intent_planner": "2026-10-31T10:21:20Z",
+    "nova.plan.clip_request_resolver": "2026-10-31T10:21:20Z",
+    "nova.video.clip_question": "2026-10-31T10:21:20Z",
+}
+
+
+@dataclass(frozen=True)
+class ProductionAgents:
+    """What production ran for the plan item up to the job's end: agents, models, prompts and
+    the outcome of each agent's last run.
+
+    ``unrecorded`` holds agents production did not store yet when the job's thread began.
+    """
+
+    models: dict[str, frozenset[str]]
+    prompt_versions: dict[str, frozenset[str]]
+    trace_complete: bool
+    unrecorded: frozenset[str] = frozenset()
+    last_outcomes: dict[str, str] = field(default_factory=dict)
+    configured_models: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def names(self) -> set[str]:
+        return set(self.models)
+
+
+def _configured_models(runs: list[dict[str, Any]]) -> dict[str, str]:
+    """Each agent's model on its last run that did not answer on a fallback model, ``runs``
+    being in the order they ran; an ``ok_fallback`` run records the fallback's model."""
+
+    last_any: dict[str, str] = {}
+    last_primary: dict[str, str] = {}
+    for run in runs:
+        name, model = run.get("agent_name"), run.get("model")
+        if name and model:
+            last_any[name] = str(model)
+            if run.get("outcome") != "ok_fallback":
+                last_primary[name] = str(model)
+    return {**last_any, **last_primary}
+
+
+def _by_agent(runs: list[dict[str, Any]], key: str) -> dict[str, frozenset[str]]:
+    found: dict[str, set[str]] = {}
+    for run in runs:
+        if run.get("agent_name"):
+            found.setdefault(run["agent_name"], set())
+            if run.get(key):
+                found[run["agent_name"]].add(str(run[key]))
+    return {name: frozenset(values) for name, values in found.items()}
+
+
+def _last_outcomes(runs: list[dict[str, Any]]) -> dict[str, str]:
+    """Each agent's outcome on its last run, ``runs`` being in the order they ran."""
+
+    return {run["agent_name"]: run.get("outcome") for run in runs if run.get("agent_name")}
+
+
+def production_agents(
+    item_id: str, job_runs: list[dict[str, Any]], until: str | None, began: str | None
+) -> ProductionAgents:
+    """Agent runs production recorded for the plan item (all pages of its proposal trace).
+
+    Runs after the job ended (``until``, its ``updated_at``) are left out: a later message may
+    have run on a model production switched to afterwards. ``trace_complete`` is False when
+    the trace was cut off, so an absence proves nothing. ``began`` is when the job's thread
+    (or the job, without one) started; with no time every agent of
+    ``RECORDED_IN_PRODUCTION_FROM`` counts as unrecorded.
+    """
+
+    runs = list(job_runs)
+    cursor: str | None = None
+    complete = False
+    for _ in range(PRODUCTION_TRACE_PAGES):
+        suffix = f"&cursor={quote(cursor, safe='')}" if cursor else ""
+        page = prod_get(f"/admin/plan-items/{item_id}/proposal-trace?limit=100{suffix}")
+        runs.extend(page.get("agent_runs") or [])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            complete = True
+            break
+    if until:
+        runs = [r for r in runs if not r.get("created_at") or str(r["created_at"]) <= until]
+    started = _parse_time(began)
+    in_order = sorted(runs, key=lambda r: str(r.get("created_at") or ""))
+    return ProductionAgents(
+        models=_by_agent(runs, "model"),
+        prompt_versions=_by_agent(runs, "prompt_version"),
+        last_outcomes=_last_outcomes(in_order),
+        configured_models=_configured_models(in_order),
+        trace_complete=complete,
+        unrecorded=frozenset(
+            name
+            for name, since in RECORDED_IN_PRODUCTION_FROM.items()
+            if started is None or started < _parse_time(since)
+        ),
+    )
+
+
+MAIN_CREATOR = "nova.creator.main"
+MAIN_CREATOR_SOURCE = "replay:main-creator"
+
+
+def choose_main_creator(
+    production: ProductionAgents, settings: dict[str, Any], wanted: str
+) -> dict[str, Any]:
+    """The Main Creator model and thinking level the replay plans on.
+
+    ``production`` is the model production planned this job on, so a chat job can take
+    production's route to its failing render; ``snapshot`` is today's production setting.
+    Agent runs do not record the thinking level: the snapshot's goes with the snapshot's model,
+    and another model runs at the code default (``thinking_level`` None), as production's
+    Gemini Main Creator did until the Sol rollout set both
+    (``docs/reviews/kri-1384/sol-main-creator.md``).
+    """
+
+    today = {
+        "model": settings["main_creator_model"]["value"],
+        "thinking_level": settings["main_creator_thinking_level"]["value"],
+        "from": "snapshot",
+    }
+    recorded = production.configured_models.get(MAIN_CREATOR)
+    if wanted == "snapshot":
+        why = "requested: today's production setting"
+        if recorded and recorded != today["model"]:
+            why += (
+                f"; production planned this job on {recorded}, so a chat job usually gets "
+                "another reply at some message and never reaches its failing render"
+            )
+        return {**today, "why": why}
+    if recorded is None:
+        return {
+            **today,
+            "why": "production recorded no nova.creator.main run with a model for this item "
+            "before the job ended, so the snapshot's model stands in",
+        }
+    if recorded == today["model"]:
+        return {**today, "from": "production", "why": f"production planned this job on {recorded}"}
+    return {
+        "model": recorded,
+        "thinking_level": None,
+        "from": "production",
+        "why": f"production planned this job on {recorded} (the snapshot has {today['model']}); "
+        "thinking level: the code default, which agent runs do not record",
+    }
+
+
+def write_replay_flags(choice: dict[str, Any], run_dir: Path) -> Path:
+    """The production snapshot with the chosen Main Creator, written into the run directory."""
+
+    snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    snapshot["sources"][MAIN_CREATOR_SOURCE] = f"replay_job.py --main-creator: {choice['why']}"
+    settings = snapshot["settings"]
+    settings["main_creator_model"] = {"source": MAIN_CREATOR_SOURCE, "value": choice["model"]}
+    settings["main_creator_thinking_level"] = (
+        {"source": MAIN_CREATOR_SOURCE, "value": choice["thinking_level"]}
+        if choice["thinking_level"] is not None
+        else {"source": "default", "value": None}
+    )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / "prod-flags.json"
+    path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def replay_agents(env: dict[str, str], item_id: str | None) -> dict[str, Any]:
+    """The agent runs the replay recorded in its scratch database (``recorded_agent_runs``)."""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", AGENT_RUNS_CODE, *((item_id,) if item_id else ())],
+        cwd=API_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ReplayJobError(f"Could not read the replay's agent runs: {completed.stderr[-300:]}")
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+def _differences(
+    production: dict[str, frozenset[str]], replay: dict[str, frozenset[str]]
+) -> list[dict[str, Any]]:
+    """Agents both ran where the replay used a value production never used for this item."""
+
+    return [
+        {"agent": name, "production": sorted(production[name]), "replay": sorted(values)}
+        for name, values in sorted(replay.items())
+        if name in production and production[name] and values - production[name]
+    ]
+
+
+def compare_routes(production: ProductionAgents, recorded: dict[str, Any]) -> dict[str, Any]:
+    """Did the replay take production's route, on production's models?
+
+    The replay drives the same controllers as the chat, but a flag the snapshot approximates
+    can send it down a planner production does not use, and a model setting the snapshot
+    misses plans on another model. A failure on such a route is the replay's own, so it is
+    reported as a divergence instead of as the production job's failure reason.
+    """
+
+    success = set(recorded["success"])
+    compared: list[dict[str, Any]] = []
+    left_out: list[dict[str, Any]] = []
+    for run in recorded["runs"]:
+        comparable = run["comparable"] and run["agent_name"] not in production.unrecorded
+        (compared if comparable else left_out).append(run)
+    last_outcome = _last_outcomes(compared)
+    ran = sorted(last_outcome)
+    failed = sorted(name for name, outcome in last_outcome.items() if outcome not in success)
+    names = production.names
+    uncompared = _last_outcomes(left_out)
+    return {
+        "production_agents": sorted(names),
+        "production_trace_complete": production.trace_complete,
+        "replay_agents": ran,
+        "replay_only_agents": sorted(set(ran) - names),
+        "replay_failed_agents": failed,
+        "diverged_failures": sorted(set(failed) - names) if production.trace_complete else [],
+        # Agents whose last run failed in the replay but not in production: the replay broke
+        # where production got through.
+        "failed_only_in_replay": [
+            {
+                "agent": name,
+                "replay": last_outcome[name],
+                "production": production.last_outcomes.get(name),
+            }
+            for name in failed
+            if name in names and production.last_outcomes.get(name) in success | {None}
+        ],
+        # Runs production's trace cannot show (session-scoped, or not stored yet when the
+        # job ran), so they prove no divergence; nor can a failure among them be production's.
+        "replay_uncompared_agents": sorted(set(uncompared) - set(last_outcome)),
+        "failed_uncompared_agents": [
+            {"agent": name, "replay": outcome}
+            for name, outcome in sorted(uncompared.items())
+            if name not in last_outcome and outcome not in success
+        ],
+        "replay_models": {
+            name: sorted(models) for name, models in _by_agent(compared, "model").items()
+        },
+        "model_differences": _differences(production.models, _by_agent(compared, "model")),
+        "prompt_version_differences": _differences(
+            production.prompt_versions, _by_agent(compared, "prompt_version")
+        ),
+        "replay_agent_runs": len(recorded["runs"]),
+        "replay_spend_usd": round(sum(r.get("cost_usd") or 0 for r in recorded["runs"]), 4),
+    }
+
+
+def planning_failure(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The error behind a job's failed plan: its last ``phone_plan_failed`` pipeline event
+    (``generative_build._record_phone_plan_failure``), or None when none was recorded."""
+
+    events = [
+        event
+        for event in (job or {}).get("pipeline_trace") or []
+        if isinstance(event, dict) and event.get("event") == "phone_plan_failed"
+    ]
+    data = (events[-1].get("data") or {}) if events else {}
+    if not data.get("error_class"):
+        return None
+    return {"error_class": data["error_class"], "error_tail": data.get("error_tail")}
+
+
+def _planning_error(failure: dict[str, Any]) -> str:
+    return f"{failure['error_class']} ({failure.get('error_tail')!r})"
+
+
+def _cause_gap(production: dict[str, Any], replay: dict[str, Any]) -> str | None:
+    """Why the replay's recorded cause is not shown to be production's, or None when it is.
+
+    A failure reason and an error class each cover many unrelated failures (one
+    CreatorRenderContractError is the text-fit gate, another the font gate), so only the exact
+    cause production recorded counts: its planning error's class and message or, for a job
+    from before planning errors were recorded, its error detail unless that is the app's generic
+    sentence for the reason. An empty message (a bare assert) is no cause. A message worded by
+    a model that differs is left to the reader, with both shown.
+    """
+
+    ours, theirs = production.get("planning_failure"), replay.get("planning_failure")
+    if ours:
+        if theirs is None:
+            return (
+                f"Production's plan failed with {_planning_error(ours)}; the replay recorded no "
+                f"planning error (its error detail: {replay.get('error_detail')!r})."
+            )
+        if (ours["error_class"], ours.get("error_tail")) != (
+            theirs["error_class"],
+            theirs.get("error_tail"),
+        ):
+            return (
+                f"Production's plan failed with {_planning_error(ours)}; the replay's with "
+                f"{_planning_error(theirs)}."
+            )
+        if not str(ours.get("error_tail") or "").strip():
+            return (
+                f"Production's plan failed with {ours['error_class']} and no message (a bare "
+                "assert records none), so its exact cause is unknown and the replay's same "
+                "class cannot be shown to be the same failure."
+            )
+        return None
+    reason, detail = production.get("failure_reason"), production.get("error_detail")
+    generic = replay.get("generic_error_detail")
+    if not detail:
+        return (
+            f"Production recorded no planning error and no error detail, only {reason}, so "
+            "the replay's failure cannot be shown to be the same one."
+        )
+    if generic is None or detail == generic:
+        known = "is" if generic else "may be"
+        return (
+            f"Production recorded no planning error, and its error detail {known} the app's "
+            f"generic sentence for {reason} ({detail!r}), so the replay's failure cannot be "
+            "shown to be the same one."
+        )
+    if detail != replay.get("error_detail"):
+        return (
+            f"Production's job failed with {detail!r}; the replay's with "
+            f"{replay.get('error_detail')!r}."
+        )
+    return None
+
+
+def _reproduction_gaps(
+    route: dict[str, Any], production: dict[str, Any], replay: dict[str, Any]
+) -> list[str]:
+    """Why a replay that ended with production's failure reason may still not be production's
+    failure. ``phone_plan_failed`` and its siblings are catch-all reasons, so the route, the
+    agents that failed and the exact recorded cause have to agree as well, and a failure
+    production's trace cannot show counts against it."""
+
+    gaps: list[str] = []
+    if not route["production_trace_complete"]:
+        gaps.append(
+            "Production's agent trace for this item was cut off, so the replay's route "
+            "cannot be compared with it."
+        )
+    elif route["replay_only_agents"]:
+        gaps.append(
+            f"The replay ran {', '.join(route['replay_only_agents'])}, which production never "
+            "ran for this item."
+        )
+    gaps.extend(
+        f"{failed['agent']} failed in the replay ({failed['replay']}), but production's last "
+        f"run of it ended {failed['production'] or 'with no outcome recorded'}."
+        for failed in route["failed_only_in_replay"]
+    )
+    gaps.extend(
+        f"{failed['agent']} failed in the replay ({failed['replay']}), and production's trace "
+        "for this item cannot show it (it runs on the Creator session, or production did not "
+        "store it yet), so whether it failed there is unknown."
+        for failed in route["failed_uncompared_agents"]
+    )
+    if gap := _cause_gap(production, replay):
+        gaps.append(gap)
+    return gaps
+
+
+def _production_failure_text(production: dict[str, Any]) -> str:
+    failure = production.get("planning_failure")
+    cause = _planning_error(failure) if failure else repr(production.get("error_detail"))
+    return f"{production.get('failure_reason')}: {cause}"
+
+
+def classify_failure(
+    result: dict[str, Any], route: dict[str, Any], production: dict[str, Any]
+) -> None:
+    """Say whether a failed replay is the production job's failure or one of its own.
+
+    ``production`` is the production render the replay is compared with
+    (``compared_production_render``): its ``failure_reason``, ``planning_failure`` and
+    ``error_detail``.
+
+    ``reproduction`` is ``reproduced`` only when the reason matches, the replay ran no agent
+    production did not, every agent whose last replay run failed also failed last in
+    production and none failed that production's trace cannot show, and the replay recorded
+    production's exact cause (``_cause_gap``). A matching reason short of that is
+    ``failure_reason_matched_route_differs`` or ``reproduction_unproven``, with
+    ``reproduction_gaps`` naming the agents and both causes.
+
+    A failure inside an agent production never ran, or a different failure reached after
+    such agents, did not happen where production failed: printing it as the job's
+    remaining failure would be stand-in evidence.
+    """
+
+    if result["outcome"] != "failed":
+        return
+    production_reason = production.get("failure_reason")
+    reasons_differ = result["failure_reason"] != production_reason
+    gaps = [] if reasons_differ else _reproduction_gaps(route, production, result)
+    if reasons_differ:
+        verdict = "failure_reason_differs"
+    elif not gaps:
+        verdict = "reproduced"
+    elif route["production_trace_complete"] and route["replay_only_agents"]:
+        verdict = "failure_reason_matched_route_differs"
+    else:
+        verdict = "reproduction_unproven"
+    result["production_failure_reproduced"] = verdict == "reproduced"
+    result["reproduction"] = verdict
+    result["reproduction_gaps"] = gaps
+    check = "check the flag snapshot (scripts/prod_flag_snapshot.py unverified) and the turns"
+    if route["diverged_failures"] or (
+        reasons_differ and route["production_trace_complete"] and route["replay_only_agents"]
+    ):
+        where = (
+            f"inside {', '.join(route['diverged_failures'])}"
+            if route["diverged_failures"]
+            else f"with {result['failure_reason']} after running "
+            f"{', '.join(route['replay_only_agents'])}"
+        )
+        explanation = (
+            f"The replay failed {where}, which production never ran for this plan item. "
+            f"Production's job failed with {_production_failure_text(production)} before "
+            "running them or on another route, so the replay's failure is not production's: "
+            "replay_failure is what the replay hit. If production's failure is a timeout or "
+            f"a provider error, production stopped earlier than the replay; otherwise {check}."
+        )
+    elif reasons_differ and route["model_differences"]:
+        models = ", ".join(
+            f"{d['agent']} on {'/'.join(d['replay'])} (production {'/'.join(d['production'])})"
+            for d in route["model_differences"]
+        )
+        explanation = (
+            f"The replay failed with {result['failure_reason']} after running {models} for "
+            f"this plan item; production failed with {_production_failure_text(production)}. "
+            "It did not fail where production did, so it is not the production job's failure: "
+            f"replay_failure is what the replay hit; {check}."
+        )
+    else:
+        return
+    result["replay_failure"] = {
+        "failure_reason": result["failure_reason"],
+        "error_detail": result["error_detail"],
+    }
+    result["outcome"] = "diverged_from_production"
+    result["failure_reason"] = explanation
+
+
+SUCCEEDED = frozenset({"video_rendered", "device_plan_ready"})
+
+
+def summarize(receipt_path: Path, run_dir: Path) -> dict[str, Any]:
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    job = receipt.get("job") or {}
+    videos = [
+        str(run_dir / "storage" / out["object_path"])
+        for out in receipt.get("outputs") or []
+        if out.get("field") in {"output_url", "video_path"} and not out.get("missing")
+    ]
+    error = (receipt.get("error") or {}).get("message")
+    question = (receipt.get("error") or {}).get("question")
+    diverged_turn = (receipt.get("error") or {}).get("diverged_turn")
+    stalled = (receipt.get("error") or {}).get("stalled")
+    input_error = (receipt.get("error") or {}).get("input_error")
+    device_plan = receipt.get("device_plan")
+    if videos:
+        outcome = "video_rendered"
+    elif input_error:
+        outcome = "input_error"
+    elif stalled:
+        outcome = "stalled"
+    elif question:
+        outcome = "main_creator_question"
+    elif diverged_turn:
+        outcome = "diverged_from_production"
+    elif device_plan and device_plan.get("complete"):
+        outcome = "device_plan_ready"
+    elif device_plan:
+        outcome = "device_plan_incomplete"
+        error = error or "The job reached awaiting_device without a pinned device request"
+    else:
+        outcome = "failed"
+    return {
+        "outcome": outcome,
+        "replayed_job_status": job.get("status"),
+        "failure_reason": None if outcome in SUCCEEDED else job.get("failure_reason") or error,
+        "error_detail": job.get("error_detail"),
+        "generic_error_detail": job.get("generic_error_detail"),
+        "planning_failure": planning_failure(job),
+        "video_paths": videos,
+        "device_plan": device_plan,
+        "main_creator_question": question,
+        "diverged_turn": diverged_turn,
+        "stalled": stalled,
+        "creator_client_protocol": (job.get("all_candidates") or {}).get("creator_client_protocol"),
+        "turns": receipt.get("turns"),
+        "first_divergent_turn": first_divergent_turn(receipt.get("turns") or [], diverged_turn),
+        "stopped_early": receipt.get("stopped_early"),
+        "reconcile": receipt.get("reconcile"),
+        "replay_plan_item_id": (receipt.get("seed") or {}).get("plan_item_id"),
+        "receipt": str(receipt_path),
+    }
+
+
+def first_divergent_turn(
+    turns: list[dict[str, Any]], diverged_turn: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """The first message whose reply differed from production's (a question, a draft, an
+    approval card), or None. Everything after it answered a reply the replay never gave.
+
+    When every reply matched but the run diverged, it is the message the replay stopped at:
+    one whose recorded answer could not be sent is never logged as a turn.
+    """
+
+    for index, turn in enumerate(turns):
+        if turn.get("matches_production") is False:
+            return {
+                "message_index": index + 1,
+                "production_turn_id": turn.get("production_turn_id"),
+                "production_reply": turn.get("production_reply"),
+                "replay_reply": turn.get("replay_reply"),
+                "replay_question": turn.get("question"),
+            }
+    if not diverged_turn:
+        return None
+    logged = [turn.get("production_turn_id") for turn in turns]
+    turn_id = diverged_turn.get("production_turn_id")
+    return {
+        "message_index": logged.index(turn_id) + 1 if turn_id in logged else len(turns) + 1,
+        "production_turn_id": turn_id,
+        "answer_not_sent": diverged_turn.get("answer"),
+        "reason": diverged_turn.get("reason"),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("job_id", help="production job id (uuid)")
+    parser.add_argument(
+        "--bucket", default=None, help="production bucket (default: STORAGE_BUCKET in .env)"
+    )
+    parser.add_argument("--timeout-s", type=float, default=1800.0)
+    parser.add_argument(
+        "--max-cost-usd",
+        type=float,
+        default=1.0,
+        help="stop once the replay's agent runs settled more than this (USD), at most 2.00",
+    )
+    parser.add_argument(
+        "--main-creator",
+        choices=("production", "snapshot"),
+        default="production",
+        help="plan on the Main Creator model production planned this job on (default, to\n"
+        "reproduce) or on the snapshot's, today's setting",
+    )
+    parser.add_argument("--fetch-only", action="store_true", help="stop after writing the inputs")
+    args = parser.parse_args(argv)
+    try:
+        job_id = str(uuid.UUID(args.job_id))
+    except ValueError:
+        print(f"not a job id: {args.job_id!r}", file=sys.stderr)
+        return 2
+    if not 0 < args.max_cost_usd <= 2.0:
+        print("--max-cost-usd must be above 0 and at most 2.00", file=sys.stderr)
+        return 2
+
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    work = WORK_ROOT / job_id
+    inputs_dir, run_dir = work / "inputs", work / "runs" / stamp
+    namespace = f"replay-{job_id[:8]}-{stamp.lower()}"
+    dotenv = _load_dotenv(REPO_ROOT / ".env")
+    worker: subprocess.Popen[bytes] | None = None
+    scratch_url: str | None = None
+    try:
+        info = collect_inputs(job_id, inputs_dir, _bucket(args.bucket))
+        print(
+            f"job {job_id}: status={info['job']['status']} "
+            f"reason={info['job'].get('failure_reason')} sources={info['source_count']} "
+            f"creator_messages={info['creator_messages']} "
+            f"target_turn={json.dumps(info['target_turn'])} "
+            f"coverage={json.dumps(info['source_coverage'])}"
+        )
+        if args.fetch_only:
+            print(f"inputs: {inputs_dir}")
+            return 0
+        production = production_agents(
+            info["item_id"], info["job_agent_runs"], info["job"].get("updated_at"), info["began_at"]
+        )
+        choice = choose_main_creator(
+            production,
+            json.loads(SNAPSHOT.read_text(encoding="utf-8"))["settings"],
+            args.main_creator,
+        )
+        print(
+            "production models for this item: "
+            + json.dumps({name: sorted(m) for name, m in sorted(production.models.items())})
+            + f"\nthe replay's Main Creator: {choice['model']} (from the {choice['from']}: "
+            + f"{choice['why']})"
+        )
+        run_dir.mkdir(parents=True)
+        flags = write_replay_flags(choice, run_dir)
+        scratch_url = scratch_database_url(
+            dotenv, f"{SCRATCH_DATABASE_PREFIX}{uuid.uuid4().hex[:12]}"
+        )
+        env = replay_environment(dotenv, scratch_url, namespace, max_cost_usd=args.max_cost_usd)
+        worker_env = {**_creator_environment(env, run_dir, inputs_dir, flags), **env}
+        try:
+            recreate_scratch_database(scratch_url, env)
+        except (OperationalError, subprocess.CalledProcessError) as exc:
+            raise ReplayInfrastructureError(
+                f"Could not create the scratch database: {type(exc).__name__}"
+            ) from exc
+        worker = start_worker(worker_env, run_dir, namespace)
+        warm_s = wait_until_worker_warm(worker, run_dir / "worker.log")
+        exit_code, capped_at = run_under_spend_cap(
+            [
+                sys.executable,
+                str(API_ROOT / "scripts" / "replay_creator.py"),
+                "--manifest",
+                str(inputs_dir / "source-manifest.json"),
+                "--job-debug",
+                str(inputs_dir / "job-debug.json"),
+                "--item-debug",
+                str(inputs_dir / "item-debug.json"),
+                "--output-dir",
+                str(run_dir),
+                "--prod-flags",
+                str(flags),
+                "--database-url",
+                scratch_url,
+                "--allow-source-count-drift",
+                "--render",
+                "--timeout-s",
+                str(args.timeout_s),
+                *(("--thread-events", str(info["thread_events"])) if info["thread_events"] else ()),
+            ],
+            env=env,
+            scratch_url=scratch_url,
+            cap_usd=args.max_cost_usd,
+        )
+        result = summarize(run_dir / "replay-receipt.json", run_dir)
+        result["replay_exit_code"] = exit_code
+        if capped_at is not None and result["outcome"] not in SUCCEEDED:
+            mark_spend_cap(result, capped_at, args.max_cost_usd)
+        result["worker_warm_s"] = warm_s
+        result["main_creator"] = choice
+        route = compare_routes(production, replay_agents(worker_env, result["replay_plan_item_id"]))
+        result["route_comparison"] = route
+        result["input_differences"] = {
+            "models": route["model_differences"],
+            **info["unseeded_state"],
+        }
+        # A replay that stopped at an earlier render is compared with production's render there.
+        compared = (result.get("stopped_early") or {}).get("production_render") or {
+            "job_id": job_id,
+            "failure_reason": info["job"].get("failure_reason"),
+        }
+        # Only the job read here carries production's pipeline trace and error detail; an
+        # earlier render's cause is unknown, so it is not compared.
+        read_here = compared["job_id"] == job_id
+        compared["planning_failure"] = planning_failure(info["job"]) if read_here else None
+        compared["error_detail"] = info["job"].get("error_detail") if read_here else None
+        result["compared_production_render"] = compared
+        classify_failure(result, route, compared)
+        result["source_job"] = {
+            "id": job_id,
+            "failure_reason": info["job"].get("failure_reason"),
+            "creator_client_protocol": (info["job"].get("all_candidates") or {}).get(
+                "creator_client_protocol"
+            ),
+            "replayed_route": "kria_thread_turns" if info["thread_events"] else "main_creator",
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        if result["outcome"] == "stalled" and (result["stalled"] or {}).get("lease_lapsed"):
+            # The local worker stopped running the turn; nothing was learned about the job.
+            return 3
+        return 0 if result["outcome"] in SUCCEEDED and exit_code == 0 else 1
+    except ReplayInfrastructureError as exc:
+        print(f"replay not run, local infrastructure: {exc}", file=sys.stderr)
+        return 3
+    except Exception as exc:  # noqa: BLE001 - a CLI driver reports any setup failure once
+        print(f"replay failed before the render: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if worker is not None:
+            stop_worker(worker)
+            try:
+                delete_queue_namespace(namespace)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not mask the result
+                print(f"redis keys not deleted: {exc}", file=sys.stderr)
+        if scratch_url is not None:
+            try:
+                drop_scratch_database(scratch_url)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not mask the result
+                print(f"scratch database not dropped: {exc}", file=sys.stderr)
+
+
+def _creator_environment(
+    env: dict[str, str], run_dir: Path, inputs_dir: Path, flags: Path
+) -> dict[str, str]:
+    """The environment replay_creator would export, so the worker sees the same settings."""
+
+    sys.path.insert(0, str(API_ROOT / "scripts"))
+    import replay_creator  # noqa: PLC0415
+
+    parsed = replay_creator.build_parser().parse_args(
+        [
+            "--manifest",
+            str(inputs_dir / "source-manifest.json"),
+            "--output-dir",
+            str(run_dir),
+            "--prod-flags",
+            str(flags),
+            "--database-url",
+            env["DATABASE_URL"],
+            "--render",
+        ]
+    )
+    return replay_creator.build_environment(parsed, output_dir=run_dir)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

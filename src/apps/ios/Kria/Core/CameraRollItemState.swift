@@ -24,15 +24,15 @@ enum CameraRollItemReason: String, Sendable, CaseIterable {
     /// The one table of plain-language copy; tiles and summaries both read it.
     var message: String {
         switch self {
-        case .providerError: "Analysis hit a snag on our side. Try again."
-        case .budgetPaused: "Analysis is paused for now. Try again a little later."
-        case .unsupportedType: "Kria can't read this file type. Photos need to be JPEG, PNG, WebP or HEIC."
-        case .tooLarge: "This file is too large to analyze. Photos can be up to 25 MB."
-        case .tooLong: "This video is longer than 30 minutes, which is too long to analyze."
-        case .icloudUnavailable: "Couldn't download this from iCloud in time. Try again on Wi-Fi."
-        case .noUsableMoment: "Kria couldn't find a usable moment in this one."
-        case .accessRevoked: "Kria no longer has access to this item in Photos."
-        case .uploadFailed: "The upload didn't finish. Check your connection and try again."
+        case .providerError: String(localized: "Analysis hit a snag on our side. Try again.")
+        case .budgetPaused: String(localized: "Analysis is paused for now. Try again a little later.")
+        case .unsupportedType: String(localized: "Kria can't read this file type. Photos need to be JPEG, PNG, WebP or HEIC.")
+        case .tooLarge: String(localized: "This file is too large to analyze. Photos can be up to 25 MB.")
+        case .tooLong: String(localized: "This video is longer than 30 minutes, which is too long to analyze.")
+        case .icloudUnavailable: String(localized: "Couldn't download this from iCloud in time. Try again on Wi-Fi.")
+        case .noUsableMoment: String(localized: "Kria couldn't find a usable moment in this one.")
+        case .accessRevoked: String(localized: "Kria no longer has access to this item in Photos.")
+        case .uploadFailed: String(localized: "The upload didn't finish. Check your connection and try again.")
         }
     }
 }

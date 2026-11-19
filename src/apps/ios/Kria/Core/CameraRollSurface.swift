@@ -161,7 +161,7 @@ struct CameraRollEvent: Identifiable {
     /// Said only while something in the event is unfinished; a settled event needs no readiness line.
     func readinessNote(_ event: CameraRollEvent) -> String? {
         let waiting = waitingCount(in: event), retry = retryCount(in: event)
-        let parts = [waiting > 0 ? "\(waiting) still looking" : nil, retry > 0 ? "\(retry) \(retry == 1 ? "needs" : "need") a retry" : nil]
+        let parts = [waiting > 0 ? String(localized: "\(waiting) still looking") : nil, retry > 0 ? String(localized: "\(retry) need a retry") : nil]
         let note = parts.compactMap { $0 }.joined(separator: " · ")
         return note.isEmpty ? nil : note
     }
@@ -268,7 +268,7 @@ struct CameraRollEvent: Identifiable {
             #if DEBUG
             if mode == .metadataOnly { writeMetadataReport() }
             #endif
-        } catch { notice = Notice(text: "Could not save collection progress.", kind: .error) }
+        } catch { notice = Notice(text: String(localized: "Could not save collection progress."), kind: .error) }
     }
 
     /// Ideas for the event, trimmed so a busy collection stays inside the snapshot's size limit.
@@ -309,7 +309,7 @@ struct CameraRollEvent: Identifiable {
             if !identifiers.contains(id) { identifiers.append(id); added.append(id) }
         }
         do { try collection.select(identifiers) }
-        catch { notice = Notice(text: "Choose at most \(CameraRollCollection.maximumCount) items.", kind: .error); return }
+        catch { notice = Notice(text: String(localized: "Choose at most \(CameraRollCollection.maximumCount) items."), kind: .error); return }
         if let target { for id in added where !existing.contains(id) { collection.setGroup(target, for: id) } }
         syncEngine(); persist()
         Task { await refreshMetadata(); await uploadPending() }
@@ -325,7 +325,7 @@ struct CameraRollEvent: Identifiable {
             if let target { for id in ids { collection.setGroup(target, for: id) } }
             syncEngine(); persist()
             Task { await syncAndPoll() }
-        } catch { notice = Notice(text: "Choose at most \(CameraRollCollection.maximumCount) items.", kind: .error) }
+        } catch { notice = Notice(text: String(localized: "Choose at most \(CameraRollCollection.maximumCount) items."), kind: .error) }
     }
 
     // MARK: Metadata
@@ -374,7 +374,7 @@ struct CameraRollEvent: Identifiable {
         if !removed.isEmpty {
             accessRemovedCount += removed.count
             syncEngine()
-            if revision > 0 { await saveCollection(reportingFailureAs: "Access changes are saved on this iPhone. Reconnect before finding ideas.") }
+            if revision > 0 { await saveCollection(reportingFailureAs: String(localized: "Access changes are saved on this iPhone. Reconnect before finding ideas.")) }
         }
         persist()
     }
@@ -454,7 +454,7 @@ struct CameraRollEvent: Identifiable {
             switch await engine.retry(entryID: entry.id, collectionID: collection.id) {
             case .requested, .notRetryable: break
             case .needsReupload: await uploadPending(only: [entry.id])
-            case .failed: notice = Notice(text: "Couldn't ask for another try. Check your connection.", kind: .error)
+            case .failed: notice = Notice(text: String(localized: "Couldn't ask for another try. Check your connection."), kind: .error)
             }
         }
     }
@@ -463,7 +463,7 @@ struct CameraRollEvent: Identifiable {
         Task {
             let result = await engine.retryAllFailed(collectionID: collection.id)
             if !result.needsReupload.isEmpty { await uploadPending(only: Set(result.needsReupload)) }
-            if result.failed > 0 { notice = Notice(text: "\(result.failed) \(result.failed == 1 ? "item" : "items") couldn't be retried. Check your connection.", kind: .error) }
+            if result.failed > 0 { notice = Notice(text: String(localized: "\(result.failed) items couldn't be retried. Check your connection."), kind: .error) }
         }
     }
 
@@ -511,7 +511,7 @@ struct CameraRollEvent: Identifiable {
     func answerQuestions(_ story: CameraRollStory, plan: CameraRollContentPlan) async {
         do {
             replaceStory(try await api.updateCameraRollContentPlan(collectionID: collection.id, story: story, collectionRevision: revision, plan: plan))
-        } catch { showError(error, summary: "Couldn't save that answer.") }
+        } catch { showError(error, summary: String(localized: "Couldn't save that answer.")) }
     }
 
     func deleteIdea(_ story: CameraRollStory, in group: String) { apply(.deleteIdea(storyID: story.id, group: group)) }
@@ -557,14 +557,14 @@ struct CameraRollEvent: Identifiable {
         case let .deleteStory(id):
             enqueue { [self] in
                 do { _ = try await api.deleteCameraRollStory(collectionID: collection.id, storyID: id) }
-                catch { await refreshIdeas(afterPendingMutations: false); showError(error, summary: "Couldn't delete that idea.") }
+                catch { await refreshIdeas(afterPendingMutations: false); showError(error, summary: String(localized: "Couldn't delete that idea.")) }
             }
         case let .restoreStory(id):
             enqueue { [self] in
                 do { try await api.restoreCameraRollStory(collectionID: collection.id, storyID: id) }
                 catch {
                     board.reduce(.restoreFailed(storyIDs: [id])); cacheIdeas()
-                    showError(error, summary: "Couldn't bring that idea back.")
+                    showError(error, summary: String(localized: "Couldn't bring that idea back."))
                 }
             }
         case let .deleteGroup(group):
@@ -600,7 +600,7 @@ struct CameraRollEvent: Identifiable {
             if let found = result.coverage { coverage[group] = found }
             board.reduce(.ideasArrived(group: group, stories: result.stories))
             if result.stories.isEmpty {
-                notice = Notice(text: excluding.isEmpty ? "No idea found in this event yet. Try adding a direction." : "No other idea found in this event.", kind: .info)
+                notice = Notice(text: excluding.isEmpty ? String(localized: "No idea found in this event yet. Try adding a direction.") : String(localized: "No other idea found in this event."), kind: .info)
             }
             cacheIdeas()
         } catch {
@@ -651,7 +651,7 @@ struct CameraRollEvent: Identifiable {
             if let info = removedInfo.removeValue(forKey: group) { collection.restoreEvent(info) }
             syncEngine()
             board.reduce(.undoDeleteEvent(group: group))
-            showError(error, summary: "Couldn't delete that event.")
+            showError(error, summary: String(localized: "Couldn't delete that event."))
         }
     }
 
@@ -665,10 +665,10 @@ struct CameraRollEvent: Identifiable {
                 do { try await api.restoreCameraRollStory(collectionID: collection.id, storyID: id) }
                 catch { failed.append(id) }
             }
-            if !failed.isEmpty { board.reduce(.restoreFailed(storyIDs: failed)); showError(nil, summary: "Some ideas couldn't be brought back.") }
+            if !failed.isEmpty { board.reduce(.restoreFailed(storyIDs: failed)); showError(nil, summary: String(localized: "Some ideas couldn't be brought back.")) }
             persist()
             if mode == .live { engine.startPolling(collectionID: collection.id) }
-        } catch { showError(error, summary: "Couldn't bring that event back.") }
+        } catch { showError(error, summary: String(localized: "Couldn't bring that event back.")) }
     }
 
     // MARK: Editing events
@@ -705,7 +705,7 @@ struct CameraRollEvent: Identifiable {
     /// Titles and about reach the server on their own save; a failure says so and keeps them on the phone.
     private func syncEvents() {
         guard mode != .metadataOnly, revision > 0, collection.serverStoresEvents else { return }
-        enqueue { [self] in await saveCollection(reportingFailureAs: "Event details are saved on this iPhone.") }
+        enqueue { [self] in await saveCollection(reportingFailureAs: String(localized: "Event details are saved on this iPhone.")) }
     }
 
     /// Where selected items can go: the other events, then a new one.
@@ -734,7 +734,7 @@ struct CameraRollEvent: Identifiable {
             await syncAndPoll()
             await refreshIdeas()
             if hadIdeas.contains(where: { board.storiesByGroup[$0]?.isEmpty ?? true }) {
-                notice = Notice(text: "Ideas for events you changed were cleared, so you can find new ones.", kind: .info)
+                notice = Notice(text: String(localized: "Ideas for events you changed were cleared, so you can find new ones."), kind: .info)
             }
         }
     }
@@ -769,7 +769,7 @@ struct CameraRollEvent: Identifiable {
             providers = [:]; board = CameraRollIdeaBoard(); collectionChanged = false
             syncEngine()
             engine.startPolling(collectionID: rebuilt.id)
-            notice = Notice(text: "Opened the latest collection. Your local changes are saved separately.", kind: .info)
+            notice = Notice(text: String(localized: "Opened the latest collection. Your local changes are saved separately."), kind: .info)
             await refreshIdeas()
         } catch { showError(error, summary: nil) }
     }

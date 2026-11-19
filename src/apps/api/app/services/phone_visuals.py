@@ -174,9 +174,10 @@ def bind_phone_visual_assets(
     Callers pass only server-derived rows; it still rechecks owner, item, exact
     generation, and the pool namespace before downloading any bytes.
 
-    ``measure_text`` (Qendresa item 18, with ``BACKGROUND_FOCUS_ENABLED``) also measures where
-    the text sits in each picture while its bytes are on disk. Only the callers that keep the
-    result (the background pins) ask for it; every other bind skips the work.
+    ``measure_text`` (Qendresa item 18, with ``BACKGROUND_FOCUS_ENABLED``; KRI-1478, with
+    ``TALKING_CARD_STRIP_ENABLED``) also measures where the text sits in each picture while its
+    bytes are on disk. Only the callers that keep the result (the background pins, the cards
+    the layout gave a strip) ask for it; every other bind skips the work.
     """
     if not pins:
         return ()
@@ -261,7 +262,10 @@ def bind_phone_visual_assets(
                     raise ValueError("library original bytes do not match their verified identity")
             probed = _probed_video(local) if kind == "video" else {}
             text_column = None
-            if measure_text and settings.background_focus_enabled:
+            # KRI-1478: a Talking card strip is cut to the same measure, under its own switch.
+            if measure_text and (
+                settings.background_focus_enabled or settings.talking_card_strip_enabled
+            ):
                 # Qendresa item 18: the only moment the bytes are on disk. `measure_text_column`
                 # is best-effort (never raises); a missing measure just means no auto focus.
                 try:

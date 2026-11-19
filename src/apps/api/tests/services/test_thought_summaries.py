@@ -85,6 +85,109 @@ def thought_subjects():
             db.commit()
 
 
+def test_a_follow_up_round_keeps_the_thinking_the_creator_was_reading(
+    thought_subjects, monkeypatch
+) -> None:
+    """Failure modes: a repair or tool round blanked the row; a failed round lost earlier text."""
+    monkeypatch.setattr(settings, "thought_summaries_enabled", True)
+    owner_id, _, thread_id, _ = thought_subjects
+
+    def row(request_id: str) -> tuple[str, str]:
+        with sync_session() as db:
+            found = db.scalars(
+                select(ThoughtSummary).where(
+                    ThoughtSummary.creator_id == owner_id,
+                    ThoughtSummary.client_request_id == request_id,
+                )
+            ).all()
+        assert len(found) == 1
+        return found[0].status, found[0].text
+
+    rounds = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="rounds"
+    )
+    rounds.begin_attempt()("Planning the title timing.")
+    rounds.mark_model_success()
+    rounds.begin_attempt()("The caption op was refused, fixing it.")
+    assert row("rounds") == (
+        "streaming",
+        "Planning the title timing.\n\nThe caption op was refused, fixing it.",
+    )
+    rounds.mark_model_success()
+    rounds.complete()
+    assert row("rounds")[0] == "completed"
+    assert row("rounds")[1].startswith("Planning the title timing.")
+
+    retried = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="retried"
+    )
+    retried.begin_attempt()("First answer.")
+    retried.mark_model_success()
+    retried.begin_attempt()("A round that then fails")
+    retried.begin_attempt()("Second try.")
+    retried.mark_model_success()
+    retried.complete()
+    assert row("retried") == ("completed", "First answer.\n\nSecond try.")
+
+    ended = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="ended"
+    )
+    ended.begin_attempt()("First answer.")
+    ended.mark_model_success()
+    ended.begin_attempt()("A round that never parses")
+    ended.complete()
+    assert row("ended") == ("completed", "First answer.")
+
+
+def test_server_steps_name_what_the_turn_is_doing_and_survive_rounds(
+    thought_subjects, monkeypatch
+) -> None:
+    """Failure modes: a step before the first call is fenced away or wiped by it; a retry or a
+    later round drops steps; a turn that never parses leaves bare steps on screen."""
+    monkeypatch.setattr(settings, "thought_summaries_enabled", True)
+    owner_id, _, thread_id, _ = thought_subjects
+
+    def row(request_id: str) -> tuple[str, str]:
+        with sync_session() as db:
+            found = db.scalars(
+                select(ThoughtSummary).where(
+                    ThoughtSummary.creator_id == owner_id,
+                    ThoughtSummary.client_request_id == request_id,
+                )
+            ).all()
+        assert len(found) == 1
+        return found[0].status, found[0].text
+
+    turn = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="steps"
+    )
+    turn.step("Reading your request and the editor")
+    assert row("steps") == ("streaming", "**Reading your request and the editor**")
+    turn.begin_attempt()("Looking at the title timing.")
+    turn.step("Checking 2 edits in your editor")
+    turn.mark_model_success()
+    turn.step("Fixing 1 edit the editor refused")
+    turn.begin_attempt()("Re-reading the refused edit.")
+    turn.mark_model_success()
+    turn.step("Writing the reply")
+    turn.complete()
+    status, text = row("steps")
+    assert status == "completed"
+    assert text == (
+        "**Reading your request and the editor**\n\nLooking at the title timing."
+        "\n\n**Checking 2 edits in your editor**\n\n**Fixing 1 edit the editor refused**"
+        "\n\nRe-reading the refused edit.\n\n**Writing the reply**"
+    )
+
+    only_steps = ThoughtSummaryPublisher(
+        creator_id=owner_id, thread_id=thread_id, client_request_id="only-steps"
+    )
+    only_steps.step("Reading your request and the editor")
+    only_steps.begin_attempt()("Partial thought")
+    only_steps.complete()
+    assert row("only-steps") == ("failed", "")
+
+
 @pytest.mark.asyncio
 async def test_attempt_fencing_history_ownership_and_chat_revision(
     thought_subjects, thought_async_sessions, monkeypatch

@@ -47,8 +47,8 @@ struct WorkspaceModeSwitch: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            segment("Chat", isSelected: selected == .chat, action: onChat, identifier: chatIdentifier)
-            segment("Editor", isSelected: selected == .editor, action: onEditor, identifier: nil)
+            segment("Chat", label: String(localized: "Chat", comment: "Workspace mode switch: the conversation"), isSelected: selected == .chat, action: onChat, identifier: chatIdentifier)
+            segment("Editor", label: String(localized: "Editor", comment: "Workspace mode switch: the video editor"), isSelected: selected == .editor, action: onEditor, identifier: nil)
         }
         .padding(4).kriaFloatingSurface(Capsule())
         .padding(.horizontal, 16)
@@ -57,9 +57,9 @@ struct WorkspaceModeSwitch: View {
     }
 
     @ViewBuilder
-    private func segment(_ title: String, isSelected: Bool, action: @escaping () -> Void, identifier: String?) -> some View {
+    private func segment(_ title: String, label labelText: String, isSelected: Bool, action: @escaping () -> Void, identifier: String?) -> some View {
         // 36pt segments in a 44pt capsule; the hit area extends back out to 44pt.
-        let label = Text(title)
+        let label = Text(labelText)
             .font(KriaFont.body(13).weight(isSelected ? .semibold : .medium))
             .frame(maxWidth: .infinity, minHeight: 36)
         if isSelected {

@@ -98,8 +98,18 @@ class ThroughputTests(unittest.TestCase):
             Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
         ).read_text()
         portable, native = workflow.split("  journey-native:", 1)
-        self.assertIn("tests/kria/test_kri623_ruled_out_clips.py", portable)
-        self.assertNotIn("tests/kria/test_kri623_ruled_out_clips.py", native)
+        step = "journey_registry.py step kri-623-ruled-out-clips"
+        self.assertIn(step, portable)
+        self.assertNotIn(step, native)
+        registry = importlib.util.spec_from_file_location(
+            "journey_registry", Path(__file__).with_name("journey_registry.py")
+        )
+        module = importlib.util.module_from_spec(registry)
+        registry.loader.exec_module(module)
+        files = module.step_files("kri-623-ruled-out-clips")
+        self.assertTrue(files)
+        for file in files:
+            self.assertTrue((module.ROOT / module.API / file).is_file(), file)
 
     def native_steps(self):
         """[(name, if-expression)] for every step of ci.yml's journey-native job."""
@@ -360,13 +370,14 @@ class ThroughputTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ci.gate(needs, "ios", "ios-tests", event=event)
 
-    def needs(self, journey="true", native="true", ios="true"):
+    def needs(self, journey="true", native="true", ios="true", ios_native="true"):
         return {
             "changes": {
                 "result": "success",
                 "outputs": {
                     "journey": journey,
                     "ios": ios,
+                    "ios_native": ios_native,
                     "native_validation": native,
                     "journey_needs_native": "true" if journey == "true" else "false",
                     "journey_coverage": "covered"
@@ -453,10 +464,74 @@ class ThroughputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ci.gate_journey(needs, "pull_request")
 
+    def test_no_pr_mac_step_hands_python_output_to_the_iphone_tests(self):
+        """The PR Mac rule (KRI-1534) holds only while this does.
+
+        A PR that changes no iPhone input may skip its Mac because nothing the
+        PR's Python produced reaches a test there: the offline fixture bundle is
+        handed to tests through TEST_RUNNER_* variables, and only steps of the
+        nightly-only legs set them. A unit-leg step that starts passing one
+        makes API changes visible to the Mac, and the rule must then select it.
+        """
+        workflow = (
+            Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+        ).read_text()
+        job = workflow[workflow.index("\n  journey-native:") :]
+        job = job[: job.index("\n  journey:\n")]
+        steps = job.split("\n      - ")[1:]
+        handed = [step for step in steps if "TEST_RUNNER_" in step]
+        self.assertTrue(handed, "expected fixture-driven steps in journey-native")
+        nightly_only = [
+            leg for leg in ci.LEG_JOURNEYS if leg not in ci.PR_NATIVE_LEGS
+        ]
+        self.assertEqual(sorted(nightly_only), ["creation", "screens"])
+        for step in handed:
+            name = step.splitlines()[0]
+            condition = next(
+                line.strip() for line in step.splitlines() if line.strip().startswith("if:")
+            )
+            self.assertTrue(
+                any(f"matrix.leg == '{leg}'" in condition for leg in nightly_only),
+                f"{name}: a PR leg would receive Python-generated fixtures",
+            )
+
+    def test_a_pr_gets_a_mac_only_when_an_iphone_input_changed(self):
+        """KRI-1534: API-only PRs keep Linux contracts and journeys, no Mac."""
+        pr = "pull_request"
+        self.assertTrue(ci.native_validation(pr, {"api", "ios"}, True, True))
+        self.assertFalse(ci.native_validation(pr, {"api", "ios"}, True, False))
+        self.assertFalse(ci.native_validation(pr, {"api"}, True, False))
+        self.assertFalse(ci.native_validation(pr, {"api"}, False, True))
+        # Nightly and manual runs are full regressions whatever the diff says.
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertTrue(ci.native_validation(event, {"ios"}, False, False))
+        self.assertFalse(ci.native_validation("push", {"ios"}, True, True))
+
+    def test_journey_gate_accepts_a_skipped_mac_only_when_no_iphone_input_changed(self):
+        skipped = self.needs(native="false", ios="true", ios_native="false")
+        ci.gate_journey(skipped, "pull_request")
+        ran = self.needs(native="false", ios="true", ios_native="false")
+        ran["journey-native"]["result"] = "success"
+        with self.assertRaises(ValueError):
+            ci.gate_journey(ran, "pull_request")
+        # An iPhone input changed: a skipped Mac is a lost check, not a saving.
+        lost = self.needs(native="false", ios="true", ios_native="true")
+        with self.assertRaises(ValueError):
+            ci.gate_journey(lost, "pull_request")
+        # The selector may not claim a Mac ran for inputs that did not change.
+        claimed = self.needs(native="true", ios="true", ios_native="false")
+        with self.assertRaises(ValueError):
+            ci.gate_journey(claimed, "pull_request")
+        missing = self.needs(native="false", ios="true", ios_native="false")
+        del missing["changes"]["outputs"]["ios_native"]
+        with self.assertRaises(ValueError):
+            ci.gate_journey(missing, "pull_request")
+
     def test_missing_metadata_and_unmapped_ids_never_pass(self):
         for field in (
             "journey",
             "ios",
+            "ios_native",
             "native_validation",
             "journey_needs_native",
             "journey_coverage",

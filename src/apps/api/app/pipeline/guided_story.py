@@ -58,6 +58,7 @@ from app.pipeline.song_captions import (
     song_caption_id,
     song_caption_index,
 )
+from app.pipeline.story_direction import STORY_BEAT_PREFIX, STORY_SEED_PREFIX
 from app.schemas.edit_proposal import (
     FAST_MONTAGE_TITLE_HOLD_S,
     GUIDED_STORY_MIN_MOMENT_S,
@@ -79,6 +80,7 @@ from app.schemas.text_style_intent import (
     TITLE_ANIMATION_SPEED,
 )
 from app.schemas.user_song import MIN_PLAYABLE_SONG_S, UserSongPlan
+from app.services.editor_limits import FRAME_S, PLAYBACK_RATE_MAX, PLAYBACK_RATE_MIN
 
 log = structlog.get_logger()
 
@@ -91,7 +93,7 @@ VOICEOVER_COMPILER_VERSION = 7
 # Only snapshots carrying an approved frame schedule opt into v8.
 SCHEDULED_COMPILER_VERSION = 8
 VARIANT_ID = "guided_story"
-_FRAME_S = 1.0 / 30.0
+_FRAME_S = FRAME_S
 _ALLOCATION_EPSILON_S = 0.0005
 _SOURCE_AUDIO_EDGE_FADE_S = 0.010
 _FRAME_FLOOR_EPSILON_S = 1e-9
@@ -235,7 +237,7 @@ class GuidedStoryMoment(BaseModel):
     # KRI-1136: the creator's tilt (`app.kria.clip_tilt.ClipTilt.row()`). Omitted when unset so
     # every stored plan keeps its exact dump. Honoured by the phone compiler only.
     tilt: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
-    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
     # The creator silenced this moment's own (camera) sound in the editor. Omitted when
     # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
     source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
@@ -469,12 +471,14 @@ class GuidedStoryExecutionPlan(BaseModel):
                 > 0.001
             ):
                 raise ValueError("song reference must cover the resolved video duration")
-        # A fast montage is valid without creator-visible copy. Other guided
-        # formats still require their approved text identity lane (KRI-255).
+        # Montage chapters can group footage without adding viewer-facing text.
         if (
             self.editor_revision_number is None
             and not self.text_elements
             and self.direction != "fast_montage"
+            and not all(
+                window.beat_id.startswith(STORY_BEAT_PREFIX) for window in self.beat_windows
+            )
         ):
             raise ValueError("approved guided stories require at least one text element")
         if len(self.selected_media_ids) != len(set(self.selected_media_ids)):
@@ -3090,16 +3094,34 @@ def _compile_base_execution_plan_version(
     return compiled.model_dump(mode="json", exclude_none=False)
 
 
-def _compile_execution_plan_version(guided_snapshot, *, track, compiler_version):
+def _compile_execution_plan_version(
+    guided_snapshot, *, track, compiler_version, include_legacy_outline=False
+):
     """Compile the base and replay its pinned text program without model I/O."""
     plan = _compile_base_execution_plan_version(
         guided_snapshot, track=track, compiler_version=compiler_version
     )
     _, _, snapshot = validate_guided_snapshot(guided_snapshot)
+    # Replay old programs against their original base digest before removing outline copy.
+    outline = {
+        row["id"]: " ".join(row["text"].split())
+        for row in plan["text_elements"]
+        if row["id"].startswith(STORY_SEED_PREFIX)
+    }
     if snapshot.text_composition is not None:
         from app.services.creation_text_composition import replay_text_composition
 
         plan = replay_text_composition(plan, snapshot.text_composition)
+    if outline and not include_legacy_outline:
+
+        def authored(row: dict) -> bool:
+            text = " ".join(row["text"].split())
+            lineage = sequence_lineage(row)
+            if lineage and lineage[0] in outline:
+                return f" {text} " not in f" {outline[lineage[0]]} "
+            return text != outline.get(row["id"])
+
+        plan["text_elements"] = [row for row in plan["text_elements"] if authored(row)]
     return plan
 
 
@@ -3272,9 +3294,22 @@ def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, 
     runtime_sfx = list(normalized.pop("editor_sound_effects", []) or [])
     canonical.pop("editor_sound_effects", None)
     if normalized != canonical:
-        raise GuidedStoryError(
-            "guided_story_snapshot_invalid", "The saved render plan was changed after approval."
-        )
+        if any(
+            beat.thought and beat.beat_id.startswith(STORY_BEAT_PREFIX)
+            for beat in snapshot.story_beats
+        ):
+            legacy = _compile_execution_plan_version(
+                guided_snapshot,
+                track=validation_track,
+                compiler_version=validated.compiler_version,
+                include_legacy_outline=True,
+            )
+            if normalized == {**canonical, "text_elements": legacy["text_elements"]}:
+                normalized["text_elements"] = canonical["text_elements"]
+        if normalized != canonical:
+            raise GuidedStoryError(
+                "guided_story_snapshot_invalid", "The saved render plan was changed after approval."
+            )
     normalized["context_label_text_elements"] = [
         element.model_dump(mode="json") for element in validated.context_label_text_elements
     ]

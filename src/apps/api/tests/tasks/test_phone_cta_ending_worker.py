@@ -18,6 +18,17 @@ Ways this could fail (written before the code; each is pinned below or in the re
 - (review #2103) the receipt, which now needs the arrow over the ending rows, stops counting
   the arrow the worker drew.
 
+KRI-1475 (Qendresa Q1 run 3, job 3ef3cbe5): the brief also carried "keep text off my face"
+(`keep_text_off: [{"kind": "face"}]`), and any such ask sent the ending back to the lime pill
+with no arrow, after the draft had promised one. Ways the fix could fail (written before it):
+- the block or the arrow lands on a second person's face (the ask protects every face);
+- no room clear of every face, and the ending is drawn on one anyway instead of the pill;
+- a marked object ("the laptop") is covered: the ending is not placed around objects;
+- the protected-text receipt calls the face-clear ending unverified, or the arrow receipt
+  stops saying met;
+- the simpler-version brief (version 2, superseded asks) loses the ending again;
+- the switch off is no longer exactly today's job.
+
 Runs the real worker (`_run_generative_job`) on the shared Talking harness: ingest, probe,
 transcription and the face sampler are faked, the planner rows, placement, compiler, contract
 check and device pin are the production ones.
@@ -30,10 +41,14 @@ import uuid
 
 import pytest
 
+import app.pipeline.phone_protected_text as protected_mod
 import app.pipeline.phone_subtitled_title as title_mod
 import app.services.phone_visuals as phone_visuals_mod
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
+from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS
+from app.kria.protected_targets import PROTECTED_TEXT_FIELD
+from app.pipeline.object_track import ObjectTrack, TrackAnchor
 from app.pipeline.phone_subtitled_lanes import PHONE_SUBTITLED_LANES_FIELD
 from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
@@ -44,6 +59,9 @@ from app.services.creator_render_contract import (
 )
 from app.services.device_render import device_status
 from app.tasks import generative_build as gb
+from tests.pipeline.test_phone_voiceover_montage_plan import _binding as _source_binding
+from tests.tasks.test_caption_corner_face import _finish, _simulate_environment
+from tests.tasks.test_green3_caption_look_worker import SEQUENCE
 from tests.tasks.test_phone_subtitled_narrated_dispatch import (
     _ending_clip_dict,
     _lane_request,
@@ -52,6 +70,7 @@ from tests.tasks.test_phone_subtitled_narrated_dispatch import (
     _setup_subtitled,
     _words,
 )
+from tests.tasks.test_speaker_background_strategy_worker import _windows_job
 
 _CTA = "comment READ"
 # Her face in V7's last seconds (Apple Vision, normalised x/y/w/h 0.40/0.35/0.42/0.24),
@@ -113,6 +132,9 @@ def _cta_job(
     requirement: BriefRequirement | None = _ENDING,
     closing: str = _CTA,
     features: tuple[str, ...] = ("authoredText", "freehandDrawing"),
+    more: tuple[BriefRequirement, ...] = (),
+    marks: list[dict] | None = None,
+    brief_version: int = 1,
 ):
     job, snapshot, _session, binding = _setup_subtitled(monkeypatch, transcript_words=_TAKE_WORDS)
     _set_switch(monkeypatch, gb.settings, enabled)
@@ -122,7 +144,9 @@ def _cta_job(
         job.all_candidates["creator_client_protocol"] = protocol
     if requirement is not None:
         binding_dump = BriefBinding.create(
-            uuid.uuid4(), CreativeBrief(version=1, requirements=[requirement])
+            uuid.uuid4(),
+            CreativeBrief(version=brief_version, requirements=[*more, requirement]),
+            protected_regions=marks,
         ).model_dump(mode="json")
         snapshot["creator_brief_binding"] = binding_dump
         job.assembly_plan["creator_brief_binding"] = copy.deepcopy(binding_dump)
@@ -150,11 +174,11 @@ def _closes_with(job, text: str = _CTA) -> list:
     return verify_phone_recipe(contract, _recipe(job))
 
 
-def _receipt_status(variant: dict) -> str:
+def _receipt_status(variant: dict, requirement: BriefRequirement = _ENDING) -> str:
     """The finished-video receipt for the arrow ask, on the variant the worker persisted."""
     from app.kria import brief_checks as bc
 
-    return bc.check_requirement(_ENDING, bc.plan_facts_from_phone_variant(variant)).status
+    return bc.check_requirement(requirement, bc.plan_facts_from_phone_variant(variant)).status
 
 
 def _drawn_box(row: dict) -> NormalizedBox:
@@ -436,3 +460,479 @@ def test_no_arrow_draws_no_arrow(monkeypatch):
     variant = job.assembly_plan["variants"][0]
     assert [row["text"] for row in _closing_rows(variant)] == ["comment", "READ"]
     assert not variant.get("drawings")
+
+
+# --- KRI-1475: the ending with "keep text off my face" in the brief ----------------------------
+
+_REPO = "comment REPO"
+# Job 3ef3cbe5's r6 and r4 as the brief extractor wrote them (curly quotes, an `arrow` fact, no
+# arrow emoji; "not over my face" filed as a text ask too).
+_REPO_ENDING = BriefRequirement(
+    id="r6",
+    kind="text",
+    scope="global",
+    description="End with \u201ccomment REPO\u201d and an arrow for the last 3 seconds.",
+    literal=_REPO,
+    facts={"arrow": True, "closing": _REPO},
+)
+_OFF_FACE = BriefRequirement(
+    id="r4",
+    kind="style",
+    scope="global",
+    description=(
+        "When I talk about something, show the matching screenshot or screen recording in "
+        "the top or bottom part of the screen, not over my face."
+    ),
+    facts={
+        "keep_text_off": [{"kind": "face"}],
+        "visual_position": "top_or_bottom",
+        "keep_visuals_off_face": True,
+        "match_visuals_to_speech": True,
+    },
+)
+# "Make it without these": the server superseded the list-label ask, the brief became v2.
+_SUPERSEDED = BriefRequirement(
+    id="r5",
+    kind="text",
+    scope="per_clip",
+    status="superseded",
+    description="When I list the five repos, show each one as big text.",
+    facts={"numbered": True, "superseded_by": "server"},
+)
+# A second person lower right, exactly where the ending sits under her face.
+_SECOND_FACE = NormalizedBox(0.55, 0.64, 0.92, 0.84)
+_LAPTOP = NormalizedBox(0.30, 0.66, 0.70, 0.86)
+_RUN3_FEATURES = (
+    "authoredText",
+    "freehandDrawing",
+    "positionedText",
+    "freezeFrame",
+    "visualBlocks",
+)
+
+
+def _repo_job(monkeypatch, **changes):
+    return _cta_job(
+        monkeypatch,
+        **{
+            "protocol": 51,  # protocol-literal-ok (run 3 build)
+            "requirement": _REPO_ENDING,
+            "closing": _REPO,
+            "features": _RUN3_FEATURES,
+            "more": (_OFF_FACE,),
+            **changes,
+        },
+    )
+
+
+def _assert_her_repo_ending(job, faces: tuple[NormalizedBox, ...]) -> dict:
+    assert job.status == "awaiting_device", job.error_detail
+    variant = job.assembly_plan["variants"][0]
+    lead, keyword = _closing_rows(variant)
+    assert (lead["text"], keyword["text"]) == ("comment", "REPO")
+    assert keyword["size_px"] >= 1.5 * lead["size_px"]
+    lead_box, keyword_box = _drawn_box(lead), _drawn_box(keyword)
+    assert keyword_box.bottom - keyword_box.top >= 1.5 * (lead_box.bottom - lead_box.top)
+    for row in (lead, keyword):
+        assert (row["start_s"], row["end_s"]) == (7.0, 10.0)  # the last 3 s
+    [arrow] = variant["drawings"]  # exactly one arrow: no emoji, no second drawing
+    assert arrow["id"] == "closing-arrow"
+    assert (arrow["start_s"], arrow["end_s"]) == (7.0, 10.0)
+    assert [layer.id for layer in _recipe(job).drawing_layers] == ["closing-arrow"]
+    for drawn in (lead_box, keyword_box, _arrow_box(arrow)):
+        for face in faces:
+            assert drawn.coverage_by(face) <= 0.05, (drawn, face)
+    assert variant["closing_title_placement"]["status"] == "cta_ending"
+    # The "keep text off my face" receipt: the ending looked at the faces and is clear.
+    protected = variant[PROTECTED_TEXT_FIELD]
+    assert protected["verdict"] == "clear", protected
+    assert protected["texts"]["closing"] == "clear"
+    assert protected["face_texts"]["closing"] == "clear"
+    assert _closes_with(job, _REPO)
+    assert _receipt_status(variant, _REPO_ENDING) == "met"
+    return variant
+
+
+@pytest.mark.parametrize(
+    ("more", "brief_version"),
+    [((_OFF_FACE,), 1), ((_OFF_FACE, _SUPERSEDED), 2)],
+    ids=["keep-text-off-face", "simpler-version-brief"],
+)
+def test_keep_text_off_my_face_still_gets_her_ending(monkeypatch, more, brief_version):
+    """Job 3ef3cbe5: the promised ending came out as one lime pill with no arrow."""
+    _faces(monkeypatch)
+    job = _repo_job(monkeypatch, more=more, brief_version=brief_version)
+
+    gb._run_generative_job(str(job.id))
+
+    _assert_her_repo_ending(job, (_FACE,))
+
+
+def test_with_a_second_face_the_ending_stays_off_both(monkeypatch):
+    """The ask protects every face in frame, not only the speaker's: the block that would
+    sit under her face moves clear of the second person too."""
+    _faces(
+        monkeypatch,
+        regions=(
+            ProtectedRegion(0.0, 10.0, _FACE, "face"),
+            ProtectedRegion(0.0, 10.0, _SECOND_FACE, "face"),
+        ),
+    )
+    job = _repo_job(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = _assert_her_repo_ending(job, (_FACE, _SECOND_FACE))
+    assert variant["closing_title_placement"]["face_boxes"] == 2
+
+
+def test_with_no_room_off_every_face_it_keeps_the_tag_and_says_so(monkeypatch):
+    """A face filling the frame leaves no spot for the block: today's pill, no arrow, and the
+    finished-video receipt names the missing arrow (never a block on a face)."""
+    _faces(
+        monkeypatch,
+        regions=(
+            ProtectedRegion(0.0, 10.0, _FACE, "face"),
+            ProtectedRegion(0.0, 10.0, NormalizedBox(0.10, 0.04, 0.90, 0.96), "face"),
+        ),
+    )
+    job = _repo_job(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    [row] = _closing_rows(variant)
+    assert (row["text"], row["background_color"]) == (_REPO, "#C5F82A")
+    assert not variant.get("drawings")
+    assert variant["closing_title_placement"]["cta_fallback"] is True
+    assert _closes_with(job, _REPO)
+    assert _receipt_status(variant, _REPO_ENDING) == "partial"
+
+
+def test_a_marked_object_keeps_todays_tag(monkeypatch):
+    """The ending is placed around faces and captions only; with a marked object to keep
+    text off, the pill (which is placed around objects) stays."""
+
+    def track(_clip_path, **kw):
+        count = int(round((kw["end_s"] - kw["start_s"]) / 0.1)) + 1
+        return ObjectTrack(
+            label=kw["label"],
+            media_id=kw["media_id"],
+            generation=kw["generation"],
+            seed_t_s=kw["seed_t_s"],
+            seed_box=kw["seed_box"],
+            anchors=tuple(
+                TrackAnchor(round(kw["start_s"] + i * 0.1, 3), _LAPTOP, "tracked")
+                for i in range(count)
+            ),
+            status="tracked",
+            receipt={"anchors": count, "tracked": count, "lost": 0},
+        )
+
+    _faces(monkeypatch)
+    monkeypatch.setattr(protected_mod, "track_object", track)
+    keep_off = [{"kind": "face"}, {"kind": "object", "label": "laptop"}]
+    off_laptop = _OFF_FACE.model_copy(update={"facts": {"keep_text_off": keep_off}})
+    mark = {
+        "label": "laptop",
+        "media_id": "c0",
+        "source_t_s": 0.5,
+        "box": [_LAPTOP.left, _LAPTOP.top, _LAPTOP.right, _LAPTOP.bottom],
+        "generation": "1",
+    }
+    job = _repo_job(monkeypatch, more=(off_laptop,), marks=[mark])
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    [row] = _closing_rows(variant)
+    assert (row["text"], row["background_color"]) == (_REPO, "#C5F82A")
+    assert not variant.get("drawings")
+    placement = variant["closing_title_placement"]
+    assert placement["status"] != "cta_ending"
+    assert [o["label"] for o in placement["objects"]] == ["laptop"]
+
+
+def test_switched_off_with_keep_text_off_my_face_is_exactly_todays(monkeypatch):
+    """CREATOR_CTA_ENDING_ENABLED=false stays the kill switch for this path too."""
+    no_arrow = _REPO_ENDING.model_copy(
+        update={"description": "End with \u201ccomment REPO\u201d.", "facts": {"closing": _REPO}}
+    )
+    _faces(monkeypatch)
+    plain = _repo_job(monkeypatch, enabled=False, protocol=None, requirement=no_arrow)
+    gb._run_generative_job(str(plain.id))
+    expected_variant = copy.deepcopy(plain.assembly_plan["variants"][0])
+    expected_recipe = _recipe(plain)
+
+    job = _repo_job(monkeypatch, enabled=False)
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    [row] = _closing_rows(variant)
+    assert (row["text"], row["background_color"]) == (_REPO, "#C5F82A")
+    assert "drawings" not in variant
+    assert variant == {**expected_variant, "render_generation_id": variant["render_generation_id"]}
+    assert _recipe(job) == expected_recipe
+
+
+# --- KRI-1482: the ending when she is drawn small in a corner (speaker frame) -------------------
+# Qendresa Q2 run 3 (job 77c63496): screen recordings full screen, her cut out small bottom
+# right. The ending was placed against her face in the FULL-FRAME take (y 0.20-0.61), so the
+# block went "just under" it at y 0.63-0.85: the "O" of REPO and the arrow were drawn across
+# her corner face (x 0.63-0.90, y 0.68-0.85) and the receipt said face_collision false.
+# Ways the fix could fail (written before it):
+# - the block or arrow still touches her corner face, her hair or her cut-out shoulders;
+# - the ending falls inside a full-screen span (she fills the frame there) and is moved anyway;
+# - no speaker frame, or SPEAKER_FRAME_CAPTION_FACES_ENABLED off, changes today's output;
+# - the block's new place (the middle of the recording) is on a label or a card;
+# - nothing is clear: the block is drawn on her anyway instead of the tag with an honest receipt;
+# - captions: once the block is clear of them they must keep running through "comment repo";
+#   they stop at the ending only when the block could not be placed clear of them.
+
+_CORNER = "small_bottom_right"
+# Job 77c63496's face band in the full-frame take (`closing_title_placement.face_band`).
+_Q2_TAKE_FACE = NormalizedBox(0.18815, 0.20292, 0.83407, 0.61125)
+_CAFE_TALK_S = 24.6  # the Cafe T2 take: she says "Nice, delicious. That's it." over the ending
+
+
+def _in_corner(box: NormalizedBox, preset: str = _CORNER) -> NormalizedBox:
+    """Where the phone draws a full-frame ``box`` with the speaker in ``preset``."""
+    frame = SPEAKER_FRAME_PRESETS[preset]
+    w, cx, cy = frame["width_fraction"], frame["x_fraction"], frame["y_fraction"]
+    return NormalizedBox(
+        cx + (box.left - 0.5) * w,
+        cy + (box.top - 0.5) * w,
+        cx + (box.right - 0.5) * w,
+        cy + (box.bottom - 0.5) * w,
+    )
+
+
+def _cutout_body(face: NormalizedBox, preset: str = _CORNER) -> NormalizedBox:
+    """Her cut-out below the top of her face: the speaker layer's rect down to the frame edge."""
+    frame = SPEAKER_FRAME_PRESETS[preset]
+    half = frame["width_fraction"] / 2
+    return NormalizedBox(frame["x_fraction"] - half, face.top, frame["x_fraction"] + half, 1.0)
+
+
+# The Q2 ask: her captions stay where she asked, near the bottom (`creator_spot_kept`).
+_BOTTOM_CAPTIONS = BriefRequirement(
+    id="r10",
+    kind="style",
+    scope="global",
+    description="Captions word by word in a light grey box near the bottom",
+    facts={"captions": "word_by_word", "caption_position": "bottom"},
+)
+
+
+def _corner_job(
+    monkeypatch,
+    *,
+    frame: str | None = _CORNER,
+    switch: bool = True,
+    more: tuple[BriefRequirement, ...] = (),
+    request: str = "End with \u201ccomment REPO\u201d and an arrow.",
+):
+    """The real worker on the Cafe T2 green-screen harness, ending with "comment REPO" + arrow."""
+    import app.services.phone_overlay_grounding as ogm
+    import app.services.pipeline_trace as pt
+
+    monkeypatch.setattr(ogm.settings, "gemini_api_key", "", raising=False)
+    monkeypatch.setattr(ogm, "sample_face_regions", lambda *a, **k: ([], {"attempted": 0}))
+    monkeypatch.setattr(pt, "record_pipeline_event", lambda *a, **k: None)
+    monkeypatch.setattr(gb.settings, "speaker_frame_caption_faces_enabled", switch)
+    take_face = (
+        _Q2_TAKE_FACE.left,
+        _Q2_TAKE_FACE.top,
+        _Q2_TAKE_FACE.right,
+        _Q2_TAKE_FACE.bottom,
+    )
+    captured = _simulate_environment(monkeypatch, take_face)
+    _faces(monkeypatch, regions=(ProtectedRegion(0.0, 30.0, _Q2_TAKE_FACE, "face"),))
+    job = _windows_job(
+        monkeypatch, SEQUENCE, cadence_s=4.0, **({"speaker_frame": frame} if frame else {})
+    )
+    _set_switch(monkeypatch, gb.settings, True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        list(
+            dict.fromkeys(
+                [*gb.settings.phone_render_verified_features, "authoredText", "freehandDrawing"]
+            )
+        ),
+    )
+    job.all_candidates["creator_strategy"]["closing_title"] = _REPO
+    job.all_candidates["creator_client_protocol"] = 51  # protocol-literal-ok (Q2 run 3 build)
+    _finish(job, (*more, _REPO_ENDING), request)
+    return job, captured
+
+
+def _ending_parts(variant: dict) -> dict[str, NormalizedBox]:
+    lead, keyword = _closing_rows(variant)
+    [arrow] = variant["drawings"]
+    return {"comment": _drawn_box(lead), "REPO": _drawn_box(keyword), "arrow": _arrow_box(arrow)}
+
+
+def _assert_ending_clear_in_the_corner(job, captured) -> tuple[dict, list[dict]]:
+    """Her two-row ending and its arrow: off her corner face and cut-out, and off every caption
+    line AS COMPILED while it shows. Returns the variant and those caption lines."""
+    assert job.status == "awaiting_device", job.error_detail
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_lane_receipt"]["background"]["speaker_frame"] == _CORNER
+    parts = _ending_parts(variant)
+    face = _in_corner(_Q2_TAKE_FACE)
+    for name, drawn in parts.items():
+        assert drawn.intersection_area(face) == 0.0, (name, drawn, face)
+        assert drawn.intersection_area(_cutout_body(face)) == 0.0, (name, drawn)
+        assert 0.0 <= drawn.left and drawn.right <= 1.0 and 0.06 <= drawn.top
+    lead, keyword = _closing_rows(variant)
+    assert (lead["text"], keyword["text"]) == ("comment", "REPO")
+    assert keyword["size_px"] >= 1.5 * lead["size_px"]
+    placement = variant["closing_title_placement"]
+    assert placement["status"] == "cta_ending"
+    assert placement["speaker_frame"] is True and placement["face_collision"] is False
+    assert _closes_with(job, _REPO)
+    assert _receipt_status(variant, _REPO_ENDING) == "met"
+    start_s = float(lead["start_s"])
+    during = [
+        b
+        for b in captured["boxes"]
+        if b.get("kind", "caption") == "caption" and b["end_s"] > start_s + 1e-3
+    ]
+    for caption in during:
+        for name, drawn in parts.items():
+            assert drawn.intersection_area(NormalizedBox(*caption["box"])) == 0.0, (name, caption)
+    return variant, during
+
+
+def test_in_the_corner_the_ending_stays_off_her_face_and_her_cut_out(monkeypatch):
+    """Job 77c63496's layout and ask: captions near the bottom, where she asked. The block
+    moves up over the recording, clear of them, so they keep running through "That's it."."""
+    job, captured = _corner_job(
+        monkeypatch,
+        more=(_BOTTOM_CAPTIONS,),
+        request=(
+            "Captions word by word in a light grey box near the bottom. "
+            "End with \u201ccomment REPO\u201d and an arrow."
+        ),
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    variant, during = _assert_ending_clear_in_the_corner(job, captured)
+    assert during, "the harness take is captioned over the ending"
+    assert variant["closing_title_placement"]["text_overlap"] is False
+    assert max(float(cue["end_s"]) for cue in variant["caption_cues"]) == pytest.approx(
+        _CAFE_TALK_S - 0.2, abs=0.01
+    )
+
+
+def test_in_the_corner_captions_that_would_cross_the_ending_stop_where_it_starts(monkeypatch):
+    """No caption ask: the text policy moves the captions off her corner face to the left
+    middle, exactly where the ending now goes. Placed before the compile, the ending could
+    not see that; the captions as compiled touch it, so they stop at the ending (KRI-1306)."""
+    job, captured = _corner_job(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant, during = _assert_ending_clear_in_the_corner(job, captured)
+    assert during == []
+    assert variant["closing_title_placement"]["text_overlap"] is True
+    start_s = float(_closing_rows(variant)[0]["start_s"])
+    assert max(float(cue["end_s"]) for cue in variant["caption_cues"]) == pytest.approx(start_s)
+
+
+def test_in_the_corner_with_the_switch_off_the_job_is_exactly_todays(monkeypatch):
+    """SPEAKER_FRAME_CAPTION_FACES_ENABLED=false: the ending is placed against the full-frame
+    face as before (the recipe and variant of the same job, byte for byte)."""
+    job, _ = _corner_job(monkeypatch, switch=False)
+    gb._run_generative_job(str(job.id))
+    variant = job.assembly_plan["variants"][0]
+    placement = variant["closing_title_placement"]
+    assert placement["status"] == "cta_ending" and "speaker_frame" not in placement
+    # Today's spot, recorded on the code before the fix: under her full-frame face (y <= 0.611).
+    assert placement["chosen_top_frac"] == pytest.approx(0.68, abs=1e-3)
+    assert _ending_parts(variant)["REPO"].intersection_area(_in_corner(_Q2_TAKE_FACE)) > 0.0
+
+
+def _closing_rows_call(monkeypatch, **changes):
+    """`_phone_talking_closing_rows` as the worker calls it for a 10 s vertical take, with the
+    job's face; the real placement, compile-free."""
+    import app.services.pipeline_trace as pt
+
+    monkeypatch.setattr(pt, "record_pipeline_event", lambda *a, **k: None)
+    _faces(monkeypatch, regions=(ProtectedRegion(0.0, 10.0, _Q2_TAKE_FACE, "face"),))
+    return gb._phone_talking_closing_rows(
+        _REPO,
+        **{
+            "photo_card": None,
+            "photo_aspect": None,
+            "binding": _source_binding("c0", duration_s=10.0),
+            "clip_path": "/tmp/c0.mp4",
+            "keep_segments": [(0.0, 10.0)],
+            "landscape_fit": "fit",
+            "cta": True,
+            "arrow": True,
+            **changes,
+        },
+    )
+
+
+def _frame(preset: str = _CORNER) -> tuple[float, float, float]:
+    frame = SPEAKER_FRAME_PRESETS[preset]
+    return (frame["width_fraction"], frame["x_fraction"], frame["y_fraction"])
+
+
+def test_an_ending_inside_a_full_screen_span_is_placed_as_without_a_frame(monkeypatch):
+    """She fills the frame there (item 16), so the ending sits under her full-frame face."""
+    plain = _closing_rows_call(monkeypatch)
+    spanned = _closing_rows_call(
+        monkeypatch, speaker_frame=_frame(), full_screen_windows=((6.0, 10.0),)
+    )
+    assert spanned == plain
+    assert plain[1]["status"] == "cta_ending" and "speaker_frame" not in plain[1]
+
+
+def test_a_label_or_a_card_where_the_block_would_go_is_kept_clear(monkeypatch):
+    rows, receipt, [arrow] = _closing_rows_call(monkeypatch, speaker_frame=_frame())
+    free = NormalizedBox(*(receipt["block"][k] for k in ("left", "top", "right", "bottom")))
+    # A label on screen during the ending, and a card, right where the block went.
+    label = {
+        "id": "spoken-text-r9",
+        "text": "5. Claude code game studio",
+        "start_s": 6.5,
+        "end_s": 9.0,
+        "x_frac": 0.5,
+        "y_frac": round((free.top + free.bottom) / 2, 4),
+        "size_px": 96,
+        "font_family": "TikTok Sans Bold",
+        "position": "custom",
+    }
+    label_box = _drawn_box(label)
+    card = NormalizedBox(0.10, label_box.bottom, 0.60, label_box.bottom + 0.06)
+    rows, receipt, [arrow] = _closing_rows_call(
+        monkeypatch,
+        speaker_frame=_frame(),
+        shown_rows=[label, {**label, "id": "earlier", "start_s": 1.0, "end_s": 3.0, "y_frac": 0.2}],
+        cards=[(7.5, 9.5, card), (0.0, 2.0, NormalizedBox(0.0, 0.06, 1.0, 0.40))],
+    )
+    assert receipt["status"] == "cta_ending"
+    face = _in_corner(_Q2_TAKE_FACE)
+    for drawn in (*(_drawn_box(row) for row in rows), _arrow_box(arrow)):
+        for other in (label_box, card, face, _cutout_body(face)):
+            assert drawn.intersection_area(other) == 0.0, (drawn, other)
+
+
+def test_with_no_clear_spot_in_the_corner_layout_it_keeps_the_tag_and_says_so(monkeypatch):
+    """A card filling the frame above her leaves no room: today's pill (placed against her
+    corner face), no arrow, `cta_fallback` for the receipt that names the missing arrow."""
+    rows, receipt, drawings = _closing_rows_call(
+        monkeypatch,
+        speaker_frame=_frame(),
+        cards=[(6.0, 10.0, NormalizedBox(0.0, 0.0, 1.0, 0.70))],
+    )
+    [row] = rows
+    assert (row["text"], row["background_color"]) == (_REPO, "#C5F82A")
+    assert drawings == []
+    assert receipt["cta_fallback"] is True and receipt["status"] != "cta_ending"
+    assert _drawn_box(row).intersection_area(_in_corner(_Q2_TAKE_FACE)) == 0.0

@@ -740,6 +740,10 @@ class UnifiedMontagePlan:
     story_beats: int | None = None
     story_fallback: UnifiedMontagePlan | None = None
     direction_fallback: str | None = None
+    # The text composer asked the creator something while the planned lane already drew every
+    # wording they asked for, so the video was made as planned: {"question", "unmet"}. None (every
+    # plan the composer did not ask about) is not recorded.
+    text_question: dict[str, Any] | None = None
 
     @property
     def cuts(self) -> list[FastMontageCut]:
@@ -840,6 +844,8 @@ class UnifiedMontagePlan:
             }
         if self.direction_fallback:
             direction_asked["direction_fallback"] = self.direction_fallback
+        if self.text_question:
+            direction_asked["text_question"] = dict(self.text_question)
         record = {
             "version": 1,
             "brief_version": self.brief_version,

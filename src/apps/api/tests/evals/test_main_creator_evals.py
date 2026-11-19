@@ -7,6 +7,12 @@ import pytest
 
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
 
+pytestmark = [
+    pytest.mark.journey("kri-586-hook-copy"),
+    pytest.mark.journey("kri-598-voiceover-planner"),
+    pytest.mark.journey("kri-789-take-trim-not-order"),
+]
+
 AGENT_DIR = "main_creator"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)
 

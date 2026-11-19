@@ -15,7 +15,7 @@ Failure modes written down before the fix (each has a test below):
  2. paired sequences retimed independently by the composer: one shared span by construction;
  3. a pair at the same video length as its words need at the minimum piece time still fits;
  4. words that cannot fit even at the minimum piece time: an honest typed failure, never flicker;
- 5. changed approved wording still rejected (control);
+ 5. changed approved wording: the reword is dropped and the approved words render (KRI-1376);
  6. a plain explanation ask that does research and fails: a typed creation_text failure, not a bug;
  7. the length plan never undercuts the longest sequence's minimum reading time, and a creator's
     explicit shorter length is never stretched.
@@ -202,7 +202,7 @@ def test_words_that_cannot_get_a_frame_each_fail_honestly() -> None:
     assert _shared_span(owned, 4.0) == (0.0, 4.0)
 
 
-def test_changed_approved_wording_is_still_rejected(monkeypatch) -> None:
+def test_changed_approved_wording_is_dropped_and_the_approved_words_render(monkeypatch) -> None:
     def reword(agent, input, *, ctx=None):  # noqa: ARG001
         bar = next(b for b in input.variant_snapshot["text_bars"] if b["text"] == ENGLISH)
         reply = {
@@ -213,8 +213,14 @@ def test_changed_approved_wording_is_still_rejected(monkeypatch) -> None:
         }
         return agent.parse(json.dumps(reply), input)
 
-    with pytest.raises(CreationTextCompositionError, match="confirmed copy|Text changed before"):
-        _compose(monkeypatch, reword)
+    _, composed = _compose(monkeypatch, reword)
+    pieces = _pieces(composed, ENGLISH)
+    assert [row["text"] for row in pieces] == ENGLISH.split()
+    assert [row["text"] for row in _pieces(composed, LOCAL)] == LOCAL.split()
+    assert (pieces[0]["start_s"], pieces[-1]["end_s"]) == (
+        _pieces(composed, LOCAL)[0]["start_s"],
+        _pieces(composed, LOCAL)[-1]["end_s"],
+    )
 
 
 def test_a_failing_research_step_is_a_typed_creation_text_failure(monkeypatch) -> None:

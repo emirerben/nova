@@ -105,6 +105,29 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("patch_caption_line",),
         fields=("cue_id", "all", "size_px", "position_x_frac", "position_y_frac"),
     ),
+    # KRI-1501: the translated caption line (its own track under the spoken line). Chat turns it
+    # on only when the video is made (`caption_translation_request`, docs/pipelines/
+    # dual-captions.md); on an existing edit it is the editor's switch and track alone.
+    "caption_translation": _g(
+        "agent_unsupported",
+        "translateCaptions applyCaptionTranslation setCaptionTranslationEnabled "
+        "setCaptionTranslationText setCaptionTranslationColor setCaptionTranslationFont "
+        "setCaptionTranslationStroke setCaptionTranslationSize placeCaptionTranslation "
+        "setCaptionTranslationGesturePosition setCaptionTranslationGestureSize "
+        "writeTranslationStyle retranslateCaption",
+        reason="KRI-1501 ships the translated caption line through the creator's first ask (the "
+        "worker plans it) and the editor's translation switch (POST caption-translation, then "
+        "the Save's caption_meta.translation). No copilot op adds, restyles or rewrites it on "
+        "an existing edit yet.",
+    ),
+    "caption_translation_queries": _g(
+        "not_an_edit",
+        "captionTranslationSize captionTranslationIsAttached captionTranslationPosition "
+        "translationStill translationLayerID rememberCaptionGesture captionTranslationIsStale "
+        "captionTranslationParkTime savedCaptionCue",
+        reason="Read-only lookups the translated-line panel and gestures use, and the gesture "
+        "bookkeeping that the move or size step it records then writes.",
+    ),
     # --------------------------------------------------------------- timeline
     "clip_trim_and_move": _g(
         "agent_ops",
@@ -249,13 +272,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("make_split_full_screen",),
         fields=("section_id", "at_s", "side", "panel"),
     ),
-    # KRI-1421: blank blocks are a person's action first. PR 2327 owns the split ops; until one
-    # places a blank (`add_split_panel_clip` with `blank: true`), the agent cannot.
+    # KRI-1457: Fill with blank puts a colour block after the panel's last member (the phone fills
+    # the free time under the playhead; chat has no playhead, so it uses the time after the last
+    # member). Block colour recolours the selected block by its slot index.
     "split_screen_blank": _g(
-        "agent_unsupported",
+        "agent_ops",
         "fillSplitPanelWithBlank setSelectedBlankColor",
-        reason="A blank block in a split panel is placed and recoloured by hand; the split ops "
-        "(PR 2327) do not take a blank yet.",
+        ("add_split_blank", "set_split_blank_color"),
+        fields=("offset_s", "duration_s", "color", "grow_section"),
     ),
     "split_screen_queries": _g(
         "not_an_edit",
@@ -437,7 +461,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "synchronizePromptRevision resumeRefreshSync refreshDeviceRender retryRender "
         "retryDeviceRender retryPreview retryPreviewRefresh rebaseCleanDraft "
         "applyPreviewVariant exportEditorState exportEditorStateSyncingDraft "
-        "exportDisplayedSourcePreview videoDownloadRoute showDeviceOutput useDeviceRendering "
+        "exportDisplayedSourcePreview exportSavedRecipe prepareVideoDownloadRoute handingOff "
+        "videoDownloadRoute showDeviceOutput useDeviceRendering "
         "useMediaUploads deviceRenderPresentationChanged installFinishedRenderPlayer "
         "handleMediaServicesReset handlePlayerItemFailure prepareSourcePreview "
         "prepareFixtureSourcePreview prepareGamedayFixture addGamedayFixtureClip "
@@ -476,8 +501,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
-        "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
-        "tiltBackdropIsMissing "
+        "textElement textAnchor captionPosition captionStyleSize captionStill clipTilt "
+        "tiltBlockedReason tiltBackdropIsMissing "
         "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame "
         "speakerEditingFrame speakerFrame speakerFrameRect speakerSelection speakerViewport "
         "usesScopedSpeakerFrame ownsTimingGesture",

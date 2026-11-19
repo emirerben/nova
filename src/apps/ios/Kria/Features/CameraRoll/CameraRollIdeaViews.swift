@@ -47,9 +47,9 @@ struct CameraRollDirectionField: View {
     let group: String
 
     static let shortcuts: [(title: String, phrase: String)] = [
-        ("More clips", "Use more clips"),
-        ("Vlog", "Make it a vlog"),
-        ("Short and punchy", "Short and punchy"),
+        (String(localized: "More clips"), "Use more clips"),
+        (String(localized: "Vlog"), "Make it a vlog"),
+        (String(localized: "Short and punchy"), "Short and punchy"),
     ]
 
     var body: some View {
@@ -111,7 +111,7 @@ struct CameraRollFinderPanel: View {
             CameraRollDirectionField(model: model, group: event.id)
             HStack(spacing: 8) {
                 if model.tasteAvailable {
-                    chip("Use my taste", selected: model.taste?.enabled == true && model.taste?.memoryPaused == false, identifier: "camera-roll-chip-taste", action: openTaste)
+                    chip(String(localized: "Use my taste"), selected: model.taste?.enabled == true && model.taste?.memoryPaused == false, identifier: "camera-roll-chip-taste", action: openTaste)
                 }
                 chip(researchLabel(draft), selected: draft.researchOn, identifier: "camera-roll-chip-research") {
                     var next = model.draft(for: event.id); next.researchOn.toggle()
@@ -151,9 +151,9 @@ struct CameraRollFinderPanel: View {
 
     private func researchLabel(_ draft: CameraRollSurfaceModel.FinderDraft) -> String {
         let topic = draft.topic.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !topic.isEmpty { return "Research \(topic)" }
-        if let suggested = model.suggestedTopic { return "Research \(suggested)" }
-        return "Research a place"
+        if !topic.isEmpty { return String(localized: "Research \(topic)") }
+        if let suggested = model.suggestedTopic { return String(localized: "Research \(suggested)") }
+        return String(localized: "Research a place")
     }
 
     private func chip(_ title: String, selected: Bool, identifier: String, action: @escaping () -> Void) -> some View {
@@ -179,7 +179,7 @@ struct CameraRollWorkingCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 KriaSpinner(size: 16)
-                Text("Reading your \(ready) \(ready == 1 ? "clip" : "clips")").font(KriaFont.body(15).weight(.semibold))
+                Text(String(localized: "Reading your \(ready) clips")).font(KriaFont.body(15).weight(.semibold))
             }
             Text("Picking the moments worth a video. Usually under 30 seconds.")
                 .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
@@ -227,7 +227,7 @@ struct CameraRollIdeaCard: View {
                 .buttonStyle(KriaPrimaryButtonStyle(minHeight: 48)).disabled(unresolved > 0)
                 .accessibilityIdentifier("camera-roll-idea-use-\(story.id)")
             if unresolved > 0 {
-                Text(unresolved == 1 ? "Answer or skip the question above to use this idea." : "Answer or skip the \(unresolved) questions above to use this idea.")
+                Text(unresolved == 1 ? String(localized: "Answer or skip the question above to use this idea.") : String(localized: "Answer or skip the \(unresolved) questions above to use this idea."))
                     .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity).multilineTextAlignment(.center)
                     .accessibilityIdentifier("camera-roll-idea-use-reason-\(story.id)")
@@ -239,18 +239,18 @@ struct CameraRollIdeaCard: View {
 
     /// While the idea is being built, Use reopens its progress.
     private var useTitle: String {
-        guard let use = model.uses[story.id] else { return "Use this idea" }
+        guard let use = model.uses[story.id] else { return String(localized: "Use this idea") }
         switch use.phase {
-        case .running: return "Building · Show progress"
-        case .failed, .needsOriginals, .blocked: return "Needs you · Show progress"
-        case .opened: return "Use this idea"
+        case .running: return String(localized: "Building · Show progress")
+        case .failed, .needsOriginals, .blocked: return String(localized: "Needs you · Show progress")
+        case .opened: return String(localized: "Use this idea")
         }
     }
 
     private var summary: String {
         let seconds = Int(story.duration.rounded())
-        let form = story.contentPlan?.formLabel ?? "Idea"
-        return "\(form) · \(story.moments.count) \(story.moments.count == 1 ? "clip" : "clips") · \(seconds / 60):\(String(format: "%02d", seconds % 60))"
+        let form = story.contentPlan?.formLabel ?? String(localized: "Idea")
+        return "\(form) · \(String(localized: "\(story.moments.count) clips")) · \(seconds / 60):\(String(format: "%02d", seconds % 60))"
     }
 
     private var menu: some View {
@@ -279,7 +279,7 @@ struct CameraRollIdeaCard: View {
         }
         .contentShape(Rectangle()).onTapGesture(perform: open)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(entries.count) \(entries.count == 1 ? "clip" : "clips")").accessibilityAddTraits(.isButton)
+        .accessibilityLabel(String(localized: "\(entries.count) clips")).accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("camera-roll-idea-clips-\(story.id)")
     }
 }
@@ -297,7 +297,7 @@ struct CameraRollUseSheet: View {
             HStack(alignment: .top) {
                 Text(use.story.title).font(KriaFont.headline(22)).foregroundStyle(KriaColor.ink).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                CameraRollCircleButton(identifier: "camera-roll-use-close", label: "Close", action: { dismiss() }) {
+                CameraRollCircleButton(identifier: "camera-roll-use-close", label: String(localized: "Close"), action: { dismiss() }) {
                     Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).foregroundStyle(KriaColor.ink)
                 }
             }
@@ -321,7 +321,17 @@ struct CameraRollUseSheet: View {
         }
     }
 
-    private enum RowState: String { case waiting = "Waiting", active = "In progress", done = "Done", failed = "Failed" }
+    private enum RowState {
+        case waiting, active, done, failed
+        var label: String {
+            switch self {
+            case .waiting: String(localized: "Waiting")
+            case .active: String(localized: "In progress")
+            case .done: String(localized: "Done", comment: "Step status: finished")
+            case .failed: String(localized: "Failed")
+            }
+        }
+    }
 
     private func state(_ step: CameraRollIdeaUse.Step) -> RowState {
         func relative(_ current: CameraRollIdeaUse.Step, at: RowState) -> RowState {
@@ -355,7 +365,7 @@ struct CameraRollUseSheet: View {
             Text(title).font(KriaFont.body(16).weight(state == .waiting ? .medium : .semibold))
                 .foregroundStyle(state == .waiting ? KriaColor.mutedInk : KriaColor.ink)
         }
-        .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(state.rawValue)
+        .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(state.label)
         .accessibilityIdentifier("camera-roll-use-step-\(step)")
     }
 
@@ -368,7 +378,7 @@ struct CameraRollUseSheet: View {
         case let .blocked(message):
             failure(message)
         case .needsOriginals:
-            failure("\(use.missingOriginals.count) \(use.missingOriginals.count == 1 ? "video needs its" : "videos need their") full-quality original from Photos.")
+            failure(String(localized: "\(use.missingOriginals.count) videos need their full-quality original from Photos."))
             Button { choosingOriginals = true } label: { Text("Choose originals").frame(maxWidth: .infinity) }
                 .buttonStyle(KriaPrimaryButtonStyle(minHeight: 52)).accessibilityIdentifier("camera-roll-use-choose-originals")
         case .running, .opened:
@@ -415,7 +425,7 @@ struct CameraRollDeleteEventCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Delete \(title)?").font(KriaFont.body(20).weight(.bold)).tracking(-0.2).foregroundStyle(KriaColor.ink)
-            Text("The \(itemCount) \(itemCount == 1 ? "item leaves" : "items leave") this camera roll and its \(ideaCount) \(ideaCount == 1 ? "idea is" : "ideas are") removed. Nothing is deleted from your Photos.")
+            Text(String(localized: "The \(itemCount) items leave this camera roll and its \(ideaCount) ideas are removed. Nothing is deleted from your Photos."))
                 .font(KriaFont.body(15).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
             VStack(spacing: 8) {
                 Button(action: delete) {

@@ -5,16 +5,20 @@ Creator, edit copilot) and the copy the server writes itself (status answers,
 receipts, review, refusals, questions). English is the default and stays
 byte-identical.
 
-How a chat's language is decided, newest evidence first:
+How a Kria (runtime-v2) chat's language is decided:
 
-1. The creator's own typed message (``detect_chat_language``). Stock sentences the
-   apps send on the creator's behalf ("Suggest an edit.", "Use this order: …") are
-   ignored, so a tap never flips a Turkish chat to English.
-2. The chat's language so far (``CreationThread.state["reply_language"]``).
-   Switching away from it needs clear evidence, so a stray English phrase in a
-   Turkish chat does not flip it.
-3. The device or browser language (``Accept-Language``), for a first message that
-   says too little to tell ("tamam", a tap, media only).
+1. The model that reads the creator's message says it: the Main Creator (and, on a rendered
+   follow-up, the brief extractor) returns ``conversation_language``, the language the creator
+   writes to Kria in, leaving out any text meant for the video (lyrics, titles, quotes). The
+   worker rebinds the turn to it and stores it with the completed turn
+   (``adopt_conversation_language``). No word is counted (agents/DECISIONS.md, language
+   policy). ``None`` means the model could not tell ("Yap", "Do it", a tap).
+2. Otherwise the chat's stored language (``CreationThread.state["reply_language"]``).
+3. A chat nothing has told yet starts from the stored language of the creator's latest other
+   chat (``creator_stored_language``), then the device language (``Accept-Language``).
+
+Runtime-v1 (web) chats and prompts with no chat behind them still read words
+(``resolve_reply_language``, ``creator_text_language``).
 
 Only ``SUPPORTED_REPLY_LANGUAGES`` are ever returned. Anything else is ``None``:
 the server copy stays English and the models keep mirroring the creator.
@@ -120,6 +124,14 @@ _DE_WORDS = (
     wird werden soll sollen kann konnen moechte mochte lass lasse lassen sonst alles
     andere anderen wort worter woerter ueber uber nach vor hab habe hinzugefugt hinzufuegen
     gemacht zeigen sag sage gesagt
+    """.split()
+        # KRI-1453: everyday words a German edit ask is made of, so "Lösch alle Beschriftungen"
+        # (only ö) is not Turkish and "Ordne die Clips in der ..." is not English.
+        + """
+    die alle allen sind sein zu dass wenn weil aus einer eines diese dieser diesen dieses
+    mir mich dir dich uns euch ihr ihm ihn haben hast bist wurde gibt sehr mehr weniger
+    etwas immer nie ganz ganze ganzen neu neue neuen jede jeden jedes als
+    nimm setz setze verwende behalte ordne schneide kurz kurze losch loesch
     """.split()
     )
     - _EN_WORDS
@@ -345,140 +357,12 @@ def _labels_video_text(language: str, detected: str, message: str | None) -> boo
     return _text_language(own[colon + 1 :])[0] == detected
 
 
-# An `ask_user` reason code naming the words for the video ("lyrics_text_needed",
-# "missing_caption_words"), not how they look ("text_position", "caption_style").
-_VIDEO_WORDS_REASON = frozenset(
-    "lyric lyrics line lines word words wording text texts caption captions title subtitle "
-    "subtitles quote".split()
-)
-_VIDEO_LOOK_REASON = frozenset(
-    "position placement place where font color colour style size timing time when length "
-    "duration language animation corner".split()
-)
-# Tag on an assistant event (copied from the turn plan) for a typed "paste the lyrics" ask.
-VIDEO_TEXT_ASK_KEY = "asks_video_text"
-
-
-def asks_for_video_words(reason_code: str | None) -> bool:
-    """True when an ``ask_user`` reason code asks the creator for words to put on the video.
-
-    Always False with the own-words switch off, so stored turn plans stay as they were.
-    """
-    if not own_words_enabled():
-        return False
-    tokens = set(re.findall(r"[a-z]+", (reason_code or "").lower()))  # kri667: server reason code
-    return bool(tokens & _VIDEO_WORDS_REASON) and not tokens & _VIDEO_LOOK_REASON
-
-
-def _open_video_text_ask(events: list[Any]) -> bool:
-    """The newest assistant reply is a tagged typed ask and nobody has answered it yet."""
-    from app.services.choice_questions import EVENT_TYPE_KEY  # noqa: PLC0415
-
-    open_ask = False
-    for role, payload in events:
-        if not isinstance(payload, Mapping):
-            continue
-        if role == "user":
-            open_ask = False
-        elif role == "assistant" and payload.get(EVENT_TYPE_KEY) == "assistant_response":
-            open_ask = payload.get(VIDEO_TEXT_ASK_KEY) is True
-    return open_ask
-
-
-def asks_for_video_text(events: Any) -> bool:
-    """True when the open question asks the creator to type words for the video (KRI-1363).
-
-    ``events`` are ``(role, payload)`` in order, as `choice_questions.tag_event` builds them.
-    A title's words, or the lyrics pasted after "Could you paste the lines?", typed as the
-    answer are the video's language, not the chat's.
-    """
-    if not own_words_enabled():
-        return False
-    from app.services.choice_questions import (  # noqa: PLC0415
-        CONFLICT_TITLE_TEXT,
-        latest_open_choice_question,
-    )
-    from app.services.creative_copy_decisions import (  # noqa: PLC0415
-        latest_open_creative_question,
-    )
-
-    events = list(events)
-    question = latest_open_choice_question(events)
-    if question is not None:
-        conflict = str(question.get("conflict") or "")
-        if conflict == CONFLICT_TITLE_TEXT or (
-            conflict.startswith("ask_user:") and asks_for_video_words(conflict[9:])
-        ):
-            return True
-    if _open_video_text_ask(events):
-        return True
-    return latest_open_creative_question(events) is not None
-
-
-# Language the chat had before its latest switch, and the client id of the message that made
-# it, kept beside ``STATE_KEY``.
-EARLIER_STATE_KEY = "reply_language_before"
-SWITCHED_BY_STATE_KEY = "reply_language_switched_by"
-# Share of a message's words the video's text must hold for the message to count as that text.
-_VIDEO_TEXT_COVERAGE = 0.8
-
-
-def earlier_reply_language(thread: Any) -> str | None:
-    """The chat's language before its latest switch, or None."""
-    state = getattr(thread, "state", None)
-    stored = state.get(EARLIER_STATE_KEY) if isinstance(state, Mapping) else None
-    return stored if stored in _supported() else None
-
-
-def switching_message_id(thread: Any) -> str | None:
-    """Client event id of the message that made the chat's latest switch, or None."""
-    state = getattr(thread, "state", None)
-    stored = state.get(SWITCHED_BY_STATE_KEY) if isinstance(state, Mapping) else None
-    return stored if isinstance(stored, str) and stored else None
-
-
-def short_reply_in(message: str | None, language: str | None) -> bool:
-    """True for a clear reply in ``language`` too short to switch a chat ("Do it", "Yes")."""
-    if language is None or not own_words_enabled():
-        return False
-    detected, strength = _detect(message)
-    return detected == language and strength < _SWITCH_STRENGTH
-
-
-def speaks_in(message: str | None, language: str | None) -> bool:
-    """True when the creator's own words say ``language`` clearly enough to switch a chat."""
-    if language is None or not own_words_enabled():
-        return False
-    detected, strength = _detect(message)
-    return detected == language and strength >= _SWITCH_STRENGTH
-
-
-def is_video_text(message: str | None, texts: Any) -> bool:
-    """True when the video's ``texts`` hold (nearly) every word of ``message``.
-
-    A switch made by words the creator pasted for the video ("Could you paste the lines?" then
-    the lyrics with no label) was never the creator changing language.
-    """
-    words = [loose_text(word) for word in _WORD.findall(_own_words(message or ""))]
-    if len(words) < _SWITCH_STRENGTH:
-        return False
-    held: set[str] = set()
-    for text in texts:
-        if isinstance(text, str):
-            held.update(
-                loose_text(word) for word in _WORD.findall(unicodedata.normalize("NFC", text))
-            )
-    found = sum(1 for word in words if word in held)
-    return found / len(words) >= _VIDEO_TEXT_COVERAGE
-
-
 def resolve_reply_language(
     message: str | None,
     *,
     previous: str | None = None,
     locale: str | None = None,
     typed_elsewhere: str | None = None,
-    answers_video_text: bool = False,
 ) -> str | None:
     """The chat's reply language after ``message``.
 
@@ -486,19 +370,16 @@ def resolve_reply_language(
     raw ``Accept-Language`` header. A message that clearly reads as one language
     sets it; leaving an established language needs at least three clear words, so
     "make it pop" inside a Turkish chat keeps Turkish. ``typed_elsewhere`` is the
-    language the creator last typed in another chat (`creator_typed_language`): for a
-    chat nothing has told yet it comes before the device (Green 5: a "Suggest an edit."
-    tap on a Turkish phone by a creator who types English).
+    stored language of the creator's latest other chat (`creator_stored_language`): for a
+    chat nothing has told yet it comes before the device (Green 5).
 
-    Only the creator's own words count (KRI-1363): quoted text and (``answers_video_text``)
-    a typed answer to a wording question are text for the video, and so is the text after a
-    short label in the chat's language ("Title: <Turkish words>" in an English chat stays
-    English). One stray word of the old language never holds a clear switch.
+    Runtime-v1 (web) chats and non-chat prompts only. A runtime-v2 (Kria) chat never scores
+    words: its Main Creator reports the language the creator writes in
+    (`MainCreatorOutput.conversation_language`). Quoted text and the text after a short label
+    in the chat's language ("Title: <Turkish words>") are text for the video (KRI-1363).
     """
     previous = previous if previous in _supported() else None
     detected, strength = _detect(message)
-    if previous is not None and answers_video_text and own_words_enabled():
-        detected = None  # the words typed for a title are the video's language (KRI-1363)
     if detected is not None and (
         previous is None
         or detected == previous
@@ -518,48 +399,36 @@ def history_enabled() -> bool:
     return enabled() and bool(getattr(settings, "kria_reply_language_history_enabled", True))
 
 
-def needs_typed_history(message: str | None, previous: str | None) -> bool:
-    """Only a chat nothing has told yet, on a message that does not say, reads the history."""
-    return history_enabled() and previous not in _supported() and _detect(message)[0] is None
+async def creator_stored_language(
+    db: Any, *, creator_id: Any, exclude_thread_id: Any
+) -> str | None:
+    """The stored chat language of the creator's most recently active other chat, or None.
 
-
-# How many of the creator's latest messages in other chats are read for their language.
-_HISTORY_MESSAGES = 20
-
-
-async def creator_typed_language(db: Any, *, creator_id: Any, exclude_thread_id: Any) -> str | None:
-    """The language of the creator's most recent message they typed in another chat, or None.
-
-    Stock sentences and taps never count (`detect_chat_language` ignores them), nor do
-    messages too short to tell. Only this creator's own chats are read."""
+    A fallback for a chat nothing has told yet. No message is read or scored: a chat's
+    language is what its model decided (`conversation_language`) or what was stored for it.
+    Only this creator's own chats are read; off with ``KRIA_REPLY_LANGUAGE_HISTORY_ENABLED``.
+    """
+    if not history_enabled():
+        return None
     from sqlalchemy import select  # noqa: PLC0415
 
-    from app.models import CreationThread, CreationThreadEvent  # noqa: PLC0415
+    from app.models import CreationThread  # noqa: PLC0415
 
     statement = (
-        select(CreationThreadEvent.content)
-        .join(CreationThread, CreationThread.id == CreationThreadEvent.thread_id)
+        select(CreationThread.state[STATE_KEY].astext)
         .where(
             CreationThread.creator_id == creator_id,
             CreationThread.id != exclude_thread_id,
-            CreationThreadEvent.role == "user",
-            CreationThreadEvent.event_type == "user_message",
-            CreationThreadEvent.content.is_not(None),
+            CreationThread.state[STATE_KEY].astext.is_not(None),
         )
-        .order_by(CreationThreadEvent.created_at.desc())
-        .limit(_HISTORY_MESSAGES)
+        .order_by(CreationThread.updated_at.desc())
+        .limit(1)
     )
     try:
-        rows = list((await db.execute(statement)).scalars())
+        stored = (await db.execute(statement)).scalar_one_or_none()
     except Exception:  # noqa: BLE001 - a language hint never fails a chat: the device decides
         return None
-    for content in rows:
-        if not isinstance(content, str):
-            continue
-        language = detect_chat_language(content)
-        if language is not None:
-            return language
-    return None
+    return stored if stored in _supported() else None
 
 
 def enabled() -> bool:
@@ -581,39 +450,103 @@ def thread_reply_language(thread: Any) -> str | None:
     return stored if stored in _supported() else None
 
 
-def remember_reply_language(
-    thread: Any,
-    language: str | None,
-    *,
-    restored: bool = False,
-    switched_by: str | None = None,
-    confirmed: bool = False,
-) -> None:
-    """Store the chat's language on the locked thread row; a no-op when unchanged.
+# Keys #2343 (KRI-1448) kept beside ``STATE_KEY`` for a switch-back; dropped on the next write.
+_RETIRED_STATE_KEYS = ("reply_language_before", "reply_language_switched_by")
 
-    A switch also keeps the language it left and ``switched_by``, the message that made it;
-    ``restored`` (going back) forgets both, so a later short reply cannot flip the chat again.
-    ``confirmed`` (the creator wrote their own sentence in the current language) forgets both
-    too: the chat is now theirs in this language, whatever made the switch.
-    """
+
+def remember_reply_language(thread: Any, language: str | None) -> None:
+    """Store the chat's language on the locked thread row; a no-op when unchanged or unknown."""
     if language not in _supported() or not enabled():
         return
     state = getattr(thread, "state", None)
     current = dict(state) if isinstance(state, Mapping) else {}
-    before = current.get(STATE_KEY)
-    if before == language:
-        if confirmed and (EARLIER_STATE_KEY in current or SWITCHED_BY_STATE_KEY in current):
-            current.pop(EARLIER_STATE_KEY, None)
-            current.pop(SWITCHED_BY_STATE_KEY, None)
-            thread.state = current
+    retired = [key for key in _RETIRED_STATE_KEYS if key in current]
+    if current.get(STATE_KEY) == language and not retired:
         return
+    for key in retired:
+        current.pop(key)
     current[STATE_KEY] = language
-    current.pop(EARLIER_STATE_KEY, None)
-    current.pop(SWITCHED_BY_STATE_KEY, None)
-    if not restored and before in _supported() and switched_by and own_words_enabled():
-        current[EARLIER_STATE_KEY] = before
-        current[SWITCHED_BY_STATE_KEY] = switched_by
     thread.state = current
+
+
+# The language the model read the creator writing in on this turn, once it said one.
+_MODEL_READ: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "kria_model_conversation_language", default=None
+)
+
+
+def supported_reply_languages() -> tuple[str, ...]:
+    """The reply-language codes offered now, sorted (German only behind its switch)."""
+    return tuple(sorted(_supported()))
+
+
+def model_language(value: object) -> str | None:
+    """A model-reported ``conversation_language`` if it is offered now, else None.
+
+    "xx", "de" with German off, or anything that is not a string means the model could not
+    give a language Kria replies in, so the chat keeps the language it has.
+    """
+    return value if isinstance(value, str) and value in _supported() else None
+
+
+def adopt_conversation_language(language: str | None) -> str | None:
+    """Bind the language the model read for the rest of this turn; returns it, or None.
+
+    A no-op for None, an unsupported code, or the kill switch off. The binding lives in the
+    caller's context (a planning ``asyncio.run`` task), so the worker rebinds from
+    ``PlannedKriaTurn.conversation_language`` after planning returns.
+    """
+    language = model_language(language)
+    if language is None or not enabled():
+        return None
+    _CURRENT.set(language)
+    _MODEL_READ.set(language)
+    return language
+
+
+def model_conversation_language() -> str | None:
+    """The language a model reported on this turn so far, or None."""
+    return _MODEL_READ.get()
+
+
+@contextmanager
+def model_language_scope() -> Iterator[None]:
+    """Start a planning run with no model-reported language; restored on exit."""
+    token = _MODEL_READ.set(None)
+    try:
+        yield
+    finally:
+        _MODEL_READ.reset(token)
+
+
+def conversation_language_line(stored: str | None, *, beside: str = "action") -> str:
+    """The Main Creator's reply-language instruction; "" with the kill switch off.
+
+    The chat's stored language is context, never an order: the model reports the language
+    the creator writes in (``conversation_language``) and writes its own text in it.
+    """
+    if not enabled():
+        return ""
+    codes = ", ".join(f'"{code}"' for code in supported_reply_languages())
+    stored = stored if stored in _supported() else None
+    so_far = (
+        f"This chat has been in {LANGUAGE_NAMES[stored]} ({stored}) so far."
+        if stored
+        else "This chat has no language yet."
+    )
+    return (
+        "CHAT LANGUAGE\n"
+        f"{so_far} Add a top-level key `conversation_language` beside `{beside}`: the language "
+        "the creator writes to you in, read from their own words in CURRENT USER MESSAGE. "
+        "Leave out any text meant to appear in the video (lyrics, titles, captions, quoted "
+        "or pasted lines, names): an English request around Turkish lyrics is English. "
+        f"Use one of {codes}, or null when the message is too short or ambiguous to tell "
+        '("ok", "Yap", "Do it", a tap) or is in a language not listed. Write every '
+        "creator-facing sentence you return (questions, options, summaries, rationales, "
+        "replies) in `conversation_language`, or in the chat's language so far when it is "
+        "null. Text that appears on the video stays exactly as the creator wrote or asked "
+        "for it, in whatever language that is."
+    )
 
 
 def bind_reply_language(language: str | None) -> contextvars.Token[str | None]:

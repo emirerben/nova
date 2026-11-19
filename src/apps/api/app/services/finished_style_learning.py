@@ -667,7 +667,10 @@ def _instruction(
     from app.kria.reply_language import say_in  # noqa: PLC0415
 
     phrase = say_in(language, en=role, tr=_ROLE_TR.get(role, role))
-    words = {"role": phrase, "head": phrase[:1].upper() + phrase[1:], "label": phrase.capitalize()}
+    # Not str.capitalize(): it lowercases German nouns ("Alle texte"); role ids are lowercase,
+    # so English reads the same.
+    head = phrase[:1].upper() + phrase[1:]
+    words = {"role": phrase, "head": head, "label": head}
     if automatic_font:
         return say_in(
             language,

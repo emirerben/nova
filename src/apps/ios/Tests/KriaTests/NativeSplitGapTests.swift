@@ -683,6 +683,159 @@ final class NativeSplitGapTests: XCTestCase {
         XCTAssertEqual(Set(pieces.compactMap(\.id)).count, 2)
     }
 
+    // MARK: A photo has no source clock (KRI-1440)
+
+    /// Failure modes, written before the fix. A cut writes `in_s > 0` on the right piece (in a panel, full screen,
+    /// or the plain timeline). A cut or trim writes `source_start_locked`. A left trim moves `in_s` or `source_end_s`.
+    /// The fix changes a duration or a position (right piece offset, left-trim ripple, split offset). A video loses
+    /// its source shift. The Adjust "slide source" action moves a photo's `in_s`. The recipe compile refuses what the
+    /// phone now writes.
+    private func assertNoSourceClock(_ slot: EditorTimelineSlot?, _ message: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(slot?.inS, 0, "\(message): in_s", file: file, line: line)
+        XCTAssertNil(slot?.raw["source_start_locked"], "\(message): source_start_locked", file: file, line: line)
+        XCTAssertNil(slot?.raw["source_end_s"], "\(message): source_end_s", file: file, line: line)
+    }
+
+    @MainActor
+    func testCuttingAPhotoInAPanelKeepsInSZeroAndPlacesBothHalves() throws {
+        let top = member(0, offset: 0, duration: 4)
+        let photo = member(1, offset: 0, duration: 4, clipIndex: 1, raw: Self.photoRaw)
+        let session = makeSession(document([top, photo], sections: [.init(id: "s", durationS: 4, panelCount: 2)]))
+        try select(session, photo)
+        session.currentTime = 1.5
+        session.splitSelectedClip()
+
+        let pieces = session.document.clips.filter { $0.splitPanelIndex == 1 }.sorted { $0.splitOffsetS < $1.splitOffsetS }
+        XCTAssertEqual(pieces.map(\.durationS), [1.5, 2.5])
+        XCTAssertEqual(pieces.map(\.splitOffsetS), [0, 1.5])
+        for piece in pieces { assertNoSourceClock(piece, "panel cut") }
+        XCTAssertEqual(pieces.first?.transitionAfter, "cut")
+    }
+
+    @MainActor
+    func testCuttingAPhotoOnThePlainTimelineKeepsInSZero() throws {
+        let photo = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 4, raw: Self.photoRaw)
+        let session = makeSession(EditorDocument(clips: [photo], capabilities: Self.editable))
+        try select(session, photo)
+        session.currentTime = 1.5
+        session.splitSelectedClip()
+
+        XCTAssertEqual(session.document.clips.map(\.durationS), [1.5, 2.5])
+        for piece in session.document.clips { assertNoSourceClock(piece, "timeline cut") }
+    }
+
+    @MainActor
+    func testFullScreenFromPlayheadOnAPhotoKeepsInSZero() throws {
+        let top = member(0, offset: 0, duration: 6)
+        let photo = member(1, offset: 0, duration: 5, clipIndex: 1, raw: Self.photoRaw)
+        let session = makeSession(document([top, photo], sections: [.init(id: "s", durationS: 6, panelCount: 2)]))
+        try select(session, photo)
+        session.currentTime = 2.5
+        session.makeSplitFullScreen(sectionID: "s", side: .fromPlayhead)
+
+        let pieces = session.document.clips.filter { $0.clipIndex == 1 }
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces.map(\.durationS), [2.5, 3.5], "The cut and the gap fill are the same as before")
+        for piece in pieces { assertNoSourceClock(piece, "full screen cut") }
+    }
+
+    @MainActor
+    func testLeftTrimOfAPhotoShortensItFromTheLeftWithoutASourceOffset() throws {
+        let photo = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 4, raw: Self.photoRaw)
+        let after = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 1, inS: 0, durationS: 3, raw: ["source_duration_s": .number(30)])
+        let session = makeSession(EditorDocument(clips: [photo, after], capabilities: Self.editable))
+        XCTAssertTrue(session.beginTrim(clipID: try clipID(session, photo), edge: .leading))
+        session.updateTrim(by: 1.25)
+        session.endTrim()
+
+        XCTAssertEqual(slot(session, photo.id)?.durationS ?? 0, 2.75, accuracy: 1e-9, "The photo is shorter by the dragged amount")
+        assertNoSourceClock(slot(session, photo.id), "left trim")
+        XCTAssertEqual(session.timelineClips.map(\.start)[1], 2.75, accuracy: 1e-9, "The next clip ripples up")
+    }
+
+    @MainActor
+    func testLeftTrimOfAPhotoInAPanelMovesItsOffsetNotItsSource() throws {
+        let top = member(0, offset: 0, duration: 4)
+        let photo = member(1, offset: 0, duration: 4, clipIndex: 1, raw: Self.photoRaw)
+        let session = makeSession(document([top, photo], sections: [.init(id: "s", durationS: 4, panelCount: 2)]))
+        XCTAssertTrue(session.beginTrim(clipID: try clipID(session, photo), edge: .leading))
+        session.updateTrim(by: 1)
+        session.endTrim()
+
+        let trimmed = slot(session, photo.id)
+        XCTAssertEqual(trimmed?.durationS ?? 0, 3, accuracy: 1e-9)
+        XCTAssertEqual(trimmed?.splitOffsetS ?? 0, 1, accuracy: 1e-9)
+        assertNoSourceClock(trimmed, "panel left trim")
+    }
+
+    @MainActor
+    func testRightTrimOfAPhotoIsUnchanged() throws {
+        let photo = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 4, raw: Self.photoRaw)
+        let session = makeSession(EditorDocument(clips: [photo], capabilities: Self.editable))
+        XCTAssertTrue(session.beginTrim(clipID: try clipID(session, photo), edge: .trailing))
+        session.updateTrim(by: -1)
+        session.endTrim()
+        XCTAssertEqual(slot(session, photo.id)?.durationS ?? 0, 3, accuracy: 1e-9)
+        assertNoSourceClock(slot(session, photo.id), "right trim")
+    }
+
+    @MainActor
+    func testVideoCutAndLeftTrimStillShiftTheSourceWindow() throws {
+        let video = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 4, raw: ["source_duration_s": .number(30)])
+        let cut = makeSession(EditorDocument(clips: [video], capabilities: Self.editable))
+        try select(cut, video)
+        cut.currentTime = 1.5
+        cut.splitSelectedClip()
+        XCTAssertEqual(cut.document.clips.map(\.inS), [0, 1.5])
+        XCTAssertEqual(cut.document.clips.last?.raw["source_start_locked"], .bool(true))
+
+        let trimmed = makeSession(EditorDocument(clips: [video], capabilities: Self.editable))
+        XCTAssertTrue(trimmed.beginTrim(clipID: try clipID(trimmed, video), edge: .leading))
+        trimmed.updateTrim(by: 1)
+        trimmed.endTrim()
+        XCTAssertEqual(slot(trimmed, video.id)?.inS ?? 0, 1, accuracy: 1e-9)
+        XCTAssertEqual(slot(trimmed, video.id)?.raw["source_start_locked"], .bool(true))
+    }
+
+    @MainActor
+    func testSlidingThePhotoSourceDoesNothing() throws {
+        let photo = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 4,
+                                       raw: ["media_kind": .string("image"), "source_duration_s": .number(30)])
+        let original = EditorDocument(clips: [photo], capabilities: Self.editable)
+        let session = makeSession(original)
+        try select(session, photo)
+        session.slideSourceWindow(by: 0.5)
+        XCTAssertEqual(session.document, original)
+        XCTAssertFalse(session.canUndo)
+    }
+
+    @MainActor
+    func testTheRecipeCompileAcceptsACutAndTrimmedPhoto() throws {
+        let png = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("kri1440-\(UUID().uuidString).png")
+        try png.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "photo",
+            asset: MediaAsset(id: "photo", relativePath: "photo.png", fingerprint: .init(hex: String(repeating: "b", count: 64), byteCount: 100), duration: nil),
+            url: url)
+        let photo = EditorTimelineSlot(id: UUID().uuidString, clipIndex: 0, inS: 0, durationS: 6, raw: Self.photoRaw)
+        let session = makeSession(EditorDocument(clips: [photo], capabilities: Self.editable))
+        session.setResolvedSourcesForTesting([0: source])
+        try select(session, photo)
+        session.currentTime = 2
+        session.splitSelectedClip()
+        let right = try XCTUnwrap(session.document.clips.last)
+        XCTAssertTrue(session.beginTrim(clipID: try clipID(session, right), edge: .leading))
+        session.updateTrim(by: 1)
+        session.endTrim()
+
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: session.document, clips: session.timelineClips, items: [], sources: [0: source]).recipe
+        XCTAssertNoThrow(try recipe.validate())
+        XCTAssertEqual(recipe.tracks.flatMap(\.clips).map(\.sourceStart), [0, 0], "A photo clip never starts partway into a source")
+        XCTAssertEqual(TimelineMath.totalDuration(of: recipe), 5, accuracy: 0.001)
+    }
+
     // MARK: Full screen and the real end of the footage
 
     @MainActor

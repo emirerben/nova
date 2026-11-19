@@ -91,7 +91,7 @@ final class KriaSourceWindowPlayer: ObservableObject {
     func show(start: Double, end: Double, rate: Double, scrubbing: Bool) {
         self.start = start
         self.end = max(end, start + 0.05)
-        self.rate = Float(min(max(rate, 0.25), 4))
+        self.rate = Float(min(max(rate, EditorLimits.playbackRate.lowerBound), EditorLimits.playbackRate.upperBound))
         seek(to: start, precise: !scrubbing)
         player.playImmediately(atRate: self.rate)
     }
@@ -164,11 +164,11 @@ struct KriaSourceWindowStrip: View {
                         onChange(KriaSourceWindowGeometry.slid(window, by: step, rate: rate, sourceDuration: sourceDuration), true)
                     }
                 handle(systemImage: "chevron.compact.left", x: span.x - handleWidth + 14, id: "kria-source-window-leading",
-                       label: "Window start", perPoint: perPoint) { base, delta in
+                       label: String(localized: "Window start"), perPoint: perPoint) { base, delta in
                     KriaSourceWindowGeometry.resizedLeading(base, by: delta, rate: rate)
                 }
                 handle(systemImage: "chevron.compact.right", x: span.x + span.width - 14, id: "kria-source-window-trailing",
-                       label: "Window end", perPoint: perPoint) { base, delta in
+                       label: String(localized: "Window end"), perPoint: perPoint) { base, delta in
                     KriaSourceWindowGeometry.resizedTrailing(base, by: delta, rate: rate, sourceDuration: sourceDuration)
                 }
             }
@@ -357,7 +357,7 @@ struct NativeSourceWindowSheet: View {
     private var unavailable: some View {
         VStack(spacing: 8) {
             Image(systemName: "film").font(.system(size: 28)).foregroundStyle(KriaColor.zinc)
-            Text(session.sourceWindowBlockedReason(for: selection) ?? "Couldn’t load this clip to choose its range.")
+            Text(session.sourceWindowBlockedReason(for: selection) ?? String(localized: "Couldn’t load this clip to choose its range."))
                 .font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

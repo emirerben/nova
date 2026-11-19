@@ -11,6 +11,8 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 
+pytestmark = pytest.mark.journey("kri-586-hook-copy")
+
 
 def _manifest() -> ResolvedCreatorManifest:
     available = CapabilityAvailability(available=True)
@@ -599,7 +601,11 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         + main_creator_module.load_skill("meaningful-moment")
         + "\n\n"
     )
-    assert actual == skills + expected
+    # The chat-language line (model-owned reply language) follows the unchanged prompt.
+    from app.kria.reply_language import conversation_language_line
+
+    line = conversation_language_line(agent_input.reply_language)
+    assert actual == (skills + expected).rstrip("\n") + f"\n\n{line}\n"
 
 
 def test_reaction_beats_prompt_section_present_when_capability_available() -> None:

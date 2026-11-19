@@ -197,3 +197,114 @@ def test_the_default_minimum_is_unchanged(tmp_path):
     a, _ = tpc.apply_tight_pauses(plan, path, words, dur)
     b, _ = tpc.apply_tight_pauses(plan, path, words, dur, min_cut_s=tpc.TIGHT_MIN_CUT_S)
     assert a.removed == b.removed and a.keep_segments == b.keep_segments
+
+
+# --- KRI-1409: a faint room hum at a take's edge must not hold the join open ---
+#
+# ylab job 1f2de191 (5 takes, "cut all my pauses"): the join after take 4 kept 1.5 s. Replayed on
+# the real takes: the voice guard called a periodic room hum about 5 dB over the take's floor
+# (-64 dBFS, speech at -15 dBFS) "voice" in the silence after the last word and before the first,
+# trimmed both edge cuts back, and the short-fragment rule then dropped them whole.
+# Failure modes written down BEFORE the code:
+# 1. A hum just above the room floor in a take's edge silence still blocks the join trim.
+# 2. The edge relief leaks into a pause between two words: the same hum there must still be
+#    judged by the guard as before (kept, never cut through).
+# 3. A voiced sound clearly above the room (15 dB or more, a soft trailing word or "mm") at the
+#    edge is cut.
+# 4. Without the edge flags the plan changes (one take, flag off stays byte-identical).
+
+
+def _hum_take(tmp_path: Path, parts: list[tuple], name: str) -> tuple[str, list[dict], float]:
+    """Like ``_take`` plus ("hum", s, amp): the room floor with a steady 120 Hz hum on top."""
+    rng = np.random.default_rng(23)
+    pieces: list[np.ndarray] = []
+    words: list[dict] = []
+    t = 0.0
+    for part in parts:
+        kind, dur = part[0], part[1]
+        n = int(dur * SR)
+        if kind == "word":
+            words.append({"text": f"w{len(words)}", "start_s": t, "end_s": t + dur})
+            pieces.append(_word_tone(dur))
+        elif kind == "hum":
+            hum = part[2] * np.sin(2 * np.pi * 120 * np.arange(n) / SR)
+            pieces.append(_floor(n, rng) + hum)
+        else:
+            pieces.append(_floor(n, rng))
+        t += dur
+    samples = np.concatenate(pieces).astype(np.float32)
+    path = tmp_path / name
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes((np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes())
+    return str(path), words, len(samples) / SR
+
+
+ROOM_HUM = 9e-4  # about -64 dBFS: ~6 dB over the -70 dBFS room floor, as in the ylab takes
+CLEAR_SOUND = 4e-3  # about -51 dBFS: ~19 dB over the room, a sound a viewer hears
+
+
+def _edges(tmp_path, parts, name):
+    path, words, dur = _hum_take(tmp_path, parts, name)
+    plan = consented(path, words, dur)
+    out, report = tpc.apply_tight_pauses(
+        plan, path, words, dur, trim_head=True, trim_tail=True, min_cut_s=SHORT_CUT
+    )
+    return plan, out, report, words
+
+
+def test_room_hum_at_both_join_edges_does_not_hold_the_join_open(tmp_path):
+    parts = [
+        ("floor", 0.2),
+        ("hum", 0.5, ROOM_HUM),
+        ("floor", 0.4),
+        ("word", 0.4),
+        ("floor", 0.3),
+        ("word", 0.4),
+        ("floor", 0.5),
+        ("hum", 0.5, ROOM_HUM),
+        ("floor", 0.4),
+    ]
+    _plan, out, report, words = _edges(tmp_path, parts, "hum_edges.wav")
+    assert report.status == "applied"
+    lead = words[0]["start_s"] - out.keep_segments[0][0]
+    tail = out.keep_segments[-1][1] - words[-1]["end_s"]
+    assert lead == pytest.approx(sc.PAD_S, abs=0.03)
+    assert tail == pytest.approx(sc.PAD_S, abs=0.03)
+    for w in words:
+        assert any(a <= w["start_s"] and w["end_s"] <= b for a, b in out.keep_segments)
+
+
+def test_room_hum_between_two_words_is_still_guarded(tmp_path):
+    hum_lo = 0.6 + 0.4 + 0.4
+    parts = [
+        ("floor", 0.6),
+        ("word", 0.4),
+        ("floor", 0.4),
+        ("hum", 0.5, ROOM_HUM),
+        ("floor", 0.4),
+        ("word", 0.4),
+        ("floor", 0.6),
+    ]
+    _plan, out, report, _words = _edges(tmp_path, parts, "hum_inside.wav")
+    assert report.guard_dropped + report.guard_trimmed > 0
+    # The guard still hears the hum inside the talk: the cut never runs through it.
+    hum_mid = hum_lo + 0.25
+    assert any(a <= hum_mid <= b for a, b in out.keep_segments)
+
+
+def test_a_clear_sound_after_the_last_word_is_kept_at_the_join(tmp_path):
+    sound_lo = 0.6 + 0.4 + 0.3 + 0.4 + 0.35
+    parts = [
+        ("floor", 0.6),
+        ("word", 0.4),
+        ("floor", 0.3),
+        ("word", 0.4),
+        ("floor", 0.35),
+        ("hum", 0.2, CLEAR_SOUND),
+        ("floor", 0.8),
+    ]
+    _plan, out, _report, _words = _edges(tmp_path, parts, "clear_tail.wav")
+    assert out.keep_segments[-1][1] >= sound_lo + 0.2 - 0.005

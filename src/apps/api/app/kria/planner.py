@@ -66,8 +66,8 @@ from app.agents.main_creator import (
     MainCreatorOutput,
 )
 from app.config import settings
-from app.kria import ask_refusals, voiceover_script
-from app.kria.ask_refusals import stale_capability_refusal
+from app.kria import ask_refusals, pending_visuals, voiceover_script
+from app.kria.ask_refusals import is_refusal_code, stale_capability_refusal
 from app.kria.brief import (
     BriefCoverageError,
     BriefUpdate,
@@ -92,6 +92,7 @@ from app.kria.brief_checks import (
     _fact_flag,
     _wants_whole_take,
     ask_text,
+    brief_asks_no_captions,
     spoken_text_literals,
     whole_line_quotes,
 )
@@ -133,7 +134,7 @@ from app.kria.order_replacement import OrderReplacementProof
 from app.kria.paid_call_scope import paid_call_request_id
 from app.kria.removed_messages import is_removed, removed_turn_ids
 from app.kria.reply_language import (
-    asks_for_video_words,
+    adopt_conversation_language,
     current_reply_language,
     is_client_stock_message,
     say,
@@ -146,6 +147,23 @@ from app.kria.strategy_policy import (
     transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
+from app.kria.turn_outcome import (
+    ANALYSIS_PENDING,
+    CHANGE_REQUEST_SELECTED,
+    EDITOR_COPILOT_PREFIX,
+    EDITOR_TARGET_PREFIX,
+    FAILED_CORRECTION,
+    MEDIA_CHANGED_DURING_PLANNING,
+    REQUEST_TOO_LONG,
+    SPEECH_CUT_NEEDS_SAVE,
+    UNRESOLVED_CHOICE,
+    UNRESOLVED_REQUIREMENT,
+    VOICEOVER_SCRIPT_UNAVAILABLE,
+    outcome_diagnostics,
+    reason_code_slug,
+    refusal_diagnostics,
+    stamp_outcome,
+)
 from app.kria.voiceover_clips import keep_every_voiceover_clip
 from app.models import (
     ContentPlan,
@@ -217,6 +235,7 @@ from app.services.clip_intent_planning import (
     sequence_text_literals,
     shot_captions_safe,
     whole_video_text_asks,
+    withdrawn_clip_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_order_sequence import stated_anchors
@@ -232,6 +251,7 @@ from app.services.creative_copy_decisions import (
     fold_creative_copy,
     localize_question,
     media_digest,
+    positional_labels_grounded,
     question_message,
     wording_question,
 )
@@ -806,10 +826,11 @@ def _moment_count_notice(
     else:
         return None
     return say(
-        en="I could fit {planned} {v1}, not {count}.",
+        en="I could fit {planned} moment, not {count}."
+        if planned == 1
+        else "I could fit {planned} moments, not {count}.",
         tr="{count} değil, {planned} an sığdırabildim.",
         planned=planned,
-        v1="moment" if planned == 1 else "moments",
         count=count,
     )
 
@@ -1121,6 +1142,10 @@ class PlannedKriaTurn:
     # the stored action ran as built, and the digest of the editor state it compiles against,
     # which the draft commit re-checks inside the row lock. None for every other turn.
     suggestion_pin: dict | None = field(default=None, compare=False, repr=False)
+    # The language the model that read the creator's message says they write in (Main Creator
+    # or brief extractor `conversation_language`); None when no model ran or it could not tell.
+    # The worker rebinds the turn's copy to it and stores it with the completed turn.
+    conversation_language: str | None = None
 
 
 async def _withdraw_stuck_pins(
@@ -1331,6 +1356,12 @@ def adapt_creator_action(
     creator answered), so whatever a model-authored strategy carried is discarded here.
     ``server_song_captions`` (KRI-578) is the same for the lyric-caption decision."""
     if isinstance(action, AskUser):
+        # KRI-1382: the model refuses through ask_user too; an ordinary question stays unstamped.
+        diagnostics = (
+            refusal_diagnostics(reason_code_slug(action.reason_code))
+            if is_refusal_code(action.reason_code)
+            else None
+        )
         if settings.kria_choice_questions_enabled:
             # KRI-476: the agent's own options become tappable (and stay listed in the
             # text for clients without the card). No/one option keeps the text question.
@@ -1341,16 +1372,19 @@ def adapt_creator_action(
                     turn_value="question",
                     response=asked[0],
                     choice_question=asked[1],
+                    diagnostics=diagnostics,
                 )
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
             response=action.question,
-            asks_video_text=asks_for_video_words(action.reason_code),
+            diagnostics=diagnostics,
         )
     if isinstance(action, DraftVoiceoverScript):
         # KRI-815: planned by `_plan_voiceover_script`; never a strategy or a draft.
-        return voiceover_script.record_first_plan()
+        return stamp_outcome(
+            voiceover_script.record_first_plan(), "blocked", VOICEOVER_SCRIPT_UNAVAILABLE
+        )
     if isinstance(action, ReviewDecision):
         return KriaTurnPlan(
             mode="respond",
@@ -2130,7 +2164,16 @@ def adapt_editor_action(
 ) -> KriaTurnPlan:
     """Draft edits are reversible; rendering is a distinct, policy-gated action."""
     if not ops:
-        return KriaTurnPlan(mode="respond", turn_value="question", response=reply)
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=reply,
+            **(
+                {"diagnostics": refusal_diagnostics("editor_request_unmet")}
+                if unmet_requests
+                else {}
+            ),
+        )
     # "Change all fonts" arrives as one op per bar; merge identical per-bar style
     # patches so a many-bar edit fits the MAX_EDITOR_OPS tool bound instead of failing
     # the whole turn (KRI-203).
@@ -2139,6 +2182,7 @@ def adapt_editor_action(
         return KriaTurnPlan(
             mode="respond",
             turn_value="recovery",
+            diagnostics=outcome_diagnostics("recovery", "editor_too_many_ops"),
             response=say(
                 en=(
                     "That is more changes than I can apply in one go, so I left the video "
@@ -2521,6 +2565,12 @@ async def _last_ready_render(
 # placing (`excluded_anchors`), so `_plan_live_turn` takes them off the brief.
 turn_excluded_anchors: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
     "kria_turn_excluded_anchors", default=None
+)
+# KRI-1470: the pending Visuals this turn goes on without (their media ids, the sentence
+# naming them), set by `_plan_live_turn`'s analysis gate. Their clip matching skips them; the
+# manifest keeps them. None = nothing left out.
+turn_left_out_visuals: contextvars.ContextVar[tuple[frozenset[str], str] | None] = (
+    contextvars.ContextVar("kria_turn_left_out_visuals", default=None)
 )
 # Why the last `_load_editor_target` in this task returned None (None = it did not miss).
 _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -2942,6 +2992,7 @@ async def _plan_editor_revision(
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
+            diagnostics=refusal_diagnostics("editor_request_unavailable"),
             response=say(
                 en=(
                     "Your saved request is too large or unavailable for this editor step. "
@@ -2989,6 +3040,7 @@ async def _plan_editor_revision(
             mode="respond",
             turn_value="recovery",
             response=localized_editor_state_reply(SPEECH_CUT_NEEDS_SAVE_REPLY),
+            diagnostics=outcome_diagnostics("recovery", SPEECH_CUT_NEEDS_SAVE),
         )
     if target.recovery_basis is not None:
         draft_plan = adapt_editor_action(
@@ -3001,6 +3053,7 @@ async def _plan_editor_revision(
                 mode="respond",
                 turn_value="recovery",
                 response=_failed_correction_alternative(),
+                diagnostics=outcome_diagnostics("recovery", FAILED_CORRECTION),
             )
         if response.ops:
             plan = adapt_editor_action(
@@ -3051,6 +3104,13 @@ async def _plan_editor_revision(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
             response=reply,
+            diagnostics=(
+                None
+                if response.outcome == "clarification"
+                else outcome_diagnostics(
+                    "refused", f"{EDITOR_COPILOT_PREFIX}{reason_code_slug(response.outcome)}"
+                )
+            ),
             # KRI-738: tappable lengths, only on a question and only those the reply states.
             reply_options=(
                 [
@@ -3202,6 +3262,7 @@ async def _load_creator_inputs(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="recovery",
+                    diagnostics=outcome_diagnostics("recovery", REQUEST_TOO_LONG),
                     response=say(
                         en=(
                             "Your edit instructions are too long for me to match safely. "
@@ -3219,10 +3280,14 @@ async def _load_creator_inputs(
             )
         # Capture DB-backed clip identity before releasing the transaction for
         # the external planner/resolver calls below.
-        intent_clips = await load_intent_clips_for_item(db, item, persona)
+        intent_clips = _without_left_out_visuals(
+            await load_intent_clips_for_item(db, item, persona)
+        )
     raw_creator_request: str | None = None
     if settings.clip_intents_enabled and brief_on:
-        intent_clips = await load_intent_clips_for_item(db, item, persona)
+        intent_clips = _without_left_out_visuals(
+            await load_intent_clips_for_item(db, item, persona)
+        )
         # Over the bound is not an error here: the brief still carries the ask.
         raw_creator_request = await _load_raw_creator_request(
             db, thread_id=thread_id, user_message=user_message
@@ -3355,7 +3420,10 @@ async def _call_main_creator(
     item_id: uuid.UUID | None = None,
     creator_agent_session_id: uuid.UUID | None = None,
 ) -> MainCreatorOutput:
-    from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+    from app.services.thought_summaries import (  # noqa: PLC0415
+        current_thought_publisher,
+        publish_step,
+    )
 
     request_id = paid_call_request_id(thread_id)
 
@@ -3379,8 +3447,11 @@ async def _call_main_creator(
         )
 
     async def _call() -> MainCreatorOutput:
+        publish_step("Planning your edit from your clips")
         try:
-            return await asyncio.to_thread(_run_agent)
+            plan = await asyncio.to_thread(_run_agent)
+            publish_step("Checking the plan against your request")
+            return plan
         except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
             # Provider work may still be billable, or a spend cap answers the same on every
             # retry. Never disguise either as a recoverable planning failure ("try again"):
@@ -3465,6 +3536,8 @@ async def _call_brief_extractor(
         insert_clips_open=_insert_clips_open(inputs),
         # KRI-1360: the same "Change my request" marker the Main Creator input carries.
         changes_request=getattr(inputs.agent_input, "changes_request", False),
+        # Context for the model's `conversation_language`; never an order.
+        reply_language=current_reply_language(),
     )
 
     def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -3521,6 +3594,13 @@ async def _call_brief_extractor(
     )
 
 
+def _adopt_read_language(output: object) -> None:
+    """The model that read the creator's message reported their language: every later reply,
+    server copy and agent this turn runs (clip intents, readiness, receipts, the copilot) follows
+    it. A stand-in output without the field, or None, keeps the stored language."""
+    adopt_conversation_language(getattr(output, "conversation_language", None))
+
+
 def _extraction_request_scope(
     outputs: Sequence[BriefExtractionOutput],
 ) -> tuple[str, str | None]:
@@ -3564,6 +3644,14 @@ def _clip_understanding_wait_until() -> float:
     return until
 
 
+def _without_left_out_visuals(clips: list[IntentClip]) -> list[IntentClip]:
+    """KRI-1470: this turn's clips minus the pending Visuals it goes on without."""
+    left_out = turn_left_out_visuals.get()
+    if not left_out:
+        return clips
+    return [clip for clip in clips if clip.media_id not in left_out[0]]
+
+
 async def _reload_intent_clips(
     db: AsyncSession, *, item_id: uuid.UUID, creator_id: uuid.UUID
 ) -> list[IntentClip]:
@@ -3582,7 +3670,7 @@ async def _reload_intent_clips(
         )
         if item is None or persona is None or persona.user_id != creator_id:
             return []
-        return await load_intent_clips_for_item(db, item, persona)
+        return _without_left_out_visuals(await load_intent_clips_for_item(db, item, persona))
     finally:
         await db.rollback()
 
@@ -3711,12 +3799,14 @@ async def _plan_from_creator_output(
         )
     if replaced is not None:
         output = replaced
+        _adopt_read_language(replaced)
         if stale_capability_refusal(output.action, manifest, effective_brief) is not None:
             return PlannedKriaTurn(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="question",
                     response=ask_refusals.unmet_reply(),
+                    diagnostics=refusal_diagnostics("stale_capability_refusal"),
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
@@ -3907,7 +3997,12 @@ async def _plan_voiceover_script(
     voiceover_attached = bool(item.voiceover_gcs_path)
     await db.rollback()
     if not voiceover_script.available(manifest, voiceover_attached=voiceover_attached):
-        return PlannedKriaTurn(plan=voiceover_script.record_first_plan(), **hashes)
+        return PlannedKriaTurn(
+            plan=stamp_outcome(
+                voiceover_script.record_first_plan(), "blocked", VOICEOVER_SCRIPT_UNAVAILABLE
+            ),
+            **hashes,
+        )
     prior = await voiceover_script.latest_script(db, thread_id)
     await db.rollback()
     if prior is not None and (
@@ -3918,7 +4013,12 @@ async def _plan_voiceover_script(
         )
     ):
         # A draft exists and nothing new was asked: keep it (never silently re-draft).
-        return PlannedKriaTurn(plan=voiceover_script.record_first_plan(), **hashes)
+        return PlannedKriaTurn(
+            plan=stamp_outcome(
+                voiceover_script.record_first_plan(), "blocked", VOICEOVER_SCRIPT_UNAVAILABLE
+            ),
+            **hashes,
+        )
     clips = list(inputs.intent_clips or []) or await _reload_intent_clips(
         db, item_id=item_id, creator_id=creator_id
     )
@@ -3938,6 +4038,7 @@ async def _plan_voiceover_script(
                 mode="respond",
                 turn_value="recovery",
                 response=_clips_still_checking_reply(len(pending)),
+                diagnostics=outcome_diagnostics("recovery", ANALYSIS_PENDING),
             ),
             continuable=True,
             continue_reason="clip_analysis_pending",
@@ -4088,6 +4189,71 @@ def _with_title_picture_beats(
     return strategy.model_copy(update={"reaction_beats": beats}) if added else None
 
 
+def _fold_words(text: str) -> str:
+    return " ".join(str(text).split()).casefold()
+
+
+def _with_brief_closing_title(
+    strategy: Any, brief: CreativeBrief | None, manifest: Any
+) -> Any | None:
+    """Qendresa Q1 run 4: the strategy with ``closing_title`` set to the brief's ending words,
+    or None when nothing is filled.
+
+    The Main Creator files 'End with "comment REPO"' as a text/global row whose ``closing``
+    fact is its literal, but may leave ``closing_title`` empty; readiness then holds the draft
+    ("That exact text isn't in this draft.") although the phone Talking lane draws that text.
+    Filled only from exactly one live such row (never a picture or clip ending, a colour
+    closing card or ``closing_media``), only when no title, pin or label already holds the
+    words, and only on a phone Talking edit whose closing-title lane is on. Runs before the
+    wording grounding, so the words still have to be the creator's own.
+    """
+    if (
+        not settings.brief_closing_title_fill_enabled
+        or brief is None
+        or strategy.closing_title
+        or strategy.closing_media is not None
+        or strategy.edit_format != "subtitled"
+    ):
+        return None
+    from app.agents._schemas.creator_policy import CAPABILITY_PHONE_SOURCE_AUDIO  # noqa: PLC0415
+    from app.kria.brief_checks import _contains_text as brief_checks_contains_text  # noqa: PLC0415
+    from app.kria.brief_checks import _fold as brief_checks_fold  # noqa: PLC0415
+    from app.pipeline.phone_talking_closing_card import asks_closing_card  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_closing_title_supported,
+    )
+
+    phone = getattr(manifest, "capabilities", {}).get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if phone is None or not phone.available or not phone_subtitled_closing_title_supported():
+        return None
+    endings = [req for req in brief.live() if req.facts.get("closing")]
+    if len(endings) != 1:
+        return None
+    (req,) = endings
+    literal = (req.literal or "").strip()
+    closing = req.facts.get("closing")
+    if (
+        req.kind != "text"
+        or req.scope != "global"
+        or not literal
+        or not isinstance(closing, str)
+        or _fold_words(closing) != _fold_words(literal)
+        or asks_closing_card(req)
+    ):
+        return None
+    # The same whole-words test readiness uses to find a text in the draft: a title, label or
+    # pin that already holds her words answers the ask, so the ending is never drawn twice.
+    wanted = brief_checks_fold(literal)
+    planned = [
+        strategy.opening_title,
+        *(strategy.shot_labels or ()),
+        *(pin.text for pin in strategy.pinned_texts or ()),
+    ]
+    if any(text and brief_checks_contains_text(text, wanted) for text in planned):
+        return None
+    return strategy.model_copy(update={"closing_title": literal})
+
+
 def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -> PlannedKriaTurn:
     """KRI-802: ask a held title-wording question in the same reply as a clip picker.
 
@@ -4216,7 +4382,23 @@ _TR_HOLD_WORDS = {
     "dokuz": 9.0,
     "on": 10.0,
 }
-_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS}
+# German (KRI-1453), with and without umlauts ("fünf"/"funf"). It shares the Turkish
+# words' pattern below, so each stays paired with a non-English seconds unit.
+_DE_HOLD_WORDS = {
+    "eine": 1.0,
+    "einer": 1.0,
+    "zwei": 2.0,
+    "drei": 3.0,
+    "vier": 4.0,
+    "fünf": 5.0,
+    "funf": 5.0,
+    "sechs": 6.0,
+    "sieben": 7.0,
+    "acht": 8.0,
+    "neun": 9.0,
+    "zehn": 10.0,
+}
+_HOLD_NUMBER_WORDS = {**_EN_HOLD_WORDS, **_TR_HOLD_WORDS, **_DE_HOLD_WORDS}
 
 
 def _words(table: dict[str, float]) -> str:
@@ -4239,8 +4421,8 @@ _HOLD_SECONDS = (
         r"(?:\s+|\s*-\s*)(?:secs?|seconds?)" + _TAIL_HALF
     ),
     re.compile(
-        rf"(?<![\w.:])(?P<num>{_words(_TR_HOLD_WORDS)})(?:\s+(?P<half>bu[çc]uk))?"
-        r"\s+(?:saniye\w*|sn)(?!\w)(?P<tail>)"
+        rf"(?<![\w.:])(?P<num>{_words({**_TR_HOLD_WORDS, **_DE_HOLD_WORDS})})"
+        r"(?:\s+(?P<half>bu[çc]uk))?\s+(?:saniye\w*|sn|sekunden?|sek)(?!\w)(?P<tail>)"
     ),
 )
 # Half-second phrases with no leading number.
@@ -4361,7 +4543,12 @@ async def _change_request_turn(db: AsyncSession, thread_id: uuid.UUID) -> Planne
     )
     log.info("kria_change_request_selected", thread_id=str(thread_id))
     return PlannedKriaTurn(
-        plan=KriaTurnPlan(mode="respond", turn_value="question", response=response),
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=response,
+            diagnostics=outcome_diagnostics("inert", CHANGE_REQUEST_SELECTED),
+        ),
         manifest_hash=None,
         context_hash=None,
     )
@@ -4444,6 +4631,8 @@ async def _plan_turn_clip_intents(
     brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
     # KRI-1111: the creator withdrew every ask for clip text Kria writes ("leave the names out").
     text_withdrawn = authored_text_withdrawn(effective_brief)
+    # KRI-1464: the clips the creator took out of the request ("... without the screen recordings").
+    withdrawn_asks = withdrawn_clip_asks(effective_brief)
     await _kick_clip_understanding(item_id, intent_clips)
     # KRI-1125: one photo is never silently the answer for two ordered beats, and a typed
     # correction newer than the tap that caused it sends the beat back to the resolver.
@@ -4492,6 +4681,7 @@ async def _plan_turn_clip_intents(
         **({"checked_inventory": checked_inventory} if checked_inventory else {}),
         **({"brief_anchors": brief_anchors} if brief_anchors else {}),
         **({"authored_text_asks_withdrawn": True} if text_withdrawn else {}),
+        **({"withdrawn_asks": withdrawn_asks} if withdrawn_asks else {}),
         # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
         # never a clip question; its receipt tells the creator.
         **(
@@ -4698,7 +4888,11 @@ async def _look_inside_clips_first(
             choice_question=asked[1] if asked is not None else None,
         )
     else:
-        plan = KriaTurnPlan(mode="respond", turn_value="question", response=unplaced_reply(clips))
+        plan = stamp_outcome(
+            KriaTurnPlan(mode="respond", turn_value="question", response=unplaced_reply(clips)),
+            "blocked",
+            "requested_shot_unplaced",
+        )
     return PlannedKriaTurn(
         plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
     )
@@ -4737,10 +4931,32 @@ async def _plan_creator_action(
                 if row.get("role") == "user"
             ],
         ]
+        if action.strategy.shot_labels and action.strategy.edit_format == "montage":
+            clip_literals = (
+                (
+                    req.literal
+                    for req in effective_brief.live()
+                    if req.kind == "text"
+                    and req.literal
+                    and (req.scope == "per_clip" or req.scope.startswith("clip:"))
+                )
+                if effective_brief is not None
+                else ()
+            )
+            if not positional_labels_grounded(
+                action.strategy.shot_labels, user_sources, clip_literals=clip_literals
+            ):
+                action = action.model_copy(
+                    update={"strategy": action.strategy.model_copy(update={"shot_labels": None})}
+                )
         titled = _with_title_picture_beats(action.strategy, effective_brief, manifest)
         if titled is not None:
             log.info("kria_title_picture_beat_added", thread_id=str(thread_id))
             action = action.model_copy(update={"strategy": titled})
+        ending = _with_brief_closing_title(action.strategy, effective_brief, manifest)
+        if ending is not None:
+            log.info("kria_brief_closing_title_filled", thread_id=str(thread_id))
+            action = action.model_copy(update={"strategy": ending})
         # KRI-1286: the drawn arrow already points at "comment WORD"; an arrow emoji the model
         # added to the words is not the creator's text, and would make her confirm words she
         # gave exactly (and show two arrows). Drop it when she asked for an arrow.
@@ -4959,6 +5175,15 @@ async def _plan_creator_action(
         # silently drops what it can't draw while the reply claims it.
         check_kwargs: dict[str, Any] = {
             "simplify_unsupported": True,
+            # KRI-1465: a plan that turns captions off when no live ask wants that keeps them
+            # with a notice, never a second "simpler version?" question. Omitted otherwise.
+            **(
+                {"creator_asked_no_captions": False}
+                if action.strategy.caption_style == "none"
+                and effective_brief is not None
+                and not brief_asks_no_captions(effective_brief)
+                else {}
+            ),
             # KRI-1365: on footage with no sound, a camera-audio strategy falls back to the
             # draft's sound (or music), unless the creator asked for the camera sound.
             **(
@@ -5033,22 +5258,17 @@ async def _plan_creator_action(
                 )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
-            return PlannedKriaTurn(
-                plan=KriaTurnPlan(
-                    mode="respond",
-                    turn_value="question",
-                    response=checked.question,
-                    # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
-                    # message that replans into the same refusal.
-                    choice_question=(
-                        simpler_version_question(checked.fields)
-                        if checked.code == SIMPLER_VERSION_REASON
-                        and settings.kria_choice_questions_enabled
-                        else None
-                    ),
+            return _refused_turn(
+                manifest,
+                checked,
+                # KRI-759: a "simpler version?" needs buttons, or a "yes" is only a new
+                # message that replans into the same refusal.
+                choice_question=(
+                    simpler_version_question(checked.fields)
+                    if checked.code == SIMPLER_VERSION_REASON
+                    and settings.kria_choice_questions_enabled
+                    else None
                 ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
             )
         song_caption_text = "\n".join(
             text
@@ -5067,13 +5287,7 @@ async def _plan_creator_action(
             )
             if need_song is not None:
                 log.info("kria_strategy_refused", thread_id=str(thread_id), code=need_song.code)
-                return PlannedKriaTurn(
-                    plan=KriaTurnPlan(
-                        mode="respond", turn_value="question", response=need_song.question
-                    ),
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
+                return _refused_turn(manifest, need_song)
         policy_notices = checked.notices
         for omitted_field in checked.omitted_fields:
             value = getattr(action.strategy, omitted_field)
@@ -5114,13 +5328,7 @@ async def _plan_creator_action(
             # lip-sync edit needs (no hero shape, no source-audio plan) apply.
             kept = check_strategy_for_runtime_v2(manifest, gate.strategy)
             if isinstance(kept, RefusedStrategy):
-                return PlannedKriaTurn(
-                    plan=KriaTurnPlan(
-                        mode="respond", turn_value="question", response=kept.question
-                    ),
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
+                return _refused_turn(manifest, kept)
             extra = [n for n in kept.notices if n not in policy_notices]
             action = action.model_copy(
                 update={
@@ -5765,6 +5973,9 @@ def _ordering_conflict_question(
         turn_value="question",
         response=choice_question_text(candidate),
         choice_question=build_choice_question(candidate),
+        diagnostics=outcome_diagnostics(
+            "blocked", f"{UNRESOLVED_CHOICE}:{CONFLICT_ORDER_VS_GROUP}"
+        ),
     )
 
 
@@ -5902,6 +6113,33 @@ def _request_recovery(
             "reason": reason,
             **({"cause": cause} if cause else {}),
         },
+    )
+
+
+def _refused_turn(
+    manifest: ResolvedCreatorManifest,
+    refused: RefusedStrategy,
+    *,
+    choice_question: Any = None,
+) -> PlannedKriaTurn:
+    """The reply for a strategy the server check refused, with its reason code recorded on the
+    turn (KRI-1382): a refusal completes as an ordinary assistant message, so without the code
+    the turn row says nothing about why nothing was made. The simpler-version question is a
+    choice offer the commit gate also records as `blocked`; both gates must agree."""
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=refused.question,
+            choice_question=choice_question,
+            diagnostics=(
+                outcome_diagnostics("blocked", refused.code)
+                if refused.code == SIMPLER_VERSION_REASON
+                else refusal_diagnostics(refused.code)
+            ),
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
     )
 
 
@@ -6133,11 +6371,13 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
     """An editor-eligible ask on a rendered item whose editor target could not be
     loaded must not silently become a re-plan that replaces the draft with a render."""
     miss = _editor_target_miss.get()
+    target_code = f"{EDITOR_TARGET_PREFIX}{reason_code_slug(miss or 'unavailable')}"
     if miss in {"failed_draft_unavailable", "render_outcome_unknown"}:
         return PlannedKriaTurn(
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
+                diagnostics=outcome_diagnostics("recovery", target_code),
                 response=(
                     say(
                         en=(
@@ -6174,6 +6414,7 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
         plan=KriaTurnPlan(
             mode="respond",
             turn_value="recovery",
+            diagnostics=outcome_diagnostics("recovery", target_code),
             response=(
                 say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR)
                 if miss == "render_in_flight"
@@ -6216,6 +6457,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
+                diagnostics=outcome_diagnostics("recovery", MEDIA_CHANGED_DURING_PLANNING),
                 response=say(
                     en=(
                         "Your clips changed while I was planning. Your draft is unchanged; "
@@ -6366,7 +6608,12 @@ async def _gate_unresolved_choices(
     if clarification is not None:
         return replace(
             planned,
-            plan=KriaTurnPlan(mode="respond", turn_value="question", response=clarification),
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=clarification,
+                diagnostics=outcome_diagnostics("blocked", UNRESOLVED_REQUIREMENT),
+            ),
         )
     if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
         return planned
@@ -6508,7 +6755,12 @@ async def _gate_unresolved_choices(
     if moments.recovery is not None:
         return replace(
             planned,
-            plan=KriaTurnPlan(mode="respond", turn_value="question", response=moments.recovery),
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=moments.recovery,
+                diagnostics=refusal_diagnostics("moment_order_unsupported"),
+            ),
         )
     if moments.question is not None:
         from app.services.named_moments import question_text  # noqa: PLC0415
@@ -6550,6 +6802,7 @@ async def _gate_unresolved_choices(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="question",
+                    diagnostics=outcome_diagnostics("blocked", "editorial_text_capacity"),
                     response=say(
                         en=(
                             "The planned explanations need more reading time than this edit "
@@ -6664,6 +6917,7 @@ async def _gate_unresolved_choices(
                 mode="respond",
                 turn_value="progress",
                 response=waiting,
+                diagnostics=outcome_diagnostics("recovery", "length_inputs_waiting"),
             ),
         )
     if not resolution.answers and not none_answers.answers:
@@ -7555,6 +7809,7 @@ async def _plan_live_turn(
     if changing is not None:
         return changing
     pending_analysis_ids: list[str] = []
+    turn_left_out_visuals.set(None)
     if settings.brief_binding_for(creator_id) and settings.kria_clip_understanding_enabled:
         from app.services.clip_intent_planning import wait_for_clip_understanding  # noqa: PLC0415
 
@@ -7571,6 +7826,22 @@ async def _plan_live_turn(
                 for clip in clips
                 if understanding_incomplete(clip.analysis, kind=clip.kind)
             ]
+            left_out = pending_visuals.visuals_to_go_without(clips, missing) if missing else None
+            if left_out is not None:
+                # KRI-1470: only Visuals are pending and this is the turn's last run (the
+                # earlier runs gave them time to land). Plan without them, name each file.
+                turn_left_out_visuals.set(
+                    (
+                        frozenset(clip.media_id for clip in left_out),
+                        pending_visuals.left_out_notice(left_out),
+                    )
+                )
+                log.info(
+                    "kria_pending_visual_left_out",
+                    stage="main_creator",
+                    media_ids=[clip.media_id for clip in left_out],
+                )
+                missing = []
             if missing:
                 # Extract and persist this turn's requirements before pausing.
                 # Otherwise a later "continue" would replace a long original
@@ -7700,6 +7971,7 @@ async def _plan_live_turn(
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
+                diagnostics=outcome_diagnostics("blocked", "no_clips"),
                 response=say(
                     en=(
                         "Add at least one clip and I can shape the edit around what is "
@@ -7757,6 +8029,7 @@ async def _plan_live_turn(
                         prior_brief=prior_brief,
                     )
                 )
+                _adopt_read_language(extraction_outputs[-1])
                 if batch is not None:
                     pre_extracted_retrieved_ids.extend(batch.requirement_ids)
             semantic_request_scope, clarification = _extraction_request_scope(extraction_outputs)
@@ -7802,6 +8075,7 @@ async def _plan_live_turn(
                         mode="respond",
                         turn_value="recovery",
                         response=_clips_still_checking_reply(len(pending_analysis_ids)),
+                        diagnostics=outcome_diagnostics("recovery", ANALYSIS_PENDING),
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
@@ -7893,6 +8167,7 @@ async def _plan_live_turn(
                         mode="respond",
                         turn_value="recovery",
                         response=_failed_correction_alternative(),
+                        diagnostics=outcome_diagnostics("recovery", FAILED_CORRECTION),
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
@@ -8006,6 +8281,7 @@ async def _plan_live_turn(
                     creator_agent_session_id=creator_agent_session_id,
                 )
             )
+            _adopt_read_language(outputs[-1])
             if batch is not None:
                 retrieved_ids.extend(batch.requirement_ids)
         output = outputs[-1]
@@ -8099,6 +8375,9 @@ async def _plan_live_turn(
     updates, pin_notices = await _withdraw_stuck_pins(
         db, thread_id=thread_id, prior=prior_brief, updates=updates, user_message=user_message
     )
+    if (left_out := turn_left_out_visuals.get()) is not None:
+        # KRI-1470: said with the draft (and every reply that carries pin notices).
+        pin_notices = (left_out[1], *pin_notices)
     if answers_clip_question and updates:
         # KRI-966: a tapped length answer is the server's own option label, already applied by
         # the gate; the model's restatement of it is never the creator's length ask.
@@ -8392,6 +8671,7 @@ async def extract_deferred_brief(
             prior_brief=prior_brief,
         )
         extraction_outputs.append(output)
+        _adopt_read_language(output)
     scope, _clarification = _extraction_request_scope(extraction_outputs)
     if scope == "clarify":
         return (), None

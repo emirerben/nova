@@ -104,7 +104,7 @@ struct ReviewPlanDraft: Equatable, Sendable {
     /// The turn message. What the creator typed is sent verbatim; otherwise "Update: captions, music".
     var message: String {
         if !trimmedPrompt.isEmpty { return trimmedPrompt }
-        return "Update: " + scope.map { $0.label.lowercased() }.joined(separator: ", ")
+        return "Update: " + scope.map { $0.englishLabel.lowercased() }.joined(separator: ", ")
     }
 }
 
@@ -128,8 +128,8 @@ enum ReviewPlanError: Error, Equatable {
 
     var message: String {
         switch self {
-        case .declined(let text): text.isEmpty ? "Kria couldn’t make that change." : text
-        case .timedOut: "Kria is taking longer than usual to start the update. Check the chat and try again."
+        case .declined(let text): text.isEmpty ? String(localized: "Kria couldn’t make that change.") : text
+        case .timedOut: String(localized: "Kria is taking longer than usual to start the update. Check the chat and try again.")
         }
     }
 }

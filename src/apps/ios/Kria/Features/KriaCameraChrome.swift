@@ -52,7 +52,7 @@ struct KriaCaptureButton: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.4)
-        .accessibilityLabel(isRecording ? "Stop recording" : "Record")
+        .accessibilityLabel(isRecording ? String(localized: "Stop recording") : String(localized: "Record", comment: "Camera button: start filming"))
         .accessibilityIdentifier(isRecording ? "teleprompter-stop-recording" : "teleprompter-record")
     }
 }
@@ -61,7 +61,7 @@ struct KriaCaptureButton: View {
 /// is ink on white, which reads grey over a camera preview.
 struct KriaCameraCloseButton: View {
     var identifier = "teleprompter-close"
-    var label = "Close"
+    var label = String(localized: "Close")
     let action: () -> Void
 
     var body: some View {
@@ -118,7 +118,7 @@ struct KriaCameraCapsule: View {
             Button(action: action) { label }
                 .buttonStyle(.plain)
                 .accessibilityLabel(title)
-                .accessibilityValue(isSwitch ? (isOn ? "On" : "Off") : "")
+                .accessibilityValue(isSwitch ? (isOn ? String(localized: "On") : String(localized: "Off")) : "")
                 .accessibilityIdentifier(identifier ?? "camera-capsule")
         } else {
             label.accessibilityElement(children: .combine)
@@ -162,7 +162,7 @@ struct KriaCountdownDisc: View {
             Text("\(value)").kriaType(.display).foregroundStyle(Color.white)
                 .frame(width: 120, height: 120)
                 .kriaCameraGlass(Circle())
-                .accessibilityLabel("Recording in \(value)")
+                .accessibilityLabel(String(localized: "Recording in \(value)"))
             Button("Cancel", action: cancel)
                 .kriaType(.button).foregroundStyle(Color.white).frame(minWidth: 88, minHeight: 44)
                 .accessibilityIdentifier("teleprompter-cancel-countdown")
@@ -179,10 +179,10 @@ struct CameraAccessCard: View {
 
     private var title: String {
         switch kind {
-        case .cameraAccess: "Camera access is off"
-        case .microphoneAccess: "Microphone access is off"
-        case .restricted: "Camera access is restricted"
-        default: "The camera isn’t available"
+        case .cameraAccess: String(localized: "Camera access is off")
+        case .microphoneAccess: String(localized: "Microphone access is off")
+        case .restricted: String(localized: "Camera access is restricted")
+        default: String(localized: "The camera isn’t available")
         }
     }
     private var symbol: String { kind == .microphoneAccess ? "mic.slash" : "video.slash" }
@@ -246,18 +246,19 @@ struct TeleprompterScriptSheet: View {
     private var largeText: Bool { dynamicTypeSize.isAccessibilitySize }
 
     private static func spoken(_ seconds: Int) -> String {
-        seconds < 60 ? "\(seconds) \(seconds == 1 ? "second" : "seconds")"
-            : "\(seconds / 60) minute\(seconds / 60 == 1 ? "" : "s")" + (seconds % 60 == 0 ? "" : " \(seconds % 60) seconds")
+        let minutes = seconds / 60, rest = seconds % 60
+        if seconds < 60 { return String(localized: "\(seconds) seconds") }
+        return rest == 0 ? String(localized: "\(minutes) minutes") : String(localized: "\(minutes) minutes") + " " + String(localized: "\(rest) seconds")
     }
 
     private var caption: String {
         // An empty field shows the pace on a typical 90 word script, so the speed has a meaning before anything is typed.
         guard !trimmed.isEmpty else {
-            return "About \(Self.spoken(Int((90 * 60 / Double(script.wordsPerMinute)).rounded()))) at \(script.wordsPerMinute) words per minute"
+            return String(localized: "About \(Self.spoken(Int((90 * 60 / Double(script.wordsPerMinute)).rounded()))) at \(script.wordsPerMinute) words per minute")
         }
         let words = script.readingUnitCount
-        let base = "\(words) \(words == 1 ? "word" : "words"), about \(Self.spoken(Int(ceil(script.estimatedReadTime)))) at \(script.wordsPerMinute) words per minute."
-        return words > 90 ? base + " Scroll to read the rest." : base
+        let base = String(localized: "\(words) words, about \(Self.spoken(Int(ceil(script.estimatedReadTime)))) at \(script.wordsPerMinute) words per minute.")
+        return words > 90 ? String(localized: "\(base) Scroll to read the rest.") : base
     }
 
     var body: some View {
@@ -282,7 +283,7 @@ struct TeleprompterScriptSheet: View {
             let expand = Button {
                 detent = expanded ? .medium : .large
             } label: {
-                Label(expanded ? "Collapse" : "Expand",
+                Label(expanded ? String(localized: "Collapse") : String(localized: "Expand"),
                       systemImage: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
                     .labelStyle(.titleAndIcon)
             }
@@ -356,7 +357,7 @@ struct ReviewTakePlayer: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain).frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityLabel(isPlaying ? "Pause take" : "Play take")
+            .accessibilityLabel(isPlaying ? String(localized: "Pause take") : String(localized: "Play take"))
             .accessibilityIdentifier(isPlaying ? "review-pause" : "review-play")
             // The player can be narrow beside tall controls at accessibility sizes, so the times drop under the scrubber.
             Group {
@@ -419,7 +420,7 @@ struct ReviewTakePlayer: View {
         .accessibilityRepresentation {
             Slider(value: Binding(get: { elapsed }, set: { seek(to: $0) }), in: 0...max(duration, 1))
                 .accessibilityLabel("Playback position")
-                .accessibilityValue("\(DurationFormatter.clock(elapsed)) of \(DurationFormatter.clock(duration))")
+                .accessibilityValue(String(localized: "\(DurationFormatter.clock(elapsed)) of \(DurationFormatter.clock(duration))"))
                 .accessibilityIdentifier("review-scrubber")
         }
     }

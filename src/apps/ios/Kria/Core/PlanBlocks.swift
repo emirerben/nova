@@ -14,6 +14,20 @@ enum PlanSectionID: String, CaseIterable, Sendable {
 
     var label: String {
         switch self {
+        case .title: String(localized: "Title")
+        case .clips: String(localized: "Clips")
+        case .captions: String(localized: "Captions")
+        case .music: String(localized: "Music")
+        case .sfx: String(localized: "Sound effects")
+        case .overlays: String(localized: "Overlays")
+        case .look: String(localized: "Look", comment: "Plan section: the visual style of the video")
+        case .postCaption: String(localized: "Post caption")
+        }
+    }
+
+    /// English section name, for text sent to the server (never shown).
+    var englishLabel: String {
+        switch self {
         case .title: "Title"
         case .clips: "Clips"
         case .captions: "Captions"
@@ -80,9 +94,9 @@ struct PlanBlock: Equatable, Identifiable, Sendable {
 
     /// Skipped sections count as decided and read "Not used".
     var displaySummary: String {
-        if skipped { return "Not used" }
+        if skipped { return String(localized: "Not used") }
         if let summary, !summary.isEmpty { return summary }
-        return state == .decided ? "Decided" : ""
+        return state == .decided ? String(localized: "Decided") : ""
     }
 }
 

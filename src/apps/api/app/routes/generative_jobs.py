@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -120,7 +120,11 @@ from app.services.editor_deletions import (
     apply_editor_deletions,
     canonical_caption_rows,
 )
-from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
+from app.services.editor_limits import (
+    EDITOR_MAX_TIMELINE_SLOTS,
+    PLAYBACK_RATE_MAX,
+    PLAYBACK_RATE_MIN,
+)
 from app.services.generative_upload_paths import (
     DIRECT_VOICEOVER_PREFIX,
     LEGACY_DIRECT_CLIP_PREFIX,
@@ -1026,7 +1030,7 @@ class TimelineSlotEdit(BaseModel):
     # KRI-1136: the creator's tilt of this occurrence, ``{rotation_deg, backdrop}``. Omission
     # keeps the saved tilt, an explicit null (or an upright blank value) clears it.
     tilt: dict[str, Any] | None = None
-    playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
     # Explicit selected source edge for source-preserving speed edits. Omission
     # retains the legacy duration * rate window contract.
     source_end_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -1188,6 +1192,13 @@ class TimelineSlotOut(BaseModel):
     layout: Literal["fullscreen", "supporting_card"] | None = None
 
     model_config = {"extra": "allow"}
+
+    @field_validator("look_preset", mode="before")
+    @classmethod
+    def a_missing_look_is_no_look(cls, value: object) -> object:
+        # An edit saved before Save normalized a new placement's look holds null, and a saved
+        # edit is read back as its draft rows. A 500 here leaves the editor loading forever.
+        return "none" if value is None else value
 
 
 class NativeTimelineSourceOut(BaseModel):
@@ -1474,6 +1485,68 @@ class EditorCaptionAppearance(BaseModel):
         return value.upper() if value is not None else None
 
 
+class EditorCaptionTranslationLine(BaseModel):
+    """One translated line's own place and size (KRI-1501), keyed by cue id."""
+
+    model_config = {"extra": "forbid"}
+    size_px: int | None = Field(None, ge=24, le=120)
+    position_x_frac: float | None = Field(None, ge=0.05, le=0.95, allow_inf_nan=False)
+    position_y_frac: float | None = Field(None, ge=0.10, le=0.90, allow_inf_nan=False)
+
+
+class EditorCaptionTranslation(BaseModel):
+    """The translated caption track (KRI-1501, docs/pipelines/dual-captions.md).
+
+    Persisted as ``variant["caption_translation"]``; each cue's line is its
+    ``caption_cues[*].translation``. ``outcome`` / ``dropped_cue_ids`` are server-owned: the
+    editor sends them back unchanged or omits them.
+    """
+
+    model_config = {"extra": "forbid"}
+    enabled: bool = True
+    language: Literal["en", "de", "tr", "pt"]
+    source_language: str | None = Field(None, max_length=16)
+    size_px: int | None = Field(None, ge=24, le=120)
+    color: str | None = None
+    font: str | None = None
+    stroke_width: int | None = Field(None, ge=0, le=12)
+    position_x_frac: float | None = Field(None, ge=0.05, le=0.95, allow_inf_nan=False)
+    position_y_frac: float | None = Field(None, ge=0.10, le=0.90, allow_inf_nan=False)
+    line_overrides: dict[str, EditorCaptionTranslationLine] | None = Field(None, max_length=500)
+    outcome: Literal["translated", "partial", "unmet"] | None = None
+    dropped_cue_ids: list[Annotated[str, Field(max_length=160)]] | None = Field(
+        None, max_length=500
+    )
+
+    @field_validator("color")
+    @classmethod
+    def validate_translation_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        clean = value.strip()
+        if not _HEX_COLOR_RE.fullmatch(clean):
+            raise ValueError("Caption colors must be #RRGGBB hex colors.")
+        return clean.upper()
+
+    @field_validator("font")
+    @classmethod
+    def validate_translation_font(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from app.pipeline.narrated_assembler import is_valid_caption_font  # noqa: PLC0415
+
+        if not is_valid_caption_font(value):
+            raise ValueError("Unknown caption font.")
+        return value
+
+    @model_validator(mode="after")
+    def translation_differs_from_source(self) -> EditorCaptionTranslation:
+        source = (self.source_language or "").strip().casefold()
+        if source and source == self.language:
+            raise ValueError("The translated line must be in another language.")
+        return self
+
+
 class EditorCommitCaptionMeta(BaseModel):
     appearance: EditorCaptionAppearance | None = None
     enabled: bool | None = None
@@ -1489,6 +1562,8 @@ class EditorCommitCaptionMeta(BaseModel):
     # KRI-1007: the all-captions animation default. Rows with their own `animation_phases`
     # win. An explicit null clears the default; omitted keeps the stored one.
     animation_phases: TextAnimationPhases | None = None
+    # KRI-1501: the translated caption track. An explicit null removes it; omitted keeps it.
+    translation: EditorCaptionTranslation | None = None
 
     @field_validator("color", "highlight_color")
     @classmethod
@@ -3662,6 +3737,10 @@ class CaptionCue(BaseModel):
     # anything not listed here would be stripped on the first text edit). Read by
     # `caption_legibility.visible_cues` (phone compile + cloud burn) and the iPhone editor.
     hidden_spans: list[list[float]] | None = None
+    # KRI-1501: this line's translated subtitle (two-language captions), drawn for exactly the
+    # cue's time under the spoken line. Written by generation or the editor's translation
+    # switch and round-tripped like `hidden_spans` (the PATCH replaces the whole cue list).
+    translation: str | None = Field(default=None, max_length=300)
 
     @field_validator("hidden_spans")
     @classmethod
@@ -7869,6 +7948,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             capabilities["background_focus"] = {"editable": True}
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
+    if _caption_translation_capability(variant, capabilities):
+        # KRI-1501: present only when ON (same reason as `text_bend`).
+        from app.services.phone_rollout import DUAL_CAPTION_LANGUAGES  # noqa: PLC0415
+
+        capabilities["caption_translation"] = {"languages": sorted(DUAL_CAPTION_LANGUAGES)}
     if _clip_tilt_capability(job, variant, capabilities):
         # KRI-1136: present only when ON, like `text_bend`: every closed-gate payload keeps
         # its exact shape. PR C (the copilot) reads the same `clips.tilt` entry.
@@ -8015,6 +8099,27 @@ def _caption_animation_capability(variant: dict, capabilities: dict) -> bool:
         variant.get("render_destination") in {"device", "phone"}
         and (editable("caption_meta") or editable("caption_cues"))
         and caption_animation_supported(require_client=True)
+    )
+
+
+def _caption_translation_capability(variant: dict, capabilities: dict) -> bool:
+    """KRI-1501: may the app turn on the translated caption line
+    (``editor_capabilities.caption_translation``)? Device variants whose captions are editable
+    and that carry caption cues, for a build that passes `dual_captions_planned_for`."""
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.phone_rollout import dual_captions_planned_for  # noqa: PLC0415
+
+    def editable(key: str) -> bool:
+        value = capabilities.get(key)
+        return isinstance(value, dict) and value.get("editable") is True
+
+    cues = variant.get("caption_cues")
+    return bool(
+        variant.get("render_destination") in {"device", "phone"}
+        and (editable("caption_meta") or editable("caption_cues"))
+        and isinstance(cues, list)
+        and cues
+        and dual_captions_planned_for(current_client_protocol())
     )
 
 
@@ -11438,6 +11543,7 @@ def prepare_editor_commit(
             job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
         _require_caption_animation_client(job, variant, payload)
+        _require_caption_translation_gate(variant, payload)
         _require_clip_tilt_gates(job, variant, payload)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
@@ -11608,6 +11714,138 @@ def _tilt_media_asset(tilt: dict[str, Any] | None) -> str | None:
     if isinstance(backdrop, dict) and backdrop.get("kind") == "media":
         return str(backdrop["asset_id"])
     return None
+
+
+def _cue_translations(rows: object) -> dict[str, str]:
+    """``{cue id or position: translation}`` for every row carrying a non-empty translation."""
+    if not isinstance(rows, list):
+        return {}
+    out: dict[str, str] = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        text = row.get("translation")
+        if isinstance(text, str) and text.strip():
+            key = row.get("id") if isinstance(row.get("id"), str) else f"#{index}"
+            out[key] = " ".join(text.split())
+    return out
+
+
+def _translation_track(document: object) -> dict | None:
+    """The creator-owned part of a translated caption track, for comparing two of them."""
+    if not isinstance(document, dict):
+        return None
+    server_owned = {"outcome", "dropped_cue_ids", "reason", "requested"}
+    track = {
+        key: value
+        for key, value in document.items()
+        if key not in server_owned and value is not None and value != {}
+    }
+    if isinstance(track.get("line_overrides"), dict):
+        track["line_overrides"] = {
+            cue_id: {k: v for k, v in own.items() if v is not None}
+            for cue_id, own in track["line_overrides"].items()
+            if isinstance(own, dict)
+        }
+    if track.get("color") == "#F5D33C":
+        del track["color"]  # the default look, written out or not
+    return track
+
+
+def _require_caption_translation_gate(variant: dict, payload: EditorCommitRequest) -> None:
+    """KRI-1501: a Save that adds or changes a translated caption line needs the gate.
+
+    `phone_rollout.dual_captions_planned_for` for the request's app build: 426
+    ``client_update_required`` (feature ``caption_translation``) for a build below
+    ``dual_captions_min_client_protocol``, 422 ``caption_translation_disabled`` when the switch
+    is off or the device is not verified. An unchanged echo of what is stored is never refused,
+    and an older app build that would erase stored translated lines (it re-sends the cues
+    without them) is refused with the same 426 while the switch is on.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+    from app.services.phone_rollout import dual_captions_planned_for  # noqa: PLC0415
+
+    meta = payload.caption_meta
+    sends_track = meta is not None and "translation" in meta.model_fields_set
+    stored_track = _translation_track(variant.get("caption_translation"))
+    # Switching the line off (or removing the track) is never gated, so a creator can always
+    # take it off.
+    changes_track = sends_track and (
+        meta.translation is not None
+        and meta.translation.enabled
+        and _translation_track(meta.translation.model_dump(mode="json")) != stored_track
+    )
+    stored_lines = _cue_translations(variant.get("caption_cues"))
+    sent_lines = _cue_translations(payload.caption_cues)
+    changes_lines = payload.caption_cues is not None and any(
+        stored_lines.get(key) != text for key, text in sent_lines.items()
+    )
+    protocol = current_client_protocol()
+    if dual_captions_planned_for(protocol):
+        return
+    below = in_http_request() and (
+        protocol is None or protocol < settings.dual_captions_min_client_protocol
+    )
+    # With the switch off the compile ignores the track, so a Save without the lines is let
+    # through rather than refused for an older build.
+    drops = (
+        settings.dual_captions_enabled
+        and payload.caption_cues is not None
+        and bool(stored_lines)
+        and not sent_lines
+    )
+    if (changes_track or changes_lines or (drops and below)) and below:
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "caption_translation",
+                "minimum_client_protocol": settings.dual_captions_min_client_protocol,
+            },
+        )
+    if changes_track or changes_lines:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "caption_translation_disabled"},
+        )
+
+
+def _caption_translation_document(
+    variant: dict, translation: EditorCaptionTranslation, sent_cues: list[dict] | None = None
+) -> dict:
+    """The variant's ``caption_translation`` after a Save.
+
+    The stored ``outcome`` / ``dropped_cue_ids`` stay for the same language while the Save
+    leaves the translated lines as stored (a look change echoes whatever it read). A Save whose
+    cues carry other translated lines brings the route's fresh answer (the editor's switch, run
+    this session), so the client's ``outcome`` / ``dropped_cue_ids`` are taken."""
+    document = translation.model_dump(mode="json")
+    document["line_overrides"] = {
+        cue_id: {key: value for key, value in own.items() if value is not None}
+        for cue_id, own in (document.get("line_overrides") or {}).items()
+    }
+    stored = variant.get("caption_translation")
+    lines_changed = sent_cues is not None and _cue_translations(sent_cues) != _cue_translations(
+        variant.get("caption_cues")
+    )
+    if (
+        isinstance(stored, dict)
+        and stored.get("language") == document["language"]
+        and stored.get("outcome") in {"translated", "partial", "unmet"}
+        and not lines_changed
+    ):
+        document["outcome"] = stored["outcome"]
+        document["dropped_cue_ids"] = list(stored.get("dropped_cue_ids") or [])
+    else:
+        document["outcome"] = document.get("outcome") or "translated"
+        document["dropped_cue_ids"] = list(document.get("dropped_cue_ids") or [])
+    if not document.get("source_language"):
+        stored_source = stored.get("source_language") if isinstance(stored, dict) else None
+        document["source_language"] = stored_source or variant.get("caption_language") or None
+    return document
 
 
 def _require_caption_animation_client(
@@ -12726,6 +12964,13 @@ def _prepare_editor_commit(
             caption_meta_patch["caption_animation_phases"] = (
                 meta.animation_phases.model_dump() if meta.animation_phases is not None else None
             )
+        if "translation" in meta.model_fields_set:
+            # KRI-1501: the translated caption track (gated in `_require_caption_translation_gate`).
+            caption_meta_patch["caption_translation"] = (
+                _caption_translation_document(variant, meta.translation, validated_caption_cues)
+                if meta.translation is not None
+                else None
+            )
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None and not guided_v2:
@@ -13542,6 +13787,8 @@ def _prepare_editor_commit(
             updated.update(caption_meta_patch)
             if updated.get("caption_animation_phases", False) is None:
                 del updated["caption_animation_phases"]
+            if updated.get("caption_translation", False) is None:
+                del updated["caption_translation"]
         if resolved_slots is not None:
             updated["user_timeline"] = {"slots": resolved_slots}
             split_sections = (

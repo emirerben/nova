@@ -635,6 +635,26 @@ def text_bend_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+DUAL_CAPTION_LANGUAGES: frozenset[str] = frozenset({"en", "de", "tr", "pt"})
+
+
+def dual_captions_planned_for(client_protocol: int | None) -> bool:
+    """May a phone edit carry a translated caption line under the spoken one?
+
+    Read like `caption_shape_planned_for`: ``client_protocol`` is the app build the creator
+    acted from (``creator_client_protocol`` on the Job, or the editor request's header). True
+    iff the kill switch is on, ``dualCaptions`` is in ``phone_render_verified_features`` and that
+    build declares at least ``dual_captions_min_client_protocol``. Any gate off: captions are
+    exactly today's, and no translated line is planned, compiled or offered in the editor.
+    """
+    return bool(
+        settings.dual_captions_enabled
+        and "dualCaptions" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.dual_captions_min_client_protocol
+    )
+
+
 def caption_shape_planned_for(client_protocol: int | None) -> bool:
     """May a phone Talking render draw the caption shape the creator typed (Qendresa item 12)?
 

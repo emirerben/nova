@@ -18,7 +18,7 @@ export default function GlobalError({
     <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4" role="alert">
       <h1 className="text-xl font-semibold mb-2">This page couldn&apos;t load</h1>
       <p className="text-zinc-400 text-sm mb-6 text-center max-w-md">
-        Your saved videos are safe. Reload this page, or return to your videos.
+        Reload this page, or go back to the home page.
       </p>
       <div className="flex gap-3">
         <button
@@ -28,10 +28,10 @@ export default function GlobalError({
           Reload page
         </button>
         <a
-          href="/plan"
+          href="/"
           className="px-4 py-2 border border-zinc-700 rounded-lg text-sm text-zinc-300 hover:border-zinc-500 transition-colors"
         >
-          Go to My videos
+          Go to home
         </a>
       </div>
       {error.digest && (

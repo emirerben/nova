@@ -27,10 +27,10 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.kria.split_screen import SplitScreenSection, layout_split_timeline
+from app.services.editor_limits import EDITOR_MIN_CLIP_S, FRAME_S
 
 Side = Literal["from", "until"]
 SIDES: tuple[Side, ...] = ("from", "until")
-MIN_CLIP_S = 0.1
 # The playhead needs at least this much of the section on each side of it.
 MIN_SIDE_S = 0.5
 _EPS = 1e-6
@@ -134,7 +134,7 @@ def source_rate(row: dict[str, Any]) -> float:
     if explicit is not None and math.isfinite(explicit) and explicit > 0:
         return explicit
     length = _length(row)
-    moving = max(MIN_CLIP_S, length if length is not None else 0.0)
+    moving = max(EDITOR_MIN_CLIP_S, length if length is not None else 0.0)
     start = max(0.0, _num(row.get("in_s")) or 0.0)
     total = _stored_source_length(row)
     available = None if total is None else max(0.0, total - start)
@@ -145,7 +145,7 @@ def source_rate(row: dict[str, Any]) -> float:
     native = _num(row.get("native_source_span_s"))
     span = selected if selected is not None else native if native is not None else moving
     span = min(span, available if available is not None else math.inf)
-    derived = span / max(MIN_CLIP_S, length if length is not None else span)
+    derived = span / max(EDITOR_MIN_CLIP_S, length if length is not None else span)
     return derived if math.isfinite(derived) and derived > 0 else 1.0
 
 
@@ -199,7 +199,7 @@ class _Clock:
         )
         if result.end - result.start < _EPS and result.hold > 0 and self.frame is not None:
             result.end = self.frame
-            result.start = max(0.0, self.frame - 1.0 / 30)
+            result.start = max(0.0, self.frame - FRAME_S)
             result.rate = 1.0
             result.hold = max(0.0, upper - lower - result.moving)
         return result
@@ -219,14 +219,20 @@ class _Clock:
         return out
 
 
-def _piece(row: dict[str, Any], a: float, b: float, length: float, rate: float) -> dict[str, Any]:
-    """``piece(of:from:to:length:rate:)``: output seconds ``a``..``b`` of ``row`` on its own source
-    clock and at its own place in its panel."""
+def _piece(
+    row: dict[str, Any], a: float, b: float, length: float, rate: float, still: bool
+) -> dict[str, Any]:
+    """``piece(of:from:to:length:rate:still:)``: output seconds ``a``..``b`` of ``row`` on its own
+    source clock and at its own place in its panel. A photo has no source clock, so its part keeps
+    ``in_s`` and never locks a source start (KRI-1440)."""
     late, early = a > _EPS, b < length - _EPS
     if not (late or early):
         return copy.deepcopy(row)
     if _num(row.get("freeze_frame_s")) is not None:
         piece = _Clock.of(row).sliced(a, b).applied(row)
+    elif still:
+        piece = copy.deepcopy(row)
+        piece["duration_s"] = b - a
     else:
         piece = copy.deepcopy(row)
         in_s = _num(row.get("in_s")) or 0.0
@@ -235,7 +241,7 @@ def _piece(row: dict[str, Any], a: float, b: float, length: float, rate: float) 
         if early and _present(row, "source_end_s"):
             piece["source_end_s"] = in_s + b * rate
     piece["duration_beats"] = None
-    if late:
+    if late and not still:
         piece["source_start_locked"] = True
     if early:
         _set_cut(piece)
@@ -303,7 +309,7 @@ def split_valid(rows: list[dict[str, Any]], sections: list[dict[str, Any]]) -> b
             or offset < 0
             or length is None
             or not math.isfinite(length)
-            or length < MIN_CLIP_S
+            or length < EDITOR_MIN_CLIP_S
             or offset + length > section.duration_s + _EPS
         ):
             return False
@@ -394,7 +400,7 @@ def _overlap(
     if _removed(row) or _section_of(row) != section_id or length is None:
         return None
     start, end = max(_offset(row), part[0]), min(_offset(row) + length, part[1])
-    return (start, end) if end - start >= MIN_CLIP_S else None
+    return (start, end) if end - start >= EDITOR_MIN_CLIP_S else None
 
 
 def _parts(duration: float, cut: float, side: Side) -> tuple[tuple[float, float], ...]:
@@ -498,12 +504,11 @@ def plan_split_full_screen(
             key=lambda part: part[0],
         )
         for position, (start, end, in_section) in enumerate(parts):
-            piece = _piece(row, start - _offset(row), end - _offset(row), length, rate)
+            still = is_still(row, still_set)
+            piece = _piece(row, start - _offset(row), end - _offset(row), length, rate, still)
             if position > 0:
                 piece["slot_id"] = new_id()
-                piece["parent_segment_id"] = (
-                    None if is_still(row, still_set) else row.get("slot_id")
-                )
+                piece["parent_segment_id"] = None if still else row.get("slot_id")
             if in_section:
                 if side == "until":
                     piece["split_offset_s"] = float(start - cut)
@@ -580,7 +585,14 @@ def plan_split_full_screen(
         replayed = _transition_overlap(left, length, _length(run[index]["slot"]) or 0.0)
         if abs(replayed - shared) <= 0.001:
             continue
-        run[index - 1]["slot"] = _piece(left, 0.0, length - shared, length, run[index - 1]["rate"])
+        run[index - 1]["slot"] = _piece(
+            left,
+            0.0,
+            length - shared,
+            length,
+            run[index - 1]["rate"],
+            is_still(left, still_set),
+        )
         run[index - 1]["end"] = run[index]["start"]
     for index in range(len(run)):
         if index == len(run) - 1 or run[index]["end"] <= run[index + 1]["start"] + _EPS:

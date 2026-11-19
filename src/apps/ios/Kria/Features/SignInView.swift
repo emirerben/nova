@@ -251,7 +251,7 @@ enum SignInFailureCopy {
     /// Shown when the server refuses an email that already opens another Kria
     /// account but sends no usable wording. Accounts are never merged, so the
     /// creator just needs to use the sign-in they used before.
-    static let existingAccount = "This email already has a Kria account. Sign in with the method you used before."
+    static let existingAccount = String(localized: "This email already has a Kria account. Sign in with the method you used before.")
     /// The server's wording before KRI-609, too technical to show a creator.
     private static let legacyProviderLinkMessage = "Sign in with the existing provider or explicitly link this provider first"
 
@@ -294,7 +294,7 @@ private struct SignInHero: View {
         .frame(height: 204)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Example edits")
-        .accessibilityValue(playing.isEmpty ? "Previews paused" : "Playing \(playing.count) of \(FeaturedEdit.onboarding.count) previews")
+        .accessibilityValue(playing.isEmpty ? String(localized: "Previews paused") : String(localized: "Playing \(playing.count) of \(FeaturedEdit.onboarding.count) previews"))
         .accessibilityIdentifier("signin.featured-edits")
     }
 

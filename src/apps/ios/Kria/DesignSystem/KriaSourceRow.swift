@@ -17,15 +17,15 @@ struct KriaSourceOption: Identifiable {
     static let uploadSymbol = "photo.on.rectangle"
 
     /// Pass `symbol: "mic.fill"` for an audio recording; video and every other surface keep `video.fill`.
-    static func record(symbol: String = recordSymbol, caption: String? = "Film with Kria", identifier: String? = nil,
+    static func record(symbol: String = recordSymbol, caption: String? = String(localized: "Film with Kria"), identifier: String? = nil,
                        isEnabled: Bool = true, action: @escaping () -> Void) -> KriaSourceOption {
-        KriaSourceOption(id: "record", symbol: symbol, title: "Record", caption: caption, identifier: identifier,
+        KriaSourceOption(id: "record", symbol: symbol, title: String(localized: "Record", comment: "Source option: record a new video"), caption: caption, identifier: identifier,
                          isEnabled: isEnabled, action: action)
     }
 
-    static func upload(caption: String? = "From your Photos", identifier: String? = nil, isEnabled: Bool = true,
+    static func upload(caption: String? = String(localized: "From your Photos"), identifier: String? = nil, isEnabled: Bool = true,
                        isPreparing: Bool = false, action: @escaping () -> Void) -> KriaSourceOption {
-        KriaSourceOption(id: "upload", symbol: uploadSymbol, title: "Upload", caption: caption, identifier: identifier,
+        KriaSourceOption(id: "upload", symbol: uploadSymbol, title: String(localized: "Upload", comment: "Source option: upload from Photos"), caption: caption, identifier: identifier,
                          isEnabled: isEnabled, isPreparing: isPreparing, action: action)
     }
 }

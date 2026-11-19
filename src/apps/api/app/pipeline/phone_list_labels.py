@@ -11,7 +11,8 @@ it says (`match_labels`), takes the recording's start (`label_start`) or, with n
 follow, grounds the item on the take's own words (`ground_on_words`), and builds one ordinary
 editable ``TextElement`` row per placed label plus a receipt (`list_label_rows`). It mirrors
 `app.pipeline.phone_spoken_text` (rows + receipt, a ``place`` callback, never raises for one
-ask) and rides the same KRI-467 text lane, so it needs no new phone capability.
+ask) and rides the same KRI-467 text lane, so it needs no new phone capability. Its one
+setting is KRI-1471's kill switch (`_example_asks_on`).
 
 No ``re`` and no word tests on lowered text (KRI-667): list markers are read with ``str``
 methods and names are compared as `phone_reaction_grounding.fold_tokens` tokens.
@@ -43,6 +44,17 @@ LIST_LABEL_LOOK_PARAM = "list_label_look"
 HOLD_S = 3.0
 MIN_S = 0.8
 LABEL_Y_FRAC = 0.86
+# KRI-1471: where a label goes when her spot is taken (a card in the bottom band, a caption
+# line): the free band above her head, about y 0.08-0.16 for a one-line label.
+LABEL_TOP_Y_FRAC = 0.12
+# KRI-1484: her spot while the recordings play behind her (speaker small in a corner): the top
+# band, as the spoken-text lane draws a text there. Her 0.86 covers her chin in the corner
+# layout and a zoomed README page has text in every band, so the label also gets a plate.
+LABEL_BACKDROP_Y_FRAC = 0.15
+# Where a label goes when it cannot stay at her spot, tried in this order (the ONE place to
+# change it). "ladder": wherever the title placer's own rows put it clear of everything (0.5 /
+# 0.44 / 0.38 / just under her face); "top": the band above her head (`LABEL_TOP_Y_FRAC`).
+LABEL_FALLBACK_SPOTS: tuple[str, ...] = ("ladder", "top")
 # Her label look (V5 OCR + frames): bold cream text with a dark outline.
 LABEL_FONT_FAMILY = "TikTok Sans Bold"
 LABEL_COLOR = "#FCF3C3"
@@ -71,6 +83,11 @@ _MAX_JOINER_LETTERS = 3
 _MAX_GAP_S = 0.6
 MAX_LIST_ITEMS = 10
 _MIN_LIST_ITEMS = 3
+# KRI-1471: the mark that opens a quoted example -> the marks that may close it („ “ is German).
+_QUOTE_CLOSERS = {'"': '"', "“": "”", "„": '“”"', "«": "»", "‘": "’", "'": "'"}
+# A transcribed word that ends a sentence, read past a closing quote or bracket.
+_SENTENCE_END = (".", "!", "?", "…")
+_CLOSING_MARKS = "\"'”’»)]"
 
 
 @dataclass(frozen=True)
@@ -78,6 +95,9 @@ class ListLabelAsk:
     requirement_id: str
     text: str  # the literal as shown, whitespace-collapsed
     item: str  # the literal without its leading list marker
+    # KRI-1480: the spoken trigger of a label named by its own word (`names_own_item`), the
+    # word it falls back to when the list lane cannot time it. Empty: item 19's own labels.
+    triggers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -128,27 +148,113 @@ def _has_explicit_marker(text: str) -> bool:
     return _read_marker(_collapse(text))[1]
 
 
+def _example_asks_on() -> bool:
+    """KRI-1471's kill switch (the one setting this module reads). Off: today's reads."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.list_label_example_ask_enabled)
+
+
+def _quoted(text: str) -> list[str]:
+    """Each quoted stretch of ``text``, marks dropped. An apostrophe inside a word ("don't")
+    neither opens nor closes one."""
+    found: list[str] = []
+    opened: tuple[int, str] | None = None  # (where the words start, the marks that close them)
+    for index, mark in enumerate(text):
+        if opened is None:
+            if mark in _QUOTE_CLOSERS and not (mark == "'" and text[index - 1 : index].isalnum()):
+                opened = (index + 1, _QUOTE_CLOSERS[mark])
+        elif mark in opened[1] and not (mark == "'" and text[index + 1 : index + 2].isalnum()):
+            found.append(text[opened[0] : index])
+            opened = None
+    return found
+
+
+def example_label(req: Any) -> str | None:
+    """KRI-1471: the numbered example of a list ask that was NOT filed as item 19's row (a
+    whole-video text whose literal is the label), or None.
+
+    Q1 run 3: "When I list the five repos, show each one as big text, like “1. Spec-kit”." came
+    as one ``per_clip`` text with no literal, the example left in the description. Two shapes:
+    a ``global`` or ``per_clip`` text with no literal whose description quotes exactly ONE text
+    with an explicit list marker, or a ``per_clip`` text whose own literal carries the marker.
+    Read from quote marks and digits only (KRI-667). The callers are the phone Talking readers;
+    every other per-clip text (described labels, a shot's dictated words) is None."""
+    if not _example_asks_on() or req.kind != "text" or req.scope not in ("global", "per_clip"):
+        return None
+    literal = _collapse(req.literal)
+    if literal:
+        marked = req.scope == "per_clip" and _has_explicit_marker(literal)
+        return literal if marked else None
+    examples = [
+        text
+        for text in map(_collapse, _quoted(str(req.description or "")))
+        if _has_explicit_marker(text)
+    ]
+    return examples[0] if len(examples) == 1 else None
+
+
+def names_own_item(req: Any) -> bool:
+    """KRI-1480 / KRI-1481: a numbered whole-video text ("4. Agents") whose spoken trigger only
+    names its own item (``triggers: ["Agents"]``) is a list label, not a text on a word.
+
+    Q2 run 3: filed that way, the labels went to the spoken-text lane, which shows a text at the
+    FIRST hearing of the word: "4. Agents" came up inside "Trading Agents" and "5. Claude code
+    game studio" never did ("Cloud Code Game Studios"). The list-label lane starts each label
+    with the recording it names, or on her k-th counted item. A trigger that names something
+    else ("show 1. Spec-kit when I say GitHub"), a text with no list marker, and a row the
+    creator pinned (a speaker, an occurrence, a hold) stay the spoken-text lane's."""
+    from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
+
+    if not _example_asks_on() or req.kind != "text" or req.scope != "global":
+        return False
+    text = _collapse(req.literal)
+    ask = requirement_spoken_text(req) if _has_explicit_marker(text) else None
+    if ask is None or ask.speaker or ask.occurrence is not None or ask.hold_s is not None:
+        return False
+    item = _tokens(label_item(text))
+
+    def _name(tokens: Sequence[str]) -> list[str]:
+        # "the Spec kit": a joiner is not part of the name (unless the name is only short words).
+        long = [token for token in tokens if len(token) > _MAX_JOINER_LETTERS]
+        return long or list(tokens)
+
+    def _covers(a: Sequence[str], b: Sequence[str]) -> bool:
+        return all(any(_same(token, other) for other in b) for token in a)
+
+    def _is_the_item(trigger: str) -> bool:
+        # The whole name, nothing else: "company" for "1. which company it sends data to?" is a
+        # word she says, and "Trading Agents" for "4. Agents" is another item.
+        said, name = _name(_tokens(trigger)), _name(item)
+        return bool(said) and _covers(said, name) and _covers(name, said)
+
+    return bool(item) and all(_is_the_item(trigger) for trigger in ask.triggers)
+
+
 def list_label_asks(requirements: Iterable[Any]) -> tuple[ListLabelAsk, ...]:
     """Every live global ``text`` requirement that no spoken trigger owns, in brief order.
 
     Being listed does NOT make it a label: only a content match (`match_labels`) or, for a text
     with a list marker, the take's words (`ground_on_words`) does. The title and the closing text
-    are listed too and come out of `list_label_rows` as ``not_a_list_item``."""
+    are listed too and come out of `list_label_rows` as ``not_a_list_item``. KRI-1471: so is a
+    list ask filed with its numbered example elsewhere (`example_label`), as that example."""
     from app.kria.spoken_text_ask import requirement_spoken_text  # noqa: PLC0415
 
     asks: list[ListLabelAsk] = []
     for req in requirements:
-        if not req.live or req.kind != "text" or req.scope != "global":
+        if not req.live or req.kind != "text":
             continue
-        text = _collapse(req.literal)
+        text = example_label(req) or (_collapse(req.literal) if req.scope == "global" else "")
         if not text:
             continue
-        if requirement_spoken_text(req) is not None:
+        spoken = requirement_spoken_text(req)
+        if spoken is not None and not names_own_item(req):
             continue  # KRI-707's: never drawn twice
         item = label_item(text)
         if not any(char.isalnum() for char in item):
             continue
-        asks.append(ListLabelAsk(requirement_id=req.id, text=text, item=item))
+        triggers = tuple(spoken.triggers) if spoken is not None else ()
+        asks.append(ListLabelAsk(requirement_id=req.id, text=text, item=item, triggers=triggers))
     return tuple(asks)
 
 
@@ -553,6 +659,143 @@ def find_spoken_list(
     ]
 
 
+def _ends_sentence(word: object) -> bool:
+    return str(word or "").rstrip().rstrip(_CLOSING_MARKS)[-1:] in _SENTENCE_END
+
+
+def _after_break(
+    stream: Sequence[tuple[str, int, float, float]], words: Sequence[dict], k: int
+) -> bool:
+    """Token ``k`` follows a break: the take starts (or ends) there, the word before it ends a
+    sentence, or she paused (``_MAX_GAP_S``) before it."""
+    if k == 0 or k >= len(stream):
+        return True
+    _token, word, _start, end = stream[k - 1]
+    return _ends_sentence(words[word].get("text")) or stream[k][2] - end >= _MAX_GAP_S - _EPS
+
+
+def _starts_sentence(
+    stream: Sequence[tuple[str, int, float, float]], words: Sequence[dict], k: int
+) -> bool:
+    """Token ``k`` opens a sentence, or follows the one short joiner that does ("And number")."""
+    joined = k > 0 and len(stream[k - 1][0]) <= _MAX_JOINER_LETTERS
+    return _after_break(stream, words, k) or (joined and _after_break(stream, words, k - 1))
+
+
+def find_counted_list(
+    words: Sequence[dict], *, first_start_s: float, first_end_s: float
+) -> list[SpokenItem]:
+    """KRI-1471: items 2.. of a list she COUNTS aloud, item 1 said at [first_start_s,
+    first_end_s] -- or [].
+
+    Q1 run 3: "Number one, Spec Kit. You write the spec first ... Number two, Impeccable. ..." has
+    talk between the items, so no opener follows item 1 (`find_spoken_list`). Language-agnostic
+    (no word lists): the two tokens right before item 1 are the opener (4+ letters, "number") and
+    its counter ("one"). The opener said again where a sentence starts (after a sentence mark or
+    a pause; one joiner of 3 letters or fewer may come first, "And number five"), with a counter
+    not used before, opens the next item. That counter is set off by a mark ("two," / "two." /
+    "two:", or the first one's own), or has none while the opener itself starts the sentence;
+    "the number of stars" (a joiner first, no mark) is talk.
+    The item runs from the word after the counter to the first word
+    that ends a sentence or is followed by a pause, within 2 * n1 + 2 tokens; an opener whose
+    item has no such end is talk and is skipped, never guessed. At least 3 items in all or
+    nothing."""
+    stream = _word_stream(words)
+    texts = [token for token, _w, _s, _e in stream]
+    first = next((i for i, row in enumerate(stream) if row[2] >= first_start_s - 1e-3), None)
+    if first is None or first < 2:
+        return []
+    after = max((i for i, row in enumerate(stream) if row[3] <= first_end_s + 1e-3), default=first)
+    after = max(after + 1, first + 1)
+    opener = texts[first - 2]
+    if len(opener) < _MIN_OPENER_LETTERS or not _starts_sentence(stream, words, first - 2):
+        return []
+
+    def _mark(k: int) -> str:
+        raw = str(words[stream[k][1]].get("text") or "").rstrip()
+        return raw[-1:] if raw and not raw[-1].isalnum() else ""
+
+    cap = 2 * (after - first) + 2
+    seen = {texts[first - 1]}
+    items: list[SpokenItem] = []
+    q = after
+    while q + 2 < len(stream) and len(items) < MAX_LIST_ITEMS - 1:
+        end = None
+        if (
+            texts[q] == opener
+            and texts[q + 1] not in seen
+            and _starts_sentence(stream, words, q)
+            # The counter is set off like the first ("two," / "two." / "two:"), or, with no
+            # mark at all, the opener itself starts the sentence ("Number two Impeccable.").
+            # "The number of stars ..." (a joiner first, no mark) is talk.
+            and (
+                _mark(q + 1) in (_mark(first - 1), *_MARKER_PUNCTUATION, ",")
+                or _after_break(stream, words, q)
+            )
+        ):
+            span = range(q + 2, min(len(stream), q + 2 + cap))
+            end = next((k for k in span if _after_break(stream, words, k + 1)), None)
+        if end is None:
+            q += 1
+            continue
+        seen.add(texts[q + 1])
+        items.append(
+            SpokenItem(
+                start_s=float(stream[q + 2][2]),
+                words=tuple(
+                    str(words[w].get("text") or "")
+                    for w in range(stream[q + 2][1], stream[end][1] + 1)
+                ),
+            )
+        )
+        q = end + 1
+    return items if len(items) + 1 >= _MIN_LIST_ITEMS else []
+
+
+def _first_free_hearing(
+    ask: ListLabelAsk, words: Sequence[dict], starts: Mapping[str, float]
+) -> tuple[str, float] | None:
+    """The first time the take says one of ``ask.triggers`` (the spoken-text lane's matcher,
+    `phone_spoken_text.spoken_word_occurrences`) while no other placed label is on screen
+    (`HOLD_S` from its start): (trigger, start_s), or None."""
+    from app.pipeline.phone_spoken_text import spoken_word_occurrences  # noqa: PLC0415
+
+    shown = [at for rid, at in starts.items() if rid != ask.requirement_id]
+    for trigger, start_s, _end_s in spoken_word_occurrences(words, ask.triggers):
+        if not any(at - _EPS <= start_s < at + HOLD_S for at in shown):
+            return trigger, float(start_s)
+    return None
+
+
+def _counted_starts(
+    marked: Sequence[ListLabelAsk],
+    fallback: Sequence[ListLabelAsk],
+    words: Sequence[dict],
+    spans: Mapping[str, tuple[float, float]],
+) -> dict[str, float]:
+    """KRI-1480: a TYPED list numbered 1..N in order, counted aloud: label k starts on her k-th
+    counted item (`find_counted_list` from where label 1 is heard), never on the first hearing
+    of its word ("agents" in "Trading Agents" or "AI agents" is not her fourth item) and even
+    when its name is misheard ("Claude" / "Cloud"). Only for labels no recording names
+    (``fallback``); a list she does not count, or a label past her last counted item, keeps the
+    start its own words gave it. Requirement id -> start."""
+    if [marker_number(ask.text) for ask in marked] != list(range(1, len(marked) + 1)):
+        return {}
+    first = marked[0]
+    span = spans.get(first.requirement_id) or _ground_spans([first], words).get(
+        first.requirement_id
+    )
+    if span is None:
+        return {}
+    items = find_counted_list(words, first_start_s=span[0], first_end_s=span[1])
+    open_ids = {ask.requirement_id for ask in fallback}
+    return {
+        ask.requirement_id: item.start_s
+        for ask, item in zip(marked[1:], items, strict=False)
+        if ask.requirement_id in open_ids
+    }
+
+
 def _marker_parts(text: str) -> tuple[str, str] | None:
     """(digits, punctuation) of ``text``'s explicit marker, or None."""
     length, explicit = _read_marker(text)
@@ -677,6 +920,50 @@ def _label_element(ask: ListLabelAsk, *, start_s: float, end_s: float, canvas: A
     return label_look(element.model_dump(mode="json", exclude_none=True), canvas=canvas)
 
 
+def _clear_spot(row: dict, avoid: list, place: Callable, canvas: Any) -> tuple[dict, dict]:
+    """KRI-1471: ``place(row, avoid)`` at her spot (`LABEL_Y_FRAC`) and, when the label does not
+    stay there clear of everything else on screen (a card, a caption line, other text), the
+    first clear spot of `LABEL_FALLBACK_SPOTS`, in that order. None clear: her spot as placed,
+    ``text_overlap`` and all, and the receipt row says so.
+
+    The Q1 run 3 replay drew all five labels over their own screenshot cards: the placer's rows
+    (her spot, the title's 0.5 / 0.44 / 0.38, just under her face) were all taken, and it went
+    back to her spot. A label that is clear at her spot is placed once, exactly as before."""
+    placed, placement = place(row, list(avoid))
+    overlaps = placement.get("text_overlap") is True
+    kept = abs(float(placed.get("y_frac") or 0.0) - float(row.get("y_frac") or 0.0)) < 1e-4
+    if not _example_asks_on() or (kept and not overlaps):
+        return placed, placement
+    blocked = ("text_overlap", "face_collision", "object_collision")
+    for spot in LABEL_FALLBACK_SPOTS:
+        if spot == "ladder":
+            if not overlaps:
+                return placed, placement  # where the placer's own rows put it
+            continue
+        moved, verdict = place({**row, "y_frac": _spot_y_frac(spot, row, canvas)}, list(avoid))
+        if verdict.get("status") in (None, "error", "best_effort") or any(
+            verdict.get(key) is True for key in blocked
+        ):
+            continue
+        status = "moved" if verdict.get("status") == "preset" else verdict["status"]
+        return moved, {**verdict, "status": status, "default_y_frac": row["y_frac"]}
+    return placed, placement
+
+
+def _spot_y_frac(spot: str, row: dict, canvas: Any) -> float:
+    """The centre y of a named fallback spot for this label ("top": above her head, lower for
+    a taller label so its ink stays under the top margin)."""
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        _TOP_MARGIN_FRAC,
+        _measure_title_box,
+    )
+
+    if spot != "top":
+        raise ValueError(f"unknown label spot {spot!r}")
+    box = _measure_title_box(row, canvas=canvas)
+    return round(max(LABEL_TOP_Y_FRAC, _TOP_MARGIN_FRAC + (box.bottom - box.top) / 2 + 0.002), 4)
+
+
 def list_label_rows(
     asks: Sequence[ListLabelAsk],
     *,
@@ -687,8 +974,16 @@ def list_label_rows(
     place: Callable[[dict, list[NormalizedBox]], tuple[dict, dict]],
     avoid_for: Callable[[tuple[float, float], list[dict]], list[NormalizedBox]],
     phrases: Sequence[tuple[int, str]] | None = None,
+    over_backdrop: Callable[[tuple[float, float]], bool] | None = None,
+    backdrop_plate: str | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """One placed row per label that has its moment, plus the receipt of every ask.
+
+    KRI-1484: ``over_backdrop(window)`` says a label's whole time is over the recordings behind
+    her (a speaker-background window, not her full-screen take). There the label tries the top
+    band first (`LABEL_BACKDROP_Y_FRAC`, under KRI-1471's switch), and with ``backdrop_plate``
+    (a ``#RRGGBB`` the caller allows: its switch and ``authoredText``) it is drawn on that opaque
+    plate, its letters unchanged. Both absent: today's rows, byte for byte.
 
     ``phrases`` are (index, spoken_phrase) of EVERY phrased background entry, anchored or not
     (default: the anchors' own), so a label never takes a part of the list another label names.
@@ -741,10 +1036,18 @@ def list_label_rows(
         except Exception as exc:  # noqa: BLE001 - the take's words are a fallback, not a must
             log.warning("phone_list_labels.ground_failed", error=str(exc)[:200])
 
+    marked = [ask for ask in asks if _has_explicit_marker(ask.text)]
+    if len(marked) >= 2 and _example_asks_on():
+        try:
+            for rid, at in _counted_starts(marked, fallback, words, spans).items():
+                starts[rid] = at
+                basis[rid] = {"basis": "counted_list"}
+        except Exception as exc:  # noqa: BLE001 - the label keeps its own words
+            log.warning("phone_list_labels.counted_list_failed", error=str(exc)[:200])
+
     # Q1: ONE typed "1. ..." example heard on the take: the rest of the list is what she says next.
     found: dict[str, int] = {}
     extras: dict[str, list[ListLabelAsk]] = {}
-    marked = [ask for ask in asks if _has_explicit_marker(ask.text)]
     if (
         len(marked) == 1
         and marked[0].requirement_id in spans
@@ -752,11 +1055,13 @@ def list_label_rows(
     ):
         parent = marked[0]
         try:
-            items = find_spoken_list(
-                words,
-                first_start_s=spans[parent.requirement_id][0],
-                first_end_s=spans[parent.requirement_id][1],
-            )
+            first_start_s, first_end_s = spans[parent.requirement_id]
+            items = find_spoken_list(words, first_start_s=first_start_s, first_end_s=first_end_s)
+            if not items and _example_asks_on():
+                # KRI-1471: talk between the items ("Number one, ... Number two, ...").
+                items = find_counted_list(
+                    words, first_start_s=first_start_s, first_end_s=first_end_s
+                )
             found[parent.requirement_id] = 1
             for offset, item in enumerate(items):
                 number = offset + 2
@@ -774,6 +1079,20 @@ def list_label_rows(
             found[parent.requirement_id] = 1 + len(extras.get(parent.requirement_id, []))
         except Exception as exc:  # noqa: BLE001 - a list that is not found is just item 1
             log.warning("phone_list_labels.spoken_list_failed", error=str(exc)[:200])
+    # KRI-1480: a label named by its own trigger that nothing above could time is shown where
+    # the spoken-text lane showed it, at the first hearing of that word, never while another
+    # label is on screen; never drawn nowhere.
+    for ask in asks:
+        if ask.triggers and ask.requirement_id not in starts:
+            try:
+                heard = _first_free_hearing(ask, words, starts)
+            except Exception as exc:  # noqa: BLE001 - the label is just not heard then
+                log.warning("phone_list_labels.trigger_fallback_failed", error=str(exc)[:200])
+                heard = None
+            if heard is not None:
+                starts[ask.requirement_id] = heard[1]
+                basis[ask.requirement_id] = {"basis": "spoken_word", "trigger": heard[0]}
+                unheard.discard(ask.requirement_id)
     every = [*asks, *(sub for subs in extras.values() for sub in subs)]
 
     status: dict[str, str] = {}
@@ -812,8 +1131,13 @@ def list_label_rows(
         start, end = windows[rid]
         try:
             row = _label_element(ask, start_s=start, end_s=end, canvas=canvas)
+            backdrop = over_backdrop is not None and over_backdrop((start, end))
+            if backdrop and _example_asks_on():
+                row["y_frac"] = LABEL_BACKDROP_Y_FRAC  # KRI-1484: not her chin, not mid-page
+            if backdrop and backdrop_plate:
+                row["background_color"] = backdrop_plate
             avoid = avoid_for((start, end), list(rows))
-            placed, placement = place(row, list(avoid))
+            placed, placement = _clear_spot(row, list(avoid), place, canvas)
         except LabelTooLong:
             status[rid] = "too_long"  # left out whole, never drawn shortened
             continue
@@ -833,6 +1157,13 @@ def list_label_rows(
             # A placement that could not look ("error") is never called clear of the face.
             "face_collision": placement.get("face_collision") is True
             or placement.get("status") == "error",
+            # KRI-1471: no clear spot was found, so the label sits on something else on screen.
+            **(
+                {"text_overlap": True}
+                if placement.get("text_overlap") is True and _example_asks_on()
+                else {}
+            ),
+            **({"plate": True} if placed.get("background_color") else {}),  # KRI-1484
         }
 
     receipt_rows: list[dict[str, Any]] = []

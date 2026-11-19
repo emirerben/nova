@@ -56,7 +56,7 @@ from app.routes.generative_jobs import (
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
 from app.services.clip_facts import assignment_facts, facts_for_prompt
-from app.services.editor_limits import MAX_EDITOR_OPS
+from app.services.editor_limits import MAX_EDITOR_OPS, MOTION_FPS
 from app.services.kria_editor_ops_diff import (
     EditorDiff,
     diff_compiled_state,
@@ -105,6 +105,19 @@ def split_collapse_available(job: Any, variant: dict[str, Any]) -> bool:
     from app.services.phone_rollout import split_collapse_planned_for
 
     return split_screen_available(job, variant) and split_collapse_planned_for(
+        current_client_protocol()
+    )
+
+
+def split_blank_available(job: Any, variant: dict[str, Any]) -> bool:
+    """May an edit put a blank block in a split panel? Reads the sending build, as the request does.
+
+    Offered when Save would take the block: protocol 51 and `splitBlankPanel` verified.
+    """
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_blank_planned_for
+
+    return split_screen_available(job, variant) and split_blank_planned_for(
         current_client_protocol()
     )
 
@@ -423,6 +436,8 @@ def _safe_slot(
     ):
         if key in row:
             slot[key] = copy.deepcopy(row[key])
+    if is_blank_row(row) and isinstance(row.get("color"), str):
+        slot["color"] = row["color"]
     media_id = row.get("media_id")
     if isinstance(media_id, str) and media_id:
         slot["media_id"] = media_id
@@ -1839,6 +1854,8 @@ def build_editor_snapshot(
         snapshot["split_screen_sections"] = sections
     if split_screen_available(job, variant):
         snapshot["split_screen_available"] = True
+        if split_blank_available(job, variant):
+            snapshot["split_blank_available"] = True
     if sections and "clip" in families:
         from app.agents.editor_ops_v2.split_full_screen import (  # noqa: PLC0415
             split_full_screen_snapshot,
@@ -3159,7 +3176,7 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
         elif name == "set_clip_in":
             row.update(set_source_start(row, float(op["in_s"])))
         else:
-            amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+            amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - EDITOR_MIN_CLIP_S))
             row.update(slice_source_window(row, amount, _slot_duration(row)))
             if row.get("split_section_id"):
                 row["split_offset_s"] += amount
@@ -3183,7 +3200,7 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
             row["source_end_s"] = row["in_s"] + span
         row["source_start_locked"] = True
     elif name == "trim_clip_start":
-        amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+        amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - EDITOR_MIN_CLIP_S))
         row["in_s"] = float(row.get("in_s") or 0.0) + amount * _slot_rate(row)
         row["source_start_locked"] = True
         if row.get("split_section_id"):
@@ -3209,7 +3226,7 @@ def _op_trim_output_start(state: _DraftState, op: dict[str, Any]) -> None:
         if row.get("removed"):
             continue
         duration = _slot_duration(row)
-        if remaining >= duration - 0.1:
+        if remaining >= duration - EDITOR_MIN_CLIP_S:
             row["removed"] = True
             remaining -= duration
             continue
@@ -3255,7 +3272,7 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
         local = split_at - output_start
     else:
         local = split_at - output_start if split_at > duration else split_at
-    if local < 0.1 or local > duration - 0.1:
+    if local < EDITOR_MIN_CLIP_S or local > duration - EDITOR_MIN_CLIP_S:
         raise KriaEditorOpError("The split point is outside the clip")
     from uuid import uuid4
 
@@ -3347,25 +3364,80 @@ def _op_set_media_duration(state: _DraftState, op: dict[str, Any]) -> None:
     state.changed.add("timeline")
 
 
+# The fields of the editor's translated caption track (`EditorCaptionTranslation`).
+_CAPTION_TRANSLATION_KEYS = frozenset(
+    {
+        "enabled",
+        "language",
+        "source_language",
+        "size_px",
+        "color",
+        "font",
+        "stroke_width",
+        "position_x_frac",
+        "position_y_frac",
+        "line_overrides",
+        "outcome",
+        "dropped_cue_ids",
+    }
+)
+
+
+def _drop_stale_translations(state: _DraftState, rows: list[dict[str, Any]]) -> int:
+    """KRI-1501: a caption line whose words were rewritten loses its translated line (it would
+    show the old sentence in the second language). Its id joins the track's ``dropped_cue_ids``
+    and the track's outcome becomes "partial", so the receipt never calls it translated.
+    Returns how many translated lines were removed."""
+    dropped = [
+        row["id"] if isinstance(row.get("id"), str) else ""
+        for row in rows
+        if str(row.pop("translation", None) or "").strip()
+    ]
+    if not dropped:
+        return 0
+    stored = state.caption_patch.get("translation") or state.variant.get("caption_translation")
+    if isinstance(stored, dict) and stored.get("language"):
+        track = {k: copy.deepcopy(v) for k, v in stored.items() if k in _CAPTION_TRANSLATION_KEYS}
+        ids = [*(track.get("dropped_cue_ids") or []), *(cue_id for cue_id in dropped if cue_id)]
+        track["dropped_cue_ids"] = list(dict.fromkeys(ids))
+        track["outcome"] = "partial"
+        state.caption_patch["translation"] = track
+        state.changed.add("caption_meta")
+    return len(dropped)
+
+
+def _stale_translation_summary(op: dict[str, Any], count: int) -> str | None:
+    if not count:
+        return None
+    lines = "its translated line" if count == 1 else f"{count} translated lines"
+    return f"{_summary(op)}; removed {lines} (they no longer matched the words)"
+
+
 def _op_edit_caption(state: _DraftState, op: dict[str, Any]) -> None:
     index = _require_index(state.captions, op.get("cue_index"), "Caption")
-    state.captions[index]["text"] = str(op["text"])
+    row = state.captions[index]
+    text = str(op["text"])
+    stale = _drop_stale_translations(state, [row]) if text != str(row.get("text") or "") else 0
+    row["text"] = text
     state.changed.add("captions")
+    state.summary = _stale_translation_summary(op, stale) or state.summary
 
 
 def _op_replace_caption_text(state: _DraftState, op: dict[str, Any]) -> None:
     find = str(op["find"])
     replace = str(op["replace"])
-    replaced = 0
+    rewritten: list[dict[str, Any]] = []
     for row in state.captions:
         current = str(row.get("text") or "")
         updated = current.replace(find, replace)
         if updated != current:
             row["text"] = updated
-            replaced += 1
-    if not replaced:
+            rewritten.append(row)
+    if not rewritten:
         raise KriaEditorOpError(f'No captions contain "{find}"')
     state.changed.add("captions")
+    stale = _drop_stale_translations(state, rewritten)
+    state.summary = _stale_translation_summary(op, stale) or state.summary
 
 
 def _op_set_caption_timing(state: _DraftState, op: dict[str, Any]) -> None:
@@ -3740,7 +3812,7 @@ def compile_editor_ops(
             state.summary = None
         targets = [float(op["target_s"]) for op in ops if op.get("op") == "set_total_duration"]
         if targets and any(op.get("fit_to_video") for op in sequence_ops):
-            rounded_target = round(targets[-1] * 30) / 30
+            rounded_target = round(targets[-1] * MOTION_FPS) / MOTION_FPS
             if abs(total - rounded_target) > 0.001:
                 raise TextTimingConflict(
                     targets[-1],

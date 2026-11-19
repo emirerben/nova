@@ -209,14 +209,14 @@ enum AccountIdentity {
     static func detailLine(name: String?, email: String?, providers: [String]) -> String? {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let provider = providers.first?.capitalized
-        let signedInWith = provider.map { "Signed in with \($0)" }
+        let signedInWith = provider.map { String(localized: "Signed in with \($0)") }
         if let trimmedName, !trimmedName.isEmpty {
             guard let email, !email.isEmpty else { return signedInWith }
             guard let provider else { return email }
             return "\(email) · \(provider)"
         }
         guard let signedInWith else { return nil }
-        if let email, isPrivateRelay(email: email) { return "\(signedInWith) · hidden email" }
+        if let email, isPrivateRelay(email: email) { return String(localized: "\(signedInWith) · hidden email") }
         return signedInWith
     }
 
@@ -706,7 +706,7 @@ enum WorkspaceDestination: Equatable, Sendable {
         // The server deletion is already committed; never present it as a failed
         // delete just because the recoverable device cache cannot save.
         do { try cache?.removeProject(project.id) }
-        catch { cacheWarning = "Project deleted. Device storage couldn’t finish updating." }
+        catch { cacheWarning = String(localized: "Project deleted. Device storage couldn’t finish updating.") }
         projects.removeAll { $0.id == project.id }
         libraryProjects.removeAll { $0.id == project.id || $0.id == project.activeJobID }
         if selectedProject?.id == project.id { selectedProject = projects.first }

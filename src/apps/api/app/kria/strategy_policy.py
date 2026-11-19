@@ -144,18 +144,27 @@ def _guided_voiceover_downgrade_notice(manifest: ResolvedCreatorManifest) -> str
 def _asked_media_left_out_notice(kind: str | None, ask: str) -> str:
     """KRI-594: a photo or video the creator's brief asks for, named in their own words."""
 
-    noun_en, noun_tr = ("photo", "fotoğraf") if kind == "image" else ("video", "video")
+    photo = kind == "image"
     return say(
-        en='This version leaves out the {noun_en} you asked for: "{ask}".',
-        tr='Bu sürümde istediğin {noun_tr} yok: "{ask}".',
-        noun_en=noun_en,
+        en='This version leaves out the photo you asked for: "{ask}".'
+        if photo
+        else 'This version leaves out the video you asked for: "{ask}".',
+        tr='Bu sürümde istediğin fotoğraf yok: "{ask}".'
+        if photo
+        else 'Bu sürümde istediğin video yok: "{ask}".',
         ask=ask,
-        noun_tr=noun_tr,
     )
 
 
 def _captions_kept_notice() -> str:
     return say(en=CAPTIONS_KEPT_NOTICE, tr=_CAPTIONS_KEPT_NOTICE_TR)
+
+
+def _captions_always_on(strategy: CreativeStrategy) -> bool:
+    """A strategy that turns captions off on an edit whose renderer always shows them."""
+    return strategy.caption_style == "none" and (
+        strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
+    )
 
 
 def transcript_labels_dropped_notice() -> str:
@@ -994,26 +1003,29 @@ def _length_reason(
             )
         several = len(numbers) > 1
         which = _join_numbers(numbers)
+        # Whole sentences per count: German inflects around the clip word (KRI-1362).
         return say(
             en=(
-                "Only {v1} {which} "
-                "{v2} in this edit and "
-                "{v3} about {possible:g} seconds, "
+                "Only clips {which} are in this edit and together they run about "
+                "{possible:g} seconds, so the video can't be {wanted:g} seconds."
+            )
+            if several
+            else (
+                "Only clip {which} is in this edit and it runs about {possible:g} seconds, "
                 "so the video can't be {wanted:g} seconds."
             ),
             tr=(
-                "Bu düzenlemede yalnızca {which}. {v4} var ve "
-                "{v5}yaklaşık {possible:g} saniye sürüyor, bu "
-                "yüzden video {wanted:g} saniye olamıyor."
+                "Bu düzenlemede yalnızca {which}. klipler var ve birlikte yaklaşık "
+                "{possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
+            )
+            if several
+            else (
+                "Bu düzenlemede yalnızca {which}. klip var ve yaklaşık {possible:g} saniye "
+                "sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
             ),
-            v1="clips" if several else "clip",
             which=which,
-            v2="are" if several else "is",
-            v3="together they run" if several else "it runs",
             possible=possible,
             wanted=wanted,
-            v4="klipler" if several else "klip",
-            v5="birlikte " if several else "",
         )
     return say(
         en=(
@@ -1055,20 +1067,22 @@ def _lost_in_words(
             which = _join_numbers(numbers)
             reasons.append(
                 say(
-                    en="{v1} {which} can't be in this edit.",
-                    tr="{which}. {v2} bu düzenlemeye giremiyor.",
-                    v1="Clips" if several else "Clip",
+                    en="Clips {which} can't be in this edit."
+                    if several
+                    else "Clip {which} can't be in this edit.",
+                    tr="{which}. klipler bu düzenlemeye giremiyor."
+                    if several
+                    else "{which}. klip bu düzenlemeye giremiyor.",
                     which=which,
-                    v2="klipler" if several else "klip",
                 )
             )
             agreed.append(
                 say(
-                    en="I left out {v1} {which}.",
-                    tr="{which}. {v2} dışarıda bıraktım.",
-                    v1="clips" if several else "clip",
+                    en="I left out clips {which}." if several else "I left out clip {which}.",
+                    tr="{which}. klipleri dışarıda bıraktım."
+                    if several
+                    else "{which}. klibi dışarıda bıraktım.",
                     which=which,
-                    v2="klipleri" if several else "klibi",
                 )
             )
         elif field == "target_duration_s":
@@ -1190,7 +1204,12 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
             return RefusedStrategy(
                 question=say(
                     en=(
-                        'You picked {clips} clip{v1}, so "{pin_text}" '
+                        'You picked {clips} clip, so "{pin_text}" '
+                        "can't go on clip {pin_clip}. Which clip should it be on?"
+                    )
+                    if clips == 1
+                    else (
+                        'You picked {clips} clips, so "{pin_text}" '
                         "can't go on clip {pin_clip}. Which clip should it be on?"
                     ),
                     tr=(
@@ -1198,7 +1217,6 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
                         "konamaz. Hangi klibe koyayım?"
                     ),
                     clips=clips,
-                    v1="" if clips == 1 else "s",
                     pin_text=pin.text,
                     pin_clip=pin.clip,
                 ),
@@ -1334,12 +1352,18 @@ def check_strategy_for_runtime_v2(
     draft_audio_strategy: str | None = None,
     creator_asked_camera_sound: bool = False,
     creator_asked_no_music: bool = False,
+    creator_asked_no_captions: bool = True,
 ) -> CheckedStrategy | RefusedStrategy:
     """Run v1's plan compile over a v2 strategy; never raises a policy error.
 
     ``draft_audio_strategy`` (the draft's sound route) and ``creator_asked_camera_sound`` (a
     live brief ask to keep the camera sound) only matter on footage with no sound at all
     (KRI-1365).
+
+    ``creator_asked_no_captions`` (KRI-1465) only matters when the strategy turns captions off
+    on an edit that always shows them. ``False`` = the caller read the brief and no live ask
+    wants no captions: keeping them is a notice, never the "simpler version?" question. The
+    default is for a caller that does not know the brief, which asks as before.
 
     Both keywords serve a guided-voiceover downgrade (KRI-594): ``creator_text`` is the
     creator's own words (it tells an "all 7 clips" ask apart from "all my photos and
@@ -1374,13 +1398,18 @@ def check_strategy_for_runtime_v2(
     strategy, title_notice = _talking_top_text_as_title(manifest, strategy)
     if title_notice:
         notices.append(title_notice)
+    if not creator_asked_no_captions and _captions_always_on(strategy):
+        # KRI-1465 (prod thread 78787267): before the baseline is taken, like the repairs
+        # above. The plan said "none" but no live ask wants no captions, so there is no
+        # choice of the creator's to lose: "Should I make a simpler version?" asked them to
+        # give up nothing, right after another hold. Said as a notice instead.
+        strategy = strategy.model_copy(update={"caption_style": "auto"})
+        notices.append(_captions_kept_notice())
     original = strategy
     # What a dropped request is judged against: the creator's strategy, with a guided
     # voiceover contract already swapped out when its downgrade keeps every request.
     baseline = original
-    if strategy.caption_style == "none" and (
-        strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
-    ):
+    if _captions_always_on(strategy):
         # Both renderers always caption (the item stores "none" as NULL, which
         # the worker reads as sentence captions), so say so instead of
         # approving a caption-free edit that renders with captions.

@@ -51,6 +51,8 @@ from app.pipeline.unified_montage import (
 from app.services.phone_sources import PhoneSourceBinding
 from tests.pipeline.test_unified_montage import clip
 
+pytestmark = pytest.mark.journey("kri-585-spoken-order")
+
 RIVER, WELCOME, DENIZ, BATHROOM = "c9", "c8", "c7", "c10"
 WELCOME_LINE = (1.94, 3.4)
 DENIZ_WORDS = ((0.0, 1.22), (3.3, 5.74))

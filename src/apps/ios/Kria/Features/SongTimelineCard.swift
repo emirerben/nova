@@ -84,7 +84,7 @@ struct SongTimelineCard: View {
     private var positions: [String: Int] { SongOrderPositions.map(media: media, question: question) }
     private func number(_ mediaID: String) -> Int { positions[mediaID] ?? 0 }
     private func attached(_ mediaID: String) -> CreationAttachedMedia {
-        media.first { $0.id == mediaID } ?? CreationAttachedMedia(id: mediaID, filename: "Clip \(number(mediaID))", kind: "video", previewURL: nil)
+        media.first { $0.id == mediaID } ?? CreationAttachedMedia(id: mediaID, filename: String(localized: "Clip \(number(mediaID))"), kind: "video", previewURL: nil)
     }
 
     // MARK: body
@@ -126,7 +126,7 @@ struct SongTimelineCard: View {
     }
 
     static func answeredText(summary: String?) -> String {
-        summary.map { "Arrangement confirmed: \($0)" } ?? "Arrangement question closed"
+        summary.map { String(localized: "Arrangement confirmed: \($0)") } ?? String(localized: "Arrangement question closed")
     }
 
     private var header: some View {
@@ -314,7 +314,7 @@ struct SongTimelineCard: View {
 
     private func announceMoved(_ id: String) {
         let start = max(0, state.delta(of: id) ?? 0)
-        UIAccessibility.post(notification: .announcement, argument: "Clip \(number(id)) now starts at \(DurationFormatter.clock(start))")
+        UIAccessibility.post(notification: .announcement, argument: String(localized: "Clip \(number(id)) now starts at \(DurationFormatter.clock(start))"))
     }
 
     // MARK: tray
@@ -445,7 +445,7 @@ struct SongTimelineCard: View {
             let gap = state.gaps().first { $0.index == index }
             let clips = state.tray
             SongTimelineClipPicker(
-                title: gap.map { "Fill \(DurationFormatter.clock($0.start)) to \(DurationFormatter.clock($0.end))" } ?? "Fill this spot",
+                title: gap.map { String(localized: "Fill \(DurationFormatter.clock($0.start)) to \(DurationFormatter.clock($0.end))") } ?? String(localized: "Fill this spot"),
                 clips: clips.map { ($0, attached($0), number($0)) },
                 onPick: { id in
                     if let gap { report(state.place(id, inGap: gap), for: id) }
@@ -455,14 +455,14 @@ struct SongTimelineCard: View {
                 onClose: { self.sheet = nil })
         case .block(let id):
             SongTimelineTakeSheet(
-                mediaID: id, title: "Clip \(number(id))", detail: Self.detail(for: question.item(for: id), start: state.delta(of: id)),
-                previewURL: previewURL(id), primaryTitle: "Move to tray", primaryID: "song-timeline-to-tray",
+                mediaID: id, title: String(localized: "Clip \(number(id))"), detail: Self.detail(for: question.item(for: id), start: state.delta(of: id)),
+                previewURL: previewURL(id), primaryTitle: String(localized: "Move to tray"), primaryID: "song-timeline-to-tray",
                 primary: { state.moveToTray(id); notice = nil; selection = .tray(id); self.sheet = nil },
                 onClose: { self.sheet = nil })
         case .tray(let id):
             SongTimelineTakeSheet(
-                mediaID: id, title: "Clip \(number(id))", detail: Self.detail(for: question.item(for: id), start: nil),
-                previewURL: previewURL(id), primaryTitle: "Add to the song", primaryID: "song-timeline-add-\(id)",
+                mediaID: id, title: String(localized: "Clip \(number(id))"), detail: Self.detail(for: question.item(for: id), start: nil),
+                previewURL: previewURL(id), primaryTitle: String(localized: "Add to the song"), primaryID: "song-timeline-add-\(id)",
                 primary: { report(state.placeAnywhere(id), for: id); finishPlacing(id); self.sheet = nil },
                 onClose: { self.sheet = nil })
         }
@@ -470,12 +470,12 @@ struct SongTimelineCard: View {
 
     /// One line about a take: where it sits, or why Kria was unsure.
     static func detail(for item: SongOrderQuestion.Item?, start: Double?) -> String {
-        if let start { return "Starts at \(DurationFormatter.clock(max(0, start))) in the song" }
+        if let start { return String(localized: "Starts at \(DurationFormatter.clock(max(0, start))) in the song") }
         switch item?.reason {
-        case .tie: return "Kria wasn’t sure: two places in the song fit about equally well."
-        case .weak: return "Kria found only a weak match for this clip."
-        case .noEvidence: return "Kria couldn’t find this clip in your song."
-        case nil: return "Not placed on the song"
+        case .tie: return String(localized: "Kria wasn’t sure: two places in the song fit about equally well.")
+        case .weak: return String(localized: "Kria found only a weak match for this clip.")
+        case .noEvidence: return String(localized: "Kria couldn’t find this clip in your song.")
+        case nil: return String(localized: "Not placed on the song")
         }
     }
 }

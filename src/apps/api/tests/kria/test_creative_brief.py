@@ -715,7 +715,10 @@ def test_requirement_without_a_checker_is_never_reported_met() -> None:
 def test_reply_never_claims_an_unmet_requirement() -> None:
     brief = apply_updates(
         None,
-        [_upd("text", "per_clip"), _upd("order", "global", facts={"key": "capture_time"})],
+        [
+            _upd("text", "per_clip", description="label each clip"),
+            _upd("order", "global", facts={"key": "capture_time"}, description="in filming order"),
+        ],
         source_turn_id="t",
     )
     facts = PlanFacts(clip_ids=_CLIPS, ordering_basis="attachment")
@@ -1599,7 +1602,9 @@ def test_build_receipts_is_empty_with_no_live_requirements(requirements) -> None
     assert build_receipts(requirements, PlanFacts()) == []
 
 
-def test_long_replies_are_truncated_at_the_cap() -> None:
+@pytest.mark.parametrize("line_fit", [False, True])
+def test_long_replies_are_truncated_at_the_cap(monkeypatch, line_fit: bool) -> None:
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", line_fit)
     reqs = [_req("order", "global", id=f"r{i}", description="X" * 150) for i in range(1, 5)]
     brief = CreativeBrief(version=1, requirements=reqs)
     receipts = [
@@ -1608,6 +1613,8 @@ def test_long_replies_are_truncated_at_the_cap() -> None:
     ]
     reply = reply_from_receipts(brief, receipts, summary="Drafted.")
     assert reply.startswith("Not everything you asked for made it in:\n")
+    # KRI-1485: four Partly rows alone fill the chat, so the line fitter hands this text to the
+    # same shortening as with the switch off: never over 1200 characters.
     assert len(reply) <= 1200 and reply.endswith("…")
 
 

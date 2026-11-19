@@ -1087,6 +1087,18 @@ def _assert_rule0_candidate_invariants(
             assert silence_cut._is_sentence_final(original.text), item
             assert piece_lo == item.original_start_s, item
             assert piece_hi - piece_lo >= silence_cut.SENTENCE_TAIL_MIN_VOICED_S - _RULE0_EPS
+        elif item.kind == "trim_sentence_head":
+            # Its mirror (KRI-1492): only the head of the token after a sentence-final token
+            # goes, and the token keeps its minimum voiced length.
+            ((piece_lo, piece_hi),) = item.pieces
+            index = next(
+                i
+                for i, word in enumerate(cut_words)
+                if word.start == item.original_start_s and word.end == item.original_end_s
+            )
+            assert index > 0 and silence_cut._is_sentence_final(cut_words[index - 1].text), item
+            assert piece_hi == item.original_end_s, item
+            assert piece_hi - piece_lo >= silence_cut.SENTENCE_HEAD_MIN_VOICED_S - _RULE0_EPS
         else:
             # A single piece means the carve was still interior and the sliver
             # on one side fell under TOKEN_PIECE_MIN_S; the kind names the end

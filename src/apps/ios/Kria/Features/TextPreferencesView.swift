@@ -34,11 +34,11 @@ enum TextSetting: String, Sendable {
 
     var title: String {
         switch self {
-        case .font: "Font"
-        case .placement: "Placement"
-        case .color: "Color"
-        case .outline: "Outline"
-        case .shadow: "Shadow"
+        case .font: String(localized: "Font")
+        case .placement: String(localized: "Placement")
+        case .color: String(localized: "Color")
+        case .outline: String(localized: "Outline", comment: "Text style setting: outline around letters")
+        case .shadow: String(localized: "Shadow", comment: "Text style setting: drop shadow behind letters")
         }
     }
 }
@@ -193,7 +193,7 @@ struct TextPreferenceOperation: Decodable, Sendable {
     }
     private func show(_ error: Error) {
         needsReload = (error as? APIError)?.isConflict == true
-        self.error = needsReload ? "Your saved preferences changed. Reload before saving again." : error.localizedDescription
+        self.error = needsReload ? String(localized: "Your saved preferences changed. Reload before saving again.") : error.localizedDescription
     }
 }
 
@@ -266,7 +266,7 @@ struct TextPreferencesView: View {
             Button("Discard changes", role: .destructive) { dismiss() }
             Button("Keep editing", role: .cancel) {}
         } message: {
-            Text("You changed \(dirtyRoles.count == 1 ? "a text type" : "\(dirtyRoles.count) text types") that is not saved yet.")
+            Text(dirtyRoles.count == 1 ? String(localized: "You changed a text type that is not saved yet.") : String(localized: "You changed \(dirtyRoles.count) text types that is not saved yet."))
         }
     }
 
@@ -280,7 +280,7 @@ struct TextPreferencesView: View {
                 let other = memory.active.filter { $0.categoryIsText && !($0.normalizedKey ?? "").hasPrefix("text_style_") }
                 if !other.isEmpty {
                     Group {
-                        groupLabel("Other saved text instructions")
+                        groupLabel(String(localized: "Other saved text instructions"))
                         ForEach(other) { item in
                             Text(item.instruction)
                             Button("Forget this instruction") { Task { await model.forget(item) } }
@@ -289,7 +289,7 @@ struct TextPreferencesView: View {
                 }
                 if !memory.suggestions.isEmpty {
                     Group {
-                        groupLabel("Suggestions")
+                        groupLabel(String(localized: "Suggestions"))
                         ForEach(memory.suggestions.filter(\.categoryIsText)) { item in
                             TextPreferenceSuggestionRow(item: item) { accept in
                                 await model.decide(item, accept: accept)
@@ -301,12 +301,12 @@ struct TextPreferencesView: View {
             } else if model.memory != nil { Text("Text preferences are not available yet.").plainRow() }
             if let learning = model.memory?.editLearning, learning.available || learning.enabled {
                 Group {
-                    groupLabel("Learn from finished edits")
+                    groupLabel(String(localized: "Learn from finished edits"))
                     Toggle("Learn from finished edits", isOn: Binding(get: { learning.enabled }, set: { enabled in Task { await model.setLearningEnabled(enabled) } }))
                         .accessibilityIdentifier("text-learning-enabled")
-                    note("After the same change in three finished videos, Kria can suggest a preference. You choose whether to save it.")
+                    note(String(localized: "After the same change in three finished videos, Kria can suggest a preference. You choose whether to save it."))
                     if learning.enabled {
-                        note("Turning this off clears learning history and pending suggestions. Approved preferences stay saved.")
+                        note(String(localized: "Turning this off clears learning history and pending suggestions. Approved preferences stay saved."))
                         Button("Reset learning history") { Task { await model.resetLearningHistory() } }
                             .accessibilityIdentifier("text-learning-reset")
                     }
@@ -337,10 +337,10 @@ struct TextPreferencesView: View {
 
     private func savedSection(_ memory: TextPreferenceMemory) -> some View {
         Group {
-            groupLabel("Saved preferences")
+            groupLabel(String(localized: "Saved preferences"))
             Toggle("Use saved preferences", isOn: Binding(get: { memory.enabled }, set: { enabled in Task { await model.setEnabled(enabled) } }))
                 .accessibilityIdentifier("text-preferences-enabled")
-            note(memory.enabled ? "Used for new videos. A request in chat wins." : "Paused. Turn this on to use your choices in new videos.")
+            note(memory.enabled ? String(localized: "Used for new videos. A request in chat wins.") : String(localized: "Paused. Turn this on to use your choices in new videos."))
             Button("Reset \(TextRoleSpec.spec(role).label.lowercased()) preferences") {
                 let resetRole = role
                 Task {
@@ -450,7 +450,7 @@ struct TextPreferencesView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("text-preference-role-" + spec.role)
-        .accessibilityValue(unsaved ? "unsaved changes" : "")
+        .accessibilityValue(unsaved ? String(localized: "unsaved changes") : "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -465,7 +465,7 @@ struct TextPreferencesView: View {
 
     private var fontSection: some View {
         Group {
-            groupLabel("Fonts", first: true)
+            groupLabel(String(localized: "Fonts"), first: true)
             pickerRow(.font) {
                 Picker("Font", selection: Binding(get: {
                     effective.fontFamily ?? "auto"
@@ -482,19 +482,19 @@ struct TextPreferencesView: View {
                 }.accessibilityIdentifier("text-preference-font")
             }
             if let hint = defaults.fontHint, effective.fontFamily == nil {
-                note("Kria starts with \(hint) for \(TextRoleSpec.spec(role).label.lowercased()).")
+                note(String(localized: "Kria starts with \(hint) for \(TextRoleSpec.spec(role).label.lowercased())."))
             }
             NavigationLink {
                 TextPreferenceFontPicker(rule: $rule, selection: .favorite)
             } label: {
-                fontRow("Favorite fonts", symbol: "heart", fonts: rule.favoriteFonts)
+                fontRow(String(localized: "Favorite fonts"), symbol: "heart", fonts: rule.favoriteFonts)
             }.accessibilityIdentifier("text-preference-favorite-fonts")
             NavigationLink {
                 TextPreferenceFontPicker(rule: $rule, selection: .excluded)
             } label: {
-                fontRow("Never use", symbol: "nosign", fonts: rule.excludedFonts)
+                fontRow(String(localized: "Never use", comment: "Font list: fonts Kria must not use"), symbol: "nosign", fonts: rule.excludedFonts)
             }
-            .accessibilityLabel("Excluded fonts, " + fontSummary(rule.excludedFonts))
+            .accessibilityLabel(String(localized: "Excluded fonts, \(fontSummary(rule.excludedFonts))"))
             .accessibilityIdentifier("text-preference-excluded-fonts")
         }.plainRow()
     }
@@ -506,14 +506,14 @@ struct TextPreferencesView: View {
 
     private var placementSection: some View {
         Group {
-            groupLabel("Placement and color")
+            groupLabel(String(localized: "Placement and color"))
             pickerRow(.placement) {
                 Picker("Placement", selection: Binding(get: { effective.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
-                    if inheritsNoPosition { Text(defaults.placement == TextRoleSpec.kriaPicksPlacement ? "Kria picks" : defaults.placement).tag("") }
+                    if inheritsNoPosition { Text(defaults.placement == TextRoleSpec.kriaPicksPlacement ? String(localized: "Kria picks", comment: "Placement choice: Kria chooses the position") : defaults.placement).tag("") }
                     ForEach(TextRoleSpec.positions, id: \.self) { Text(TextRoleSpec.positionName($0)).tag($0) }
                 }
                 .accessibilityIdentifier("text-preference-placement")
-                .accessibilityHint(inheritsNoPosition && defaults.placement == TextRoleSpec.kriaPicksPlacement ? "Kria picks the clearest spot" : "")
+                .accessibilityHint(inheritsNoPosition && defaults.placement == TextRoleSpec.kriaPicksPlacement ? String(localized: "Kria picks the clearest spot") : "")
             }
             VStack(alignment: .leading, spacing: 4) {
                 settingHeader(.color)
@@ -597,7 +597,7 @@ struct TextPreferencesView: View {
 
     private var effectsSection: some View {
         Group {
-            groupLabel("Effects")
+            groupLabel(String(localized: "Effects"))
             effectRow(.outline, id: "text-preference-outline",
                       value: Binding(get: { isOn(effective.strokeWidth.map { $0 != 0 }, fallback: defaults.outline) ? "on" : "off" },
                                      set: { rule.strokeWidth = $0 == "on" ? 2 : 0 }))
@@ -611,7 +611,7 @@ struct TextPreferencesView: View {
 
     /// Label and its source tag left, choices right on one row; a text size too big for that stacks them.
     private func effectRow(_ setting: TextSetting, id: String, value: Binding<String>) -> some View {
-        let control = KriaSegmentedControl(options: [(label: "Off", value: "off"), (label: "On", value: "on")], selection: value)
+        let control = KriaSegmentedControl(options: [(label: String(localized: "Off"), value: "off"), (label: String(localized: "On"), value: "on")], selection: value)
             .accessibilityIdentifier(id)
         return ViewThatFits(in: .horizontal) {
             HStack { settingHeader(setting); Spacer(minLength: 12); control }
@@ -666,13 +666,13 @@ struct TextPreferencesView: View {
         VStack(spacing: 8) {
             if model.saved { Label("Saved for future videos.", systemImage: "checkmark.circle.fill").foregroundStyle(KriaColor.success).accessibilityIdentifier("text-preferences-saved") }
             if !model.saved, model.error == nil, !dirtyRoles.isEmpty {
-                Text(dirtyRoles.count == 1 ? "Unsaved changes" : "Unsaved changes in \(dirtyRoles.count) types")
+                Text(dirtyRoles.count == 1 ? String(localized: "Unsaved changes") : String(localized: "Unsaved changes in \(dirtyRoles.count) types"))
                     .foregroundStyle(KriaColor.mutedInk)
                     .accessibilityIdentifier("text-preferences-unsaved")
             }
             if let error = model.error {
                 Text(error).foregroundStyle(KriaColor.failureText)
-                Button(model.needsReload ? "Reload preferences" : "Retry") {
+                Button(model.needsReload ? String(localized: "Reload preferences") : String(localized: "Retry")) {
                     let discardDraft = model.needsReload
                     Task {
                         await model.load()
@@ -688,7 +688,7 @@ struct TextPreferencesView: View {
                 } label: {
                     HStack {
                         if model.isWorking { ProgressView() }
-                        Text(model.isWorking ? "Saving…" : "Save preferences").frame(maxWidth: .infinity)
+                        Text(model.isWorking ? String(localized: "Saving…") : String(localized: "Save preferences")).frame(maxWidth: .infinity)
                     }
                 }
                 .buttonStyle(KriaPrimaryButtonStyle())
@@ -704,9 +704,9 @@ struct TextPreferencesView: View {
 
     private func reloadRule() { rule = drafts[role] ?? model.memory?.rule(role: role) ?? TextPreferenceRule() }
     private func fontSummary(_ fonts: [String]) -> String {
-        if fonts.isEmpty { return "Choose fonts" }
+        if fonts.isEmpty { return String(localized: "Choose fonts") }
         let names = fonts.prefix(2).joined(separator: ", ")
-        return fonts.count > 2 ? names + " and \(fonts.count - 2) more" : names
+        return fonts.count > 2 ? String(localized: "\(names) and \(fonts.count - 2) more") : names
     }
     private func fontRow(_ title: String, symbol: String, fonts: [String]) -> some View {
         let icon = Image(systemName: symbol).frame(width: 24).foregroundStyle(KriaColor.mutedInk)
@@ -718,7 +718,10 @@ struct TextPreferencesView: View {
         }.frame(minHeight: 44)
     }
     private func colorName(_ hex: String) -> String {
-        ["#FFFFFF": "White", "#000000": "Black", "#FFFF00": "Yellow", "#FF0000": "Red", "#0000FF": "Blue"][hex.uppercased()] ?? hex
+        [
+            "#FFFFFF": String(localized: "White"), "#000000": String(localized: "Black"), "#FFFF00": String(localized: "Yellow"),
+            "#FF0000": String(localized: "Red"), "#0000FF": String(localized: "Blue"),
+        ][hex.uppercased()] ?? hex
     }
 }
 
@@ -754,12 +757,12 @@ private struct TextPreferenceFontPicker: View {
                     .accessibilityAddTraits(isSelected(font) ? .isSelected : [])
                 }
             } footer: {
-                Text(selection == .favorite ? "Kria will favor these fonts when choosing a style." : "Kria will avoid these fonts in future videos. Return to save your choices.")
+                Text(selection == .favorite ? String(localized: "Kria will favor these fonts when choosing a style.") : String(localized: "Kria will avoid these fonts in future videos. Return to save your choices."))
             }
         }
         .searchable(text: $search, prompt: "Find a font")
         .tint(KriaColor.ink)
-        .navigationTitle(selection == .favorite ? "Favorite fonts" : "Never use")
+        .navigationTitle(selection == .favorite ? String(localized: "Favorite fonts") : String(localized: "Never use", comment: "Font list: fonts Kria must not use"))
         .navigationBarTitleDisplayMode(.inline)
     }
     private func toggle(_ font: String) {

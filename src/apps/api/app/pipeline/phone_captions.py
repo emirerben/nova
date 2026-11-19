@@ -157,6 +157,48 @@ _LEFT_EDGE_SAFETY_EM = 0.1
 Box = tuple[float, float, float, float]  # left, top, right, bottom (canvas px)
 
 
+# KRI-1501 (two-language captions, docs/pipelines/dual-captions.md): the translated line under
+# the spoken caption. One row, never wrapped: it shrinks to fit 0.9 of the canvas width, never
+# below 24 px (still too wide: the line is dropped, never cut off). Mirrored by the iOS preview.
+TRANSLATION_DEFAULT_COLOR = "#F5D33C"
+_TRANSLATION_SIZE_SHARE = 0.6
+_TRANSLATION_DEFAULT_MIN_PX = 28
+TRANSLATION_MIN_PX = 24
+TRANSLATION_MAX_PX = 120
+_TRANSLATION_STROKE_SHARE = 0.6
+_TRANSLATION_MIN_STROKE_PX = 2
+_TRANSLATION_GAP_EM = 0.25
+_TRANSLATION_WIDTH_FRAC = 0.9
+# An attached line flipped above the spoken one never starts higher than this (canvas share).
+_TRANSLATION_TOP_FRAC = 0.05
+# Where an attached line may end when the spoken caption has no asked frame budget: the lowest
+# block centre a caption may be moved to (`captions.CAPTION_Y_FRAC_MAX`).
+_TRANSLATION_FRAME_BUDGET_FRAC = 0.90
+
+
+@dataclass(frozen=True, slots=True)
+class PhoneCaptionTranslationLook:
+    """The translated caption track (``variant["caption_translation"]``, KRI-1501).
+
+    ``enabled`` False keeps the texts but draws nothing. ``size_px`` None is 0.6 of the spoken
+    caption (28-120); ``font`` None is the spoken caption's; ``stroke_width`` None is
+    ``max(2, round(0.6 x spoken stroke))``. ``position_*_frac`` None is ATTACHED (centred under
+    the spoken line's ink, or above it when below would leave the frame or meet a face); set, a
+    detached block centre. ``line_overrides[cue_id]`` wins for that one line.
+    """
+
+    enabled: bool = True
+    language: str = ""
+    source_language: str = ""
+    size_px: int | None = None
+    color: str = TRANSLATION_DEFAULT_COLOR
+    font: str | None = None
+    stroke_width: int | None = None
+    position_x_frac: float | None = None
+    position_y_frac: float | None = None
+    line_overrides: dict | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class PhoneCaptionLook:
     """Every caption-appearance knob `compile_caption_layers` honours.
@@ -221,6 +263,9 @@ class PhoneCaptionLook:
     # Both default off: the default look compiles the same layers as before.
     box_color: str | None = None
     dim_words: bool = False
+    # KRI-1501: the translated line under each cue carrying a ``translation``. None (the
+    # default) draws no translated line: the compile is byte-identical to before.
+    translation: PhoneCaptionTranslationLook | None = None
 
 
 _DEFAULT_CAPTION_LOOK = PhoneCaptionLook()
@@ -441,7 +486,97 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         line_overrides=editor_style.get("line_overrides"),
         frame_budget_frac=_frame_budget_or_none(variant.get("caption_frame_budget_frac")),
         **_caption_shape_fields(variant),
+        **_caption_translation_fields(variant),
     )
+
+
+def _fraction_or_none(value: object, lower: float, upper: float) -> float | None:
+    import math
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    return max(lower, min(upper, float(value)))
+
+
+def _translation_size_or_none(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return max(TRANSLATION_MIN_PX, min(TRANSLATION_MAX_PX, int(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def dual_captions_renderable() -> bool:
+    """The build-independent half of `phone_rollout.dual_captions_planned_for`: the kill switch
+    is on and ``dualCaptions`` is verified on device. A compile has no app build to ask; the
+    build is gated where a translated line is planned (worker) or accepted (editor Save)."""
+    from app.config import settings
+
+    return bool(
+        settings.dual_captions_enabled
+        and "dualCaptions" in set(settings.phone_render_verified_features)
+    )
+
+
+def caption_translation_look(value: object) -> PhoneCaptionTranslationLook | None:
+    """``variant["caption_translation"]`` as a `PhoneCaptionTranslationLook`, or None.
+
+    None unless the two-language kill switch is on, ``dualCaptions`` is verified on device, and
+    the document names a supported language other than its source. Out-of-range values are
+    clamped to the contract ranges (sizes 24-120, x 0.05-0.95, y 0.10-0.90)."""
+    if not isinstance(value, dict) or not dual_captions_renderable():
+        return None
+    from app.services.phone_rollout import DUAL_CAPTION_LANGUAGES
+
+    language = str(value.get("language") or "").strip().casefold()
+    source = str(value.get("source_language") or "").strip().casefold()
+    if language not in DUAL_CAPTION_LANGUAGES or language == source:
+        return None
+    overrides: dict[str, dict] = {}
+    raw_overrides = value.get("line_overrides")
+    if isinstance(raw_overrides, dict):
+        for cue_id, own in raw_overrides.items():
+            if not isinstance(cue_id, str) or not isinstance(own, dict):
+                continue
+            entry = {
+                key: parsed
+                for key, parsed in (
+                    ("position_x_frac", _fraction_or_none(own.get("position_x_frac"), 0.05, 0.95)),
+                    ("position_y_frac", _fraction_or_none(own.get("position_y_frac"), 0.10, 0.90)),
+                    ("size_px", _translation_size_or_none(own.get("size_px"))),
+                )
+                if parsed is not None
+            }
+            if entry:
+                overrides[cue_id] = entry
+    stroke = value.get("stroke_width")
+    return PhoneCaptionTranslationLook(
+        enabled=value.get("enabled", True) is not False,
+        language=language,
+        source_language=source,
+        size_px=_translation_size_or_none(value.get("size_px")),
+        color=_clean_hex_or(value.get("color"), TRANSLATION_DEFAULT_COLOR),
+        font=_valid_font_or_none(value.get("font")),
+        stroke_width=None if stroke is None else _clamp_int(stroke, 0, 12, _CAPTION_OUTLINE_PX),
+        position_x_frac=_fraction_or_none(value.get("position_x_frac"), 0.05, 0.95),
+        position_y_frac=_fraction_or_none(value.get("position_y_frac"), 0.10, 0.90),
+        line_overrides=overrides or None,
+    )
+
+
+def _valid_font_or_none(value: object) -> str | None:
+    from app.pipeline.narrated_assembler import is_valid_caption_font
+
+    return value if isinstance(value, str) and value and is_valid_caption_font(value) else None
+
+
+def _caption_translation_fields(variant: dict) -> dict:
+    """``translation`` from ``variant["caption_translation"]``; {} when there is none to draw."""
+    look = caption_translation_look(variant.get("caption_translation"))
+    return {"translation": look} if look is not None else {}
 
 
 def _frame_budget_or_none(value: object) -> float | None:
@@ -574,7 +709,15 @@ def compile_caption_layers(
 
     from app.pipeline.portable_text_layout import compile_text_overlay
 
-    prepared = _prepare_cues(cues, timeline_duration_s=timeline_duration_s)
+    translation = _active_translation(resolved_look)
+    prepared = _prepare_cues(
+        cues, timeline_duration_s=timeline_duration_s, keep_translation=translation is not None
+    )
+    # KRI-1501: the translated line belongs to the cue as prepared here, before any split in
+    # time below; each piece remembers its original cue.
+    originals = prepared
+    if translation is not None:
+        prepared = [{**cue, _TRANSLATION_ORIGIN: index} for index, cue in enumerate(prepared)]
     if len(prepared) > MAX_CAPTION_LAYERS:
         raise UnsupportedPhonePlan(
             f"{len(prepared)} caption cues would exceed the phone recipe's "
@@ -682,6 +825,7 @@ def compile_caption_layers(
                 canvas=canvas,
                 budget=canvas.height * resolved_look.frame_budget_frac,
             )
+        spoken_pieces = resolved
         if any(isinstance(entry, _SingleWordCue) for entry in entries):
             resolved = _merge_single_word_cues(entries, resolved)
             if len(resolved) > MAX_CAPTION_LAYERS:
@@ -690,8 +834,320 @@ def compile_caption_layers(
                     f"{MAX_CAPTION_LAYERS}-text-layer cap"
                 )
         break
+    if translation is not None:
+        translated = _compile_translation_layers(
+            originals,
+            _pieces_by_origin(prepared, entries, spoken_pieces, overlays),
+            look=resolved_look,
+            translation=translation,
+            canvas=canvas,
+            id_prefix=id_prefix,
+            animate=animate,
+        )
+        # The spoken captions keep their room; translated lines past the layer cap are dropped.
+        resolved = [*resolved, *translated[: max(0, MAX_CAPTION_LAYERS - len(resolved))]]
     remember_caption_bounds(resolved, canvas=canvas)
     return resolved
+
+
+# The original (pre-split) cue index each prepared cue carries while a translated line is drawn.
+_TRANSLATION_ORIGIN = "_translation_origin"
+
+
+def _active_translation(look: PhoneCaptionLook) -> PhoneCaptionTranslationLook | None:
+    """The translated line this compile draws: the look's own (an editor Save), else the one the
+    running generation registered; None when there is none or it is switched off."""
+    translation = look.translation
+    if translation is None:
+        from app.services.phone_text_styling import generation_caption_translation
+
+        translation = generation_caption_translation()
+    if translation is None or not translation.enabled or not translation.language:
+        return None
+    return translation
+
+
+def _pieces_by_origin(
+    prepared: list[dict],
+    entries: list[Any],
+    layers: list[PortableTextLayer],
+    overlays: list[dict[str, Any]],
+) -> dict[int, list[tuple[PortableTextLayer, dict[str, Any]]]]:
+    """Each original cue's drawn spoken layers (one per piece of a cue split in time, one per
+    word of a one-word-at-a-time cue) with the overlay each was compiled from."""
+    out: dict[int, list[tuple[PortableTextLayer, dict[str, Any]]]] = {}
+    for cue, entry in zip(prepared, entries, strict=True):
+        origin = cue.get(_TRANSLATION_ORIGIN)
+        if not isinstance(origin, int):
+            continue
+        if isinstance(entry, int):
+            items = [(layers[entry], overlays[entry])]
+        else:
+            span = slice(entry.first, entry.first + len(entry.layers))
+            items = list(zip(layers[span], overlays[span], strict=True))
+        out.setdefault(origin, []).extend(items)
+    return out
+
+
+def _compile_translation_layers(
+    originals: list[dict],
+    pieces_by_origin: dict[int, list[tuple[PortableTextLayer, dict[str, Any]]]],
+    *,
+    look: PhoneCaptionLook,
+    translation: PhoneCaptionTranslationLook,
+    canvas: Any,
+    id_prefix: str,
+    animate: bool,
+) -> list[PortableTextLayer]:
+    """One translated layer per original cue with a non-empty ``translation`` (KRI-1501).
+
+    Ids are ``f"{id_prefix}-tr-{index}"`` over the original cues; each spans its cue's whole
+    time even when the spoken line was split in time. A line that cannot be drawn (wider than
+    the frame at 24 px, no room above or below the spoken line clear of a face, the frame
+    budget and the watermark) is dropped -- never cut off, never on a face -- and recorded."""
+    from app.services.phone_text_styling import generation_face_boxes
+
+    faces = generation_face_boxes()
+    out: list[PortableTextLayer] = []
+    dropped: list[dict[str, Any]] = []
+    for index, cue in enumerate(originals):
+        text = " ".join(str(cue.get("translation") or "").split())
+        pieces = pieces_by_origin.get(index) or []
+        if not text or not pieces:
+            continue
+        try:
+            layer, reason = _translation_layer(
+                cue,
+                text,
+                pieces,
+                look=look,
+                translation=translation,
+                canvas=canvas,
+                layer_id=f"{id_prefix}-tr-{index}",
+                animate=animate,
+                faces=faces,
+            )
+        except Exception as exc:  # noqa: BLE001 - a translated line never fails a render
+            layer, reason = None, f"error:{type(exc).__name__}"
+        if layer is None:
+            dropped.append({"cue": cue.get("id") or index, "reason": reason})
+            continue
+        out.append(layer)
+    if dropped:
+        try:
+            from app.services.pipeline_trace import record_pipeline_event
+
+            record_pipeline_event(
+                "captions",
+                "caption_translation_lines_not_drawn",
+                {"language": translation.language, "lines": dropped[:50]},
+            )
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+    return out
+
+
+def _translation_layer(
+    cue: dict,
+    text: str,
+    pieces: list[tuple[PortableTextLayer, dict[str, Any]]],
+    *,
+    look: PhoneCaptionLook,
+    translation: PhoneCaptionTranslationLook,
+    canvas: Any,
+    layer_id: str,
+    animate: bool,
+    faces: list,
+) -> tuple[PortableTextLayer | None, str]:
+    """The translated line of one cue, or (None, why it is not drawn)."""
+    import math
+    from dataclasses import replace
+
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    spoken_layer, spoken_overlay = pieces[0]
+    spoken_size = (
+        spoken_layer.runs[0].font_size if spoken_layer.runs else spoken_overlay["text_size_px"]
+    )
+    own = (translation.line_overrides or {}).get(cue.get("id")) if cue.get("id") else None
+    own = own if isinstance(own, dict) else {}
+    size = own.get("size_px") or translation.size_px
+    if size is None:
+        size = max(
+            _TRANSLATION_DEFAULT_MIN_PX,
+            min(TRANSLATION_MAX_PX, round(_TRANSLATION_SIZE_SHARE * spoken_size)),
+        )
+    size = max(TRANSLATION_MIN_PX, min(TRANSLATION_MAX_PX, int(size)))
+    stroke = (
+        translation.stroke_width
+        if translation.stroke_width is not None
+        else max(
+            _TRANSLATION_MIN_STROKE_PX,
+            round(_TRANSLATION_STROKE_SHARE * float(spoken_overlay.get("outline_px") or 0)),
+        )
+    )
+    x_set = own.get("position_x_frac", translation.position_x_frac)
+    y_set = own.get("position_y_frac", translation.position_y_frac)
+    line_look = replace(
+        look,
+        font_family=translation.font or spoken_overlay["font_family"],
+        text_size_px=size,
+        text_color=translation.color,
+        outline_px=stroke,
+        position_x_frac=0.5,
+        position_y_frac=0.5,
+        text_anchor=None,
+        max_width_frac=_TRANSLATION_WIDTH_FRAC,
+        box_color=None,
+        dim_words=False,
+        line_overrides=None,
+        # Plain fill + stroke: no shadow.
+        shadow_enabled=False,
+        shadow_color=None,
+        shadow_opacity=None,
+        translation=None,
+    )
+    overlay = _base_overlay(
+        {"text": text, "start_s": cue["start_s"], "end_s": cue["end_s"]}, line_look
+    )
+    phases = cue.get("animation_phases") or look.default_animation_phases
+    phases = phases if animate else None
+    if phases is not None:
+        overlay["animation_phases"] = phases
+        overlay["effect"] = (
+            "typewriter" if "typewriter" in (phases["entrance"], phases["exit"]) else "none"
+        )
+    else:
+        overlay["effect"] = "pop-in"
+
+    # One row: shrink to fit the width budget, never below 24 px.
+    typeface = cloud._resolve_typeface_for_overlay(overlay).typeface
+    shaped = bool(overlay.get("shape_text"))
+    limit = canvas.width * _TRANSLATION_WIDTH_FRAC
+
+    def width_at(px: int) -> float:
+        spacing = cloud._overlay_letter_spacing_px(overlay, px)
+        return cloud._measure_line(_caption_font(typeface, px), text, spacing, shape_text=shaped)
+
+    width = width_at(size) + stroke
+    while width > limit:
+        smaller = min(size - 1, math.floor(size * limit / width))
+        if smaller < TRANSLATION_MIN_PX:
+            return None, "too_wide"
+        size = smaller
+        width = width_at(size) + stroke
+    overlay["text_size_px"] = size
+
+    # Horizontal: detached at its own x, attached centred under the spoken ink.
+    spoken_face = cloud._resolve_typeface_for_overlay(spoken_overlay).typeface
+    spoken_inks = [
+        ink
+        for layer, _overlay in pieces
+        for run in layer.runs
+        if (ink := caption_ink_box(run, spoken_face)) is not None
+    ]
+    spoken_ink = _union(spoken_inks)
+    if x_set is not None:
+        cx = float(x_set) * canvas.width
+    elif spoken_ink is not None:
+        cx = (spoken_ink[0] + spoken_ink[2]) / 2
+    else:
+        cx = float(look.position_x_frac) * canvas.width
+    if y_set is None:
+        # An attached line stays inside the frame's side margins.
+        half = width / 2
+        cx = min(max(cx, 0.05 * canvas.width + half), 0.95 * canvas.width - half)
+    overlay["position_x_frac"] = cx / canvas.width
+
+    def compiled_at(cy: float) -> PortableTextLayer:
+        layer, _font = compile_text_overlay(
+            {**overlay, "position_y_frac": cy / canvas.height}, layer_id=layer_id, canvas=canvas
+        )
+        return layer
+
+    def one_row(layer: PortableTextLayer) -> bool:
+        return (
+            bool(layer.runs)
+            and len({run.baseline_y for run in layer.runs}) == 1
+            and all(run.font_size == size for run in layer.runs)
+        )
+
+    if y_set is not None:
+        layer = compiled_at(float(y_set) * canvas.height)
+        return (layer, "") if one_row(layer) else (None, "wrapped")
+    if spoken_ink is None:
+        return None, "no_spoken_ink"
+
+    trial_cy = canvas.height / 2
+    trial = compiled_at(trial_cy)
+    if not one_row(trial):
+        return None, "wrapped"
+    ink = _union([b for run in trial.runs if (b := caption_ink_box(run, typeface)) is not None])
+    if ink is None:
+        return None, "no_ink"
+    gap = _TRANSLATION_GAP_EM * size
+    budget = canvas.height * (
+        look.frame_budget_frac
+        if look.frame_budget_frac is not None
+        else _TRANSLATION_FRAME_BUDGET_FRAC
+    )
+    keepout = watermark_keepout_rect(canvas.width, canvas.height)
+    window = {"start_s": cue["start_s"], "end_s": cue["end_s"]}
+    below = trial_cy + (spoken_ink[3] + gap - ink[1])
+    above = trial_cy + (spoken_ink[1] - gap - ink[3])
+    reason = "no_room"
+    for cy in (below, above):
+        shift = cy - trial_cy
+        box = (ink[0], ink[1] + shift, ink[2], ink[3] + shift)
+        if box[3] > budget or box[1] < canvas.height * _TRANSLATION_TOP_FRAC:
+            reason = "no_room"
+            continue
+        dx = 0.0
+        if _intersects(box, keepout):
+            # Slide right just past the mark when the line has the room (it is narrower than
+            # the frame); otherwise this placement is not usable.
+            dx = keepout[2] - box[0] + 1.0
+            if box[2] + dx > canvas.width * 0.95:
+                reason = "watermark"
+                continue
+            box = (box[0] + dx, box[1], box[2] + dx, box[3])
+        if _box_on_face(box, faces, window, canvas):
+            reason = "face"
+            continue
+        if dx:
+            overlay["position_x_frac"] = (cx + dx) / canvas.width
+        layer = compiled_at(cy)
+        overlay["position_x_frac"] = cx / canvas.width
+        if one_row(layer):
+            return layer, ""
+        reason = "wrapped"
+    return None, reason
+
+
+def _box_on_face(box: Box, faces: list, window: dict, canvas: Any) -> bool:
+    """Does ``box`` (canvas px) overlap a face sampled while ``window`` is on screen?"""
+    if not faces:
+        return False
+    frac = (
+        box[0] / canvas.width,
+        box[1] / canvas.height,
+        box[2] / canvas.width,
+        box[3] / canvas.height,
+    )
+    for face in faces:
+        edges = face.get("box") if isinstance(face, dict) else face
+        if not isinstance(edges, (list, tuple)) or len(edges) != 4:
+            continue
+        if isinstance(face, dict) and not (
+            float(face.get("start_s", 0)) < float(window["end_s"])
+            and float(window["start_s"]) < float(face.get("end_s", 0))
+        ):
+            continue
+        left, top, right, bottom = (float(value) for value in edges)
+        if frac[0] < right and left < frac[2] and frac[1] < bottom and top < frac[3]:
+            return True
+    return False
 
 
 # A karaoke layer holds at most this many words (`KaraokeContent.starts`); a longer cue is
@@ -1524,7 +1980,9 @@ def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
     return overlay
 
 
-def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> list[dict]:
+def _prepare_cues(
+    cues: list[dict], *, timeline_duration_s: float | None, keep_translation: bool = False
+) -> list[dict]:
     """Sort, drop empty/degenerate cues, and clamp overlap (and, optionally,
     the timeline bound) -- see `compile_caption_layers`'s docstring. A cue's
     ``hidden_spans`` (KRI-1344) are cut out of its time first
@@ -1549,6 +2007,10 @@ def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> lis
         phases = _phases_or_none(cue.get("animation_phases"))
         if phases is not None:
             entry["animation_phases"] = phases
+        if keep_translation and isinstance(cue.get("translation"), str):
+            translated = " ".join(cue["translation"].split())
+            if translated:
+                entry["translation"] = translated
         words = cue.get("words")
         if isinstance(words, list) and words:
             entry["words"] = _words_spelling(text, words, start_s=start, end_s=end)

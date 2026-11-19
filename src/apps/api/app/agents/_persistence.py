@@ -124,6 +124,7 @@ def persist_agent_run(
     output_dict: dict[str, Any] | None,
     raw_text: str | None,
     error: str | None = None,
+    fallback_kind: str | None = None,
 ) -> None:
     """Insert one agent_run row. Swallows all errors. Uses the sync engine
     directly to stay decoupled from any caller-owned session/transaction.
@@ -171,7 +172,7 @@ def persist_agent_run(
                         tokens_tool, token_details, environment, usage_purpose,
                         test_run_id, provider_request_id, price_version,
                         reserved_cost_usd, settled_cost_usd, cost_reservation_id,
-                        cost_usd, latency_ms, error_message
+                        cost_usd, latency_ms, error_message, fallback_kind
                     ) VALUES (
                         :job_id, :plan_item_id, :template_id, :music_track_id,
                         :creator_agent_session_id, :owner_label,
@@ -182,7 +183,8 @@ def persist_agent_run(
                         :tokens_tool, CAST(:token_details AS JSONB), :environment,
                         :usage_purpose, :test_run_id, :provider_request_id,
                         :price_version, :reserved_cost_usd, :settled_cost_usd,
-                        :cost_reservation_id, :cost_usd, :latency_ms, :error_message
+                        :cost_reservation_id, :cost_usd, :latency_ms, :error_message,
+                        :fallback_kind
                     )
                     """
                 ),
@@ -219,6 +221,7 @@ def persist_agent_run(
                     "cost_usd": round(cost_usd, 6),
                     "latency_ms": latency_ms,
                     "error_message": error,
+                    "fallback_kind": fallback_kind,
                 },
             )
     except Exception as exc:  # noqa: BLE001 — never break an agent call

@@ -8,6 +8,14 @@ import subprocess
 import sys
 
 
+# Two shards. Four were tried on 2026-11-19 (#2389) and reverted the same day:
+# round-robin put test_phone_text_fit_never_fails.py in a shard with the
+# carousel renders and other CPU-heavy tests, and its 40-cue case went from
+# 24-41 s to 53-60 s against this runner's 60 s timeout, failing an unrelated
+# PR. The slowest job only got 3-4 minutes faster. Raise the count again only
+# with shards balanced on measured per-file time, and check the slowest tests
+# against the timeout over several runs first. test_api_tests.py keeps
+# ci.yml's matrix equal to this count, so a shard can never be left out.
 SHARD_COUNT = 2
 
 
@@ -36,7 +44,7 @@ def shard_files(api_root: Path, shard: int, shard_count: int = SHARD_COUNT) -> l
 
 
 def pytest_command(selected: list[Path]) -> list[str]:
-    """Keep the CI runner flags consistent across both isolated shards."""
+    """Keep the CI runner flags consistent across the isolated shards."""
     return [
         "pytest",
         *(str(path) for path in selected),

@@ -389,6 +389,13 @@ async def _repaired(
         ):
             log.info("edit_copilot.repair_skipped", repair_round=repair.repair_round)
             break
+        from app.services.thought_summaries import publish_step  # noqa: PLC0415
+
+        if repair.rejected:
+            count = len(repair.rejected)
+            publish_step(f"Fixing {count} {'edit' if count == 1 else 'edits'} the editor refused")
+        else:
+            publish_step("Writing the reply")
         try:
             repaired = await asyncio.to_thread(
                 agent.run,
@@ -447,7 +454,10 @@ async def run_copilot_turn(
         reply_language=current_reply_language(),
     )
 
-    from app.services.thought_summaries import current_thought_publisher  # noqa: PLC0415
+    from app.services.thought_summaries import (  # noqa: PLC0415
+        current_thought_publisher,
+        publish_step,
+    )
 
     agent = configure_creator_agent(ChatEditCopilotAgent(default_client()), "edit_copilot")
     agent.compile_check = compile_check
@@ -464,6 +474,7 @@ async def run_copilot_turn(
             thought_summary_callback=current_thought_publisher(),
         )
 
+    publish_step("Reading your request and the editor")
     try:
         output: EditCopilotOutput = await asyncio.to_thread(
             agent.run, agent_input, ctx=run_context()
@@ -490,6 +501,8 @@ async def run_copilot_turn(
 
     if output.research_request is not None:
         from app.services.researched_text import ResearchUnavailable, run_researched_revision
+
+        publish_step("Looking up facts for your text")
 
         try:
             output = await asyncio.to_thread(

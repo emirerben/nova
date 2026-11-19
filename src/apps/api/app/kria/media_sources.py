@@ -15,6 +15,21 @@ from pydantic import (
     model_validator,
 )
 
+PROJECT_AUDIO_CONTENT_TYPES = frozenset(
+    {
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/aac",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/wave",
+        "audio/webm",
+        "audio/ogg",
+    }
+)
+
 PROXY_MEDIA_PREFIX = "analysis-proxy-"
 
 # "image" is deliberately not in this set: Visuals-pool photos upload in full to

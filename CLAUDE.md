@@ -40,7 +40,7 @@ Rules:
 - Client protocol numbers: run `scripts/bump-protocol.py <feature> [--config-field <name>]` when rebasing, never hand-pick ([runbook](docs/runbooks/ios-development.md)).
 
 ## Stack
-- Frontend: Next.js (src/apps/web/) — **frozen**; only privacy/terms, landing, admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) are live. Archive tag: `web-archive-2026-11`.
+- Frontend: Next.js (src/apps/web/) — **frozen**; the web editor was removed (KRI-1398). Only landing, privacy/terms, /admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) remain. Restore old code from branch `archive/web-editor-2026-11` (commit `560f1f3`).
 - Native: SwiftUI + AVFoundation (src/apps/ios/) — iOS 18, XcodeGen
 - Backend: Python FastAPI + Celery (src/apps/api/) — video processing pipeline
 - Queue: Redis (job queue for async processing)
@@ -90,7 +90,8 @@ Use `make local-render` for byte-equivalent output before merging a render-affec
 - Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
 - Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
 - Frontend (only for an explicitly requested web change): `cd src/apps/web && npm run lint && npx tsc --noEmit && npm test`
-- Kria gates: `make verify-kria`; iOS: `make ios-verify`; offline replay: `make kria-replay FIXTURE=nermin-matcha-update`
+- Kria gates: `make verify-kria`; iOS: `make ios-verify`; replay: `make kria-replay FIXTURE=nermin-matcha-update`, prod `make kria-replay-job JOB=<id>`
+- iOS screen text is EN/DE/TR (String Catalog): `python3 scripts/ios/localization.py check && … scan`; see `docs/runbooks/ios-localization.md`.
 - Pre-PR gate: `bash scripts/preship-check.sh` — ruff, drift, release metadata, KRI-577 gates, journey mapping, fix-chain BLOCK (3rd fix PR needs a failure-mode list). Run before every PR.
 - Reliability (KRI-577): `python3 scripts/reliability-gates.py select|run|red-control`; evidence and scratch-DB steps: `docs/runbooks/pr-acceptance-checklist.md`.
 
@@ -186,7 +187,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - `IOS_DEVICE_ONLY_MODE` / `KRIA_MINIMUM_CLIENT_PROTOCOL` / `CLOUD_RENDER_EXECUTION_ENABLED` — defaults `false` / `2` / `true`. Staged cutover; API and workers must share the flags. Runbook: `docs/runbooks/ios-device-only-runtime.md`; narrative: DECISIONS.md "CLAUDE.md flag detail".
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED` — default `false` (KRI-1039); on ⇒ asks the ops can express are composed. Guards: `test_compose_unmet_flag_off_is_byte_identical`, `test_ios_editor_actions_have_agent_ops`.
-- `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
+- `EDIT_WIDE_LOOKS_ENABLED` — on in prod; `docs/pipelines/generative.md`.
 - `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`). Rollout/rollback: `docs/pipelines/clip-understanding.md`.
 - `CLIP_EXPOSURE_FACT_ENABLED` — default `false` (KRI-680); measured brightness in clip records. `docs/pipelines/clip-understanding.md`.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.

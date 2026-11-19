@@ -39,10 +39,10 @@ struct CameraRollSavedPicker: View {
                     SavedMediaGrid(
                         assets: assets, selected: $selected, limit: capacity, owner: api.mediaLibraryOwner, api: api,
                         state: { $0.source == nil ? .blocked : .selectable },
-                        detail: { $0.source == nil ? "Cloud copy unavailable" : "Available to reuse" },
+                        detail: { $0.source == nil ? String(localized: "Cloud copy unavailable") : String(localized: "Available to reuse") },
                         tileID: { "collection-saved-\($0.id)" },
-                        message: notice ?? (loading ? "Loading more…" : nil),
-                        onBlockedTap: { _ in notice = "This upload’s cloud copy is unavailable." },
+                        message: notice ?? (loading ? String(localized: "Loading more…") : nil),
+                        onBlockedTap: { _ in notice = String(localized: "This upload’s cloud copy is unavailable.") },
                         onNearEnd: { if cursor != nil, !loading, error == nil { Task { await load(more: true) } } }
                     ) { _ in EmptyView() }
                 }

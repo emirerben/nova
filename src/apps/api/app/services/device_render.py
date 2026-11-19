@@ -16,6 +16,7 @@ from app.kria.device_render import (
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
+from app.services.cleared_failures import record_cleared_failure
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     REQUIREMENT_VERSION_FIELD,
@@ -823,6 +824,7 @@ def apply_retry_variant_reset(job: Any, variant_id: str) -> None:
     Call AFTER `retry_device_render` has re-pinned the new identity so the
     per-variant status and the job-level failure surface reset together.
     """
+    record_cleared_failure(job)
     assembly = dict(job.assembly_plan or {})
     assembly["variants"] = [
         {**v, "ok": False, "render_status": "awaiting_device"}

@@ -31,6 +31,8 @@ from app.agents.retake_detector import (
     run_retake_detector,
 )
 
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
+
 MODEL = RetakeDetectorAgent.spec.model
 
 # 22 words: "So today we're | wait let me start over. | So today we're looking
@@ -244,7 +246,8 @@ def test_parse_keeps_borderline_candidates_but_drops_auto_overlap() -> None:
     out = _agent().parse(
         json.dumps(
             {
-                "retakes": [_span(2, 6, "certain abandoned take")],
+                # KRI-1518: the auto span is the real restart, re-said from word 8.
+                "retakes": [_span(0, 7, "certain abandoned take")],
                 "review_candidates": [
                     _span(0, 3, "overlaps the automatic cut"),
                     _span(9, 11, "plausible restart"),
@@ -253,7 +256,7 @@ def test_parse_keeps_borderline_candidates_but_drops_auto_overlap() -> None:
         ),
         _input(),
     )
-    assert [(s.start_word, s.end_word) for s in out.retakes] == [(2, 6)]
+    assert [(s.start_word, s.end_word) for s in out.retakes] == [(0, 7)]
     assert [(s.start_word, s.end_word) for s in out.review_candidates] == [(9, 11)]
 
 

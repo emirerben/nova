@@ -187,6 +187,9 @@ def test_sequence_entries_outside_the_pool_are_dropped_with_receipts(monkeypatch
 
 
 def test_unheard_phrase_falls_back_to_cadence_with_a_note(monkeypatch):
+    # KRI-1494: with this switch on, a NAMED pace brings photos back to keep it
+    # (tests/tasks/test_cigdem2_background_pace.py); this test pins S57 without it.
+    monkeypatch.setattr(gb.settings, "background_keeps_asked_pace_enabled", False)
     job = _windows_job(
         monkeypatch,
         [
@@ -229,6 +232,9 @@ def test_a_short_sequence_shows_each_photo_once_to_the_take_end(monkeypatch):
     """S39 as changed 2026-11-05 (S57, S4 "fb 1"): two photos on a longer take used to cycle three
     times at 4 s; now each shows once, stretched to cover the take, and the same photo never
     comes up twice."""
+    # KRI-1494: with this switch on, a NAMED pace brings photos back to keep it
+    # (tests/tasks/test_cigdem2_background_pace.py); this test pins S57 without it.
+    monkeypatch.setattr(gb.settings, "background_keeps_asked_pace_enabled", False)
     job = _windows_job(monkeypatch, [f"asset-{COTOPAXI}", f"asset-{OBLEA}"], cadence_s=4.0)
     gb._run_generative_job(str(job.id))
 

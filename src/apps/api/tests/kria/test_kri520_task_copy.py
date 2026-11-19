@@ -95,6 +95,24 @@ def test_every_job_failure_code_has_turkish_copy() -> None:
         assert kr._job_failure_copy(None, None) is None
 
 
+def test_a_failure_without_a_retry_never_invites_one() -> None:
+    """KRI-1456: the sentence follows the recovery. Each code that ends by inviting a retry has
+    a sentence without it, in both languages, and that is the one a card with no Retry shows."""
+    import re
+
+    from app.tasks.content_plan_build import JOB_FAILURE_REASONS
+
+    assert set(JOB_FAILURE_REASONS) <= set(JOB_FAILURE_MESSAGES)
+    assert set(JOB_FAILURE_REASONS) == set(kr._JOB_FAILURE_REASONS_TR)
+    for code, reason in JOB_FAILURE_REASONS.items():
+        assert not re.search(r"\b(try|retry)\b", reason, re.IGNORECASE), code
+        assert kr._job_failure_copy(code, None, retry=True) == JOB_FAILURE_MESSAGES[code]
+        assert kr._job_failure_copy(code, None, retry=False) == reason
+        with reply_language_for("tr"):
+            assert kr._job_failure_copy(code, None, retry=False) == kr._JOB_FAILURE_REASONS_TR[code]
+            assert "dene" not in kr._JOB_FAILURE_REASONS_TR[code], code
+
+
 def test_every_device_edit_refusal_code_has_turkish_copy() -> None:
     assert set(kr._DEVICE_EDIT_REFUSALS) == set(kr._DEVICE_EDIT_REFUSALS_TR)
     for code in [*kr._DEVICE_EDIT_REFUSALS, "something_unmapped"]:

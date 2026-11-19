@@ -408,9 +408,10 @@ class BackgroundMedia(BaseModel):
     sequence: tuple[BackgroundSequenceEntry, ...] = Field(
         default=(), max_length=MAX_BACKGROUND_SEQUENCE
     )
-    cadence_s: float = Field(
-        default=DEFAULT_BACKGROUND_CADENCE_S, ge=2.0, le=10.0, allow_inf_nan=False
-    )
+    # None = no pace named (the layout's own DEFAULT_BACKGROUND_CADENCE_S applies). A named pace
+    # is kept whatever its value: "3-5 seconds" is taught as 4, the default itself, and a 4.0
+    # used to vanish from the dump (Cigdem 2, KRI-1494).
+    cadence_s: float | None = Field(default=None, ge=2.0, le=10.0, allow_inf_nan=False)
     speaker_frame: SpeakerFramePreset = "full"
     # Qendresa item 16: the speaker's own take full screen before the background / corner starts.
     # Both are omitted from the dump while unused and lenient on junk (a bad model value never
@@ -481,7 +482,7 @@ class BackgroundMedia(BaseModel):
             data.pop("source_start_s", None)
         if not data.get("sequence"):
             data.pop("sequence", None)
-        if data.get("cadence_s") == DEFAULT_BACKGROUND_CADENCE_S:
+        if data.get("cadence_s") is None:
             data.pop("cadence_s", None)
         if data.get("speaker_frame") == "full":
             data.pop("speaker_frame", None)

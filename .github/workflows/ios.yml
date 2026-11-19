@@ -153,6 +153,9 @@ jobs:
           # Later UI shards compile every bundle but leave unit tests to shard 1.
           KRIA_IOS_UNIT_TESTS: ${{ (!matrix.shard || startsWith(matrix.shard, '1/')) && '1' || '0' }}
         run: bash scripts/ios/verify.sh
+      - name: Every compiled screen string is in the String Catalog
+        if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/'))
+        run: python3 scripts/ios/localization.py built src/apps/ios/.derived-data
       - name: Require named native unit journey tests
         if: matrix.lane == 'native' && (!matrix.shard || startsWith(matrix.shard, '1/'))
         run: python3 scripts/ci/journey-gate.py native-units --ids all --require-unit

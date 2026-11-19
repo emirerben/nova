@@ -13,7 +13,7 @@ export default function GlobalError({
         <div role="alert" style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 1rem" }}>
           <h1 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "0.5rem" }}>This page couldn&apos;t load</h1>
           <p style={{ color: "#a1a1aa", fontSize: "0.875rem", marginBottom: "1.5rem", textAlign: "center", maxWidth: "28rem" }}>
-            Your saved videos are safe. Reload this page, or return to your videos.
+            Reload this page, or go back to the home page.
           </p>
           {error?.digest && (
             <p style={{ color: "#71717a", fontSize: "0.75rem", marginBottom: "1.5rem", fontFamily: "monospace", textAlign: "center", maxWidth: "28rem", wordBreak: "break-all" }}>
@@ -28,10 +28,10 @@ export default function GlobalError({
               Reload page
             </button>
             <a
-              href="/plan"
+              href="/"
               style={{ padding: "0.5rem 1rem", border: "1px solid #3f3f46", borderRadius: "0.5rem", fontSize: "0.875rem", color: "#d4d4d8", textDecoration: "none" }}
             >
-              Go to My videos
+              Go to home
             </a>
           </div>
         </div>

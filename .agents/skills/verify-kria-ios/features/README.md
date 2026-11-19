@@ -16,6 +16,6 @@ Fixture checks, real-service checks and missing product flows are separate.
 | [Billing](billing.md) | Missing native purchase flow. The harness records a gap and exits 3. |
 | [Publication](publication.md) | Missing native platform-publish completion. The harness records a gap and exits 3. |
 
-The runtime's test names are in `scripts/ios/ui-test-groups.json`. Keep this index
+The runtime's test names are read from the Swift sources (`python3 scripts/ios/ui_tests.py` lists them; `scripts/ios/ui-test-groups.json` holds only the group classification). Keep this index
 and its sibling files in sync. Do not substitute these fixture checks for an
 original-request replay and inspected native export.

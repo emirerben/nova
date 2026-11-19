@@ -38,6 +38,8 @@ from app.services.phone_rollout import (
     validate_phone_pilot_recipe,
 )
 
+pytestmark = pytest.mark.journey("kri-646-text-bend")
+
 CANVAS = Canvas(1080, 1920)
 
 

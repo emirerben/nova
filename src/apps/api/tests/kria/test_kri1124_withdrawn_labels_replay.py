@@ -50,10 +50,11 @@ from app.pipeline.unified_montage import (
     title_source_exists,
 )
 from app.services.creation_text_composition import (
-    CreationTextCompositionError,
     compose_creation_text,
     snapshot_copy_constraints,
 )
+
+pytestmark = pytest.mark.journey("kri-1124-withdrawn-labels")
 
 FX = json.loads(
     (Path(__file__).parent.parent / "fixtures" / "m4_leverkusen_withdrawn_labels.json").read_text(
@@ -256,8 +257,8 @@ def test_a_composer_that_changes_nothing_does_not_print_the_dropped_labels(monke
 
 def test_labels_a_live_requirement_still_asks_for_stay_locked(monkeypatch):
     brief = _brief(open_ids=("r8", "r9"))  # GOAL + Full time live again; Arrival still dropped
-    with pytest.raises(CreationTextCompositionError, match="changed confirmed copy"):
-        _compose(monkeypatch, brief, _remove_every_label)
+    # KRI-1376: the removal of confirmed labels is dropped, so they stay on screen.
+    assert _compose(monkeypatch, brief, _remove_every_label) == ["GOAL", "Full time"]
 
 
 def test_only_the_labels_still_asked_for_are_printed(monkeypatch):

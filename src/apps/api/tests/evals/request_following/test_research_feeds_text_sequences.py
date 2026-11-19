@@ -317,10 +317,42 @@ def test_translation_citing_other_facts_is_rejected(provider) -> None:
         _compose()
 
 
-def test_a_missing_translation_layer_fails_instead_of_silently_dropping(provider) -> None:
-    provider.layers = _layers()[:1]
+def test_a_missing_translation_layer_is_said_not_silently_dropped(provider) -> None:
+    """KRI-1376: the reviewed layer renders and the note names the asked layer no fact covers.
 
-    with pytest.raises(CreationTextCompositionError, match="no researched text for The same"):
+    Ways this could fail, written before the code: the video fails for one missing layer; the
+    missing layer is dropped with no note; the note quotes an internal requirement id.
+    """
+    provider.layers = _layers()[:1]
+    provider.shape_ops = lambda local, _english: [
+        {
+            "op": "replace_text_sequence",
+            "selector": {"ids": [local["id"]]},
+            "segments": LOCAL.split(),
+        }
+    ]
+    drops = []
+
+    composed = compose_creation_text(
+        _plan().snapshot, creator_request=REQUEST, text_requirements=REQUIREMENTS, drops=drops
+    )
+
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    assert [row["text"] for row in _rows(rows, LOCAL)] == LOCAL.split()
+    assert _rows(rows, ENGLISH) == []
+    assert [(drop.reason, drop.action, drop.text) for drop in drops] == [
+        ("incomplete", "shrunk", REQUIREMENTS[1].description)
+    ]
+    assert drops[0].note() == (
+        "I couldn't do “The same in English at the bottom, word by word”, so the video shows "
+        "the rest of your text"
+    )
+
+
+def test_no_reviewed_layer_for_any_asked_place_still_fails(provider) -> None:
+    provider.layers = []
+
+    with pytest.raises(CreationTextCompositionError):
         _compose()
 
 
@@ -337,7 +369,8 @@ def test_shaping_cannot_write_its_own_text(provider) -> None:
         {"op": "add_text", "text": "Since 1066", "start_s": 0, "end_s": 2}
     ]
 
-    with pytest.raises(CreationTextCompositionError, match="only be shaped"):
+    # Without its added line the shaping split nothing, so the asked word sequences are not met.
+    with pytest.raises(CreationTextCompositionError, match="only be shaped|unrequested text"):
         _compose()
 
 
@@ -446,9 +479,21 @@ def _retime_then_split(local, english):
 def test_shaping_cannot_move_research_onto_unreviewed_footage(provider) -> None:
     provider.layers[0].end_s = provider.layers[1].end_s = 6
     provider.shape_ops = _retime_then_split
+    drops = []
 
-    with pytest.raises(CreationTextCompositionError, match="outside its reviewed 0.0-6.0 s"):
-        _compose()
+    # KRI-1376: the retimes are dropped; the reviewed words stay on their reviewed footage.
+    composed = compose_creation_text(
+        _plan().snapshot, creator_request=REQUEST, text_requirements=REQUIREMENTS, drops=drops
+    )
+    rows = compile_proposal_execution_plan(composed)["text_elements"]
+    for words in (LOCAL, ENGLISH):
+        pieces = _rows(rows, words)
+        assert [row["text"] for row in pieces] == words.split()
+        assert pieces[0]["start_s"] >= 0 and pieces[-1]["end_s"] <= 6 + 1 / 30
+    assert [(drop.reason, drop.op) for drop in drops] == [
+        ("layer_shape", "set_texts_timing"),
+        ("layer_shape", "set_texts_timing"),
+    ]
 
 
 def test_a_translation_shown_after_its_text_is_not_simultaneous(provider) -> None:

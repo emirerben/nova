@@ -35,7 +35,7 @@ extension Notification.Name {
 
     var recordingURL: URL? { fileURL }
     var displayName: String {
-        isImported ? BackgroundUploadCoordinator.displayFilename(fileURL?.lastPathComponent ?? "Voiceover") : "Recorded voiceover"
+        isImported ? BackgroundUploadCoordinator.displayFilename(fileURL?.lastPathComponent ?? "Voiceover") : String(localized: "Recorded voiceover")
     }
     var playbackProgress: CGFloat { duration > 0 ? min(1, max(0, playbackTime / duration)) : 0 }
 
@@ -58,7 +58,7 @@ extension Notification.Name {
         permissionRequestInFlight = false
         guard generation == operationGeneration else { return }
         guard permitted else {
-            error = "Microphone access is off. Allow it in Settings to record, or upload an audio file instead."
+            error = String(localized: "Microphone access is off. Allow it in Settings to record, or upload an audio file instead.")
             return
         }
         do {
@@ -89,7 +89,7 @@ extension Notification.Name {
             startMetering()
         } catch {
             removeLocalTake()
-            self.error = "Couldn’t start recording. \(error.localizedDescription)"
+            self.error = String(localized: "Couldn’t start recording. \(error.localizedDescription)")
         }
     }
 
@@ -114,7 +114,7 @@ extension Notification.Name {
             return
         }
         _ = stop()
-        error = "Recording stopped because audio was interrupted. You can listen and use it, record again, or choose a file."
+        error = String(localized: "Recording stopped because audio was interrupted. You can listen and use it, record again, or choose a file.")
     }
 
     /// Takes ownership of the Files picker’s copied temporary URL.
@@ -132,7 +132,7 @@ extension Notification.Name {
             }
             self.isImporting = false
             guard let loadedDuration, loadedDuration.isFinite, loadedDuration > 0 else {
-                self.error = "This audio file couldn’t be opened. Choose another file."
+                self.error = String(localized: "This audio file couldn’t be opened. Choose another file.")
                 try? FileManager.default.removeItem(at: url)
                 return
             }
@@ -163,7 +163,7 @@ extension Notification.Name {
             audioPlayer = player
             isPlaying = true
             startPlaybackTimer()
-        } catch { self.error = "This recording couldn’t be played. Choose another file." }
+        } catch { self.error = String(localized: "This recording couldn’t be played. Choose another file.") }
     }
 
     func pausePlayback() {
@@ -260,7 +260,7 @@ extension Notification.Name {
 
     enum RecorderError: LocalizedError { case couldNotStart, couldNotPlay, invalidFile
         var errorDescription: String? {
-            switch self { case .couldNotStart: "The microphone did not start."; case .couldNotPlay: "The recording could not be played."; case .invalidFile: "The file has no usable duration." }
+            switch self { case .couldNotStart: String(localized: "The microphone did not start."); case .couldNotPlay: String(localized: "The recording could not be played."); case .invalidFile: String(localized: "The file has no usable duration.") }
         }
     }
 }

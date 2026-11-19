@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.config import settings
 from app.kria import brief_checks
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import (
@@ -27,6 +28,8 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import RequirementReceipt
 from app.kria.reply_language import reply_language_for
+
+pytestmark = pytest.mark.journey("kri-551-consented-retakes")
 
 CLIPS = ("c1", "c2", "c3")
 
@@ -208,11 +211,14 @@ def test_outcome_rows_read_in_turkish() -> None:
     assert "- Partly: first: the blue video (the clips did not end up there)" in english
 
 
-def test_reply_stays_inside_the_length_cap_in_turkish() -> None:
+@pytest.mark.parametrize("line_fit", [False, True])
+def test_reply_stays_inside_the_length_cap_in_turkish(monkeypatch, line_fit: bool) -> None:
+    monkeypatch.setattr(settings, "kria_reply_line_fit_enabled", line_fit)
     reqs = [_req("text", f"yazı {i}", scope="per_clip", rid=f"r{i}") for i in range(40)]
     facts = PlanFacts(clip_ids=CLIPS, per_clip_text={"c1": "A"}, rendered_output=True)
     with reply_language_for("tr"):
         text = _reply(reqs, facts)
+    # KRI-1485: forty Partly rows alone fill the chat; either way the reply stays in the cap.
     assert len(text) <= brief_checks.MAX_REPLY_CHARS
 
 
