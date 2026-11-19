@@ -79,6 +79,7 @@
         "src/apps/api/app/pipeline/transcribe.py",
         "src/apps/api/app/schemas/media_assets.py",
         "src/apps/api/app/routes/media_assets.py",
+        "src/apps/api/app/kria/media_sources.py",
         "src/apps/api/app/services/media_library_ingest.py",
         "src/apps/api/app/services/media_library_analysis.py",
         "src/apps/api/app/services/media_library_projections.py",
@@ -765,7 +766,7 @@
     {
       "id": "kri-653-silent-take",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py",
+      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/pipeline/test_late_word_realign.py tests/tasks/test_kri1502_cusco_t2_replay.py",
       "paths": [
         "src/apps/api/app/pipeline/silence_cut.py",
         "src/apps/api/app/services/clip_speech.py",
@@ -778,7 +779,11 @@
         "src/apps/api/app/pipeline/speech_voice_guard.py",
         "src/apps/api/tests/pipeline/test_voice_guard_cleanup_e2e.py",
         "src/apps/api/tests/pipeline/test_kri1017_maximo2_replay.py",
-        "src/apps/api/tests/fixtures/kri1017_maximo2_cleanup.json"
+        "src/apps/api/tests/fixtures/kri1017_maximo2_cleanup.json",
+        "src/apps/api/app/pipeline/late_word_realign.py",
+        "src/apps/api/tests/pipeline/test_late_word_realign.py",
+        "src/apps/api/tests/tasks/test_kri1502_cusco_t2_replay.py",
+        "src/apps/api/tests/fixtures/kri1502_cusco_t2/incident.json"
       ]
     },
     {

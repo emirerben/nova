@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-08-research-21",
+  "version": "2026-11-15-research-22",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -400,6 +400,19 @@
       "highlight_color": "#A3E635",
       "niche": "lifestyle & product reviews",
       "source": "tiktok market research 2026-11-01"
+    },
+    {
+      "id": "routine-motivation-reveal-popin-01",
+      "content_profile": "wellness or lifestyle moment after a break — a morning bowl, a ritual ingredient, a small daily habit — framed as the specific thing motivating a return to routine, not the routine itself",
+      "effect": "pop-in",
+      "text": "my motivation for getting back on track",
+      "highlight_word": "motivation",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A3E635",
+      "niche": "wellness & lifestyle rituals",
+      "source": "tiktok market research 2026-11-15"
     }
   ]
 }

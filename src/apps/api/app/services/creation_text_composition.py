@@ -1275,6 +1275,7 @@ def creation_model_snapshot(
     slots: list[dict],
     constraints: Mapping[str, str],
     text_requirements: Sequence[BriefRequirement] | None,
+    beat_windows: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """What the text composer (and the research step) see of a planned draft.
 
@@ -1317,6 +1318,10 @@ def creation_model_snapshot(
         "total_duration_s": max((float(x.get("output_end_s") or 0) for x in slots), default=0),
         **({"caption_lane": caption_lane} if caption_lane is not None else {}),
     }
+    if beat_windows and _is_story_snapshot(snapshot):
+        model_snapshot["story_beat_windows"] = [
+            {"start_s": window["start_s"], "end_s": window["end_s"]} for window in beat_windows
+        ]
     if text_requirements is not None:
         model_snapshot["text_requirements"] = [
             req.model_dump(mode="json")
@@ -1518,68 +1523,7 @@ def compose_creation_text(
             job_id=getattr(ctx, "job_id", None),
             drops=[drop.event() for drop in dropped],
         )
-    return _ensure_text_look(_drop_unused_story_seeds(composed), look)
-
-
-def _drop_unused_story_seeds(snapshot: EditProposalSnapshot) -> EditProposalSnapshot:
-    """A story build's placeholder captions the text step did not replace, removed.
-
-    `story_direction` seeds every beat with the planner's chapter line so the plan has text and
-    the text step has a window per beat. Once the step has written captions of its own, an
-    untouched placeholder is an outline line on screen where the video wants none, so it goes.
-    With nothing written (no request, the step left the lane as it was) the placeholders stay:
-    the story keeps its chapter text. Report-only: any trouble keeps the snapshot as composed.
-    """
-    program = snapshot.text_composition
-    if program is None or not program.operations or not _is_story_snapshot(snapshot):
-        return snapshot
-    from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
-    from app.pipeline.story_direction import STORY_SEED_PREFIX  # noqa: PLC0415
-
-    try:
-        base = compile_proposal_execution_plan(
-            snapshot.model_copy(update={"text_composition": None})
-        )
-        final = compile_proposal_execution_plan(snapshot)["text_elements"]
-        seeds = {
-            row["id"]: row
-            for row in base["text_elements"]
-            if str(row.get("id") or "").startswith(STORY_SEED_PREFIX)
-        }
-        untouched_ids = {row["id"] for row in final if seeds.get(row.get("id")) == row}
-        written = [
-            row
-            for row in final
-            if row.get("id") not in untouched_ids and not is_caption_text_bar(row)
-        ]
-        if not untouched_ids or not written:
-            return snapshot
-        # A removal addresses a bar by its place in the lane the program started from (removed
-        # bars keep their place until the lane is rebuilt), not by its place in the result.
-        untouched = [
-            index
-            for index, row in enumerate(base["text_elements"])
-            if row.get("id") in untouched_ids
-        ]
-        cleaned = snapshot.model_copy(
-            update={
-                "text_composition": program.model_copy(
-                    update={
-                        "operations": [
-                            *program.operations,
-                            *({"op": "remove_text", "bar_index": i} for i in reversed(untouched)),
-                        ]
-                    }
-                )
-            }
-        )
-        compile_proposal_execution_plan(cleaned)
-        return cleaned
-    except Exception as exc:  # noqa: BLE001 - report-only: placeholders may stay, never a failure
-        from app.pipeline.story_direction import error_fields  # noqa: PLC0415
-
-        log.warning("story_seed_cleanup_skipped", **error_fields(exc))
-        return snapshot
+    return _ensure_text_look(composed, look)
 
 
 def _is_story_snapshot(snapshot: EditProposalSnapshot) -> bool:
@@ -1958,6 +1902,7 @@ def _compose_from_research(
         slots=slots,
         constraints=constraints,
         text_requirements=text_requirements,
+        beat_windows=plan["beat_windows"],
     )
     try:
         if approved is not None:
@@ -2008,6 +1953,7 @@ def _compose_from_research(
         slots=slots,
         constraints={**constraints, **researched},
         text_requirements=text_requirements,
+        beat_windows=plan["beat_windows"],
     )
     shaped = CreationTextComposer(default_client()).run(
         EditCopilotInput(
@@ -2327,6 +2273,7 @@ def _compose_creation_text(
         slots=slots,
         constraints=constraints,
         text_requirements=text_requirements,
+        beat_windows=plan["beat_windows"],
     )
     caption_lane = model_snapshot.get("caption_lane")
     model_texts = model_snapshot["text_bars"]

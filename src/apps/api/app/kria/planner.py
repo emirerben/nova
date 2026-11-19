@@ -251,6 +251,7 @@ from app.services.creative_copy_decisions import (
     fold_creative_copy,
     localize_question,
     media_digest,
+    positional_labels_grounded,
     question_message,
     wording_question,
 )
@@ -4930,6 +4931,24 @@ async def _plan_creator_action(
                 if row.get("role") == "user"
             ],
         ]
+        if action.strategy.shot_labels and action.strategy.edit_format == "montage":
+            clip_literals = (
+                (
+                    req.literal
+                    for req in effective_brief.live()
+                    if req.kind == "text"
+                    and req.literal
+                    and (req.scope == "per_clip" or req.scope.startswith("clip:"))
+                )
+                if effective_brief is not None
+                else ()
+            )
+            if not positional_labels_grounded(
+                action.strategy.shot_labels, user_sources, clip_literals=clip_literals
+            ):
+                action = action.model_copy(
+                    update={"strategy": action.strategy.model_copy(update={"shot_labels": None})}
+                )
         titled = _with_title_picture_beats(action.strategy, effective_brief, manifest)
         if titled is not None:
             log.info("kria_title_picture_beat_added", thread_id=str(thread_id))

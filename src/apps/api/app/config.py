@@ -2322,6 +2322,18 @@ class Settings(BaseSettings):
         "re-analyzes. Kill switch: `fly secrets set SPEECH_CLEANUP_FILLER_CHECK_ENABLED=false "
         "--app nova-video` + api and worker restart (the fingerprint is computed in the API).",
     )
+    speech_cleanup_late_words_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup late-word fix (KRI-1506/KRI-1507). whisper-1 can stamp a run "
+        'of words into the pause AFTER their voice (Cusco T2: "Kilitli sistemler" stamped 1.6 s '
+        "late, wholly in a 1.9 s silence, its voice left wordless). On: the preflight analysis "
+        "moves such a run back onto the wordless voice before planning, only when silencedetect "
+        "and the KRI-1017 voicing detector agree (app/pipeline/late_word_realign.py). The cut then "
+        "sees the pause, and the stored words the captions and list labels follow are on time. "
+        "Part of the source policy fingerprint, so a flip re-analyzes. Kill switch: "
+        "`fly secrets set SPEECH_CLEANUP_LATE_WORDS_ENABLED=false --app nova-video` + api and "
+        "worker restart (the fingerprint is computed in the API, the analysis in the worker).",
+    )
 
     speech_cleanup_aligner_model_dir: str = Field(
         default="/opt/models/wav2vec2-base-960h",

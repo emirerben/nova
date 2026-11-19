@@ -149,6 +149,20 @@ struct DeviceExportUploadBody: Encodable, Sendable {
 struct DeviceExportCompleteBody: Encodable, Sendable {
     let identity: DeviceRenderIdentity
     let attemptID: UUID
+    var receiptTiming: DeviceRenderTiming? = nil
+    var uploadMilliseconds: UInt64? = nil
+
+    var timingHeaders: [String: String] {
+        let phases = [
+            "device_elapsed_ms": receiptTiming?.elapsedMilliseconds(at: Date()),
+            "export_ms": receiptTiming?.lastCompletedExportMilliseconds,
+            "upload_ms": uploadMilliseconds,
+            "last_suspension_ms": receiptTiming?.lastSuspensionMilliseconds,
+        ].compactMapValues { value in value.flatMap { $0 <= 604_800_000 ? $0 : nil } }
+        guard !phases.isEmpty, let data = try? JSONEncoder().encode(phases) else { return [:] }
+        return ["X-Kria-Device-Timing": String(decoding: data, as: UTF8.self)]
+    }
+
     private enum CodingKeys: String, CodingKey { case identity, attemptID = "attemptId" }
 }
 struct DeviceExportUploadTarget: Decodable, Sendable {
@@ -188,7 +202,7 @@ extension KriaAPI {
     }
     func completeDeviceExport(_ body: DeviceExportCompleteBody) async throws {
         let result = try await Perf.measureAsync("talk.save.complete") {
-            try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/complete", method: "POST", bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportCompletion.self)
+            try await request(path: "me/jobs/\(body.identity.jobID.uuidString)/device-render/complete", method: "POST", headers: body.timingHeaders, bodyData: RecipeJSON.encoder().encode(body), decode: DeviceExportCompletion.self)
         }
         if result.status == "published" { return }
         guard result.status == "checking" else { throw APIError.invalidResponse }
@@ -378,12 +392,17 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         catch APIError.conflict { return false }
     }
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        try await publish(file: file, identity: identity, attemptID: attemptID, brandTail: brandTail, timing: nil)
+    }
+
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String,
+                 timing: DeviceRenderTiming?) async throws -> DevicePublication {
         try await requireOwner()
         let current = try await api.deviceRender(jobID: identity.jobID, variantID: identity.variantID)
         try await requireOwner()
         guard current.request.identity == identity else { return .superseded }
         guard ["awaiting_device", "syncing", "published"].contains(current.phase) else { throw APIError.conflict }
-        let complete = DeviceExportCompleteBody(identity: identity, attemptID: attemptID)
+        var complete = DeviceExportCompleteBody(identity: identity, attemptID: attemptID, receiptTiming: timing)
         if current.phase == "published" {
             do { try await requireOwner(); try await api.completeDeviceExport(complete); try await requireOwner(); return .published }
             catch APIError.conflict { return .superseded }
@@ -415,11 +434,15 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"
         for (name, value) in reservation.uploadHeaders { put.setValue(value, forHTTPHeaderField: name) }
+        let uploadStart = DispatchTime.now().uptimeNanoseconds
         let (_, response) = try await Perf.measureAsync("talk.save.publishPut") { try await uploadSession.upload(for: put, fromFile: file) }
         guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         // A create-only PUT can return 412 after a lost success response. The server validates
         // the generation and checksum before attaching it, so this is safe to reconcile.
         guard (200..<300).contains(response.statusCode) || response.statusCode == 412 else { throw APIError.requestFailed(status: response.statusCode) }
+        if (200..<300).contains(response.statusCode) {
+            complete.uploadMilliseconds = (DispatchTime.now().uptimeNanoseconds - uploadStart) / 1_000_000
+        }
         try? Data(markerText.utf8).write(to: marker, options: .atomic)
         try Task.checkCancellation()
         do { try await requireOwner(); try await api.completeDeviceExport(complete); try await requireOwner(); return .published }
