@@ -12,7 +12,14 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_serializer,
+    model_validator,
+)
 
 from app.kria.recipes import EditRecipeV1
 from app.kria.recipes_v2 import EditRecipeV2
@@ -183,6 +190,25 @@ class DeviceExportReservationOut(_DeviceModel):
 class DeviceExportCompleteBody(_DeviceModel):
     identity: DeviceRenderIdentity
     attempt_id: uuid.UUID
+
+
+_PhaseMilliseconds = Annotated[int, Field(strict=True, ge=0, le=7 * 24 * 60 * 60 * 1000)]
+
+
+class DeviceExportTiming(_DeviceModel):
+    device_elapsed_ms: _PhaseMilliseconds | None = None
+    export_ms: _PhaseMilliseconds | None = None
+    upload_ms: _PhaseMilliseconds | None = None
+    last_suspension_ms: _PhaseMilliseconds | None = None
+
+    @classmethod
+    def from_header(cls, value: str | None) -> DeviceExportTiming | None:
+        if not value or len(value) > 256:
+            return None
+        try:
+            return cls.model_validate_json(value)
+        except ValidationError:
+            return None
 
 
 class DeviceExportCompleteOut(_DeviceModel):

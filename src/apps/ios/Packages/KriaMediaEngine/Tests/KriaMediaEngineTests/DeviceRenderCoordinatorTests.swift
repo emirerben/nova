@@ -40,6 +40,9 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         await exporter.waitStarted()
         let persisted = try JSONDecoder().decode(DeviceRenderReceipt.self, from: Data(contentsOf: directory.appendingPathComponent("device-render.json")))
         XCTAssertEqual(persisted.continuationStage, .exportStarted)
+        XCTAssertNotNil(persisted.timing?.startedAt)
+        XCTAssertNil(persisted.timing?.lastCompletedExportMilliseconds)
+        XCTAssertNil(persisted.timing?.lastSuspension)
         let overlapping = try await coordinator.resumeParkedSafely()
         XCTAssertFalse(overlapping)
         await exporter.release()
@@ -48,6 +51,8 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         XCTAssertEqual(final?.phase, .synced)
         XCTAssertEqual(final?.attemptID, saved.attemptID)
         XCTAssertEqual(count, 1)
+        XCTAssertEqual(final?.timing?.startedAt, persisted.timing?.startedAt)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(final?.timing?.lastCompletedExportMilliseconds), 0)
     }
 
     func testSafeContinuationPublishesIntactOutputButNeverReplacesMissingOutput() async throws {
@@ -821,10 +826,21 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         let parked = await coordinator.snapshot()
         XCTAssertEqual(parked?.phase, .localReady, "the encoded file survives the suspension")
         XCTAssertNil(parked?.error)
-        try await coordinator.recover()
-        await coordinator.waitUntilIdle()
-        let final = await coordinator.snapshot()?.phase, exports = await exporter.count
-        XCTAssertEqual(final, .synced)
+        let timing = try XCTUnwrap(parked?.timing)
+        let suspension = try XCTUnwrap(timing.lastSuspension)
+        XCTAssertNil(suspension.resumedAt)
+        let relaunched = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(),
+                                                     publisher: publisher, backgroundExecution: background)
+        let restored = await relaunched.snapshot()
+        XCTAssertEqual(restored?.timing, timing)
+        try await relaunched.recover()
+        await relaunched.waitUntilIdle()
+        let final = await relaunched.snapshot(), exports = await exporter.count
+        XCTAssertEqual(final?.phase, .synced)
+        XCTAssertEqual(final?.timing?.startedAt, timing.startedAt)
+        XCTAssertEqual(final?.timing?.lastCompletedExportMilliseconds, timing.lastCompletedExportMilliseconds)
+        XCTAssertEqual(final?.timing?.lastSuspension?.suspendedAt, suspension.suspendedAt)
+        XCTAssertNotNil(final?.timing?.lastSuspension?.resumedAt)
         XCTAssertEqual(exports, 1, "foregrounding publishes the same file, no re-encode")
         let calls = await reporter.calls, ended = await background.ended
         XCTAssertTrue(calls.isEmpty)
@@ -840,8 +856,11 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
                                                       publisher: RecordingPublisher(), failureReporter: reporter, retryPolicy: .immediate)
         try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
         await coordinator.waitUntilIdle()
-        let phase = await coordinator.snapshot()?.phase
-        XCTAssertEqual(phase, .preparing)
+        let parked = await coordinator.snapshot()
+        XCTAssertEqual(parked?.phase, .preparing)
+        XCTAssertNotNil(parked?.timing?.lastSuspension?.suspendedAt)
+        XCTAssertNil(parked?.timing?.lastSuspension?.resumedAt)
+        XCTAssertNil(parked?.timing?.lastCompletedExportMilliseconds)
         let calls = await reporter.calls
         XCTAssertTrue(calls.isEmpty)
     }

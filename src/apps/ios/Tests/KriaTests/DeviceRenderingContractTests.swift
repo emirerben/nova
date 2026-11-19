@@ -212,7 +212,12 @@ final class DeviceRenderingContractTests: XCTestCase {
         XCTAssertEqual(nested["variant_id"] as? String, "original_text")
         XCTAssertEqual(nested["recipe_revision"] as? Int, 7)
         XCTAssertEqual(nested["recipe_digest"] as? String, identity.recipeDigest)
-        let complete = DeviceExportCompleteBody(identity: identity, attemptID: attempt)
+        var complete = DeviceExportCompleteBody(identity: identity, attemptID: attempt)
+        XCTAssertTrue(complete.timingHeaders.isEmpty)
+        complete.uploadMilliseconds = 420
+        let header = try XCTUnwrap(complete.timingHeaders["X-Kria-Device-Timing"])
+        let timing = try JSONDecoder().decode([String: UInt64].self, from: Data(header.utf8))
+        XCTAssertEqual(timing, ["upload_ms": 420])
         let completion = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(complete)) as? [String: Any])
         XCTAssertEqual(Set(completion.keys), ["identity", "attempt_id"])
     }
