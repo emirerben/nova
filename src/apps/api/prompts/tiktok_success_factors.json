@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-08-research-21",
+  "version": "2026-11-15-research-22",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. PERSONA_PROMPT_VERSION and CONTENT_PLAN_PROMPT_VERSION are fingerprints of this file; bumping `version` still requires bumping IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -257,6 +257,18 @@
       "provenance": "corpus",
       "evidence": "In our Nov 2026 fetched founder set, one 'fate of [product] is in your hands' post indexed ~3.7x the account median views at 3.4% aggregate engagement. Single post; comments and shares were not isolated, so no causal effect is established",
       "source": "tiktok market research 2026-11-08 (founder account)"
+    },
+    {
+      "id": "routine-reset-motivation-corpus-17",
+      "factor": "Try naming a specific motivation for returning to a routine after a break — a caption-derived idea from one high-reach post, not a proven advantage over other wellness framing",
+      "why": "The framing may connect a small daily ritual to a familiar return-to-routine problem. This is a hypothesis to test; the observation does not isolate the caption's effect or explain why viewers shared the post",
+      "applies_to": [
+        "hook",
+        "plan"
+      ],
+      "provenance": "corpus",
+      "evidence": "In our Nov 2026 fetched wellness-founder set, one short granola-bowl post framed around returning to routines after a holiday indexed ~528x the account median at 10.2M views. Single-post observation; no causal effect or typical performance uplift is established",
+      "source": "tiktok market research 2026-11-15 (wellness-founder account)"
     }
   ]
 }

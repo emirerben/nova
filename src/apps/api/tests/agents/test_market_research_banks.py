@@ -213,9 +213,9 @@ def test_success_factor_bank_version_couples_to_intro_prompt_version():
 
     # Persona and content plan derive their versions from the bank file. The intro
     # writer still carries a hand-numbered version, so the bank `version` and it move
-    # together. Bump 2026-11-08-research-21: added community-ownership-decision-corpus-16.
-    assert success_factors_version() == "2026-11-08-research-21"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-08-research-21"
+    # together. Bump 2026-11-15-research-22: added routine-reset-motivation-corpus-17.
+    assert success_factors_version() == "2026-11-15-research-22"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-15-research-22"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -253,10 +253,10 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  (2-word aesthetic verdict form, "kinda chic" pattern).
     # Bump 2026-11-01-research-20: weekly refresh — added product-review-warm-fadein-01
     #                  (warm "hope it helps" product review hook form).
-    # Bump 2026-11-08-research-21: version lockstep bump (no new overlay examples this cycle).
-    assert library_version() == "2026-11-08-research-21"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-08-research-21"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-11-08-research-21"
+    # Bump 2026-11-15-research-22: added routine-motivation-reveal-popin-01.
+    assert library_version() == "2026-11-15-research-22"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-15-research-22"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-11-15-research-22"
 
 
 @pytest.mark.parametrize(

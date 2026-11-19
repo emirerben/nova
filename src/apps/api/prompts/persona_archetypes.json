@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-08-research-21",
+  "version": "2026-11-15-research-22",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). PERSONA_PROMPT_VERSION is a fingerprint of this file, so an edit needs no prompt-version bump.",
   "archetypes": [
     {
@@ -254,6 +254,30 @@
         "engagement_rate": 0.022,
         "view_index": 4.42,
         "sampled_at": "2026-11-01"
+      }
+    },
+    {
+      "id": "pop-up-market-founder-01",
+      "niche": "founder / product launch",
+      "summary": "You take your small product or brand to real-world pop-up markets and street stalls, capturing the energy of face-to-face selling — the stall setup, the crowd, the first sale — and bringing your online community into a moment they can't attend.",
+      "tone": "excited, grounded, community-first",
+      "content_pillars": [
+        "pop-up market setup and atmosphere",
+        "first real-world sales moments",
+        "behind-the-scenes of trading in person",
+        "community invitation and event energy"
+      ],
+      "audience": "small-brand followers who want to see the product in the real world and feel part of the journey",
+      "sample_hooks": [
+        "we're open — come find us",
+        "first day at the [market] 🔓",
+        "the stall is live"
+      ],
+      "source": "tiktok:@nermozdemir (2026-11)",
+      "performance": {
+        "engagement_rate": 0.042,
+        "view_index": 3.99,
+        "sampled_at": "2026-11-15"
       }
     }
   ]
