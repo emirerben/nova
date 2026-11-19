@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.25.0] - 2026-11-19
+
+### Changed
+- test(kria): make the review-sweep test independent of leftover turns and Redis (#2274) <!-- release-pr: 2274 -->
+
 ## [0.89.24.0] - 2026-11-19
 
 ### Fixed
