@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.23.0] - 2026-11-19
+
+### Changed
+- fix(ios): use the full upload gallery in Split Video (#2398) <!-- release-pr: 2398 -->
+
 ## [0.89.22.0] - 2026-11-19
 
 ### Changed
