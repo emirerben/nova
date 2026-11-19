@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.24.0] - 2026-11-19
+
+### Fixed
+- fix(kria): Cusco T2 "list 1": words stamped into a pause go back on their voice; a captions plan reads as planned (KRI-1506, KRI-1507, KRI-1508) (#2374) <!-- release-pr: 2374 -->
+
 ## [0.89.23.0] - 2026-11-19
 
 ### Changed
