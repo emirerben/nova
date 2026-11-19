@@ -2503,6 +2503,13 @@ class Settings(BaseSettings):
     # restart workers); read lazily per matte compute, no deploy needed.
     matte_rvm_enabled: bool = True
 
+    # KRI-1514: a sideways montage clip cropped to fill a vertical video, with no face in it,
+    # follows the person or body part the RVM person matte finds (a hand on a wall) instead of
+    # keeping the middle (`app.pipeline.phone_person_window`). Kill switch: `fly secrets set
+    # MONTAGE_PERSON_FILL_ENABLED=false --app nova-video` + worker restart; new renders then
+    # keep the middle as before (nothing is sampled).
+    montage_person_fill_enabled: bool = True
+
     # Depth-based scene-occluder backbone (non-person subjects — landmarks,
     # objects, scenery with no person in frame). When True, the subject-matte
     # engine (`app.pipeline.subject_matte`) attempts a second pass with a
