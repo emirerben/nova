@@ -529,6 +529,26 @@ def test_main_creator_drops_invented_or_unverifiable_copy() -> None:
     assert no_evidence.opening_title_duration_s is None
 
 
+@pytest.mark.parametrize(
+    ("wording", "expected"),
+    [
+        ("show the view from the sky", None),
+        ('Label the first shot "show the view from the sky".', ["show the view from the sky"]),
+    ],
+)
+def test_shot_label_evidence_must_identify_display_copy(wording, expected):
+    from app.routes.creator_agent import _apply_explicit_render_intent
+
+    strategy = _barcelona_strategy(shot_labels=["show the view from the sky"])
+    evidence = CreatorRenderIntentEvidence(shot_labels=wording)
+    assert (
+        _apply_explicit_render_intent(
+            strategy, wording, render_intent_evidence=evidence
+        ).shot_labels
+        == expected
+    )
+
+
 def test_labels_compile_to_a_story_direction_and_fail_where_they_cannot_render(
     monkeypatch,
 ) -> None:

@@ -435,3 +435,49 @@ def test_phone_montage_recipe_keeps_requested_text_and_excludes_outline(directio
         "Window Seat",
         "Above the clouds",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("wording", "expected"),
+    [
+        ("show the view from the sky", []),
+        ('Label the first shot "show the view from the sky".', ["show the view from the sky"]),
+        ("Gökyüzünden manzarayı göster", []),
+        (
+            "İlk klibin etiketi “Gökyüzünden manzarayı göster” olsun.",
+            ["Gökyüzünden manzarayı göster"],
+        ),
+    ],
+)
+async def test_native_positional_labels_require_creator_copy(monkeypatch, wording, expected):
+    from app.agents._schemas.creator_agent import CreativeStrategy, CreatorRenderIntentEvidence
+    from app.services.creator_capabilities import resolve_creator_manifest
+    from tests.kria.test_title_hold_grounding import plan_until_strategy_check
+
+    label = "show the view from the sky" if "sky" in wording else "Gökyüzünden manzarayı göster"
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="positional-label-test",
+        edit_format="montage",
+        media=[
+            {"media_id": c.media_id, "kind": "video", "duration_s": c.duration_s} for c in _clips(3)
+        ],
+    )
+    _, _, checked = await plan_until_strategy_check(
+        monkeypatch,
+        manifest=manifest,
+        strategy=CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            render_program="guided",
+            target_duration_s=10,
+            story_structure=[label],
+            shot_labels=[label],
+        ),
+        evidence=CreatorRenderIntentEvidence(shot_labels=wording),
+        user_message=wording,
+    )
+    plan = _plan(checked.strategy.model_dump(mode="json"), count=3)
+    compiled = compile_proposal_execution_plan(plan.snapshot)
+    assert [row["text"] for row in compiled["text_elements"]] == expected
