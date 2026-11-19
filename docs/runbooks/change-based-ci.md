@@ -76,12 +76,15 @@ avoid dependency installation, PostgreSQL/Redis services, five web workers and
 macOS runners. Superseded PR and portable main CI runs are cancelled; a running main iOS
 release lane is never cancelled. Nightly/manual regressions have separate concurrency groups.
 
-API tests run as four deterministic round-robin shards over the
+API tests run as two deterministic round-robin shards over the
 complete non-quality test-file set; every shard feeds the same stable `test-api`
 gate, so sharding changes wall-clock scheduling without reducing coverage. The
 count lives in `scripts/ci/api-tests.py` (`SHARD_COUNT`) and the workflow matrix
-must list exactly those shards. Two shards took about 22 minutes of pytest each;
-the shards are the last required check on a PR that starts no Mac.
+must list exactly those shards. Four shards were tried on 2026-11-19 and
+reverted the same day: the slowest job got only 3 to 4 minutes faster, and one
+shard concentrated CPU-heavy render tests so that a 24-41 second test ran for
+53-60 seconds against the 60-second per-test timeout. More shards need a
+partition balanced on measured per-file time, checked over several runs.
 The `iPhone validation` matrix has a `unit` leg (build, unit tests, selected UI
 subset, named-unit gate) plus `creation` and `screens` legs that compile from
 the same cache and split the fixture-driven journeys by measured duration. The
