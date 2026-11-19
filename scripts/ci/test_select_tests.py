@@ -21,6 +21,77 @@ journey_registry = ci.journey_registry
 ALL = {"api", "ios", "ios_ui", "shared_motion"}
 
 
+# Repo paths the iPhone tree names without reading them on the Mac leg. Every
+# entry needs a reason; a path a test really reads belongs in
+# select-tests.py IOS_NATIVE_INPUTS instead.
+IOS_NAMED_NOT_READ = {
+    "src/apps/api/": "AuthoredHandwritingLayoutTests joins tests/fixtures/ and "
+    "assets/fonts/ onto this root; both are declared inputs",
+    "src/apps/api/assets/": "an HTTP route fragment (plan-items/<id>/assets/...) "
+    "that happens to resolve inside the API tree",
+}
+_SWIFT_LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
+_PATH_LIKE = re.compile(r"(?:\.\./|\./|[A-Za-z0-9_.@+-]+/)+[A-Za-z0-9_.@+-]*")
+
+
+def repo_paths_named_by_ios(root):
+    """Existing repo paths outside src/apps/ios that the iPhone tree names.
+
+    A static scan: Swift string literals (comments dropped) and project/shell
+    config lines, resolved against the repo root, the file's own directory and
+    the roots tests join fixtures onto. It cannot see a path assembled at run
+    time from pieces that are not path-like, which is why unknown paths still
+    select a Mac and the rule was replayed against merged PRs before use.
+    """
+    ios = root / "src/apps/ios"
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "-z", "--", "src/apps/ios"], cwd=root
+    ).decode()
+    named = {}
+    for relative in filter(None, tracked.split("\0")):
+        path = root / relative
+        if path.suffix not in {".swift", ".yml", ".yaml", ".xcconfig", ".sh"}:
+            continue
+        # Generated API documents carry Python docstrings as prose, not reads.
+        if not path.is_file() or "/Kria/Generated/" in f"/{relative}":
+            continue
+        text = path.read_text(errors="replace")
+        if path.suffix == ".swift":
+            text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+            chunks = [
+                literal
+                for line in text.splitlines()
+                if not line.lstrip().startswith("//")
+                for literal in _SWIFT_LITERAL.findall(line)
+            ]
+        else:
+            chunks = [line.split("#", 1)[0] for line in text.splitlines()]
+        bases = (root, path.parent, ios, root / "src/apps/api", root / "src/apps/web")
+        for chunk in chunks:
+            for candidate in _PATH_LIKE.findall(chunk):
+                for base in bases:
+                    try:
+                        resolved = (base / candidate).resolve()
+                    except OSError:
+                        continue
+                    if resolved == root or root not in resolved.parents:
+                        continue
+                    # "originals/.." climbs back to where it started: a
+                    # traversal string under test, not a repo path.
+                    if resolved == base or resolved in base.parents:
+                        continue
+                    if not resolved.exists():
+                        continue
+                    found = resolved.relative_to(root).as_posix()
+                    if resolved.is_dir():
+                        found += "/"
+                    # No early exit: a literal that exists under two roots
+                    # (tests/fixtures/ and the API's) is credited to both.
+                    if not found.startswith(("src/apps/ios/", ".git/")):
+                        named.setdefault(found, relative)
+    return named
+
+
 class ClassificationTests(unittest.TestCase):
     def test_learning_loop_docs_map_to_an_executed_journey(self):
         path = "src/apps/api/tests/evals/request_following/README.md"
@@ -186,6 +257,86 @@ class ClassificationTests(unittest.TestCase):
         for path in bundled:
             with self.subTest(path=path):
                 self.assertTrue({"ios", "ios_ui"}.issubset(ci.affected(path)))
+
+    def test_only_declared_inputs_policy_and_unknown_paths_need_a_mac(self):
+        for path in (
+            "src/apps/ios/Kria/App.swift",
+            "src/apps/ios/Kria/Generated/KriaContracts.swift",
+            "scripts/ios/verify.sh",
+            ".github/workflows/ios.yml",
+            "src/apps/api/assets/fonts/Inter-Bold.ttf",
+            "src/apps/api/tests/fixtures/split_full_screen.json",
+            "tests/fixtures/drawing-parity/v1.json",
+            "brand/social/dist/kria-mark.png",
+            "src/packages/motion-runtime/creator-blocks.catalog.json",
+            "src/apps/web/public/fonts/Inter-Bold.ttf",
+            # CI policy and anything unclassified fail closed.
+            ".github/workflows/ci.yml",
+            "scripts/ci/select-tests.py",
+            "scripts/ci/journey-manifest.json",
+            "brand-new/tool.py",
+            ".env.example",
+        ):
+            self.assertTrue(ci.native_input(path), path)
+        for path in (
+            "src/apps/api/app/kria/policy.py",
+            "src/apps/api/app/config.py",
+            "src/apps/api/app/routes/kria_runtime.py",
+            "src/apps/api/app/pipeline/single_pass.py",
+            "src/apps/api/tests/kria/test_policy.py",
+            # Swift opens files directly in tests/fixtures/, never its folders.
+            "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json",
+            "src/apps/api/assets/models/face.tflite",
+            "src/apps/api/prompts/main_creator.txt",
+            "src/apps/web/src/app/plan/page.tsx",
+            "docs/runbooks/change-based-ci.md",
+        ):
+            self.assertFalse(ci.native_input(path), path)
+
+    def test_api_files_swift_tests_open_also_run_the_iphone_unit_suite(self):
+        """A parity fixture or font is read by both sides; changing it tests both."""
+        for path in (
+            "src/apps/api/assets/fonts/Inter-Bold.ttf",
+            "src/apps/api/assets/fonts/handwriting-strokes.json",
+            "src/apps/api/tests/fixtures/split_full_screen.json",
+            "src/apps/api/tests/fixtures/phone_dissolve_timing.json",
+        ):
+            self.assertEqual(ci.affected(path), {"api", "ios"}, path)
+        for path in (
+            "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json",
+            "src/apps/api/assets/models/face.tflite",
+        ):
+            self.assertEqual(ci.affected(path), {"api"}, path)
+
+    def test_native_inputs_cover_everything_the_xcode_cache_hashes(self):
+        source = (SCRIPT.parents[1] / "ios/cache-inputs.py").read_text()
+        roots = ast.literal_eval(
+            re.search(r"^INPUT_ROOTS = (\(.*?^\))", source, re.S | re.M).group(1)
+        )
+        self.assertTrue(roots)
+        for root in roots:
+            self.assertTrue(ci.native_input(root + "/file"), root)
+            self.assertTrue((root + "/").startswith(ci.IOS_NATIVE_INPUTS), root)
+
+    def test_every_repo_path_the_iphone_tree_names_is_a_declared_native_input(self):
+        named = repo_paths_named_by_ios(SCRIPT.parents[2])
+        # The scan must be finding real references, not passing on an empty set.
+        self.assertIn("src/apps/api/assets/fonts/Inter-Bold.ttf", named)
+        undeclared = {
+            path: source
+            for path, source in named.items()
+            if not ci.declared_native_input(path)
+            and path not in IOS_NAMED_NOT_READ
+        }
+        self.assertEqual(
+            undeclared,
+            {},
+            "The iPhone tree names repo paths the Mac selector does not know. Add "
+            "each to IOS_NATIVE_INPUTS in select-tests.py if a build or test reads "
+            "it, or to IOS_NAMED_NOT_READ here with the reason it is not read.",
+        )
+        for path in IOS_NAMED_NOT_READ:
+            self.assertIn(path, named, f"stale IOS_NAMED_NOT_READ entry: {path}")
 
     def test_non_pr_always_full(self):
         for event in ("push", "workflow_dispatch", None, "merge_group"):
@@ -1407,6 +1558,50 @@ class GitDiffTests(unittest.TestCase):
         self.assertIn("unmapped-paths", preship)
         self.assertIn("-u GITHUB_OUTPUT", preship)
 
+    def test_an_api_contract_change_reports_the_mac_the_rule_would_skip(self):
+        """Shadow only: the Mac still runs, the summary says it tested nothing new."""
+        self.write("src/apps/api/app/config.py", "FLAG = True")
+        head = self.commit()
+        output, summary = Path("output"), Path("summary")
+        subprocess.run(
+            [sys.executable, str(SCRIPT.resolve())],
+            check=True,
+            env={
+                **os.environ,
+                "CI_EVENT": "pull_request",
+                "CI_BASE": self.base,
+                "CI_HEAD": head,
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_STEP_SUMMARY": str(summary),
+            },
+            capture_output=True,
+        )
+        lines = output.read_text().splitlines()
+        self.assertIn("ios=true", lines)
+        self.assertIn("native_validation=true", lines)
+        self.assertIn("ios_native=false", lines)
+        self.assertIn(
+            "iPhone inputs: unchanged (shadow: this Mac run would be skipped)",
+            summary.read_text(),
+        )
+
+    def test_native_inputs_fail_closed_without_a_readable_pr_diff(self):
+        self.assertTrue(ci.native_inputs_changed("push", "", ""))
+        self.assertTrue(ci.native_inputs_changed("schedule", "", ""))
+        self.assertTrue(ci.native_inputs_changed("pull_request", "missing", "missing"))
+        head = self.git("rev-parse", "HEAD")
+        self.assertTrue(ci.native_inputs_changed("pull_request", head, head))
+
+    def test_native_inputs_ignore_release_metadata_and_see_both_rename_sides(self):
+        self.write("package.json", json.dumps({"version": "2", "scripts": {"test": "test"}}))
+        self.write("src/apps/api/app/pipeline/x.py", "x = 1")
+        head = self.commit()
+        self.assertFalse(ci.native_inputs_changed("pull_request", self.base, head))
+        Path("src/apps/ios/Kria").mkdir(parents=True)
+        self.git("mv", "src/apps/api/app/pipeline/x.py", "src/apps/ios/Kria/x.py")
+        moved = self.commit()
+        self.assertTrue(ci.native_inputs_changed("pull_request", head, moved))
+
     def test_cli_outputs_and_summary(self):
         self.write("src/apps/ios/new.swift", "test")
         head = self.commit()
@@ -1432,8 +1627,9 @@ class GitDiffTests(unittest.TestCase):
             "api=true\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
             'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n'
-            "journey_mapped=true\nios_render_evidence=false\n",
+            "journey_mapped=true\nios_render_evidence=false\nios_native=true\n",
         )
+        self.assertIn("iPhone inputs: changed", summary.read_text())
         self.assertIn("ios: run", summary.read_text())
         self.assertIn("Export/OCR unit proofs: skipped", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())
