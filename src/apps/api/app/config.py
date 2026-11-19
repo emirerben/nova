@@ -360,6 +360,15 @@ class Settings(BaseSettings):
     # Default off: windows stay on the cue word, byte-identical. Apply: `fly secrets set
     # BEAT_PHRASE_TIMING_ENABLED=true -a nova-video`, then restart the worker.
     beat_phrase_timing_enabled: bool = False
+    # KRI-1511: a sticker or corner photo shown from its spoken word keeps its time on screen
+    # when Clean up speech cuts a pause inside its window (Cusco T3: the puma's 2.5 s became
+    # 1.27 s). Its window is held in the cut video's time from its word, ending early only where
+    # the next card starts or the take ends, and never earlier than before. Phrase-sized photos,
+    # full-screen cutaways, video cards, the closing photo and hand-placed cards are unchanged.
+    # Phone Talking only (`remap_lanes_for_cut(held_card_ids=...)`). Default TRUE. False:
+    # exactly as before. Rollback: `fly secrets set CUT_KEEPS_STICKER_HOLD_ENABLED=false
+    # --app nova-video` + restart the worker.
+    cut_keeps_sticker_hold_enabled: bool = True
     # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
     # full-screen / "keep my face in frame" video and the phone Talking speaker
     # clip is landscape, `_run_phone_subtitled_job` samples the face across the
@@ -1174,6 +1183,16 @@ class Settings(BaseSettings):
     # before. Rollback: `fly secrets set UNSAID_CUE_REPORT_ENABLED=false --app nova-video` +
     # restart (api + worker).
     unsaid_cue_report_enabled: bool = True
+    # KRI-1510: the same report when the draft PLANNED a pop-in on the unsaid word (Cusco T3:
+    # the llama sticker on "lama", which the speaker never says). On a phone Talking draft whose
+    # takes' transcripts are all known and none says a planned beat's trigger (by the render's
+    # own matchers), that beat no longer counts as placed: the draft says "You don't say “lama”
+    # in your take, so nothing is shown for it" (approvable) instead of "Done", which only the
+    # finished video corrected ("I never heard lama in your voice"). Finished videos, title
+    # logos and unknown transcripts: unchanged. Needs UNSAID_CUE_REPORT_ENABLED. Default TRUE.
+    # False: exactly as before. Rollback: `fly secrets set UNSAID_PLANNED_CUE_REPORT_ENABLED=false
+    # --app nova-video` + restart (api + worker).
+    unsaid_planned_cue_report_enabled: bool = True
     # KRI-1484: a numbered list label shown while the recordings play behind the speaker (a
     # speaker-background window, never her full-screen take) is drawn on an opaque dark plate
     # (#141414, the label's cream letters unchanged), the text row's `background_color`. Her

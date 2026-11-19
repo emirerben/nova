@@ -17,6 +17,7 @@ held closing line and repeated video files.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import math
 import re
 import unicodedata
@@ -9223,9 +9224,13 @@ def _take_transcripts(facts: PlanFacts) -> list[str] | None:
     return [str(text) for text in said]
 
 
+@functools.lru_cache(maxsize=512)
 def _take_says(transcript: str, phrase: str) -> bool:
     """``phrase`` is said in ``transcript``, by the matchers the recordings behind the speaker
-    use (folded tokens: case, punctuation, "SpecKit" / "Spec Kit", a plural "s")."""
+    use (folded tokens: case, punctuation, "SpecKit" / "Spec Kit", a plural "s").
+
+    Cached (KRI-1510): every row of a draft asks about every planned pop-in's word, and the
+    near-hearing lookup takes ~50 ms on a 600-word take. The matchers read no settings."""
     from app.services import phone_background_sequence as sequence  # noqa: PLC0415
     from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
 
@@ -9241,6 +9246,113 @@ def _take_says(transcript: str, phrase: str) -> bool:
     )
 
 
+def _draft_unsaid_beat_triggers(facts: PlanFacts) -> frozenset[str]:
+    """KRI-1510: the triggers of a phone Talking DRAFT's planned word-timed pop-ins that no take
+    says, by the render's own beat matcher (`_beat_heard_in`).
+
+    Cusco T3: the planner put the llama sticker on "lama" though its own rationale said the
+    transcript has no "lama"; the draft counted the planned beat as placed ("Done"), and only
+    the finished video said "I never heard lama in your voice". Such a beat is judged as if it
+    were not planned, so KRI-1486's "You don't say ..." answers its ask. Empty on a finished
+    video (its beat receipt decides), a title logo (nothing is listened for), a take whose
+    transcript is unknown, or with either switch off: today's answer.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if (
+        not _settings.unsaid_planned_cue_report_enabled
+        or not _settings.unsaid_cue_report_enabled
+        or not facts.phone_talking
+        or facts.rendered_variant
+        or not facts.reaction_beats
+    ):
+        return frozenset()
+    takes = _take_transcripts(facts)
+    if takes is None:
+        return frozenset()
+    return frozenset(
+        beat.trigger
+        for beat in facts.reaction_beats
+        if beat.anchor != "title"
+        and beat.trigger.strip()
+        and not any(_beat_heard_in(take, beat.trigger) for take in takes)
+    )
+
+
+@functools.lru_cache(maxsize=512)
+def _beat_heard_in(transcript: str, trigger: str) -> bool:
+    """The render's reaction-beat matcher hears ``trigger`` in ``transcript`` (KRI-1510): exactly
+    `phone_reaction_grounding.trigger_is_heard`, so a planned beat the draft calls unsaid is one
+    the render reports ``never_heard``. Cached: rows ask about the same words."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    words = [
+        {"text": text, "start_s": float(i), "end_s": i + 0.5}
+        for i, text in enumerate(transcript.split())
+    ]
+    return grounding.trigger_is_heard(words, trigger)
+
+
+def _draft_heard_beats(facts: PlanFacts, named: Sequence[str]) -> tuple[BeatFact, ...]:
+    """The planned pop-ins minus those on one of ``named`` that no take says (KRI-1510).
+
+    Only an ask's own named words take a pop-in out: another ask's unsaid pop-in still counts
+    as planned for this one (it is that ask's answer), so its verdict is today's."""
+    unsaid = _draft_unsaid_beat_triggers(facts)
+    return tuple(
+        b
+        for b in facts.reaction_beats or ()
+        if b.trigger not in unsaid or not any(_trigger_heard(n, b.trigger) for n in named)
+    )
+
+
+def _unsaid_cue_names(req: BriefRequirement, facts: PlanFacts) -> list[str] | None:
+    """The named words `unsaid_cue_reason` reports, or None (see there)."""
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.unsaid_cue_report_enabled or not facts.phone_talking:
+        return None
+    named = _named_triggers(req) if _wants_beats(req) else []
+    if not named:
+        return None
+    beats = _draft_heard_beats(facts, named)
+    planned = (*facts.unheard_beat_triggers, *facts.dropped_beat_triggers)
+    takes = _take_transcripts(facts)
+
+    def unsaid(name: str) -> bool:
+        return (
+            takes is not None
+            and not any(_trigger_heard(name, b.trigger) for b in beats)
+            # a pop-in WAS planned for it: its own answer ("I never heard ...") stands
+            and not any(_trigger_heard(name, t) for t in planned)
+            and not _title_misses_for(facts, [name])
+            and not _beat_room_drop(facts, name)
+            and not any(_take_says(take, name) for take in takes)
+        )
+
+    if len(beats) < len(facts.reaction_beats or ()):
+        # KRI-1510: a planned pop-in waits on a word no take says. Its words are named; any
+        # other word of the ask keeps its own answer beside them.
+        return [n for n in named if unsaid(n)] or None
+    return named if all(unsaid(n) for n in named) else None
+
+
+def _no_pop_in(names: Sequence[str]) -> str:
+    return say(
+        en="No pop-in for {names_missing}",
+        tr="Şunlar için çıkan görsel yok: {names_missing}",
+        names_missing=_names(names),
+    )
+
+
+def _unsaid_sentence(names: Sequence[str]) -> str:
+    return say(
+        en="You don't say {names} in your take, so nothing is shown for it",
+        tr="Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor",
+        names=", ".join(f"“{name}”" for name in names),
+    )
+
+
 def unsaid_cue_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
     """KRI-1486: the receipt reason for a word-timed visual whose words the take never says.
 
@@ -9251,30 +9363,13 @@ def unsaid_cue_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
     one: then nothing is shown and the reply says why. Readiness reads the same sentence
     (`approval_readiness._promised_at_render`), so the draft is approvable. Anything else (she
     says it, no transcript, the switch off) is None: today's answer.
-    """
-    from app.config import settings as _settings  # noqa: PLC0415
 
-    if not _settings.unsaid_cue_report_enabled or not facts.phone_talking:
-        return None
-    named = _named_triggers(req) if _wants_beats(req) else []
-    beats = facts.reaction_beats or ()
-    if not named or any(_trigger_heard(n, b.trigger) for b in beats for n in named):
-        return None
-    planned = (*facts.unheard_beat_triggers, *facts.dropped_beat_triggers)
-    if (
-        any(_trigger_heard(n, t) for t in planned for n in named)
-        or _title_misses_for(facts, named)
-        or any(_beat_room_drop(facts, n) for n in named)
-    ):
-        return None  # a pop-in WAS planned for it: its own answer ("I never heard ...") stands
-    takes = _take_transcripts(facts)
-    if takes is None or any(_take_says(take, n) for take in takes for n in named):
-        return None
-    return say(
-        en="You don't say {names} in your take, so nothing is shown for it",
-        tr="Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor",
-        names=", ".join(f"“{name}”" for name in named),
-    )
+    KRI-1510: a pop-in the draft planned on such a word does not count as carrying it
+    (`_draft_unsaid_beat_triggers`); the sentence names those words, and the ask's other words
+    are judged as before.
+    """
+    names = _unsaid_cue_names(req, facts)
+    return _unsaid_sentence(names) if names else None
 
 
 def _unshown_visuals_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
@@ -9340,9 +9435,12 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
         # guessed from the sentence pick which pop-ins the ask is about, never a verdict.
         named = _named_triggers(req)
         names = named or _cue_triggers(req)
+        # KRI-1510: a draft's pop-in on one of these words that no take says is not planned.
+        beats = _draft_heard_beats(facts, named)
         # KRI-1486: her take never says the words. That sentence replaces only the cue's own
         # verdict below ("No pop-in for ..."); every other problem of the row is still said.
-        unsaid = unsaid_cue_reason(req, facts)
+        unsaid_names = _unsaid_cue_names(req, facts) or []
+        unsaid = _unsaid_sentence(unsaid_names) if unsaid_names else None
         if not facts.reaction_beats_available:
             problems.append(
                 say(
@@ -9380,8 +9478,12 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
                     promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
             elif unsaid is not None:
                 problems.append(unsaid)
+                # KRI-1510: a said word of the ask with no pop-in is still told.
+                said = [n for n in named if n not in unsaid_names]
                 if sequence_problem:
                     problems.append(sequence_problem)
+                elif said:
+                    problems.append(_no_pop_in(said))
                 delivered = bool(sequence_problem)
             else:
                 problems.append(
@@ -9439,6 +9541,12 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
                 missing, uncertain = _described_names_uncovered(req, missing, beats, names, facts)
                 if uncertain:
                     promises.append(_DESCRIBED_POPINS_PLAN)
+            elif said := [n for n in missing if n not in unsaid_names]:
+                # KRI-1510: a word she does say, beside the unsaid ones, keeps its own check.
+                said, uncertain = _described_names_uncovered(req, said, beats, names, facts)
+                if uncertain:
+                    promises.append(_DESCRIBED_POPINS_PLAN)
+                missing = [n for n in missing if n in unsaid_names or n in said]
             if unheard:
                 problems.append(
                     _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
@@ -9456,18 +9564,14 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
             ]
             if missing and unsaid is not None:
                 problems.append(unsaid)
+                said = [n for n in missing if n not in unsaid_names]  # KRI-1510
                 if sequence_problem:
                     problems.append(sequence_problem)
+                elif said:
+                    problems.append(_no_pop_in(said))
                 delivered = delivered or bool(sequence_problem)
             elif missing:
-                problems.append(
-                    sequence_problem
-                    or say(
-                        en="No pop-in for {names_missing}",
-                        tr="Şunlar için çıkan görsel yok: {names_missing}",
-                        names_missing=_names(missing),
-                    )
-                )
+                problems.append(sequence_problem or _no_pop_in(missing))
                 delivered = delivered or bool(sequence_problem)
             if footage_cues and facts.rendered_variant:
                 problems.extend(_footage_at_cue_problem(n, facts, req) for n in footage_cues)

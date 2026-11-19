@@ -2272,6 +2272,14 @@
       ]
     },
     {
+      "id": "kri-1510-1511-cusco-t3-stickers",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1510_unsaid_planned_trigger.py tests/pipeline/test_kri1511_cut_keeps_sticker_hold.py tests/tasks/test_kri1511_sticker_hold_worker.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1511_cusco_t3/sticker1.json"
+      ]
+    },
+    {
       "id": "kri-838-caption-language",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri838_caption_language_replay.py tests/pipeline/test_caption_translate.py tests/pipeline/test_caption_language_id.py tests/pipeline/test_caption_language.py tests/kria/test_kri838_caption_language_asks.py tests/tasks/test_subtitled_caption_language.py tests/tasks/test_narrated_caption_language.py",

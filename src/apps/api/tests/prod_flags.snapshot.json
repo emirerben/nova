@@ -293,6 +293,10 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "cut_keeps_sticker_hold_enabled": {
+      "source": "default",
+      "value": true
+    },
     "described_popin_names_enabled": {
       "source": "default",
       "value": true
@@ -1656,6 +1660,10 @@
       "value": false
     },
     "unsaid_cue_report_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "unsaid_planned_cue_report_enabled": {
       "source": "default",
       "value": true
     },
