@@ -1275,6 +1275,7 @@ def creation_model_snapshot(
     slots: list[dict],
     constraints: Mapping[str, str],
     text_requirements: Sequence[BriefRequirement] | None,
+    beat_windows: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """What the text composer (and the research step) see of a planned draft.
 
@@ -1317,6 +1318,10 @@ def creation_model_snapshot(
         "total_duration_s": max((float(x.get("output_end_s") or 0) for x in slots), default=0),
         **({"caption_lane": caption_lane} if caption_lane is not None else {}),
     }
+    if beat_windows and _is_story_snapshot(snapshot):
+        model_snapshot["story_beat_windows"] = [
+            {"start_s": window["start_s"], "end_s": window["end_s"]} for window in beat_windows
+        ]
     if text_requirements is not None:
         model_snapshot["text_requirements"] = [
             req.model_dump(mode="json")
@@ -1897,6 +1902,7 @@ def _compose_from_research(
         slots=slots,
         constraints=constraints,
         text_requirements=text_requirements,
+        beat_windows=plan["beat_windows"],
     )
     try:
         if approved is not None:
@@ -1947,6 +1953,7 @@ def _compose_from_research(
         slots=slots,
         constraints={**constraints, **researched},
         text_requirements=text_requirements,
+        beat_windows=plan["beat_windows"],
     )
     shaped = CreationTextComposer(default_client()).run(
         EditCopilotInput(
@@ -2266,6 +2273,7 @@ def _compose_creation_text(
         slots=slots,
         constraints=constraints,
         text_requirements=text_requirements,
+        beat_windows=plan["beat_windows"],
     )
     caption_lane = model_snapshot.get("caption_lane")
     model_texts = model_snapshot["text_bars"]

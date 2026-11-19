@@ -676,6 +676,9 @@ def research_windows(snapshot: dict) -> list[dict]:
             ):
                 continue
             candidates.append((float(row.get("start_s", 0)), float(row.get("end_s", 0))))
+        candidates.extend(
+            (row["start_s"], row["end_s"]) for row in snapshot.get("story_beat_windows") or []
+        )
         for beat in (snapshot.get("editorial_plan") or {}).get("beats", []):
             if beat.get("output_start_s") is not None and beat.get("output_end_s") is not None:
                 candidates.append((float(beat["output_start_s"]), float(beat["output_end_s"])))

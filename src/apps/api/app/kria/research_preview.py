@@ -412,6 +412,7 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
         slots=slots,
         constraints=snapshot_copy_constraints(snapshot, execution),
         text_requirements=inputs.brief.live(),
+        beat_windows=execution["beat_windows"],
     )
     if research_needs_text_layers(inputs.brief.live()):
         # Words shown a piece at a time or a translated layer: footage explanations cannot be
