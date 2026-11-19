@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.11.0] - 2026-11-19
+
+### Fixed
+- fix(cleanup): cut a restarted sentence only when it is said again in what stays (KRI-1518) (#2378) <!-- release-pr: 2378 -->
+
 ## [0.89.10.0] - 2026-11-19
 
 ### Changed
