@@ -243,7 +243,7 @@ def test_m1_receipt_says_the_clips_were_cropped(tmp_path):
     assert receipt.verification != "unchecked"
     assert receipt.reason == (
         "Cropped the 3 sideways clips to fill the vertical frame; "
-        "the crop follows the main face on 1"
+        "the crop follows the main face on 1; the other 2 keep the middle of the picture"
     )
 
 

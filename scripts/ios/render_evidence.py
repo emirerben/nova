@@ -36,6 +36,10 @@ TESTS = (
     "RenderedOriginalClockTests",
     "SavedDraftPreviewRangeTests",
     "CaptionAnimationTests/testScopedCaptionsMatchSyntheticPreviewAndExportPixels",
+    # Exports a 92-second source in real time to prove the slide-post
+    # 90-second cap: 172 s of the PR unit leg (run 44481108406, 2026-11-19),
+    # the slowest single unit test by a factor of two.
+    "SlidePostVideoRenderTests/testNinetyTwoSecondSourceTrimsVideoAndAudioAtNinetySeconds",
 )
 
 # A pull request that changes any of these runs the tests above as well.
@@ -47,6 +51,9 @@ TRIGGER_PREFIXES = (
     "src/apps/ios/Kria/Core/DeviceRender",
     "src/apps/ios/Kria/Features/DeviceRender",
     "src/apps/ios/Kria/Features/TextRole",
+    # Slide-post model, media and render code (SlidePost*.swift in both trees).
+    "src/apps/ios/Kria/Core/SlidePost",
+    "src/apps/ios/Kria/Features/SlidePost",
     "src/apps/ios/Kria/Resources/",
     "src/apps/ios/project.yml",
     "src/apps/ios/Tests/KriaTests/DurationTextPreservationTests.swift",
@@ -54,6 +61,7 @@ TRIGGER_PREFIXES = (
     "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
     "src/apps/ios/Tests/KriaTests/SavedDraftPreviewRangeTests.swift",
     "src/apps/ios/Tests/KriaTests/CaptionAnimationTests.swift",
+    "src/apps/ios/Tests/KriaTests/SlidePostVideoRenderTests.swift",
     "src/apps/ios/Tests/Fixtures/DurationTextPreservation.json",
     "src/apps/ios/Tests/Fixtures/ReferenceStyleSave.json",
     "src/apps/web/public/fonts/",

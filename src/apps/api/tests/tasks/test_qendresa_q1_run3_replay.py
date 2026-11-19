@@ -240,6 +240,8 @@ NEW_SWITCHES = (
     "list_label_example_ask_enabled",  # KRI-1471
     "voice_only_ask_enabled",  # KRI-1472
     "keep_text_off_caption_spot_enabled",  # KRI-1476 / KRI-1477
+    # Q1 run 4: a shrunk title retries the band above her face; a faint line gets an outline.
+    "title_legibility_enabled",
 )
 STRIP_SWITCH = "talking_card_strip_enabled"  # KRI-1478, off by default
 # The switches production has on for this path (all default off in code).
@@ -733,7 +735,8 @@ def test_with_the_strip_her_recordings_share_the_mention_with_the_screenshot():
 
 
 def test_with_the_strip_every_card_is_as_wide_as_its_band_allows():
-    """Full width in a free band; in the bottom band it sits beside the Kria wordmark."""
+    """Full width in a free band; in the bottom band it is clear of the Kria wordmark (since
+    Q1 run 4 below it, centred; beside it only when the band under the mark is too short)."""
     run = _replay("A")
 
     assert run.cards
@@ -756,11 +759,20 @@ def test_without_the_strip_the_cards_are_todays_whole_pictures():
         assert card.source_crop is None
         assert (place.fade_in, place.fade_out) == (True, True)
         assert _window(card)[0] == _window(shot)[0]
-        assert (place.x_fraction, place.y_fraction, place.width_fraction) == (
-            shot.visual_placement.x_fraction,
-            shot.visual_placement.y_fraction,
-            shot.visual_placement.width_fraction,
-        ), "the strip keeps the box of the card it replaces"
+        whole = (place.x_fraction, place.y_fraction, place.width_fraction)
+        strip_place = shot.visual_placement
+        cut = (strip_place.x_fraction, strip_place.y_fraction, strip_place.width_fraction)
+        if cut == whole:
+            continue  # the strip keeps the box of the card it replaces
+        # Q1 run 4: the whole card sat off-centre beside the Kria wordmark (prod: x 0.21-0.97);
+        # its strip is the one box that may differ: centred, full width, below the wordmark.
+        beside = _card_box(card)
+        assert place.x_fraction != 0.5, card.id
+        assert beside.top < WATERMARK_BOX.bottom and WATERMARK_BOX.top < beside.bottom, card.id
+        box = _card_box(shot)
+        assert (strip_place.x_fraction, strip_place.width_fraction) == (0.5, 0.94), shot.id
+        assert not _hits(box, WATERMARK_BOX), (shot.id, box)
+        assert box.top >= WATERMARK_BOX.bottom and box.bottom <= 0.98 + 1e-6, (shot.id, box)
     unplaced = run.variant["phone_overlay_receipt"]["unplaced"]
     assert [(u["kind"], u["reason"]) for u in unplaced] == [("video", "overlap")] * 5
 
@@ -779,7 +791,17 @@ def test_the_finished_video_says_done_only_for_what_it_drew(case):
 
     statuses = {rid: (r.status, r.verification) for rid, r in run.receipts.items()}
     done = {rid for rid, status in statuses.items() if status == ("met", "checked")}
-    assert done == {"r2", "r3", "r4", "r5", "r6", "r7", "r8"}, statuses
+    # Q1 run 4: without the strip her five recordings are dropped as "overlap" (case C), and
+    # the done-list says so instead of "Done" (prod said Done with two recordings unshown).
+    unshown = run.variant["phone_overlay_receipt"]["unplaced"]
+    assert bool(unshown) == (case == "C")
+    assert done == {"r2", "r3", "r5", "r6", "r7", "r8"} | ({"r4"} if not unshown else set()), (
+        statuses
+    )
+    if unshown:
+        assert statuses["r4"] == ("partial", "checked")
+        assert run.receipts["r4"].reason.startswith("Not shown: ")
+        assert "another card was already on screen then" in run.receipts["r4"].reason
     # r1 (her pauses) is the one ask this replay cannot judge: cleanup needs her audio.
     assert statuses["r1"] == ("partial", "checked")
     # Each "Done" has its thing in the output.
@@ -851,3 +873,74 @@ def test_control_an_object_to_keep_text_off_keeps_todays_plain_tag():
     placement = run.variant["closing_title_placement"]
     assert placement["status"] != "cta_ending"
     assert [o["label"] for o in placement["objects"]] == ["laptop"]
+
+
+# ============================== Q1 run 4 (2026-11-17): the ending held =========================
+# Same prompt, same build of this pipeline, but the Main Creator's strategy came back WITHOUT
+# `closing_title` and the brief filed r6 with only `{closing}` (no `arrow` fact). Prod held the
+# draft on r6 alone: "That exact text isn't in this draft." Ways the fix could go wrong, written
+# first: (a) the draft turns ready but the render draws no ending (a checker that only accepts);
+# (b) the ending is drawn twice; (c) switching the fix off does not bring prod's hold back, so
+# this test would pass on anything. The single-function cases (picture endings, pins, two
+# endings, superseded rows, routes without closing text, TR/DE) are in
+# tests/kria/test_brief_closing_title_fill.py.
+
+R6_RUN4 = _r(
+    "r6",
+    "text",
+    'End with "comment REPO" and an arrow for the last 3 seconds.',
+    literal=ENDING,
+    facts={"closing": ENDING},
+)
+BRIEF_RUN4 = CreativeBrief(version=1, requirements=[R1, R2, R3, R4, R5, R6_RUN4, R7, R8])
+STRATEGY_RUN4 = {key: value for key, value in STRATEGY.items() if key != "closing_title"}
+
+
+def _run4_draft(monkeypatch, *, fill: bool) -> tuple[dict, dict]:
+    """(the strategy the draft carries after the planner's backstop, its readiness report)."""
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.kria.planner import _with_brief_closing_title  # noqa: PLC0415
+
+    apply_prod_profile(monkeypatch)
+    _switches(monkeypatch, fixes=True, strip=False)
+    monkeypatch.setattr(settings, "brief_closing_title_fill_enabled", fill)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [])
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", list(VERIFIED))
+    planned = CreativeStrategy.model_validate({**STRATEGY_RUN4, "selected_media_ids": [PROXY_TAKE]})
+    filled = _with_brief_closing_title(planned, BRIEF_RUN4, _manifest())
+    strategy = (filled or planned).model_dump(mode="json", exclude_none=True)
+    report = assess_readiness(
+        BRIEF_RUN4,
+        strategy,
+        media={"clip_paths": [PROXY_TAKE]},
+        manifest=_manifest(),
+        creator_id=uuid.UUID("00000000-0000-4000-8000-0000000011a1"),
+        protected_regions=[],
+        protected_marks=True,
+    )
+    return strategy, report
+
+
+def test_run4_an_ending_the_planner_left_out_is_drawn_from_her_brief(monkeypatch):
+    strategy, report = _run4_draft(monkeypatch, fill=True)
+
+    assert report["ready"] is True and _held(report) == {}
+    # Ready because the render will draw it: the strategy the worker gets is run 3's, whose
+    # worker output `test_the_ending_is_her_comment_repo_with_one_arrow` pins (her "comment" /
+    # "REPO" rows once, one closing arrow).
+    assert strategy["closing_title"] == ENDING == STRATEGY["closing_title"]
+    assert [strategy.get(key) for key in ("opening_title", "reaction_beats")] == [
+        STRATEGY["opening_title"],
+        STRATEGY["reaction_beats"],
+    ]
+    rows = {row["requirement_id"]: row for row in report["requirements"]}
+    assert rows["r6"]["disposition"] in APPROVABLE
+
+
+def test_run4_control_without_the_fill_the_draft_is_held_as_prod_was(monkeypatch):
+    strategy, report = _run4_draft(monkeypatch, fill=False)
+
+    assert "closing_title" not in strategy
+    assert report["ready"] is False
+    assert _held(report) == {"r6": "That exact text isn't in this draft."}

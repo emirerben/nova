@@ -31,6 +31,29 @@ SHARED_MOTION_PATHS = (
     "src/apps/web/tsconfig.json",
 )
 
+# Everything outside the selector and CI policy that the iPhone build or its
+# tests can read: the app tree, the scripts that drive it, resources Xcode
+# bundles from the web tree, and the fonts and parity fixtures Swift tests open
+# by path. A PR that changes none of these gives the Mac the same bytes `main`
+# already built and tested; a stale mobile contract is caught on Linux by
+# ios-contracts, and regenerating it changes src/apps/ios/Kria/Generated/.
+# test_select_tests.py scans the iPhone tree for repo paths missing from here.
+IOS_NATIVE_INPUTS = (
+    "src/apps/ios/",
+    "scripts/ios/",
+    ".github/workflows/ios.yml",
+    "src/apps/web/public/fonts/",
+    "src/apps/web/public/plan/type-posters/",
+    "src/apps/web/public/landing/raw-story/",
+    "src/apps/api/assets/fonts/",
+    "src/packages/motion-runtime/",
+    "tests/fixtures/",
+    "brand/social/dist/",
+)
+# Swift parity tests open files directly in this directory, some by a name built
+# at run time. Its subdirectories hold API-only fixtures.
+IOS_NATIVE_FIXTURE_DIR = "src/apps/api/tests/fixtures/"
+
 # This is deliberately independent from the broad suite selector.  KRI-559 is
 # a cross-runtime proof: the saved creation transport must survive the API
 # compiler, persisted-draft boundary, and the actual iPhone exporter.
@@ -155,6 +178,72 @@ def journey_native_for_ids(ids):
 matches_journey_path = journey_registry.matches_journey_path
 
 
+JOURNEY_MANIFEST = "scripts/ci/journey-manifest.json"
+
+
+def selection_rollback():
+    """Repository variable CI_MAC_SELECTION=full: undo KRI-1534's PR narrowing.
+
+    One switch restores what pull requests selected before: a Mac whenever
+    `ios` or a native journey is selected, everything for a journey-manifest
+    edit, and everything for `.env.example`. No code change is needed.
+    """
+    return os.environ.get("CI_MAC_SELECTION", "") == "full"
+
+
+def manifest_row_changes(before, after):
+    """Journey ids a manifest edit added or changed, and whether any is native.
+
+    The manifest is CI policy, so a row whose definition changed must execute.
+    Unchanged rows are identical on both sides and lose nothing by not running.
+    Returns None for every edit that is not a plain row change (a removed
+    journey, a change outside the rows, duplicate or missing ids, a manifest
+    that is not the expected shape): the caller then selects everything.
+    """
+    try:
+        if {k: v for k, v in before.items() if k != "journeys"} != {
+            k: v for k, v in after.items() if k != "journeys"
+        }:
+            return None
+        old = {row["id"]: row for row in before["journeys"]}
+        new = {row["id"]: row for row in after["journeys"]}
+        if len(old) != len(before["journeys"]) or len(new) != len(after["journeys"]):
+            return None
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if set(old) - set(new):
+        return None
+    changed = sorted(i for i, row in new.items() if old.get(i) != row)
+
+    def native(row):
+        return bool(
+            row
+            and (row.get("needs_native") or row.get("xctests") or row.get("xctest"))
+        )
+
+    return changed, any(native(new[i]) or native(old.get(i)) for i in changed)
+
+
+def selectable_manifest_edit(before, after):
+    """`manifest_row_changes`, or None when a changed id cannot be selected."""
+    edit = manifest_row_changes(before, after)
+    known = {journey["id"] for journey in JOURNEYS}
+    # A changed id this checkout's registry does not know cannot be run.
+    return edit if edit is not None and set(edit[0]) <= known else None
+
+
+def manifest_edit(ancestor, head):
+    """The selectable manifest edit between two commits, or None."""
+    if selection_rollback():
+        return None
+    try:
+        before = json.loads(git("show", f"{ancestor}:{JOURNEY_MANIFEST}"))
+        after = json.loads(git("show", f"{head}:{JOURNEY_MANIFEST}"))
+    except (subprocess.CalledProcessError, ValueError, UnicodeError):
+        return None
+    return selectable_manifest_edit(before, after)
+
+
 def journey_affected(path):
     """Whether a change needs an incident-corpus journey or an explicit gap."""
     if path in ISOLATED_TEST_SUITES:
@@ -204,13 +293,20 @@ def journey_details(event, base, head):
     if event != "pull_request":
         return True, "covered", ",".join(journey["id"] for journey in JOURNEYS)
     try:
+        ancestor = git("merge-base", base, head).decode().strip()
         paths = journey_diff_paths(base, head)
-        relevant = [path for path in paths if journey_affected(path)]
         if not paths:
             return True, "gap", ""
-        if not relevant:
-            return False, "not_applicable", ""
         selected = set()
+        # A plain row edit of the manifest selects the rows it changed
+        # (possibly none); every other manifest edit selects every journey.
+        edit = manifest_edit(ancestor, head) if JOURNEY_MANIFEST in paths else None
+        if edit is not None:
+            selected.update(edit[0])
+            paths = [path for path in paths if path != JOURNEY_MANIFEST]
+        relevant = [path for path in paths if journey_affected(path)]
+        if not relevant and not selected:
+            return False, "not_applicable", ""
         for path in relevant:
             ids = journey_ids_for_path(path)
             if not ids:
@@ -354,6 +450,10 @@ def affected(path):
     if path.startswith("scripts/ios/") or path == ".github/workflows/ios.yml":
         return {"ios", "ios_ui"}
     if path.startswith("src/apps/api/"):
+        # Fonts and parity fixtures Swift unit tests open by path: both sides
+        # read the file, so both suites run.
+        if declared_native_input(path):
+            return {"api", "ios"}
         # Public contracts affect both clients; internal pipeline/tests only API.
         contracts = (
             "app/routes/",
@@ -378,6 +478,9 @@ def affected(path):
             if path.removeprefix("src/apps/api/").startswith(contracts)
             else {"api"}
         )
+    # API tests read the documented flags; nothing on the iPhone side does.
+    if path == ".env.example" and not selection_rollback():
+        return {"api"}
     if path.startswith(("docs/", "plans/", "agents/")) or path in (
         "README.md",
         "AGENTS.md",
@@ -411,6 +514,13 @@ def selection_details(event, base, head):
         suites = set()
         ui_paths = []
         for path in paths:
+            if path == JOURNEY_MANIFEST:
+                edit = manifest_edit(ancestor, head)
+                if edit is not None:
+                    # API tests read the manifest. A changed native row also
+                    # runs the iPhone unit suite that proves its named tests.
+                    suites.update({"api", "ios"} if edit[1] else {"api"})
+                    continue
             if not release_only(path, ancestor, head):
                 suites.update(affected(path))
                 if "ios_ui" in affected(path):
@@ -450,6 +560,50 @@ def render_evidence_selection(event, base, head):
     except (subprocess.CalledProcessError, UnicodeError, OSError):
         return True
     return not paths or render_evidence.triggered(paths)
+
+
+def declared_native_input(path):
+    """Whether a path is a declared iPhone build or test input."""
+    if path.startswith(IOS_NATIVE_INPUTS):
+        return True
+    name = path.removeprefix(IOS_NATIVE_FIXTURE_DIR)
+    return name != path and "/" not in name
+
+
+def native_input(path):
+    """Whether a changed path can alter what the Mac builds or tests.
+
+    Declared inputs, plus every path `affected` cannot place (shared packages,
+    CI policy, new directories): those select all suites and stay fail closed.
+    """
+    return declared_native_input(path) or affected(path) == set(SUITES)
+
+
+def native_inputs_changed(event, base, head):
+    """The PR Mac rule (KRI-1534): did this PR change an iPhone input?
+
+    Everything except a pull request with a readable, non-empty diff is True.
+    """
+    if event != "pull_request":
+        return True
+    try:
+        ancestor = git("merge-base", base, head).decode().strip()
+        raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
+        paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
+        if not paths:
+            return True
+        for path in paths:
+            if path == JOURNEY_MANIFEST:
+                edit = manifest_edit(ancestor, head)
+                if edit is not None:
+                    if edit[1]:
+                        return True
+                    continue
+            if not release_only(path, ancestor, head) and native_input(path):
+                return True
+        return False
+    except (subprocess.CalledProcessError, UnicodeError, OSError):
+        return True
 
 
 def journey_selection(event, base, head):
@@ -492,9 +646,16 @@ def ui_shards(event, groups):
         return 1
 
 
-def native_validation(event, suites, journey_native):
-    """PR/manual/nightly native proof; main's release workflow owns its Mac."""
-    return event != "push" and ("ios" in suites or journey_native)
+def native_validation(event, suites, journey_native, native_inputs=True):
+    """PR/manual/nightly native proof; main's release workflow owns its Mac.
+
+    A pull request starts a Mac only when it changed an iPhone input
+    (KRI-1534): otherwise the Mac would rebuild and retest what `main` already
+    did. Its Linux contract and journey jobs run either way.
+    """
+    if event == "push" or (event == "pull_request" and not native_inputs):
+        return False
+    return "ios" in suites or journey_native
 
 
 def validate_journey_mapping(coverage, ids):
@@ -532,7 +693,13 @@ def gate_journey(needs, event):
     if set(needs) != required or needs["changes"].get("result") != "success":
         raise ValueError("Journey selection failed or dependencies are missing")
     outputs = needs["changes"].get("outputs", {})
-    for key in ("journey", "ios", "journey_needs_native", "native_validation"):
+    for key in (
+        "journey",
+        "ios",
+        "ios_native",
+        "journey_needs_native",
+        "native_validation",
+    ):
         if outputs.get(key) not in ("true", "false"):
             raise ValueError(f"Missing or invalid {key}")
     journey = outputs["journey"] == "true"
@@ -562,6 +729,7 @@ def gate_journey(needs, event):
         event,
         {"ios"} if outputs["ios"] == "true" else set(),
         outputs["journey_needs_native"] == "true",
+        outputs["ios_native"] == "true",
     )
     if outputs["native_validation"] != str(native).lower():
         raise ValueError("Native execution does not match event and selection")
@@ -755,9 +923,15 @@ def main():
     selected_ids = journey_ids.split(",") if journey_ids else ()
     native = journey_native_for_ids(selected_ids)
     legs = native_legs(selected_ids, event, shards)
-    output += (
-        f"native_validation={str(native_validation(event, suites, native)).lower()}\n"
+    # Repository variable CI_MAC_SELECTION=full is the rollback: every selected
+    # PR gets its Mac again, with no code change.
+    mac_rule = not selection_rollback()
+    inputs_changed = native_inputs_changed(
+        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
+    native_inputs = inputs_changed or not mac_rule
+    mac_runs = native_validation(event, suites, native, native_inputs)
+    output += f"native_validation={str(mac_runs).lower()}\n"
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
     output += f"native_legs={json.dumps(legs)}\n"
     mapped = journey_mapped(journey, coverage, journey_ids)
@@ -766,6 +940,15 @@ def main():
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
     output += f"ios_render_evidence={str(render).lower()}\n"
+    output += f"ios_native={str(native_inputs).lower()}\n"
+    inputs_note = (
+        "changed"
+        if inputs_changed
+        else "unchanged, but CI_MAC_SELECTION=full keeps the Mac"
+        if not mac_rule
+        else "unchanged (no Mac: this PR changes nothing the iPhone build or its"
+        " tests read; Linux contracts and journeys still run)"
+    )
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -777,6 +960,7 @@ def main():
                 f" ({shards} native leg{'s' if shards > 1 else ''})\n\n"
                 f"iPhone validation legs: {', '.join(legs)}\n\n"
                 f"Export/OCR unit proofs: {'run' if render else 'skipped (no render code changed; main runs them)'}\n\n"
+                f"iPhone inputs: {inputs_note}\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

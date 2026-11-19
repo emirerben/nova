@@ -232,7 +232,9 @@ jobs:
     # apt install); typical is ~8 min. Without it a hang burns GitHub's 360.
     timeout-minutes: 80
     strategy:
-      # Both shards must finish so the stable test-api gate aggregates failures.
+      # Every shard must finish so the stable test-api gate aggregates failures.
+      # Keep this list equal to SHARD_COUNT in scripts/ci/api-tests.py
+      # (test_api_tests.py fails otherwise).
       fail-fast: false
       matrix:
         shard: [0, 1]

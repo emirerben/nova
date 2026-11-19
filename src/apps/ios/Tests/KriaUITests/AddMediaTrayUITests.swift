@@ -89,6 +89,70 @@ import XCTest
         capture(app, "Manage clips from the tray")
     }
 
+    func testRemovingAClipInAddMediaRemovesItsChatRow() {
+        let app = launch(format: "format-talking_to_camera", talkingMaxClips: "1")
+        let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10), "the attached clip shows in the chat")
+        XCTAssertTrue(app.staticTexts["sample.mov"].exists, "listed by name")
+        app.buttons["chat-attach"].tap()
+        app.buttons["attach-manage"].tap()
+        let remove = app.buttons["Remove sample.mov"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.tap()
+        XCTAssertTrue(app.buttons["Remove sample.mov"].waitForNonExistence(timeout: 10), "the server dropped the clip")
+        app.buttons["attachment-close"].tap()
+        assertBackInTheChat(app, "closing Add media returns to the chat")
+        capture(app, "Chat after removing the only clip")
+        XCTAssertTrue(app.buttons["record-footage"].waitForExistence(timeout: 10), "with no clips left the stage offers Record again")
+        XCTAssertFalse(app.descendants(matching: .any)["chat-media-fixture-clip"].exists, "a removed clip is not listed as uploaded")
+        XCTAssertFalse(app.staticTexts["sample.mov"].exists, "nor by name")
+    }
+
+    /// A slow drag that stops part-way, so the row rests open instead of deleting on release.
+    private func dragRowOpen(_ row: XCUIElement) {
+        let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        let end = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+    }
+
+    func testSwipingAChatMediaRowOpenRevealsDeleteAndTappingItRemovesTheClip() {
+        let app = launch(format: "format-talking_to_camera")
+        let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        dragRowOpen(receipt)
+        let delete = app.buttons["chat-media-remove-fixture-clip"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3), "a left swipe reveals Delete")
+        XCTAssertTrue(receipt.exists, "the row is still there until Delete is tapped")
+        capture(app, "Media row swiped open")
+        delete.tap()
+        XCTAssertTrue(app.buttons["record-footage"].waitForExistence(timeout: 10), "with no clips left the stage offers Record again")
+        XCTAssertFalse(app.descendants(matching: .any)["chat-media-fixture-clip"].exists, "the row is gone")
+        XCTAssertFalse(app.buttons["drawer-new-chat"].isHittable, "the swipe never opened the drawer")
+        capture(app, "Chat after swipe-to-delete")
+    }
+
+    func testAFullSwipeOnAChatMediaRowDeletesTheClip() {
+        let app = launch(format: "format-talking_to_camera")
+        let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        receipt.swipeLeft()
+        XCTAssertTrue(app.buttons["record-footage"].waitForExistence(timeout: 10), "with no clips left the stage offers Record again")
+        XCTAssertFalse(app.descendants(matching: .any)["chat-media-fixture-clip"].exists, "a long swipe deletes without a tap")
+    }
+
+    func testFailedSwipeDeleteBringsTheRowBackWithAnError() {
+        let app = launch(format: "format-talking_to_camera", environment: ["KRIA_CHAT_REMOVE_MEDIA_FAILURE": "1"])
+        let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        dragRowOpen(receipt)
+        let delete = app.buttons["chat-media-remove-fixture-clip"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+        XCTAssertTrue(app.staticTexts["chat-media-remove-error"].waitForExistence(timeout: 10), "the refusal is said out loud")
+        XCTAssertTrue(app.descendants(matching: .any)["chat-media-fixture-clip"].waitForExistence(timeout: 5), "the clip is still attached, so its row comes back")
+        capture(app, "Failed swipe-to-delete")
+    }
+
     func testTrayAtTheClipLimitReachesManageClipsAtAccessibilitySize() {
         let app = launch(format: "format-talking_to_camera", talkingMaxClips: "1", largeText: true)
         app.buttons["chat-attach"].tap()
@@ -134,8 +198,9 @@ import XCTest
         capture(app, "Tray while Kria is replying")
     }
 
-    private func launch(format: String, media: Bool = true, talkingMaxClips: String? = nil, largeText: Bool = false, sendDelay: String? = nil) -> XCUIApplication {
+    private func launch(format: String, media: Bool = true, talkingMaxClips: String? = nil, largeText: Bool = false, sendDelay: String? = nil, environment: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
+        for (key, value) in environment { app.launchEnvironment[key] = value }
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         if media { app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1" }

@@ -917,9 +917,15 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
     }
 
+    /// Takes an attached file out of the project from the chat, where it is known only by its media id. The same
+    /// `remove_media` as un-ticking it in the picker, and the picker's tick goes with it.
+    func remove(mediaID: String, projectID: UUID) async -> DeselectOutcome {
+        await detach(mediaID: mediaID, role: .clip, projectID: projectID, itemID: nil, recordID: nil)
+    }
+
     /// Detaches an attached clip (`remove_media`, which also deletes the blob server-side) or visual.
     /// Serialized with attaches so it can't race one on the thread's optimistic `expected_revision`.
-    private func detach(mediaID: String, role: CreationMediaRole, projectID: UUID, itemID: String?, recordID: UUID) async -> DeselectOutcome {
+    private func detach(mediaID: String, role: CreationMediaRole, projectID: UUID, itemID: String?, recordID: UUID?) async -> DeselectOutcome {
         await serialized(projectID: projectID) { [self] () async -> DeselectOutcome in
             do {
                 if role == .visual {
@@ -933,7 +939,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                         expectedRevision: latest.revision, clientActionID: "ios-deselect-\(mediaID)"
                     )
                 }
-                releaseSelection(recordID: recordID, projectID: projectID)
+                if let recordID { releaseSelection(recordID: recordID, projectID: projectID) }
+                else { releaseSelection(mediaID: mediaID, projectID: projectID) }
                 return .detached
             } catch APIError.conflict {
                 // The server refuses removal while a render is running, and on a stale revision.
@@ -1106,6 +1113,15 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         let pid = projectID.uuidString
         guard var selection = photoSelections[pid],
               let key = selection.entries.first(where: { $0.value.recordID == recordID })?.key else { return }
+        selection.entries[key] = nil
+        photoSelections[pid] = selection.entries.isEmpty ? nil : selection
+        persistPhotoSelections()
+    }
+
+    private func releaseSelection(mediaID: String, projectID: UUID) {
+        let pid = projectID.uuidString
+        guard var selection = photoSelections[pid],
+              let key = selection.entries.first(where: { $0.value.mediaID == mediaID })?.key else { return }
         selection.entries[key] = nil
         photoSelections[pid] = selection.entries.isEmpty ? nil : selection
         persistPhotoSelections()

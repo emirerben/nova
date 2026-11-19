@@ -2785,6 +2785,11 @@
             },
             "title": "Verified Features",
             "type": "array"
+          },
+          "watermark_exemption": {
+            "$ref": "#/components/schemas/WatermarkExemption",
+            "default": null,
+            "nullable": true
           }
         },
         "title": "DeviceRenderCapabilities",
@@ -2977,6 +2982,11 @@
           },
           "recovery": {
             "$ref": "#/components/schemas/DeviceRepairInstruction",
+            "default": null,
+            "nullable": true
+          },
+          "watermark_exemption": {
+            "$ref": "#/components/schemas/WatermarkExemption",
             "default": null,
             "nullable": true
           }
@@ -16550,6 +16560,21 @@
           "fingerprint"
         ],
         "title": "VoiceoverRenderAsset",
+        "type": "object"
+      },
+      "WatermarkExemption": {
+        "additionalProperties": false,
+        "properties": {
+          "owner_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Owner Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_hash"
+        ],
+        "title": "WatermarkExemption",
         "type": "object"
       },
       "app__agents___schemas__visual_block__MediaTransform": {

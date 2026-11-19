@@ -36,6 +36,9 @@ from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.services.background_text_focus import TextColumn
 from app.services.phone_card_layout import (
     CANVAS_RATIO,
+    EDGE_INSET,
+    GAP,
+    MIN_ZONE_HEIGHT,
     STRIP_WIDTH,
     WATERMARK_BOX,
     CardLayoutContext,
@@ -591,14 +594,93 @@ def test_no_strip_for_a_portrait_and_no_wider_box_for_a_moved_or_full_width_card
     assert strip_for(spot, 16 / 9, blockers, side_blockers=(mark,)) is spot
 
 
-def test_a_bottom_band_card_beside_the_watermark_keeps_its_box():
+def test_a_bottom_band_card_beside_the_watermark_becomes_a_centred_strip_past_it():
     # Her own layout (captions in the middle): the bottom band is the big one and the card
-    # already sits beside the Kria mark, as wide as that spot allows.
+    # sits beside the Kria mark. The strip is centred below the mark instead of right-shifted.
     blockers = [NormalizedBox(0.30, 0.22, 0.70, 0.50), caption(0.58, 0.64)]
     spot = place_card(16 / 9, blockers, side_blockers=(WATERMARK_BOX,))
     assert spot.zone == "bottom" and spot.x_frac > 0.5
-    assert strip_for(spot, 16 / 9, blockers, side_blockers=(WATERMARK_BOX,)) is spot
-    assert strip_crop(spot.scale, spot.height, COLUMN) is not None
+    strip = strip_for(spot, 16 / 9, blockers, side_blockers=(WATERMARK_BOX,))
+    assert strip.x_frac == 0.5 and strip.scale == STRIP_WIDTH
+    assert strip.box.top >= WATERMARK_BOX.bottom + GAP - 1e-9
+    assert strip_crop(strip.scale, strip.height, COLUMN) is not None
+
+
+# --- KRI-1478 follow-up (Q1 run 4): a strip beside the wordmark is centred, never right-shifted.
+# Ways this goes wrong, each asserted below:
+# - the strip is still right-shifted / narrower than STRIP_WIDTH (centre != 0.5);
+# - it covers the wordmark, the caption box, a face, or another placed card;
+# - it leaves the frame inset (bottom past 1 - EDGE_INSET) or is shorter than MIN_ZONE_HEIGHT;
+# - a portrait / square picture gets a strip, or a card with nothing in the way is moved;
+# - no room past the wordmark: today's beside-wordmark box must be kept unchanged;
+# - the crop does not hold the measured text column or leaves the picture;
+# - the lane row's dump changes for a strip that was not moved (extra ``y_frac`` key);
+# - the compile draws the moved strip at the card's old height.
+RUN4_CAPTION_BOTTOM = 0.725
+RUN4_FACE = NormalizedBox(0.22, 0.22, 0.84, 0.60)
+
+
+def _run4():
+    blockers = [RUN4_FACE, caption(0.60, RUN4_CAPTION_BOTTOM)]
+    spot = place_card(16 / 9, blockers, side_blockers=(WATERMARK_BOX,))
+    return spot, blockers
+
+
+def test_run4_today_the_card_sits_right_shifted_beside_the_wordmark():
+    spot, _ = _run4()
+    assert spot.zone == "bottom" and spot.x_frac == pytest.approx(0.592, abs=0.005)
+    assert spot.scale == pytest.approx(0.759, abs=0.005)
+
+
+def test_run4_strip_is_centred_and_clear_of_the_wordmark():
+    spot, blockers = _run4()
+    strip = strip_for(spot, 16 / 9, blockers, side_blockers=(WATERMARK_BOX,))
+    assert strip is not spot
+    assert (strip.x_frac, strip.scale) == (0.5, STRIP_WIDTH)
+    assert not any(boxes_intersect(strip.box, b) for b in [*blockers, WATERMARK_BOX])
+    box = strip.box
+    assert box.top >= WATERMARK_BOX.bottom + GAP - 1e-9
+    assert box.bottom <= 1 - EDGE_INSET + 1e-9 and strip.height >= MIN_ZONE_HEIGHT
+    assert box.left >= 0 and box.right <= 1
+    # same zone edge as before: it still reaches the bottom inset, item 15 is unchanged
+    assert box.bottom == pytest.approx(spot.box.bottom)
+    crop = strip_crop(strip.scale, strip.height, COLUMN)
+    assert crop is not None
+    x, y, w, h = crop
+    assert x <= COLUMN.left and x + w >= COLUMN.right and y + h <= 1.0
+
+
+def test_strip_keeps_the_beside_wordmark_box_when_no_room_is_left_past_it():
+    # A tall mark leaves under MIN_ZONE_HEIGHT between it and the bottom inset.
+    spot = CardPlacement(0.6, 0.86, 0.76, "bottom", 0.24)
+    tall_mark = NormalizedBox(0.04, 0.74, 0.19, 0.93)
+    assert strip_for(spot, 16 / 9, [], side_blockers=(tall_mark,)) is spot
+
+
+def test_strip_never_moves_a_picture_that_is_not_wide_or_a_card_with_nothing_in_the_way():
+    spot, blockers = _run4()
+    assert strip_for(spot, 0.46, blockers, side_blockers=(WATERMARK_BOX,)) is None
+    assert strip_for(spot, 1.0, blockers, side_blockers=(WATERMARK_BOX,)) is None
+    assert strip_for(spot, 16 / 9, blockers) is spot  # no mark hit: unchanged
+
+
+def test_a_moved_strip_row_carries_its_height_and_an_unmoved_one_dumps_as_before():
+    from app.pipeline.phone_subtitled_lanes import SubtitledCardStrip
+
+    base = {
+        "id": "c1",
+        "media_id": "m1",
+        "gcs_path": "p",
+        "generation": "1",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    plain = SubtitledOverlayCard(**base, strip=SubtitledCardStrip(scale=0.94, height=0.2))
+    assert "y_frac" not in plain.model_dump()["strip"]
+    moved = SubtitledOverlayCard(
+        **base, strip=SubtitledCardStrip(scale=0.94, height=0.19, y_frac=0.88)
+    )
+    assert moved.model_dump()["strip"]["y_frac"] == 0.88
 
 
 def test_strip_crop_is_the_text_column_at_the_bands_shape():
@@ -732,19 +814,20 @@ def test_a_second_visual_takes_the_second_half_of_a_strip_cards_window(monkeypat
         "r2": (17.05, 18.88),
         "r3": (24.61, 26.5),
         "r4": (33.57, 36.18),
+        # S8 (Q1 run 4): the fifth mention is 2.72 s; two parts of 1.36 s are too short, so the
+        # screenshot keeps all of it and the recording follows it to the end of its own window
+        # (prod dropped it as "overlap" and the video never showed it).
+        "r5": (41.94, 44.92),
     }
     assert all(c.kind == "video" and c.strip is not None for c in result.cards)
-    # S8: the fifth mention is 2.72 s; two parts of 1.36 s are too short, so it keeps one. The
-    # recording is still accounted for by name, exactly as before: never placed, never dropped.
-    assert result.receipt["unplaced"] == [
-        {"media_id": "r5", "label": "r5.png", "reason": "overlap", "kind": "video"}
-    ]
-    assert [p["media_id"] for p in result.receipt["placed"]] == ["r1", "r2", "r3", "r4"]
+    assert result.receipt["unplaced"] == []
+    assert [p["media_id"] for p in result.receipt["placed"]] == ["r1", "r2", "r3", "r4", "r5"]
     assert result.shared_windows == (
         (8.38, 13.04, 10.71),
         (15.22, 18.88, 17.05),
         (22.72, 26.5, 24.61),
         (30.96, 36.18, 33.57),
+        (39.22, 41.94, 41.94),  # "midpoint" = its end: the screenshot keeps its whole window
     )
 
 
@@ -918,7 +1001,7 @@ def test_run3_job_with_the_strip_on(monkeypatch):
 
     cards, beat_receipt, overlay_receipt, recipe, clips = _run3_job(monkeypatch, strip=True)
 
-    assert len(clips) == 9, "five screenshots and the four recordings that fit"
+    assert len(clips) == 10, "five screenshots and her five recordings"
     for clip in clips:
         placement, crop = clip.visual_placement, clip.source_crop
         assert placement.width_fraction == pytest.approx(0.94) and placement.x_fraction == 0.5
@@ -944,10 +1027,11 @@ def test_run3_job_with_the_strip_on(monkeypatch):
         (30.96, 33.57),
         (33.57, 36.18),
         (39.22, 41.94),
+        (41.94, 44.92),  # Q1 run 4: the fifth recording follows its too-short mention
     ]
     assert [p["end_s"] for p in beat_receipt["placed"]] == [10.71, 17.05, 24.61, 33.57, 41.94]
-    assert len(overlay_receipt["placed"]) == 4
-    assert [u["reason"] for u in overlay_receipt["unplaced"]] == ["overlap"]
+    assert len(overlay_receipt["placed"]) == 5
+    assert overlay_receipt["unplaced"] == []
     assert "sourceCrop" in recipe.required_capabilities
     assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
 

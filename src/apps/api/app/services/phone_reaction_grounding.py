@@ -763,6 +763,11 @@ class GroundedReactionBeats:
     # creator's closing text can sit on it. `None` when no closing photo stands.
     closing_card_id: str | None = None
     closing_card_aspect: float | None = None
+    # KRI-1511: the corner pictures held for a set time from their spoken word (a sticker or
+    # photo on its word, its own `hold_s` or the default): a speech cut keeps that time on
+    # screen (`remap_lanes_for_cut(held_card_ids=...)`). Never a phrase-sized photo (it follows
+    # its phrase), a full-screen cutaway, a video card or the closing photo/badge.
+    held_card_ids: frozenset[str] = frozenset()
 
 
 def ground_phone_reaction_beats(
@@ -1450,6 +1455,16 @@ def ground_phone_reaction_beats(
     closing_card_id = merged_card_id or "closing-photo"
     if closing_card_id not in {card.id for card in cards}:
         closing_card_id = None
+    held_card_ids = frozenset(
+        card.id
+        for card in cards
+        if card.display_mode == "pip"
+        and card.kind == "image"
+        and card.id != closing_card_id
+        and card.id in cards_by_id
+        and cards_by_id[card.id].beat_id != "__closing__"
+        and cards_by_id[card.id].phrase_args is None
+    )
     return GroundedReactionBeats(
         cards=cards,
         sound_effects=sound_effects,
@@ -1458,4 +1473,5 @@ def ground_phone_reaction_beats(
         closing_card_aspect=(
             footprints_by_id[closing_card_id].aspect_ratio if closing_card_id else None
         ),
+        held_card_ids=held_card_ids,
     )

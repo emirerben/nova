@@ -1508,9 +1508,11 @@ def analyze_pool_asset(
         # write or any download/model work.
         asset_ref = db.get(PlanItemAsset, aid)
         if asset_ref is None:
+            log.info("autoplace.asset_gone_attempt", asset_id=asset_id)
             return
         item_ref = db.get(PlanItem, asset_ref.plan_item_id)
         if item_ref is None:
+            log.info("autoplace.asset_unowned_attempt", asset_id=asset_id, stage="item")
             return
         plan_id = item_ref.content_plan_id
         item_id = item_ref.id
@@ -1525,6 +1527,9 @@ def analyze_pool_asset(
             log.error("autoplace.asset_invalid_persona", asset_id=asset_id)
             return
         if fenced is None:
+            # KRI-1469: every return before the claim leaves a `queued` row as it was;
+            # say which one so a stuck Visual can be traced from the worker log.
+            log.info("autoplace.asset_unowned_attempt", asset_id=asset_id, stage="lock")
             return
         plan, _item, asset = fenced
         ownership_epoch = _plan_ownership_epoch(plan)
@@ -1579,6 +1584,10 @@ def analyze_pool_asset(
                     return
             else:
                 if asset.status not in {"uploaded", "queued"}:
+                    # Also the second copy of a re-sent attempt (KRI-1469): a no-op.
+                    log.info(
+                        "autoplace.asset_already_claimed", asset_id=asset_id, status=asset.status
+                    )
                     return
                 dispatched_at = getattr(asset, "analysis_last_dispatched_at", None)
                 if dispatched_at is not None:

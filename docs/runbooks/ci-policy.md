@@ -4,9 +4,12 @@ Nova CI covers the API and native phone contracts. Web application tests and
 web lint are retired because the web app is no longer developed. Web assets
 bundled into the iOS app still select native coverage.
 
-Pull requests run API and mobile contract checks on Linux. One selected PR Mac
-job compiles the iPhone app once, then runs its selected unit, UI and native
-journey scenarios without rebuilding. The journey manifest's `needs_native`
+Pull requests run API and mobile contract checks on Linux. A PR that changes
+an iPhone input (the app tree, its scripts, bundled resources, or a font or
+fixture Swift tests open) also gets one Mac job, which compiles the iPhone app
+once, then runs its selected unit, UI and native journey scenarios without
+rebuilding. A PR that changes none starts no Mac: see
+[When a PR gets a Mac](change-based-ci.md#when-a-pr-gets-a-mac-kri-1534). The journey manifest's `needs_native`
 flag keeps Python only journeys on Linux. A mixed selection with a native
 journey uses the Mac job. Unknown Kria journey paths fail closed to the shared
 API plus native contract selection.

@@ -223,8 +223,22 @@ struct PhoneRenderingCapabilities: Codable, Equatable, Sendable {
     let enabled: Bool
     let recipeVersions: [Int]
     let verifiedFeatures: [String]
+    var watermarkExemption: WatermarkExemption? = nil
     enum CodingKeys: String, CodingKey {
-        case enabled, recipeVersions = "recipe_versions", verifiedFeatures = "verified_features"
+        case enabled, recipeVersions = "recipe_versions", verifiedFeatures = "verified_features", watermarkExemption = "watermark_exemption"
+    }
+    init(enabled: Bool, recipeVersions: [Int], verifiedFeatures: [String], watermarkExemption: WatermarkExemption? = nil) {
+        self.enabled = enabled; self.recipeVersions = recipeVersions; self.verifiedFeatures = verifiedFeatures
+        self.watermarkExemption = watermarkExemption
+    }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        recipeVersions = try container.decode([Int].self, forKey: .recipeVersions)
+        verifiedFeatures = try container.decode([String].self, forKey: .verifiedFeatures)
+        if let raw = try container.decodeIfPresent(JSONValue.self, forKey: .watermarkExemption) {
+            watermarkExemption = try RecipeJSON.decoder().decode(WatermarkExemption.self, from: JSONEncoder().encode(raw))
+        }
     }
     static let disabled = Self(enabled: false, recipeVersions: [], verifiedFeatures: [])
 }

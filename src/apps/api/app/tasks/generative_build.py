@@ -9783,6 +9783,8 @@ def _run_phone_subtitled_job(
     # strategy carried no beats/closing at all), byte-identical.
     beat_receipt: dict | None = None
     beat_cards: list = []
+    # KRI-1511: the beat cards held for a set time from their word (see `remap_lanes_for_cut`).
+    beat_held_card_ids: frozenset[str] = frozenset()
     beat_sfx_requests: list = []
     beat_media_ids: frozenset[str] = frozenset()
     # KRI-514: which beat card holds the closing photo, so the closing text
@@ -10598,6 +10600,14 @@ def _run_phone_subtitled_job(
             # Everything placed against the face (title, closing text, cards) maps
             # it through the same crop the recipe draws.
             framed_fit = "fill" if speaker_position_x is not None else landscape_fit
+            # KRI-1525: the caption look is chosen below (face band / protected text) before the
+            # plan is compiled; tell caption styling now how each take will be drawn, so a
+            # letterboxed take's faces and background are sampled where the phone draws them.
+            from app.services.phone_text_styling import (  # noqa: PLC0415
+                register_generation_speaker_fit,
+            )
+
+            register_generation_speaker_fit(framed_fit)
             face_box_to_canvas = (
                 _phone_face_box_mapper(binding, speaker_position_x, **text_canvas)
                 if speaker_position_x is not None
@@ -11980,6 +11990,7 @@ def _run_phone_subtitled_job(
                             }
                         else:
                             beat_cards = list(grounded_beats.cards)
+                            beat_held_card_ids = grounded_beats.held_card_ids
                             beat_sfx_requests = list(grounded_beats.sound_effects)
                             beat_media_ids = frozenset(card.media_id for card in beat_cards)
                             beat_receipt = grounded_beats.receipt
@@ -12465,7 +12476,18 @@ def _run_phone_subtitled_job(
                         if lanes.background is not None
                         else frozenset()
                     )
-                    lanes, cut_dropped_card_ids = remap_lanes_for_cut(lanes, cut_plan)
+                    lanes, cut_dropped_card_ids = remap_lanes_for_cut(
+                        lanes,
+                        cut_plan,
+                        # KRI-1511: a sticker keeps its time on screen through a pause cut.
+                        held_card_ids=(
+                            beat_held_card_ids
+                            if settings.cut_keeps_sticker_hold_enabled
+                            else frozenset()
+                        ),
+                        # A marked object's window the longer sticker must not run into.
+                        hold_stops_s=[float(r.start_s) for r in protected_card_regions],
+                    )
                     for dropped_media_id in sorted(cut_dropped_card_ids & window_media_ids):
                         lane_drops.append(
                             {
@@ -14864,7 +14886,23 @@ def _style_rows_keeping_title_look(rows: list[dict], *, job_id: str, canvas: Any
             row["id"]: row
             for row in generation_style_rows(others, job_id=job_id, excluded_boxes=excluded)
         }
-    return [row if is_title_look_row(row) else restyled[row["id"]] for row in rows]
+    styled = [row if is_title_look_row(row) else restyled[row["id"]] for row in rows]
+    # Q1 run 4: nothing measured the pixels under the final title block; outline a line the
+    # footage swallows (`TITLE_LEGIBILITY_ENABLED`). Off or unmeasured: the rows as they were.
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_title_legibility import title_legibility_pass  # noqa: PLC0415
+    from app.services.phone_text_styling import (  # noqa: PLC0415
+        generation_title_frames,
+        register_title_legibility,
+    )
+
+    styled, legibility_receipt = title_legibility_pass(
+        styled,
+        generation_title_frames(),
+        canvas=canvas if canvas is not None else _STORY_CANVAS,
+    )
+    register_title_legibility(legibility_receipt)
+    return styled
 
 
 def _protected_style_rows(

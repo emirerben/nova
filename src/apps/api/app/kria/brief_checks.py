@@ -17,6 +17,7 @@ held closing line and repeated video files.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import math
 import re
 import unicodedata
@@ -798,6 +799,11 @@ class PlanFacts:
     # KRI-1488: the creator's own videos a finished phone render was made from (the job's
     # `_phone_sources_v1`); None = not known. Read only by `_check_single_take_pointer`.
     attached_video_count: int | None = None
+    # KRI-1515: the clips and photos the creator attached (`attached_media_count`) and the ones
+    # the plan or the finished video leaves out (`unused_media_ids`), for "use all these clips".
+    # None = not known (no manifest, no approved media snapshot, or ids that match nothing).
+    attached_media_count: int | None = None
+    unused_media_ids: tuple[str, ...] | None = None
     # KRI-547: how a phone Talking render framed a sideways speaker clip for a
     # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
     # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
@@ -1585,6 +1591,32 @@ def _draft_talking_cards(strategy: Mapping[str, Any], manifest: ResolvedCreatorM
     )
 
 
+def media_use_facts(attached: Sequence[str], used: Iterable[str]) -> dict[str, Any]:
+    """KRI-1515: ``attached_media_count`` / ``unused_media_ids`` for "use all these clips".
+
+    ``attached`` are the creator's own clips and photos, ``used`` the media ids the plan or the
+    finished timeline holds. Nothing is claimed ({}) without attached media, or when not one
+    attached id is used: ids written in another form must never read as "left out all 8".
+    """
+    own = list(dict.fromkeys(str(media_id) for media_id in attached if media_id))
+    taken = {str(media_id) for media_id in used if media_id}
+    if not own or not taken.intersection(own):
+        return {}
+    return {
+        "attached_media_count": len(own),
+        "unused_media_ids": tuple(media_id for media_id in own if media_id not in taken),
+    }
+
+
+def _draft_media_use(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
+    """The creator's clips and photos the strategy leaves out (KRI-1515), as the plan says."""
+    own = [m.media_id for m in manifest.media if m.kind in ("video", "image")]
+    selected = {str(x) for x in strategy.get("selected_media_ids") or []}
+    if not selected or strategy.get("media_scope") == "all":
+        return media_use_facts(own, own)
+    return media_use_facts(own, selected)
+
+
 def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> int:
     videos = [m.media_id for m in manifest.media if m.kind == "video"]
     selected = {str(x) for x in strategy.get("selected_media_ids") or []}
@@ -1776,6 +1808,7 @@ def plan_facts_from_strategy(
         extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["talking_cards_at_render"] = _draft_talking_cards(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
+        extra.update(_draft_media_use(strategy, manifest))
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
         spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
         extra["phone_voiceover_spoken_text"] = bool(spoken_cap and spoken_cap.available)
@@ -9018,7 +9051,11 @@ def _names_join(items: Sequence[str]) -> str:
 # Why a Visual stayed off screen, from `phone_overlay_receipt.unplaced[].reason` (EN, TR). An
 # unknown reason claims no cause (`_CARD_MISS_OTHER`).
 _CARD_MISS_WHY: dict[str, tuple[str, str]] = {
-    "no_spoken_match": ("no spoken moment", "konuşmanda uygun an yoktu"),
+    "no_spoken_match": ("I didn't find a moment for it", "uygun bir an bulamadım"),
+    "overlap": (
+        "another card was already on screen then",
+        "o sırada ekranda başka bir kart vardı",
+    ),
     "hook_window": (
         "it only fit the opening seconds, which stay clear",
         "yalnızca boş kalan açılışa uyuyordu",
@@ -9068,6 +9105,11 @@ def _spoken_cards_receipt(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return None
 
 
+def _left_out_by_kria(missed: Sequence[GroundedCardFact]) -> bool:
+    """Any unshown Visual the creator did not remove herself."""
+    return any(card.reason != "removed_in_editor" for card in missed)
+
+
 def _check_grounded_cards(
     req: BriefRequirement, cards: Sequence[GroundedCardFact]
 ) -> RequirementReceipt:
@@ -9082,7 +9124,10 @@ def _check_grounded_cards(
             missed,
             prefix=say(en="; not shown: ", tr="; çıkmadı: "),
         )
-        return _receipt(req, "met", reason, verification="checked")
+        # A Visual left out is a miss to say, never a "Done" (Q1 run 4); one she removed in the
+        # editor herself is said, but is her choice, not a miss.
+        status = "partial" if _left_out_by_kria(missed) else "met"
+        return _receipt(req, status, reason, verification="checked")
     if missed:
         lead = say(
             en="None of your Visuals showed as a card",
@@ -9211,9 +9256,13 @@ def _take_transcripts(facts: PlanFacts) -> list[str] | None:
     return [str(text) for text in said]
 
 
+@functools.lru_cache(maxsize=512)
 def _take_says(transcript: str, phrase: str) -> bool:
     """``phrase`` is said in ``transcript``, by the matchers the recordings behind the speaker
-    use (folded tokens: case, punctuation, "SpecKit" / "Spec Kit", a plural "s")."""
+    use (folded tokens: case, punctuation, "SpecKit" / "Spec Kit", a plural "s").
+
+    Cached (KRI-1510): every row of a draft asks about every planned pop-in's word, and the
+    near-hearing lookup takes ~50 ms on a 600-word take. The matchers read no settings."""
     from app.services import phone_background_sequence as sequence  # noqa: PLC0415
     from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
 
@@ -9229,6 +9278,113 @@ def _take_says(transcript: str, phrase: str) -> bool:
     )
 
 
+def _draft_unsaid_beat_triggers(facts: PlanFacts) -> frozenset[str]:
+    """KRI-1510: the triggers of a phone Talking DRAFT's planned word-timed pop-ins that no take
+    says, by the render's own beat matcher (`_beat_heard_in`).
+
+    Cusco T3: the planner put the llama sticker on "lama" though its own rationale said the
+    transcript has no "lama"; the draft counted the planned beat as placed ("Done"), and only
+    the finished video said "I never heard lama in your voice". Such a beat is judged as if it
+    were not planned, so KRI-1486's "You don't say ..." answers its ask. Empty on a finished
+    video (its beat receipt decides), a title logo (nothing is listened for), a take whose
+    transcript is unknown, or with either switch off: today's answer.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if (
+        not _settings.unsaid_planned_cue_report_enabled
+        or not _settings.unsaid_cue_report_enabled
+        or not facts.phone_talking
+        or facts.rendered_variant
+        or not facts.reaction_beats
+    ):
+        return frozenset()
+    takes = _take_transcripts(facts)
+    if takes is None:
+        return frozenset()
+    return frozenset(
+        beat.trigger
+        for beat in facts.reaction_beats
+        if beat.anchor != "title"
+        and beat.trigger.strip()
+        and not any(_beat_heard_in(take, beat.trigger) for take in takes)
+    )
+
+
+@functools.lru_cache(maxsize=512)
+def _beat_heard_in(transcript: str, trigger: str) -> bool:
+    """The render's reaction-beat matcher hears ``trigger`` in ``transcript`` (KRI-1510): exactly
+    `phone_reaction_grounding.trigger_is_heard`, so a planned beat the draft calls unsaid is one
+    the render reports ``never_heard``. Cached: rows ask about the same words."""
+    from app.services import phone_reaction_grounding as grounding  # noqa: PLC0415
+
+    words = [
+        {"text": text, "start_s": float(i), "end_s": i + 0.5}
+        for i, text in enumerate(transcript.split())
+    ]
+    return grounding.trigger_is_heard(words, trigger)
+
+
+def _draft_heard_beats(facts: PlanFacts, named: Sequence[str]) -> tuple[BeatFact, ...]:
+    """The planned pop-ins minus those on one of ``named`` that no take says (KRI-1510).
+
+    Only an ask's own named words take a pop-in out: another ask's unsaid pop-in still counts
+    as planned for this one (it is that ask's answer), so its verdict is today's."""
+    unsaid = _draft_unsaid_beat_triggers(facts)
+    return tuple(
+        b
+        for b in facts.reaction_beats or ()
+        if b.trigger not in unsaid or not any(_trigger_heard(n, b.trigger) for n in named)
+    )
+
+
+def _unsaid_cue_names(req: BriefRequirement, facts: PlanFacts) -> list[str] | None:
+    """The named words `unsaid_cue_reason` reports, or None (see there)."""
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.unsaid_cue_report_enabled or not facts.phone_talking:
+        return None
+    named = _named_triggers(req) if _wants_beats(req) else []
+    if not named:
+        return None
+    beats = _draft_heard_beats(facts, named)
+    planned = (*facts.unheard_beat_triggers, *facts.dropped_beat_triggers)
+    takes = _take_transcripts(facts)
+
+    def unsaid(name: str) -> bool:
+        return (
+            takes is not None
+            and not any(_trigger_heard(name, b.trigger) for b in beats)
+            # a pop-in WAS planned for it: its own answer ("I never heard ...") stands
+            and not any(_trigger_heard(name, t) for t in planned)
+            and not _title_misses_for(facts, [name])
+            and not _beat_room_drop(facts, name)
+            and not any(_take_says(take, name) for take in takes)
+        )
+
+    if len(beats) < len(facts.reaction_beats or ()):
+        # KRI-1510: a planned pop-in waits on a word no take says. Its words are named; any
+        # other word of the ask keeps its own answer beside them.
+        return [n for n in named if unsaid(n)] or None
+    return named if all(unsaid(n) for n in named) else None
+
+
+def _no_pop_in(names: Sequence[str]) -> str:
+    return say(
+        en="No pop-in for {names_missing}",
+        tr="Şunlar için çıkan görsel yok: {names_missing}",
+        names_missing=_names(names),
+    )
+
+
+def _unsaid_sentence(names: Sequence[str]) -> str:
+    return say(
+        en="You don't say {names} in your take, so nothing is shown for it",
+        tr="Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor",
+        names=", ".join(f"“{name}”" for name in names),
+    )
+
+
 def unsaid_cue_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
     """KRI-1486: the receipt reason for a word-timed visual whose words the take never says.
 
@@ -9239,34 +9395,51 @@ def unsaid_cue_reason(req: BriefRequirement, facts: PlanFacts) -> str | None:
     one: then nothing is shown and the reply says why. Readiness reads the same sentence
     (`approval_readiness._promised_at_render`), so the draft is approvable. Anything else (she
     says it, no transcript, the switch off) is None: today's answer.
-    """
-    from app.config import settings as _settings  # noqa: PLC0415
 
-    if not _settings.unsaid_cue_report_enabled or not facts.phone_talking:
-        return None
-    named = _named_triggers(req) if _wants_beats(req) else []
-    beats = facts.reaction_beats or ()
-    if not named or any(_trigger_heard(n, b.trigger) for b in beats for n in named):
-        return None
-    planned = (*facts.unheard_beat_triggers, *facts.dropped_beat_triggers)
+    KRI-1510: a pop-in the draft planned on such a word does not count as carrying it
+    (`_draft_unsaid_beat_triggers`); the sentence names those words, and the ask's other words
+    are judged as before.
+    """
+    names = _unsaid_cue_names(req, facts)
+    return _unsaid_sentence(names) if names else None
+
+
+def _unshown_visuals_receipt(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Q1 run 4: the Visuals the finished video's card matcher left out, said next to the pop-ins.
+
+    On a phone Talking edit the creator's pinned screenshots are word-triggered pop-ins (the beat
+    receipt) and the screen recordings the card matcher's (`phone_overlay_receipt`). The beats
+    checker alone judged "show the matching screenshot or recording" and said "Done" for
+    recordings the render named as left out. Only after a render (`grounded_cards`), only for the
+    no-named-word ask, and only the Visuals the receipt lists as unplaced (never one a beat shows).
+    """
     if (
-        any(_trigger_heard(n, t) for t in planned for n in named)
-        or _title_misses_for(facts, named)
-        or any(_beat_room_drop(facts, n) for n in named)
+        not facts.reaction_beats
+        or facts.grounded_cards is None
+        or not _asks_spoken_cards(req)
+        or _closing_photo_ask(req, facts)
     ):
-        return None  # a pop-in WAS planned for it: its own answer ("I never heard ...") stands
-    takes = _take_transcripts(facts)
-    if takes is None or any(_take_says(take, n) for take in takes for n in named):
         return None
-    return say(
-        en="You don't say {names} in your take, so nothing is shown for it",
-        tr="Çekiminde {names} demiyorsun, o yüzden bunun için bir şey gösterilmiyor",
-        names=", ".join(f"“{name}”" for name in named),
-    )
+    beat_labels = {_card_label(beat.visual_id) for beat in facts.reaction_beats if beat.visual_id}
+    missed = [
+        card
+        for card in facts.grounded_cards
+        if card.status == "unplaced" and card.label not in beat_labels
+    ]
+    if not _left_out_by_kria(missed):
+        return None  # nothing unshown, or only cards she removed in the editor herself
+    reason = _fit_card_reason(say(en="Not shown: ", tr="Çıkmadı: "), [], missed, prefix="")
+    return _receipt(req, "partial", reason, verification="checked")
 
 
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
+    receipt = _check_reaction_beats_core(req, facts)
+    unshown = _unshown_visuals_receipt(req, facts)
+    return receipt if unshown is None else combine_receipts(receipt, unshown)
+
+
+def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     cards = _spoken_cards_receipt(req, facts)
     if cards is not None:
         return cards  # KRI-1237: the phone Talking card matcher's Visuals
@@ -9294,9 +9467,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         # guessed from the sentence pick which pop-ins the ask is about, never a verdict.
         named = _named_triggers(req)
         names = named or _cue_triggers(req)
+        # KRI-1510: a draft's pop-in on one of these words that no take says is not planned.
+        beats = _draft_heard_beats(facts, named)
         # KRI-1486: her take never says the words. That sentence replaces only the cue's own
         # verdict below ("No pop-in for ..."); every other problem of the row is still said.
-        unsaid = unsaid_cue_reason(req, facts)
+        unsaid_names = _unsaid_cue_names(req, facts) or []
+        unsaid = _unsaid_sentence(unsaid_names) if unsaid_names else None
         if not facts.reaction_beats_available:
             problems.append(
                 say(
@@ -9334,8 +9510,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     promises.append(_NARRATED_FOOTAGE_CUE_PLAN)
             elif unsaid is not None:
                 problems.append(unsaid)
+                # KRI-1510: a said word of the ask with no pop-in is still told.
+                said = [n for n in named if n not in unsaid_names]
                 if sequence_problem:
                     problems.append(sequence_problem)
+                elif said:
+                    problems.append(_no_pop_in(said))
                 delivered = bool(sequence_problem)
             else:
                 problems.append(
@@ -9393,6 +9573,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 missing, uncertain = _described_names_uncovered(req, missing, beats, names, facts)
                 if uncertain:
                     promises.append(_DESCRIBED_POPINS_PLAN)
+            elif said := [n for n in missing if n not in unsaid_names]:
+                # KRI-1510: a word she does say, beside the unsaid ones, keeps its own check.
+                said, uncertain = _described_names_uncovered(req, said, beats, names, facts)
+                if uncertain:
+                    promises.append(_DESCRIBED_POPINS_PLAN)
+                missing = [n for n in missing if n in unsaid_names or n in said]
             if unheard:
                 problems.append(
                     _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
@@ -9410,18 +9596,14 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             ]
             if missing and unsaid is not None:
                 problems.append(unsaid)
+                said = [n for n in missing if n not in unsaid_names]  # KRI-1510
                 if sequence_problem:
                     problems.append(sequence_problem)
+                elif said:
+                    problems.append(_no_pop_in(said))
                 delivered = delivered or bool(sequence_problem)
             elif missing:
-                problems.append(
-                    sequence_problem
-                    or say(
-                        en="No pop-in for {names_missing}",
-                        tr="Şunlar için çıkan görsel yok: {names_missing}",
-                        names_missing=_names(missing),
-                    )
-                )
+                problems.append(sequence_problem or _no_pop_in(missing))
                 delivered = delivered or bool(sequence_problem)
             if footage_cues and facts.rendered_variant:
                 problems.extend(_footage_at_cue_problem(n, facts, req) for n in footage_cues)
@@ -16977,9 +17159,80 @@ def text_sequence_shown(req: BriefRequirement, facts: PlanFacts) -> bool:
     return _check_text_sequence(req, facts).status == "met"
 
 
+# KRI-1515: an asked edit format and the format the plan / finished video has; names in one set
+# are the same format to the creator (a day vlog is a montage, "talking head" is Talking).
+_SAME_FORMATS: tuple[frozenset[str], ...] = (
+    frozenset({"montage", "day_vlog", "single_hero"}),
+    frozenset({"subtitled", "talking_head"}),
+)
+
+
+def _format_ask(req: BriefRequirement) -> str | None:
+    """The typed "make it a montage" (``style {edit_format}``) when it is the row's only fact."""
+    facts = req.facts if isinstance(req.facts, Mapping) else {}
+    asked = facts.get("edit_format")
+    if req.kind != "style" or set(facts) != {"edit_format"} or not isinstance(asked, str):
+        return None
+    return asked.strip().casefold() or None
+
+
+def _check_format_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1515: "Make a montage from these clips." on a plan or video that is a montage.
+
+    Met only when the plan's / finished video's format is the asked one; any other format, an
+    unknown one, or an editor turn (its diff names its changes) keeps today's answer (None).
+    """
+    asked = _format_ask(req)
+    if asked is None or (facts.editor and not (facts.rendered_variant or facts.rendered_montage)):
+        return None
+    made = facts.edit_format or ("montage" if facts.rendered_montage else None)
+    if made is None:
+        return None
+    made = made.casefold()
+    if made == asked or any(asked in group and made in group for group in _SAME_FORMATS):
+        return _receipt(req, "met", None, verification="checked", stage="checked")
+    return None
+
+
+def _check_all_clips_used(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1515: "use all these clips" against the clips the plan / finished video holds.
+
+    A Talking edit keeps its own answer (KRI-1405: every clip is a speaker or a cutaway), an
+    editor turn names its changes from the diff, and unknown attached clips claim nothing.
+    """
+    if (
+        not is_select_all_requirement(req)
+        or facts.phone_talking
+        or facts.edit_format in _TALKING_FORMATS
+        or (facts.editor and not (facts.rendered_variant or facts.rendered_montage))
+        or facts.unused_media_ids is None
+        or not facts.attached_media_count
+    ):
+        return None
+    missing = len(facts.unused_media_ids)
+    if not missing:
+        return _receipt(req, "met", None, verification="checked", stage="checked")
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en="Left out {missing} of your {total} clips",
+            tr="{total} klibinden {missing} tanesi dışarıda kaldı",
+            missing=missing,
+            total=facts.attached_media_count,
+        ),
+        verification="checked",
+        stage="checked",
+    )
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if req.kind == "text_sequence" and compose_unmet_with_ops():
         return _check_text_sequence(req, facts)
+    # KRI-1515: the typed format and whole-set asks own their rows.
+    typed = _check_format_ask(req, facts) or _check_all_clips_used(req, facts)
+    if typed is not None:
+        return typed
     if _insert_clip_fact(req) and facts.edit_format in _TALKING_FORMATS:
         # Parent KRI-1151: the typed `insert_clip` fact is the ask, whatever words its description
         # uses ("... in full screen ..." must not send it to the framing check).
@@ -17528,6 +17781,16 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     ):
         # KRI-994: a `select` ask the typed link / finished timeline settled.
         return receipt.reason not in _NEUTRAL_REASONS
+    if (
+        req is not None
+        and receipt.status == "met"
+        and receipt.verification == "checked"
+        and receipt.stage == "checked"
+        and _format_ask(req) is not None
+    ):
+        # KRI-1515: only the met format verdict is judged; any other answer for the row keeps
+        # today's path (no `_has_checker` entry, so no fallback reason turns into "Partly").
+        return True
     if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
         # KRI-558: a change proven by the before/after edit diff, not by a value check.
         return receipt.reason not in _NEUTRAL_REASONS
@@ -18247,6 +18510,61 @@ def ask_text(req: BriefRequirement) -> str:
     return text.strip()
 
 
+def _row_severity(receipt: RequirementReceipt) -> int:
+    """Lower is worse: Couldn't, Partly, Will do at render, Done."""
+    if receipt.status == "not_possible":
+        return 0
+    if receipt.status == "partial":
+        return 2 if _planned_at_render(receipt) else 1
+    return 3
+
+
+def _one_row_per_ask(
+    judged: Sequence[RequirementReceipt],
+    unchecked: Sequence[RequirementReceipt],
+    by_id: Mapping[str, BriefRequirement],
+) -> tuple[list[RequirementReceipt], list[RequirementReceipt]]:
+    """KRI-1515: one reply row per sentence the creator wrote.
+
+    The brief may file one sentence of a message as several asks ("Make a montage from these
+    clips." became a format ask and a whole-set ask), each with its receipt; asks from the same
+    message with the same words are that sentence. A sentence is said once: its worst
+    verdict with the reasons of every part not done (a miss is never hidden), all the reasons
+    when every part is done, and under "Have a look" alone when any part is unchecked and the
+    rest is done. A sentence filed once keeps its receipt untouched.
+    """
+
+    def key(receipt: RequirementReceipt) -> str:
+        req = by_id.get(receipt.requirement_id)
+        if req is None or not req.source_turn_id:
+            # A route decline names no ask, and an ask with no message of its own cannot be
+            # told to be the same sentence: each keeps its own row.
+            return f"\0{receipt.requirement_id}"
+        return f"{req.source_turn_id}\0" + " ".join(ask_text(req).split()).casefold()
+
+    groups: dict[str, list[RequirementReceipt]] = {}
+    for receipt in judged:
+        groups.setdefault(key(receipt), []).append(receipt)
+    merged: dict[str, RequirementReceipt] = {}
+    for text, group in groups.items():
+        worst = min(group, key=_row_severity)
+        if len(group) == 1:
+            merged[text] = worst
+            continue
+        done = _row_severity(worst) == 3
+        parts = [worst, *(r for r in group if r is not worst and (done or _row_severity(r) < 3))]
+        reasons = [r.full_reason.rstrip(". ") for r in parts if r.full_reason]
+        merged[text] = worst.with_reason("; ".join(dict.fromkeys(reasons)) or None)
+    look: dict[str, RequirementReceipt] = {}
+    for receipt in unchecked:
+        text = key(receipt)
+        if text in merged and _row_severity(merged[text]) < 3:
+            continue  # the miss row already says to look at it
+        look.setdefault(text, receipt)
+    rows = [merged[text] for text in groups if text not in look]
+    return rows, list(look.values())
+
+
 def reply_from_receipts(
     brief: CreativeBrief,
     receipts: list[RequirementReceipt],
@@ -18308,6 +18626,12 @@ def reply_and_lead_from_receipts(
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
+    unchecked = [
+        r
+        for r in receipts
+        if r.verification == "unchecked" and by_id.get(r.requirement_id) is not None
+    ]
+    judged, unchecked = _one_row_per_ask(judged, unchecked, by_id)
     misses = [
         r
         for r in judged
@@ -18318,11 +18642,6 @@ def reply_and_lead_from_receipts(
             and r.status == "not_possible"
             and is_route_decline_reason(r.reason)
         )
-    ]
-    unchecked = [
-        r
-        for r in receipts
-        if r.verification == "unchecked" and by_id.get(r.requirement_id) is not None
     ]
     lines: list[str] = []
     guesses: list[str] = []
