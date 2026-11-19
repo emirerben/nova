@@ -260,14 +260,14 @@
     },
     {
       "id": "routine-reset-motivation-corpus-17",
-      "factor": "Name the motivation for returning to a routine, not the routine itself — 'my motivation for getting back into [habit]: [the specific ritual]' outperforms generic wellness content by orders of magnitude",
-      "why": "Naming a motivation frames the content as relatable problem-solving; viewers who just returned from a holiday or disruption project themselves onto it and share it, compounding reach beyond the core audience",
+      "factor": "Try naming a specific motivation for returning to a routine after a break — a caption-derived idea from one high-reach post, not a proven advantage over other wellness framing",
+      "why": "The framing may connect a small daily ritual to a familiar return-to-routine problem. This is a hypothesis to test; the observation does not isolate the caption's effect or explain why viewers shared the post",
       "applies_to": [
         "hook",
         "plan"
       ],
       "provenance": "corpus",
-      "evidence": "In our Nov 2026 fetched wellness-founder set, a short granola-bowl post framed as 'my motivation to get back into routines after the holiday' indexed ~528x the account median at 10.2M views — the strongest organic-reach outlier in our entire corpus to date; treat as an upside ceiling, not a typical outcome",
+      "evidence": "In our Nov 2026 fetched wellness-founder set, one short granola-bowl post framed around returning to routines after a holiday indexed ~528x the account median at 10.2M views. Single-post observation; no causal effect or typical performance uplift is established",
       "source": "tiktok market research 2026-11-15 (wellness-founder account)"
     }
   ]
