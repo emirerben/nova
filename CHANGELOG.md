@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.17.0] - 2026-11-19
+
+### Changed
+- test(captions): ignore fontconfig cache noise in Arabic sweep test (KRI-1401) (#2301) <!-- release-pr: 2301 -->
+
 ## [0.89.16.0] - 2026-11-19
 
 ### Changed
