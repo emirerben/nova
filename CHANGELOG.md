@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.15.0] - 2026-11-19
+
+### Changed
+- fix(ci): the CI_MAC_SELECTION rollback also undoes manifest and .env.example narrowing (KRI-1541) (#2394) <!-- release-pr: 2394 -->
+
 ## [0.89.14.0] - 2026-11-19
 
 ### Changed
