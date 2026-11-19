@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.19.0] - 2026-11-19
+
+### Changed
+- feat(ios): report phone render phase timings (KRI-1516) (#2391) <!-- release-pr: 2391 -->
+
 ## [0.89.18.0] - 2026-11-19
 
 ### Changed
