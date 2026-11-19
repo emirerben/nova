@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.13.0] - 2026-11-19
+
+### Changed
+- fix(kria): crop follows the person in no-face sideways clips; say a split sentence once (KRI-1514, KRI-1515) (#2377) <!-- release-pr: 2377 -->
+
 ## [0.89.12.0] - 2026-11-19
 
 ### Changed
