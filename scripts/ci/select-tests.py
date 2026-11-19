@@ -181,6 +181,16 @@ matches_journey_path = journey_registry.matches_journey_path
 JOURNEY_MANIFEST = "scripts/ci/journey-manifest.json"
 
 
+def selection_rollback():
+    """Repository variable CI_MAC_SELECTION=full: undo KRI-1534's PR narrowing.
+
+    One switch restores what pull requests selected before: a Mac whenever
+    `ios` or a native journey is selected, everything for a journey-manifest
+    edit, and everything for `.env.example`. No code change is needed.
+    """
+    return os.environ.get("CI_MAC_SELECTION", "") == "full"
+
+
 def manifest_row_changes(before, after):
     """Journey ids a manifest edit added or changed, and whether any is native.
 
@@ -224,6 +234,8 @@ def selectable_manifest_edit(before, after):
 
 def manifest_edit(ancestor, head):
     """The selectable manifest edit between two commits, or None."""
+    if selection_rollback():
+        return None
     try:
         before = json.loads(git("show", f"{ancestor}:{JOURNEY_MANIFEST}"))
         after = json.loads(git("show", f"{head}:{JOURNEY_MANIFEST}"))
@@ -467,7 +479,7 @@ def affected(path):
             else {"api"}
         )
     # API tests read the documented flags; nothing on the iPhone side does.
-    if path == ".env.example":
+    if path == ".env.example" and not selection_rollback():
         return {"api"}
     if path.startswith(("docs/", "plans/", "agents/")) or path in (
         "README.md",
@@ -913,7 +925,7 @@ def main():
     legs = native_legs(selected_ids, event, shards)
     # Repository variable CI_MAC_SELECTION=full is the rollback: every selected
     # PR gets its Mac again, with no code change.
-    mac_rule = os.environ.get("CI_MAC_SELECTION", "") != "full"
+    mac_rule = not selection_rollback()
     inputs_changed = native_inputs_changed(
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
