@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.6.0] - 2026-11-19
+
+### Changed
+- chore(ci): PRs skip the 172-second slide-post trim proof unless slide-post or render code changed (KRI-1537) (#2387) <!-- release-pr: 2387 -->
+
 ## [0.89.5.0] - 2026-11-19
 
 ### Changed
