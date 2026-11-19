@@ -8,10 +8,8 @@ This module builds the other two there, from the plan that route already made:
 * The fast plan is the base. Its order, source windows and lengths stay (every creator ask the
   route reads is already folded into them), so no clip the creator selected is dropped and a
   stated length is not moved.
-* The cuts become story beats: ``story_structure`` gives the chapters (each chapter's line is
-  the beat's topic and its placeholder text), at most four clips to a beat, in the same order.
-  The text step (`compose_creation_text`, the same research / animation path every montage
-  uses) writes the captions that replace the placeholders; whatever it leaves stays.
+* The cuts become story beats: ``story_structure`` supplies chapter topics, with at most
+  four clips to a beat, in the same order. The text step writes any captions independently.
 * The guided compiler then holds every moment at least the direction's own minimum
   (`guided_story._DIRECTION_POLICY`), crossfades where the pace allows, and draws the beat text.
 
@@ -44,11 +42,7 @@ log = structlog.get_logger()
 MAX_MEDIA_PER_BEAT = 4
 MAX_BEATS = 20
 MAX_STORY_LINES = 8
-# A placeholder caption is the planner's chapter line, kept readable on screen.
-_SEED_CHARS = 100
-# The ids of the placeholder caption rows this module seeds (the guided compiler names a beat's
-# text ``guided-thought-<beat_id>``). The text step may replace them wherever it writes a
-# caption (`researched_text`) and drops the ones it leaves (`creation_text_composition`).
+# Older montage snapshots stored outline copy in thought rows with this prefix.
 STORY_BEAT_PREFIX = "story-beat-"
 STORY_SEED_PREFIX = "guided-thought-" + STORY_BEAT_PREFIX
 
@@ -358,14 +352,6 @@ def _beat_sizes(clips: int, beats: int) -> list[int]:
     return [base + (1 if index < extra else 0) for index in range(beats)]
 
 
-def _seed(line: str) -> str:
-    """The chapter line as placeholder caption text, cut at a word boundary when long."""
-    if len(line) <= _SEED_CHARS:
-        return line
-    cut = line[:_SEED_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:-")
-    return cut or line[:_SEED_CHARS]
-
-
 def story_beats(
     media_ids: list[str], durations: list[float], lines: list[str]
 ) -> tuple[list[StoryBeat] | None, str | None]:
@@ -373,9 +359,7 @@ def story_beats(
 
     Enough beats to hold four clips each and at least one per outline line; the clips are
     shared out evenly in order and the outline is spread over the beats in order (a line a
-    beat or two long when there are more beats than lines). Each beat carries its line as
-    placeholder text (`STORY_SEED_PREFIX` ids), so every beat is a window the text step can
-    caption and the plan always has text; the captions it writes replace the placeholders.
+    beat or two long when there are more beats than lines). The line is chapter metadata.
     """
     if len(set(media_ids)) != len(media_ids):
         return None, "repeated_footage"
@@ -393,8 +377,6 @@ def story_beats(
             StoryBeat(
                 beat_id=f"{STORY_BEAT_PREFIX}{index + 1}",
                 topic=line[:80],
-                thought=_seed(line),
-                thought_source="ai_draft",
                 media_ids=media_ids[cursor : cursor + size],
                 layout="fullscreen",
                 duration_s=max(1.0, min(MAX_PROPOSAL_DURATION_S, seconds)),

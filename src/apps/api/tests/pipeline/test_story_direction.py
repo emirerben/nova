@@ -26,9 +26,6 @@ from app.pipeline.story_direction import (
 from app.pipeline.unified_montage import BriefView, UnifiedClip, brief_view, plan_unified_montage
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.services.creation_text_composition import (
-    _digest,
-    _drop_unused_story_seeds,
-    _lanes,
     _plays_entrance,
 )
 from app.services.length_planning import build_length_plan
@@ -259,38 +256,66 @@ def test_the_creators_named_entrance_goes_on_a_placeholder_caption() -> None:
     assert not _plays_entrance({"id": "guided-title", "effect": "static"})
 
 
-def test_placeholders_the_text_step_did_not_replace_are_dropped_once_it_wrote_text() -> None:
+def test_saved_story_text_program_replays_without_restoring_its_outline() -> None:
+    from app.pipeline.guided_story import (
+        COMPILER_VERSION,
+        GuidedStoryError,
+        _compile_execution_plan_version,
+        validate_execution_plan,
+    )
+    from app.schemas.edit_proposal import canonical_media_digest
     from app.schemas.text_composition import TextCompositionProgram
+    from app.services.creation_text_composition import _digest, _lanes
 
     snapshot = _story_snapshot()
-    base = compile_proposal_execution_plan(snapshot)
-    texts, slots = _lanes(base)
-    seed_ids = [row["id"] for row in texts]
-    assert len(seed_ids) == 3 and all(i.startswith("guided-thought-story-beat-") for i in seed_ids)
-
-    def with_ops(ops: list[dict]) -> EditProposalSnapshot:
-        program = TextCompositionProgram(base_digest=_digest(texts, slots), operations=ops)
-        return snapshot.model_copy(update={"text_composition": program})
-
-    window = (texts[1]["start_s"], texts[1]["end_s"])
-    wrote = with_ops(
-        [
-            {"op": "remove_text", "bar_index": 1},
-            {
-                "op": "add_text",
-                "text": "Assos: Home to a temple",
-                "start_s": window[0],
-                "end_s": window[1],
-            },
-        ]
+    beats = [
+        beat.model_copy(update={"thought": line})
+        for beat, line in zip(snapshot.story_beats, OUTLINE, strict=True)
+    ]
+    legacy = snapshot.model_copy(update={"story_beats": beats})
+    approved = {
+        "proposal_version": 1,
+        "media_digest": canonical_media_digest(legacy.media),
+        "approved_proposal": legacy.model_dump(mode="json"),
+        "media_identities": [
+            ref.model_dump(include={"lane", "media_id", "gcs_path", "generation", "kind"})
+            for ref in legacy.media
+        ],
+    }
+    base = _compile_execution_plan_version(
+        approved, track=None, compiler_version=COMPILER_VERSION, include_legacy_outline=True
     )
-    cleaned = _drop_unused_story_seeds(wrote)
-    final = compile_proposal_execution_plan(cleaned)["text_elements"]
-    assert [row["text"] for row in final] == ["Assos: Home to a temple"]
-    # Nothing written (the step only took a placeholder away): the chapter text stays.
-    untouched = with_ops([{"op": "remove_text", "bar_index": 1}])
-    assert _drop_unused_story_seeds(untouched) is untouched
-    assert len(compile_proposal_execution_plan(untouched)["text_elements"]) == 2
+    texts, slots = _lanes(base)
+    assert [row["text"] for row in texts] == OUTLINE
+    assert compile_proposal_execution_plan(legacy)["text_elements"] == []
+
+    program = TextCompositionProgram(
+        base_digest=_digest(texts, slots),
+        operations=[
+            {
+                "op": "rewrite_text",
+                "selector": {"ids": [texts[1]["id"]]},
+                "target_ids": [texts[1]["id"]],
+                "expected_count": 1,
+                "text": "Ancient ruins",
+            }
+        ],
+    )
+    approved["approved_proposal"]["text_composition"] = program.model_dump(mode="json")
+    pinned = _compile_execution_plan_version(
+        approved, track=None, compiler_version=COMPILER_VERSION, include_legacy_outline=True
+    )
+    assert [row["text"] for row in pinned["text_elements"]] == [
+        OUTLINE[0],
+        "Ancient ruins",
+        OUTLINE[2],
+    ]
+    verified = validate_execution_plan(pinned, approved)
+    assert [row["text"] for row in verified["text_elements"]] == ["Ancient ruins"]
+
+    pinned["text_elements"][0]["text"] = "Tampered overlay"
+    with pytest.raises(GuidedStoryError, match="changed after approval"):
+        validate_execution_plan(pinned, approved)
 
 
 def test_a_plain_photo_in_the_pinned_plan_does_not_make_the_card_promise_a_fast_montage() -> None:
@@ -346,3 +371,113 @@ def test_approval_time_planning_holds_clips_longer_only_where_a_story_will_be_bu
     assert sum(w["source_end_s"] - w["source_start_s"] for w in kept["windows"]) == pytest.approx(
         9.0, abs=0.2
     )
+
+
+@pytest.mark.parametrize(
+    ("direction", "instruction"),
+    [
+        ("guided_story", "show the view from the sky"),
+        ("text_explainer", "Deniz kenarındaki çekimle bitir"),
+    ],
+)
+def test_phone_montage_recipe_keeps_requested_text_and_excludes_outline(direction, instruction):
+    from app.kria.media_sources import OriginalMediaDescriptor
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan
+    from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+    from app.schemas.edit_proposal import PinnedText
+    from app.services.phone_sources import PhoneSourceBinding
+
+    strategy = {**STRATEGY, "direction": direction, "story_structure": [instruction]}
+    clips = [
+        UnifiedClip(
+            media_id=f"c{i}",
+            proxy_path=f"test/analysis-proxy-c{i}.mp4",
+            generation="1",
+            duration_s=6,
+            analysis=ANALYSIS,
+        )
+        for i in range(3)
+    ]
+    plan = plan_unified_montage(clips, strategy=strategy)
+    assert plan.snapshot.direction == direction
+    assert plan.snapshot.story_beats[0].topic == instruction
+    snapshot = plan.snapshot.model_copy(
+        update={
+            "title": "Window Seat",
+            "opening_title": "Window Seat",
+            "pinned_texts": [
+                PinnedText(text="Above the clouds", corner="bottom_right", start_s=2.5, end_s=4.5)
+            ],
+        }
+    )
+    compiled = GuidedStoryExecutionPlan.model_validate(compile_proposal_execution_plan(snapshot))
+    bindings = tuple(
+        PhoneSourceBinding(
+            media_id=ref.media_id,
+            proxy_path=ref.gcs_path,
+            generation=ref.generation,
+            original=OriginalMediaDescriptor(
+                sha256="a" * 64,
+                byte_count=1000,
+                duration_s=6,
+                width=1080,
+                height=1920,
+                has_audio=False,
+            ),
+        )
+        for ref in snapshot.media
+    )
+
+    recipe = compile_phone_guided_plan(compiled, bindings)
+
+    assert [moment.media_id for moment in compiled.story_timeline] == ["c0", "c1", "c2"]
+    assert {"".join(run.text for run in layer.runs) for layer in recipe.text_layers} == {
+        "Window Seat",
+        "Above the clouds",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("wording", "expected"),
+    [
+        ("show the view from the sky", []),
+        ('Label the first shot "show the view from the sky".', ["show the view from the sky"]),
+        ("Gökyüzünden manzarayı göster", []),
+        (
+            "İlk klibin etiketi “Gökyüzünden manzarayı göster” olsun.",
+            ["Gökyüzünden manzarayı göster"],
+        ),
+    ],
+)
+async def test_native_positional_labels_require_creator_copy(monkeypatch, wording, expected):
+    from app.agents._schemas.creator_agent import CreativeStrategy, CreatorRenderIntentEvidence
+    from app.services.creator_capabilities import resolve_creator_manifest
+    from tests.kria.test_title_hold_grounding import plan_until_strategy_check
+
+    label = "show the view from the sky" if "sky" in wording else "Gökyüzünden manzarayı göster"
+    monkeypatch.setattr(settings, "guided_edit_capability_enabled", True)
+    manifest = resolve_creator_manifest(
+        item_id="positional-label-test",
+        edit_format="montage",
+        media=[
+            {"media_id": c.media_id, "kind": "video", "duration_s": c.duration_s} for c in _clips(3)
+        ],
+    )
+    _, _, checked = await plan_until_strategy_check(
+        monkeypatch,
+        manifest=manifest,
+        strategy=CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            render_program="guided",
+            target_duration_s=10,
+            story_structure=[label],
+            shot_labels=[label],
+        ),
+        evidence=CreatorRenderIntentEvidence(shot_labels=wording),
+        user_message=wording,
+    )
+    plan = _plan(checked.strategy.model_dump(mode="json"), count=3)
+    compiled = compile_proposal_execution_plan(plan.snapshot)
+    assert [row["text"] for row in compiled["text_elements"]] == expected
