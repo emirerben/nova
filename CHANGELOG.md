@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.12.0] - 2026-11-19
+
+### Changed
+- fix(kria): Cusco T3 stickers: draft names an unsaid trigger before approval; pause cuts keep sticker holds (KRI-1510, KRI-1511) (#2375) <!-- release-pr: 2375 -->
+
 ## [0.89.11.0] - 2026-11-19
 
 ### Fixed
