@@ -35,7 +35,7 @@ on:
         description: Whether PR unit runs include the slow export/OCR proofs (scripts/ios/render_evidence.py).
         value: ${{ jobs.select.outputs.ios_render_evidence }}
       ios_native:
-        description: Shadow (KRI-1534), not yet used to skip a job. Whether the PR changed an iPhone build or test input (select-tests.py IOS_NATIVE_INPUTS).
+        description: Whether the PR changed an iPhone build or test input (select-tests.py IOS_NATIVE_INPUTS). A pull request starts a Mac only when true (KRI-1534).
         value: ${{ jobs.select.outputs.ios_native }}
 
 jobs:
@@ -80,4 +80,6 @@ jobs:
           CI_EVENT: ${{ github.event_name }}
           CI_BASE: ${{ github.event.pull_request.base.sha }}
           CI_HEAD: ${{ github.event.pull_request.head.sha }}
+          # Rollback for the PR Mac rule: set this repository variable to `full`.
+          CI_MAC_SELECTION: ${{ vars.CI_MAC_SELECTION }}
         run: python3 scripts/ci/select-tests.py
