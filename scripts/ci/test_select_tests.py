@@ -1558,32 +1558,93 @@ class GitDiffTests(unittest.TestCase):
         self.assertIn("unmapped-paths", preship)
         self.assertIn("-u GITHUB_OUTPUT", preship)
 
-    def test_an_api_contract_change_reports_the_mac_the_rule_would_skip(self):
-        """Shadow only: the Mac still runs, the summary says it tested nothing new."""
-        self.write("src/apps/api/app/config.py", "FLAG = True")
-        head = self.commit()
+    def run_selector(self, head, **env):
         output, summary = Path("output"), Path("summary")
+        for stale in (output, summary):
+            stale.unlink(missing_ok=True)
         subprocess.run(
             [sys.executable, str(SCRIPT.resolve())],
             check=True,
             env={
-                **os.environ,
+                **{k: v for k, v in os.environ.items() if k != "CI_MAC_SELECTION"},
                 "CI_EVENT": "pull_request",
                 "CI_BASE": self.base,
                 "CI_HEAD": head,
                 "GITHUB_OUTPUT": str(output),
                 "GITHUB_STEP_SUMMARY": str(summary),
+                **env,
             },
             capture_output=True,
         )
-        lines = output.read_text().splitlines()
-        self.assertIn("ios=true", lines)
-        self.assertIn("native_validation=true", lines)
+        return output.read_text().splitlines(), summary.read_text()
+
+    def test_an_api_contract_change_keeps_linux_contracts_and_starts_no_mac(self):
+        self.write("src/apps/api/app/config.py", "FLAG = True")
+        lines, summary = self.run_selector(self.commit())
+        self.assertIn("ios=true", lines)  # ios-contracts still runs on Linux
         self.assertIn("ios_native=false", lines)
-        self.assertIn(
-            "iPhone inputs: unchanged (shadow: this Mac run would be skipped)",
-            summary.read_text(),
+        self.assertIn("native_validation=false", lines)
+        self.assertIn("iPhone inputs: unchanged (no Mac", summary)
+
+    def test_required_gates_accept_the_skipped_mac_and_reject_a_lost_one(self):
+        """The selector's own outputs, taken through each PR gate."""
+        self.write("src/apps/api/app/config.py", "FLAG = True")
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual(
+            (outputs["ios"], outputs["ios_native"], outputs["native_validation"]),
+            ("true", "false", "false"),
         )
+        changes = {"result": "success", "outputs": outputs}
+        # Linux journey jobs run exactly as the selection says; only the Mac
+        # is skipped.
+        linux = "success" if outputs["journey"] == "true" else "skipped"
+        library = (
+            "success"
+            if "kri-384-library-ingest" in outputs["journey_ids"].split(",")
+            else "skipped"
+        )
+        journey = {
+            "changes": changes,
+            "journey-mapping": {"result": linux},
+            "journey-offline": {"result": linux},
+            "journey-library": {"result": library},
+            "journey-native": {"result": "skipped"},
+        }
+        ci.gate_journey(journey, "pull_request")
+        ios = {
+            "changes": changes,
+            "journey": {"result": "success"},
+            "ios-contracts": {"result": "success"},
+        }
+        ci.gate(ios, "ios", "journey")
+        # The Linux contract job is what still proves this PR: it may not skip.
+        with self.assertRaises(ValueError):
+            ci.gate({**ios, "ios-contracts": {"result": "skipped"}}, "ios", "journey")
+        # A Mac that ran anyway, or a selector claiming unchanged inputs after
+        # the fact, is an inconsistent run, never a pass.
+        with self.assertRaises(ValueError):
+            ci.gate_journey(
+                {**journey, "journey-native": {"result": "success"}}, "pull_request"
+            )
+        lost = {**changes, "outputs": {**outputs, "ios_native": "true"}}
+        with self.assertRaises(ValueError):
+            ci.gate_journey({**journey, "changes": lost}, "pull_request")
+
+    def test_the_rollback_variable_restores_a_mac_for_every_selected_pr(self):
+        self.write("src/apps/api/app/config.py", "FLAG = True")
+        lines, summary = self.run_selector(self.commit(), CI_MAC_SELECTION="full")
+        self.assertIn("ios=true", lines)
+        self.assertIn("ios_native=true", lines)
+        self.assertIn("native_validation=true", lines)
+        self.assertIn("CI_MAC_SELECTION=full", summary)
+
+    def test_an_iphone_input_change_still_starts_a_mac(self):
+        self.write("src/apps/api/tests/fixtures/split_full_screen.json", "{}")
+        lines, _ = self.run_selector(self.commit())
+        self.assertIn("ios=true", lines)
+        self.assertIn("ios_native=true", lines)
+        self.assertIn("native_validation=true", lines)
 
     def test_native_inputs_fail_closed_without_a_readable_pr_diff(self):
         self.assertTrue(ci.native_inputs_changed("push", "", ""))

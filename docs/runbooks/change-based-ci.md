@@ -18,7 +18,8 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | Native unit tests/fixture or `Kria/Generated/**` only | API tests and API lint, iOS build, unit tests and mobile contracts; no PR UI execution |
 | Web public fonts and type-posters bundled in Xcode | iOS build/unit on PRs; full iOS coverage nightly/manual |
 | API internal implementation, prompts, tests | API tests and API lint |
-| API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | API and native build/unit contracts; fixture-driven UI tests are not selected |
+| API fonts, and fixtures Swift tests open by path (files directly in `src/apps/api/tests/fixtures/`) | API tests and API lint, iOS build and unit tests |
+| API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | API tests and the Linux mobile-contract job; no Mac unless an iPhone input also changed (see "When a PR gets a Mac") |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |
 | `docs/**`, `plans/**`, `agents/**`, listed root documentation, `VERSION` | No heavyweight suites |
 | Root `package.json` / `package-lock.json` changing only release versions | No heavyweight suites |
@@ -235,20 +236,38 @@ How to read it:
   leg. About a third of the failed PR Mac-minutes fell in such periods, judged
   by the last `iOS` run on `main` that had started before the PR run.
 
-## Mac rule under shadow (KRI-1534)
+## When a PR gets a Mac (KRI-1534)
 
-Today a PR gets a Mac when it selects `ios` or a journey flagged `needs_native`.
-That put a Mac on 92% of merged PRs, most of which changed no file the iPhone
-build or its tests can read. For those PRs the Mac rebuilds and retests the same
-bytes as `main`: the `unit` leg runs before the offline fixture bundle is
-downloaded, the fixture-driven legs run nightly only, and a stale mobile
-contract is caught on Linux by `ios-contracts`.
-
-The proposed rule: a PR needs a Mac only when it changes an iPhone input
+A pull request starts a Mac only when it changes an iPhone input
 (`IOS_NATIVE_INPUTS` in `scripts/ci/select-tests.py`), a CI policy path or a path
-the selector cannot classify. It is **reported, not enforced**: the selector
-emits `ios_native` and the selection summary says "iPhone inputs: unchanged
-(shadow: this Mac run would be skipped)". Every job still runs as before.
+the selector cannot classify. The selector emits this as `ios_native`, and the
+selection summary says "iPhone inputs: unchanged (no Mac ...)" when it applies.
+
+Before this rule a PR got a Mac whenever it selected `ios` or a journey flagged
+`needs_native`: 92% of merged PRs, most of which changed no file the iPhone
+build or its tests can read. For those the Mac rebuilt and retested the same
+bytes as `main`. Nothing the PR's Python produced reaches a test on that Mac:
+the offline fixture bundle is handed to tests through `TEST_RUNNER_*` variables,
+and only the `creation` and `screens` legs set them, which run nightly and on
+manual dispatch. `test_no_pr_mac_step_hands_python_output_to_the_iphone_tests`
+fails if a PR leg starts receiving it.
+
+What still runs for such a PR, unchanged:
+
+- `ios` is still selected by API contract paths, so the Linux `ios-contracts`
+  job runs and `build-and-test` requires it. It is what catches a stale mobile
+  contract; regenerating the contract changes `src/apps/ios/Kria/Generated/`,
+  an iPhone input, so that PR gets its Mac.
+- Linux journeys (`journey-offline`, `journey-library`) and the API shards.
+- The `journey` gate recomputes Mac selection from `ios_native`, so a Mac that
+  is skipped when an input changed, or runs when none did, fails the gate.
+
+Nightly and manual `CI` runs and every push to `main` are not affected.
+
+**Rollback:** set the repository variable `CI_MAC_SELECTION` to `full`
+(Settings, Variables, or `gh variable set CI_MAC_SELECTION --body full`). Every
+selected PR gets its Mac again on its next run, with no code change. Delete the
+variable to return to the rule.
 
 The list is exact where it can be: the app tree, the scripts that drive it,
 bundled web resources, API fonts, the shared parity fixtures, and the files
@@ -290,8 +309,6 @@ break they did not cause; `main`'s own iOS run still reports it.
 The replay covers the rule exactly as written here. It does not cover narrowing
 `scripts/ci/journey-manifest.json` or `.env.example`, which still select
 everything.
-
-Enforcement is a separate change with its own rollback switch.
 
 ## Verification and rollback
 

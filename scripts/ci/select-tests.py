@@ -497,9 +497,8 @@ def native_input(path):
 
 
 def native_inputs_changed(event, base, head):
-    """Shadow of the PR Mac rule (KRI-1534): did this PR change an iPhone input?
+    """The PR Mac rule (KRI-1534): did this PR change an iPhone input?
 
-    Reported next to `native_validation` and not yet used to skip anything.
     Everything except a pull request with a readable, non-empty diff is True.
     """
     if event != "pull_request":
@@ -557,9 +556,16 @@ def ui_shards(event, groups):
         return 1
 
 
-def native_validation(event, suites, journey_native):
-    """PR/manual/nightly native proof; main's release workflow owns its Mac."""
-    return event != "push" and ("ios" in suites or journey_native)
+def native_validation(event, suites, journey_native, native_inputs=True):
+    """PR/manual/nightly native proof; main's release workflow owns its Mac.
+
+    A pull request starts a Mac only when it changed an iPhone input
+    (KRI-1534): otherwise the Mac would rebuild and retest what `main` already
+    did. Its Linux contract and journey jobs run either way.
+    """
+    if event == "push" or (event == "pull_request" and not native_inputs):
+        return False
+    return "ios" in suites or journey_native
 
 
 def validate_journey_mapping(coverage, ids):
@@ -597,7 +603,13 @@ def gate_journey(needs, event):
     if set(needs) != required or needs["changes"].get("result") != "success":
         raise ValueError("Journey selection failed or dependencies are missing")
     outputs = needs["changes"].get("outputs", {})
-    for key in ("journey", "ios", "journey_needs_native", "native_validation"):
+    for key in (
+        "journey",
+        "ios",
+        "ios_native",
+        "journey_needs_native",
+        "native_validation",
+    ):
         if outputs.get(key) not in ("true", "false"):
             raise ValueError(f"Missing or invalid {key}")
     journey = outputs["journey"] == "true"
@@ -627,6 +639,7 @@ def gate_journey(needs, event):
         event,
         {"ios"} if outputs["ios"] == "true" else set(),
         outputs["journey_needs_native"] == "true",
+        outputs["ios_native"] == "true",
     )
     if outputs["native_validation"] != str(native).lower():
         raise ValueError("Native execution does not match event and selection")
@@ -820,9 +833,15 @@ def main():
     selected_ids = journey_ids.split(",") if journey_ids else ()
     native = journey_native_for_ids(selected_ids)
     legs = native_legs(selected_ids, event, shards)
-    output += (
-        f"native_validation={str(native_validation(event, suites, native)).lower()}\n"
+    # Repository variable CI_MAC_SELECTION=full is the rollback: every selected
+    # PR gets its Mac again, with no code change.
+    mac_rule = os.environ.get("CI_MAC_SELECTION", "") != "full"
+    inputs_changed = native_inputs_changed(
+        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
+    native_inputs = inputs_changed or not mac_rule
+    mac_runs = native_validation(event, suites, native, native_inputs)
+    output += f"native_validation={str(mac_runs).lower()}\n"
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
     output += f"native_legs={json.dumps(legs)}\n"
     mapped = journey_mapped(journey, coverage, journey_ids)
@@ -831,17 +850,14 @@ def main():
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
     output += f"ios_render_evidence={str(render).lower()}\n"
-    native_inputs = native_inputs_changed(
-        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
-    )
     output += f"ios_native={str(native_inputs).lower()}\n"
-    mac_runs = native_validation(event, suites, native)
     inputs_note = (
         "changed"
-        if native_inputs
-        else "unchanged (shadow: this Mac run would be skipped)"
-        if mac_runs
-        else "unchanged"
+        if inputs_changed
+        else "unchanged, but CI_MAC_SELECTION=full keeps the Mac"
+        if not mac_rule
+        else "unchanged (no Mac: this PR changes nothing the iPhone build or its"
+        " tests read; Linux contracts and journeys still run)"
     )
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
