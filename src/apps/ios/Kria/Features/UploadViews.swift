@@ -399,7 +399,7 @@ struct FootagePickerView: View {
     /// The Photos permission prompt comes here, only when the user actually asks for Photos.
     private func presentPhotosPicker() async {
         let wasAuthorized = libraryAuthorized
-        libraryAuthorized = await Self.photoLibraryAuthorized()
+        libraryAuthorized = await LibraryPhotosPickerSheet.hasFullAccess()
         if libraryAuthorized, ProcessInfo.processInfo.arguments.contains("-ui-testing-seed-photo-video") { await Self.seedUITestVideo() }
         refreshShowablePreselected()
         // Seed with what is already chosen, so those clips render as selected and can't be re-picked.
@@ -411,16 +411,6 @@ struct FootagePickerView: View {
         // new modifier a moment to install. Happens once per permission grant, not per presentation.
         if libraryAuthorized != wasAuthorized { try? await Task.sleep(for: .milliseconds(150)) }
         showingPhotosPicker = true
-    }
-
-    /// Only `.authorized`. `.limited` is deliberately excluded: a library-backed picker under limited
-    /// access doesn't reliably show the whole library, and silently hiding footage is worse than
-    /// having no checkmarks.
-    private static func photoLibraryAuthorized() async -> Bool {
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-no-photo-library") { return false }
-        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        let resolved = status == .notDetermined ? await PHPhotoLibrary.requestAuthorization(for: .readWrite) : status
-        return resolved == .authorized
     }
 
     /// UI tests only: the simulator's sample library has no videos, and Footage only offers videos.
@@ -662,7 +652,17 @@ private struct FootagePhotosPicker: ViewModifier {
     }
 }
 
-private struct LibraryPhotosPickerSheet: View {
+struct LibraryPhotosPickerSheet: View {
+    /// Only `.authorized`. `.limited` is deliberately excluded: a library-backed picker under limited
+    /// access doesn't reliably show the whole library, and silently hiding footage is worse than
+    /// having no checkmarks.
+    static func hasFullAccess() async -> Bool {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-no-photo-library") { return false }
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        let resolved = status == .notDetermined ? await PHPhotoLibrary.requestAuthorization(for: .readWrite) : status
+        return resolved == .authorized
+    }
+
     let heading: String
     let offersSaved: Bool
     @Binding var selection: [PhotosPickerItem]
