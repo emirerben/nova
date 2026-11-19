@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.10.0] - 2026-11-19
+
+### Changed
+- feat(ci): a journey-manifest edit selects the rows it changed, not everything (KRI-1541) (#2393) <!-- release-pr: 2393 -->
+
 ## [0.89.9.0] - 2026-11-19
 
 ### Changed
