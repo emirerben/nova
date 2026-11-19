@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.18.0] - 2026-11-19
+
+### Changed
+- chore(web): remove the web editor; keep landing, legal pages and admin (KRI-1398) (#2305) <!-- release-pr: 2305 -->
+
 ## [0.89.17.0] - 2026-11-19
 
 ### Changed
