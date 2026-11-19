@@ -104,8 +104,10 @@ def feedback_minutes(checks, merged_at):
     """First check start to the last required check finishing, on the merged head.
 
     Earlier attempts count toward the start; each required check is judged by its
-    latest attempt. None when a required check never finished before the merge.
+    latest attempt. None when a required check had not finished by the merge:
+    nobody waited for it.
     """
+    merged = parse(merged_at)
     started = before_merge(checks, merged_at)
     if not started:
         return None
@@ -115,11 +117,40 @@ def feedback_minutes(checks, merged_at):
         if not attempts:
             return None
         latest = max(attempts, key=lambda c: parse(c["started_at"]))
-        if not latest.get("completed_at"):
+        if not latest.get("completed_at") or parse(latest["completed_at"]) > merged:
             return None
         finished.append(parse(latest["completed_at"]))
     first = min(parse(c["started_at"]) for c in started)
     return round((max(finished) - first).total_seconds() / 60, 1)
+
+
+def main_ios_before(pushes, stamp):
+    """Result of the last `iOS` run on `main` started before `stamp` that finished.
+
+    PR runs test the merge with `main`, so while `main`'s iPhone build or tests
+    are red every PR's Mac leg fails for a reason the PR did not cause.
+    """
+    earlier = [
+        run
+        for run in pushes
+        if run["created_at"] < stamp and run["conclusion"] in ("success", "failure")
+    ]
+    if not earlier:
+        return "unknown"
+    return max(earlier, key=lambda run: run["created_at"])["conclusion"]
+
+
+def pr_mac_minutes_by_main_state(run_jobs, pushes):
+    """Failed and re-run PR Mac-minutes, by `main`'s iOS state when the run began."""
+    split = {}
+    for run, jobs in run_jobs:
+        summary = mac_minutes(jobs)
+        bucket = split.setdefault(
+            main_ios_before(pushes, run["created_at"]), {"failure": 0, "rerun": 0}
+        )
+        bucket["failure"] += summary["minutes"].get("failure", 0)
+        bucket["rerun"] += summary["rerun_minutes"]
+    return split
 
 
 def pr_used_mac(checks):
@@ -201,6 +232,25 @@ def list_merged_prs(repo, start, end):
         page += 1
 
 
+def origin_repo(root=ROOT):
+    """owner/name of the checkout's `origin`, without spending an API call."""
+    url = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        capture_output=True, text=True, check=True, cwd=root,
+    ).stdout.strip()
+    return repo_from_remote(url)
+
+
+def repo_from_remote(url):
+    path = url.removesuffix(".git").rstrip("/")
+    for marker in ("github.com/", "github.com:"):
+        if marker in path:
+            name = path.split(marker, 1)[1]
+            if name.count("/") == 1:
+                return name
+    raise RuntimeError(f"cannot read a GitHub owner/name from origin {url!r}; pass --repo")
+
+
 def spread(values):
     return {"n": len(values), "median": percentile(values, 50), "p90": percentile(values, 90)}
 
@@ -265,12 +315,19 @@ def measure(repo, start, end, workers=8):
     for summary in mac.values():
         total.update(summary["minutes"])
 
+    pushes = [r for r in runs if r["path"].endswith("/ios.yml") and r["event"] == "push"]
+    by_main_state = pr_mac_minutes_by_main_state(
+        [(run, jobs) for run, jobs in run_jobs if run["event"] == "pull_request"], pushes
+    )
+
     waits = {"all": [], "mac": [], "no_mac": []}
     with_mac = unmeasured = 0
+    rows = []
     for pr, checks in pr_checks:
         used = pr_used_mac(before_merge(checks, pr["merged_at"]))
         with_mac += used
         wait = feedback_minutes(checks, pr["merged_at"])
+        rows.append({"number": pr["number"], "mac": used, "minutes": wait})
         if wait is None:
             unmeasured += 1
             continue
@@ -286,6 +343,7 @@ def measure(repo, start, end, workers=8):
             "minutes_by_outcome": dict(total),
             "total_minutes": sum(total.values()),
             "rerun_minutes": sum(s["rerun_minutes"] for s in mac.values()),
+            "pr_minutes_by_main_ios_state": by_main_state,
             "cancelled_after_minutes": spread(all_cancelled)
             | {
                 "within_5": sum(v <= 5 for v in all_cancelled),
@@ -298,6 +356,7 @@ def measure(repo, start, end, workers=8):
             "with_mac": with_mac,
             "without_finished_required_checks": unmeasured,
             "minutes_to_last_required_check": {k: spread(v) for k, v in waits.items()},
+            "rows": rows,
         },
     }
 
@@ -332,6 +391,13 @@ def render(report):
     for outcome, minutes in sorted(mac["minutes_by_outcome"].items(), key=lambda i: -i[1]):
         lines.append(f"- Ended {outcome}: {minutes} ({minutes / total:.0%})")
     lines.append(f"- Spent on re-run attempts: {mac['rerun_minutes']}")
+    for state, label in (("failure", "red"), ("success", "green"), ("unknown", "unknown")):
+        split = mac["pr_minutes_by_main_ios_state"].get(state)
+        if split:
+            lines.append(
+                f"- PR Mac-minutes while main's own iOS run was {label}:"
+                f" {split['failure']} failed, {split['rerun']} on re-runs"
+            )
     cancelled = mac["cancelled_after_minutes"]
     lines += [
         f"- Cancelled Mac jobs: {cancelled['n']}; ran a median {cell(cancelled['median'])} min"
@@ -372,10 +438,7 @@ def main(argv=None):
     parser.add_argument("--until", help="window end, ISO-8601 UTC; defaults to now")
     parser.add_argument("--json", help="also write the raw summary to this path")
     args = parser.parse_args(argv)
-    repo = args.repo or subprocess.run(
-        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-        capture_output=True, text=True, check=True, cwd=ROOT,
-    ).stdout.strip()
+    repo = args.repo or origin_repo()
     end = parse(args.until) if args.until else datetime.now(timezone.utc)
     report = measure(repo, iso(end - timedelta(days=args.days)), iso(end))
     if args.json:

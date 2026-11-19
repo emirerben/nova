@@ -11,7 +11,11 @@ Each test names one way `ci-baseline.py` could mislead a before/after comparison
 - percentiles that interpolate, so two runs of the same data disagree;
 - a window count that pages through its results one at a time and spends the
   hourly API budget before any measurement starts (it did, once);
-- a measurement started with too little API allowance left, dying half way.
+- a measurement started with too little API allowance left, dying half way;
+- a required check that finished after the merge (an admin merge) counted as
+  time the author waited;
+- a PR failure during a broken `main` read as the PR's own, or a cancelled
+  `main` run read as proof `main` was green.
 """
 
 import importlib.util
@@ -200,12 +204,80 @@ class FeedbackTests(unittest.TestCase):
         ]
         self.assertIsNone(ci_baseline.feedback_minutes(checks, self.MERGED))
 
+    def test_a_required_check_that_finished_after_the_merge_has_no_wait(self):
+        checks = [
+            check("lint", "2026-11-05T10:00:00Z", "2026-11-05T10:05:00Z"),
+            check("build-and-test", "2026-11-05T10:00:00Z", "2026-11-05T10:20:00Z"),
+            check("test-api", "2026-11-05T10:00:00Z", "2026-11-05T12:30:00Z"),
+        ]
+        self.assertIsNone(ci_baseline.feedback_minutes(checks, self.MERGED))
+
     def test_a_mac_leg_is_found_by_its_check_name_and_a_skip_is_not_a_mac(self):
         ran = [check("iPhone validation (unit)", "2026-11-05T10:00:00Z", "2026-11-05T10:30:00Z")]
         skipped = [check("iPhone validation (unit)", None, None, "skipped")]
         self.assertTrue(ci_baseline.pr_used_mac(ran))
         self.assertFalse(ci_baseline.pr_used_mac(skipped))
         self.assertFalse(ci_baseline.pr_used_mac([check("api (0)", "a", "b")]))
+
+
+class MainStateTests(unittest.TestCase):
+    PUSHES = [
+        {"created_at": "2026-11-06T18:00:00Z", "conclusion": "success"},
+        {"created_at": "2026-11-06T20:00:00Z", "conclusion": "cancelled"},
+        {"created_at": "2026-11-06T21:00:00Z", "conclusion": "failure"},
+        {"created_at": "2026-11-07T12:00:00Z", "conclusion": "success"},
+    ]
+
+    def test_the_last_finished_main_run_before_the_pr_run_decides(self):
+        state = ci_baseline.main_ios_before
+        self.assertEqual(state(self.PUSHES, "2026-11-06T19:00:00Z"), "success")
+        # A cancelled main run proves nothing: the earlier green still stands.
+        self.assertEqual(state(self.PUSHES, "2026-11-06T20:30:00Z"), "success")
+        self.assertEqual(state(self.PUSHES, "2026-11-07T03:00:00Z"), "failure")
+        self.assertEqual(state(self.PUSHES, "2026-11-07T13:00:00Z"), "success")
+
+    def test_no_earlier_main_run_is_unknown_not_green(self):
+        self.assertEqual(
+            ci_baseline.main_ios_before(self.PUSHES, "2026-11-06T17:00:00Z"), "unknown"
+        )
+
+    def test_pr_mac_minutes_are_split_by_whether_main_was_already_red(self):
+        mac = ["macos-15"]
+        runs = [
+            (
+                {"created_at": "2026-11-06T19:00:00Z"},
+                [job("u", mac, "failure", "2026-11-06T19:00:00Z", "2026-11-06T19:10:00Z")],
+            ),
+            (
+                {"created_at": "2026-11-07T03:00:00Z"},
+                [
+                    job("u", mac, "failure", "2026-11-07T03:00:00Z", "2026-11-07T03:20:00Z"),
+                    job("u", mac, "success", "2026-11-07T04:00:00Z", "2026-11-07T04:30:00Z", 2),
+                ],
+            ),
+        ]
+        self.assertEqual(
+            ci_baseline.pr_mac_minutes_by_main_state(runs, self.PUSHES),
+            {
+                "success": {"failure": 10, "rerun": 0},
+                "failure": {"failure": 20, "rerun": 30},
+            },
+        )
+
+
+class RepoTests(unittest.TestCase):
+    def test_https_and_ssh_remotes_name_the_same_repo(self):
+        for url in (
+            "https://github.com/emirerben/nova.git",
+            "https://github.com/emirerben/nova",
+            "git@github.com:emirerben/nova.git",
+            "ssh://git@github.com/emirerben/nova.git",
+        ):
+            self.assertEqual(ci_baseline.repo_from_remote(url), "emirerben/nova", url)
+
+    def test_an_unreadable_remote_asks_for_the_repo_instead_of_guessing(self):
+        with self.assertRaisesRegex(RuntimeError, "pass --repo"):
+            ci_baseline.repo_from_remote("/Users/someone/mirror")
 
 
 class PercentileTests(unittest.TestCase):

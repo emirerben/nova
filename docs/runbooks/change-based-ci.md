@@ -216,6 +216,7 @@ Measured 2026-11-05 to 2026-11-19 (UTC), before KRI-1534:
 | Mac-minutes, all workflows | 50,393 |
 | ... on jobs that ended cancelled / failed | 8,721 (17%) / 7,991 (16%) |
 | ... on re-run attempts | 5,009 |
+| ... failed on PRs while `main`'s own iOS run was already red | 1,769 of 5,057 |
 | ... `CI` on pull requests / `iOS` on push / `iOS` nightly / TestFlight | 33,991 / 5,736 / 4,412 / 3,396 |
 | Cancelled Mac jobs | 291; median 17.0 min before the cancel, 59 within 5 min |
 | Nightly `CI` / `iOS` | 4 of 14 green / 0 of 14 green |
@@ -230,6 +231,9 @@ How to read it:
   up. Linux minutes are not reported: they are free and not scarce.
 - Cancelled Mac jobs had usually run for a long time, so starting the Mac a few
   minutes later would recover little of that time.
+- A PR run tests the merge with `main`, so a red `main` fails every PR's Mac
+  leg. About a third of the failed PR Mac-minutes fell in such periods, judged
+  by the last `iOS` run on `main` that had started before the PR run.
 
 ## Verification and rollback
 
