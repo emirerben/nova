@@ -20,6 +20,8 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | API internal implementation, prompts, tests | API tests and API lint |
 | API fonts, and fixtures Swift tests open by path (files directly in `src/apps/api/tests/fixtures/`) | API tests and API lint, iOS build and unit tests |
 | API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | API tests and the Linux mobile-contract job; no Mac unless an iPhone input also changed (see "When a PR gets a Mac") |
+| `scripts/ci/journey-manifest.json`, when the edit only adds or changes journey rows | API tests, plus the journeys whose rows changed; iOS build and unit tests (and a Mac) only when a changed row is native. Any other manifest edit selects all suites and every journey |
+| `.env.example` | API tests and API lint (API tests read it) |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |
 | `docs/**`, `plans/**`, `agents/**`, listed root documentation, `VERSION` | No heavyweight suites |
 | Root `package.json` / `package-lock.json` changing only release versions | No heavyweight suites |
@@ -309,9 +311,38 @@ files. One is the Mac's wait step reporting a failed Linux journey job, which
 the rule does not skip. Under the rule those PRs would not have gone red for a
 break they did not cause; `main`'s own iOS run still reports it.
 
-The replay covers the rule exactly as written here. It does not cover narrowing
-`scripts/ci/journey-manifest.json` or `.env.example`, which still select
-everything.
+### Journey manifest edits (KRI-1541)
+
+`scripts/ci/journey-manifest.json` is CI policy and was in 330 of those 897 PR
+runs (37%). Until KRI-1541 any edit of it selected every suite, a Mac and all
+179 journeys. Now the selector compares the manifest at the merge base and at
+the PR head, row by row:
+
+- Added or changed rows select those journeys, plus the API suite (API tests
+  read the manifest). Every row whose definition changed still executes.
+- A changed row that is native on either side (`needs_native`, `xctests` or
+  `xctest`) also selects the iPhone unit suite and a Mac.
+- Unchanged rows are identical on both sides and are not selected by the edit.
+  Reordering or reformatting changes no row.
+- A removed row, a change outside `journeys`, duplicate or missing ids, a
+  manifest that does not parse on either side, or a changed id the checkout's
+  registry does not know: everything is selected, as before.
+
+`.env.example` (in 116 runs) selects the API suite, whose tests read it.
+
+Replay of the same 897 runs with these rules: 189 manifest edits change only
+Linux rows, 139 change a native row, 2 select everything. The rule starts no
+Mac on 305 runs (34%), 89 more than without the manifest rules. A Mac ran to an
+end on 219 of the 305: 179 passed, 7 went green on re-run, 33 failed. The 33
+are the 26 above plus 7, each read:
+
+- 3 are the same inherited test-build break on `main`.
+- 2 are `SegmentationInputScalerTests.testAChangeOfFrameSizeRendersAtTheNewSizeAndBuffersAreRecycled`
+  on two unrelated PRs; each PR's next run passed with no iPhone file changed.
+- 1 is the Mac's wait step reporting a failed Linux journey job.
+- 1 is `NativeEditorPlaybackAdmissionUITests`: an in-app playback fixture that
+  never admitted its first frame on that runner. The same test passed on ten
+  other Mac jobs within four hours, including the same branch.
 
 ## Verification and rollback
 
