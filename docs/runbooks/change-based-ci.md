@@ -209,7 +209,11 @@ python3 scripts/ci/ci-baseline.py --days 14 --until 2026-11-19T00:00:00Z
 
 It needs about 2,200 GitHub API calls for 14 days and stops before the per-run
 queries if the hourly allowance cannot cover them. Compare windows of the same
-length, and wait at least three working days after a change lands.
+length that lie wholly on one side of the change: a 14-day window that
+straddles the merge mostly measures the old behaviour. The KRI-1534 selection
+changes landed on 2026-11-19, so the first clean 14-day "after" window ends
+2026-12-03. For an earlier read, compare a shorter window after the change
+with a "before" window of the same length.
 
 Measured 2026-11-05 to 2026-11-19 (UTC), before KRI-1534:
 
@@ -270,9 +274,11 @@ What still runs for such a PR, unchanged:
 Nightly and manual `CI` runs and every push to `main` are not affected.
 
 **Rollback:** set the repository variable `CI_MAC_SELECTION` to `full`
-(Settings, Variables, or `gh variable set CI_MAC_SELECTION --body full`). Every
-selected PR gets its Mac again on its next run, with no code change. Delete the
-variable to return to the rule.
+(Settings, Variables, or `gh variable set CI_MAC_SELECTION --body full`). On
+the next run every pull request selects what it did before KRI-1534: a Mac
+whenever `ios` or a native journey is selected, everything for a
+journey-manifest edit, and everything for `.env.example`. No code change is
+needed. Delete the variable to return to the rules.
 
 The list is exact where it can be: the app tree, the scripts that drive it,
 bundled web resources, API fonts, the shared parity fixtures, and the files
@@ -329,6 +335,21 @@ the PR head, row by row:
   registry does not know: everything is selected, as before.
 
 `.env.example` (in 116 runs) selects the API suite, whose tests read it.
+
+Narrowing which journeys run drops only a test's second execution: every
+journey API test file is also in the API shard set, which every PR that selects
+`api` runs in full (`test_every_journey_api_test_also_runs_in_the_api_shards`).
+What `journey-offline` adds for a selected journey is its fixture generation
+and evidence steps.
+
+The Linux side was replayed too. Of the 328 runs with a plain row edit, 4 had a
+Linux job (`journey-offline`, `journey-library`, `journey-mapping`,
+`ios-contracts`) fail and stay red. Three of those jobs still run under the
+row rule. The fourth is `journey-offline`'s camera-roll step, which the row
+rule would not have selected on that PR: its failing test,
+`tests/integration/test_actual_export_verification.py::test_frame_profile_never_accepts_a_shifted_or_wrong_picture`,
+passed in the API shards on the same commit (run 43607819671), so it was a
+flaky comparison, not a regression the PR caused.
 
 Replay of the same 897 runs with these rules: 189 manifest edits change only
 Linux rows, 139 change a native row, 2 select everything. The rule starts no

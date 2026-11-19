@@ -350,6 +350,40 @@ class ClassificationTests(unittest.TestCase):
             self.assertEqual(ci.selection("pull_request", "bad", "bad")[0], ALL)
 
 
+class JourneyApiTestsTests(unittest.TestCase):
+    def test_every_journey_api_test_also_runs_in_the_api_shards(self):
+        """Narrowing which journeys run (KRI-1541) may only drop a test's second
+        execution. Each journey API test file must also be in the API shard set,
+        which every PR that selects `api` runs in full."""
+        spec = importlib.util.spec_from_file_location(
+            "api_tests_for_journeys", SCRIPT.with_name("api-tests.py")
+        )
+        api_tests = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(api_tests)
+        api_root = SCRIPT.parents[2] / "src/apps/api"
+        sharded = {str(path) for path in api_tests.test_files(api_root)}
+        named = {
+            test.split("::", 1)[0]
+            for journey in ci.JOURNEYS
+            for test in (journey.get("api_tests") or "").split()
+        }
+        self.assertTrue(named, "expected journeys to name API tests")
+
+        def in_shards(entry):
+            if entry in sharded:
+                return True
+            # A journey may name a directory; pytest then collects its files.
+            directory = api_root / entry
+            collected = [
+                str(path.relative_to(api_root))
+                for path in directory.rglob("*.py")
+                if path.name.startswith("test_") or path.name.endswith("_test.py")
+            ]
+            return bool(collected) and set(collected) <= sharded
+
+        self.assertEqual(sorted(entry for entry in named if not in_shards(entry)), [])
+
+
 class ManifestRowTests(unittest.TestCase):
     """A manifest edit selects the rows it changed, or everything (KRI-1541).
 
@@ -1806,6 +1840,28 @@ class GitDiffTests(unittest.TestCase):
         self.assertEqual(outputs["ios"], "true")
         self.assertEqual(outputs["ios_native"], "true")
         self.assertIn("kri-577-reliability-gates", outputs["journey_ids"].split(","))
+
+    def test_the_rollback_variable_also_undoes_manifest_and_env_example_narrowing(self):
+        """CI_MAC_SELECTION=full must restore everything KRI-1534 narrowed on PRs."""
+        self.with_real_manifest(
+            lambda m: self.row(m, "kri-577-reliability-gates")["paths"].append(
+                "src/apps/api/app/services/brand_new.py"
+            )
+        )
+        lines, _ = self.run_selector(self.commit(), CI_MAC_SELECTION="full")
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+        self.assertEqual(outputs["native_validation"], "true")
+        self.assertEqual(
+            outputs["journey_ids"].split(","), [j["id"] for j in ci.JOURNEYS]
+        )
+
+        self.write(".env.example", "NEW_FLAG=false")
+        self.base = self.git("rev-parse", "HEAD")
+        lines, _ = self.run_selector(self.commit(), CI_MAC_SELECTION="full")
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+        self.assertEqual(outputs["native_validation"], "true")
 
     def test_env_example_selects_the_api_suite_that_reads_it(self):
         self.write(".env.example", "NEW_FLAG=false")
