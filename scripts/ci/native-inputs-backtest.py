@@ -18,6 +18,8 @@ Guards: scripts/ci/test_native_inputs_backtest.py.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -55,11 +57,47 @@ def changed_paths(files):
     return paths
 
 
-def would_skip(paths, truncated):
-    """Whether the rule would start no Mac. Unknown diffs never skip."""
+def would_skip(paths, truncated, manifest_edit=None):
+    """Whether the rule would start no Mac. Unknown diffs never skip.
+
+    `manifest_edit` is select-tests.py `selectable_manifest_edit` for a diff
+    that touches the journey manifest, or None when it could not be read or is
+    not a plain row change: the manifest then selects a Mac like any policy path.
+    """
     if truncated or not paths:
         return False
-    return not any(selector.native_input(path) for path in paths)
+    for path in paths:
+        if path == selector.JOURNEY_MANIFEST and manifest_edit is not None:
+            if manifest_edit[1]:
+                return False
+            continue
+        if selector.native_input(path):
+            return False
+    return True
+
+
+def decode_manifest(content):
+    """A manifest from the contents API's base64 body, or None."""
+    if not content.strip():
+        return None
+    try:
+        return json.loads(base64.b64decode(content, validate=False))
+    except (binascii.Error, ValueError):
+        return None
+
+
+def fetch_manifest(repo, ref):
+    """The journey manifest at one commit, or None when it cannot be read."""
+    try:
+        # A JSON object, not the bare string: baseline.gh parses each line.
+        body = baseline.gh(
+            f"repos/{repo}/contents/{selector.JOURNEY_MANIFEST}?ref={ref}",
+            "{content}",
+            paginate=False,
+        )
+    except RuntimeError:
+        return None
+    return decode_manifest(body[0].get("content") or "") if body else None
 
 
 def mac_outcome(jobs):
@@ -107,17 +145,27 @@ def backtest(repo, start, end, workers=8):
         and run["status"] == "completed"
     ]
 
-    # One compare query per run, and a jobs query for each run the rule skips.
-    baseline.require_budget(int(len(runs) * 1.4) + 20)
+    # One compare query per run, two manifest reads for each run that edits
+    # it (about a third), and a jobs query for each run the rule skips.
+    baseline.require_budget(int(len(runs) * 2.2) + 20)
 
     def inspect(run):
-        files = baseline.gh(
+        compared = baseline.gh(
             f"repos/{repo}/compare/main...{run['head_sha']}?per_page={COMPARE_FILE_CAP}",
-            "[.files[]|{filename,previous_filename}]",
+            "{base:.merge_base_commit.sha,files:[.files[]|{filename,previous_filename}]}",
+            paginate=False,
         )
-        files = files[0] if files else []
+        compared = compared[0] if compared else {"base": None, "files": []}
+        files = compared["files"]
         paths = changed_paths(files)
-        skip = would_skip(paths, len(files) >= COMPARE_FILE_CAP)
+        edit = None
+        if selector.JOURNEY_MANIFEST in paths and compared["base"]:
+            sides = [
+                fetch_manifest(repo, ref) for ref in (compared["base"], run["head_sha"])
+            ]
+            if None not in sides:
+                edit = selector.selectable_manifest_edit(*sides)
+        skip = would_skip(paths, len(files) >= COMPARE_FILE_CAP, edit)
         # Only a run the rule would skip needs its Mac outcome read.
         jobs = (
             baseline.gh(
@@ -133,6 +181,15 @@ def backtest(repo, start, end, workers=8):
             "sha": run["head_sha"],
             "created_at": run["created_at"],
             "would_skip": skip,
+            "manifest": (
+                None
+                if selector.JOURNEY_MANIFEST not in paths
+                else "everything"
+                if edit is None
+                else "native rows"
+                if edit[1]
+                else "linux rows"
+            ),
             "api_file_swift_reads": any(
                 path.startswith("src/apps/api/") and selector.declared_native_input(path)
                 for path in paths
@@ -149,6 +206,7 @@ def backtest(repo, start, end, workers=8):
         "window": {"start": start, "end": end},
         "pr_runs": len(results),
         "changed_api_file_swift_reads": sum(r["api_file_swift_reads"] for r in results),
+        "manifest_edits": dict(Counter(r["manifest"] for r in results if r["manifest"])),
         "would_skip": len(skipped),
         "would_skip_mac_ran": sum(r["verdict"] != "not_run" for r in skipped),
         "would_skip_verdicts": dict(Counter(r["verdict"] for r in skipped)),
@@ -165,6 +223,11 @@ def render(report):
         f"- Pull-request CI runs: {report['pr_runs']}",
         f"- Runs that changed an API font or fixture Swift tests open:"
         f" {report['changed_api_file_swift_reads']}",
+        "- Runs that edit the journey manifest, by what the edit selects: "
+        + (
+            ", ".join(f"{v} {k}" for k, v in sorted(report["manifest_edits"].items()))
+            or "none"
+        ),
         f"- Runs the rule would give no Mac: {report['would_skip']}"
         f" (a Mac really ran on {report['would_skip_mac_ran']} of them)",
     ]

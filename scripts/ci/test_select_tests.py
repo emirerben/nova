@@ -275,7 +275,6 @@ class ClassificationTests(unittest.TestCase):
             "scripts/ci/select-tests.py",
             "scripts/ci/journey-manifest.json",
             "brand-new/tool.py",
-            ".env.example",
         ):
             self.assertTrue(ci.native_input(path), path)
         for path in (
@@ -290,6 +289,8 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/api/prompts/main_creator.txt",
             "src/apps/web/src/app/plan/page.tsx",
             "docs/runbooks/change-based-ci.md",
+            # API tests read it; nothing on the iPhone side does.
+            ".env.example",
         ):
             self.assertFalse(ci.native_input(path), path)
 
@@ -347,6 +348,79 @@ class ClassificationTests(unittest.TestCase):
             ci, "git", side_effect=subprocess.CalledProcessError(1, "git")
         ):
             self.assertEqual(ci.selection("pull_request", "bad", "bad")[0], ALL)
+
+
+class ManifestRowTests(unittest.TestCase):
+    """A manifest edit selects the rows it changed, or everything (KRI-1541).
+
+    The manifest is CI policy: every row whose definition changed must still
+    execute, and any edit that is not a plain row change keeps the old
+    behaviour of selecting every suite and every journey.
+    """
+
+    BASE = {
+        "schema_version": 1,
+        "journeys": [
+            {"id": "linux-a", "paths": ["src/apps/api/app/a.py"], "needs_native": False},
+            {"id": "linux-b", "paths": ["src/apps/api/app/b.py"], "needs_native": False},
+            {"id": "native-c", "paths": ["src/apps/ios/Kria/C.swift"], "needs_native": True},
+            {"id": "named-d", "paths": ["src/apps/api/app/d.py"], "xctests": ["KriaTests/D/testD"]},
+        ],
+    }
+
+    def edited(self, change):
+        after = json.loads(json.dumps(self.BASE))
+        change(after)
+        return ci.manifest_row_changes(self.BASE, after)
+
+    def test_a_changed_or_added_linux_row_selects_only_itself(self):
+        self.assertEqual(
+            self.edited(lambda m: m["journeys"][0]["paths"].append("src/apps/api/x.py")),
+            (["linux-a"], False),
+        )
+        self.assertEqual(
+            self.edited(
+                lambda m: m["journeys"].append({"id": "linux-new", "paths": ["x/"]})
+            ),
+            (["linux-new"], False),
+        )
+
+    def test_a_native_row_on_either_side_needs_the_mac(self):
+        self.assertEqual(
+            self.edited(lambda m: m["journeys"][2]["paths"].append("src/apps/ios/Z.swift")),
+            (["native-c"], True),
+        )
+        self.assertEqual(
+            self.edited(lambda m: m["journeys"][3]["xctests"].append("KriaTests/D/testE")),
+            (["named-d"], True),
+        )
+        # Native before, Linux after: the row lost its iPhone proof in this PR.
+        self.assertEqual(
+            self.edited(lambda m: m["journeys"][2].update(needs_native=False)),
+            (["native-c"], True),
+        )
+        self.assertEqual(
+            self.edited(lambda m: m["journeys"][0].update(needs_native=True)),
+            (["linux-a"], True),
+        )
+
+    def test_reordering_or_reformatting_changes_no_row(self):
+        self.assertEqual(self.edited(lambda m: m["journeys"].reverse()), ([], False))
+        self.assertEqual(self.edited(lambda m: None), ([], False))
+
+    def test_anything_that_is_not_a_plain_row_change_selects_everything(self):
+        for change in (
+            lambda m: m["journeys"].pop(0),  # a removed journey deletes coverage
+            lambda m: m.update(schema_version=2),
+            lambda m: m.update(extra={"x": 1}),
+            lambda m: m["journeys"].append(dict(m["journeys"][0])),  # duplicate id
+            lambda m: m["journeys"].append({"paths": ["no-id/"]}),
+            lambda m: m.update(journeys={"not": "a list"}),
+            lambda m: m.pop("journeys"),
+        ):
+            self.assertIsNone(self.edited(change))
+        self.assertIsNone(ci.manifest_row_changes([], self.BASE))
+        self.assertIsNone(ci.manifest_row_changes(self.BASE, None))
 
 
 class GateTests(unittest.TestCase):
@@ -1645,6 +1719,103 @@ class GitDiffTests(unittest.TestCase):
         self.assertIn("ios=true", lines)
         self.assertIn("ios_native=true", lines)
         self.assertIn("native_validation=true", lines)
+
+    def with_real_manifest(self, edit=None):
+        """Commit the repo's own manifest as the base, then one edit of it."""
+        manifest = json.loads((SCRIPT.with_name("journey-manifest.json")).read_text())
+        path = "scripts/ci/journey-manifest.json"
+        self.write(path, json.dumps(manifest, indent=2))
+        self.base = self.commit()
+        if edit:
+            edit(manifest)
+            self.write(path, json.dumps(manifest, indent=2))
+        return manifest
+
+    def row(self, manifest, journey_id):
+        return next(r for r in manifest["journeys"] if r["id"] == journey_id)
+
+    def test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac(self):
+        self.with_real_manifest(
+            lambda m: self.row(m, "kri-577-reliability-gates")["paths"].append(
+                "src/apps/api/app/services/brand_new.py"
+            )
+        )
+        lines, summary = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual(outputs["journey_ids"], "kri-577-reliability-gates")
+        self.assertEqual(outputs["journey_coverage"], "covered")
+        self.assertEqual(
+            {suite: outputs[suite] for suite in ALL},
+            {"api": "true", "ios": "false", "ios_ui": "false", "shared_motion": "false"},
+        )
+        self.assertEqual(outputs["ios_native"], "false")
+        self.assertEqual(outputs["native_validation"], "false")
+        self.assertIn("iPhone inputs: unchanged (no Mac", summary)
+
+    def test_a_native_journey_row_edit_keeps_its_mac_and_its_unit_tests(self):
+        self.with_real_manifest(
+            lambda m: self.row(m, "kri-524-creation")["paths"].append(
+                "src/apps/ios/Kria/BrandNew.swift"
+            )
+        )
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual(outputs["journey_ids"], "kri-524-creation")
+        self.assertEqual(outputs["ios"], "true")
+        self.assertEqual(outputs["ios_native"], "true")
+        self.assertEqual(outputs["journey_needs_native"], "true")
+        self.assertEqual(outputs["native_validation"], "true")
+
+    def test_removing_a_journey_row_still_selects_everything(self):
+        self.with_real_manifest(lambda m: m["journeys"].pop())
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+        self.assertEqual(outputs["ios_native"], "true")
+        self.assertEqual(
+            outputs["journey_ids"].split(","), [j["id"] for j in ci.JOURNEYS]
+        )
+
+    def test_an_unreadable_manifest_still_selects_everything(self):
+        self.with_real_manifest()
+        self.write("scripts/ci/journey-manifest.json", "{ not json")
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+        self.assertEqual(outputs["native_validation"], "true")
+
+    def test_a_manifest_reformat_selects_the_api_suite_and_no_journey(self):
+        manifest = self.with_real_manifest()
+        self.write("scripts/ci/journey-manifest.json", json.dumps(manifest))
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual(outputs["api"], "true")
+        self.assertEqual(outputs["ios"], "false")
+        self.assertEqual(outputs["journey"], "false")
+        self.assertEqual(outputs["journey_coverage"], "not_applicable")
+
+    def test_a_row_edit_next_to_other_changes_adds_to_their_selection(self):
+        self.with_real_manifest(
+            lambda m: self.row(m, "kri-577-reliability-gates")["paths"].append(
+                "src/apps/api/app/services/brand_new.py"
+            )
+        )
+        self.write("src/apps/ios/Kria/App.swift", "// changed")
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual(outputs["ios"], "true")
+        self.assertEqual(outputs["ios_native"], "true")
+        self.assertIn("kri-577-reliability-gates", outputs["journey_ids"].split(","))
+
+    def test_env_example_selects_the_api_suite_that_reads_it(self):
+        self.write(".env.example", "NEW_FLAG=false")
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual(
+            {suite: outputs[suite] for suite in ALL},
+            {"api": "true", "ios": "false", "ios_ui": "false", "shared_motion": "false"},
+        )
+        self.assertEqual(outputs["native_validation"], "false")
 
     def test_native_inputs_fail_closed_without_a_readable_pr_diff(self):
         self.assertTrue(ci.native_inputs_changed("push", "", ""))

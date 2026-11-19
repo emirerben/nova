@@ -178,6 +178,60 @@ def journey_native_for_ids(ids):
 matches_journey_path = journey_registry.matches_journey_path
 
 
+JOURNEY_MANIFEST = "scripts/ci/journey-manifest.json"
+
+
+def manifest_row_changes(before, after):
+    """Journey ids a manifest edit added or changed, and whether any is native.
+
+    The manifest is CI policy, so a row whose definition changed must execute.
+    Unchanged rows are identical on both sides and lose nothing by not running.
+    Returns None for every edit that is not a plain row change (a removed
+    journey, a change outside the rows, duplicate or missing ids, a manifest
+    that is not the expected shape): the caller then selects everything.
+    """
+    try:
+        if {k: v for k, v in before.items() if k != "journeys"} != {
+            k: v for k, v in after.items() if k != "journeys"
+        }:
+            return None
+        old = {row["id"]: row for row in before["journeys"]}
+        new = {row["id"]: row for row in after["journeys"]}
+        if len(old) != len(before["journeys"]) or len(new) != len(after["journeys"]):
+            return None
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if set(old) - set(new):
+        return None
+    changed = sorted(i for i, row in new.items() if old.get(i) != row)
+
+    def native(row):
+        return bool(
+            row
+            and (row.get("needs_native") or row.get("xctests") or row.get("xctest"))
+        )
+
+    return changed, any(native(new[i]) or native(old.get(i)) for i in changed)
+
+
+def selectable_manifest_edit(before, after):
+    """`manifest_row_changes`, or None when a changed id cannot be selected."""
+    edit = manifest_row_changes(before, after)
+    known = {journey["id"] for journey in JOURNEYS}
+    # A changed id this checkout's registry does not know cannot be run.
+    return edit if edit is not None and set(edit[0]) <= known else None
+
+
+def manifest_edit(ancestor, head):
+    """The selectable manifest edit between two commits, or None."""
+    try:
+        before = json.loads(git("show", f"{ancestor}:{JOURNEY_MANIFEST}"))
+        after = json.loads(git("show", f"{head}:{JOURNEY_MANIFEST}"))
+    except (subprocess.CalledProcessError, ValueError, UnicodeError):
+        return None
+    return selectable_manifest_edit(before, after)
+
+
 def journey_affected(path):
     """Whether a change needs an incident-corpus journey or an explicit gap."""
     if path in ISOLATED_TEST_SUITES:
@@ -227,13 +281,20 @@ def journey_details(event, base, head):
     if event != "pull_request":
         return True, "covered", ",".join(journey["id"] for journey in JOURNEYS)
     try:
+        ancestor = git("merge-base", base, head).decode().strip()
         paths = journey_diff_paths(base, head)
-        relevant = [path for path in paths if journey_affected(path)]
         if not paths:
             return True, "gap", ""
-        if not relevant:
-            return False, "not_applicable", ""
         selected = set()
+        # A plain row edit of the manifest selects the rows it changed
+        # (possibly none); every other manifest edit selects every journey.
+        edit = manifest_edit(ancestor, head) if JOURNEY_MANIFEST in paths else None
+        if edit is not None:
+            selected.update(edit[0])
+            paths = [path for path in paths if path != JOURNEY_MANIFEST]
+        relevant = [path for path in paths if journey_affected(path)]
+        if not relevant and not selected:
+            return False, "not_applicable", ""
         for path in relevant:
             ids = journey_ids_for_path(path)
             if not ids:
@@ -405,6 +466,9 @@ def affected(path):
             if path.removeprefix("src/apps/api/").startswith(contracts)
             else {"api"}
         )
+    # API tests read the documented flags; nothing on the iPhone side does.
+    if path == ".env.example":
+        return {"api"}
     if path.startswith(("docs/", "plans/", "agents/")) or path in (
         "README.md",
         "AGENTS.md",
@@ -438,6 +502,13 @@ def selection_details(event, base, head):
         suites = set()
         ui_paths = []
         for path in paths:
+            if path == JOURNEY_MANIFEST:
+                edit = manifest_edit(ancestor, head)
+                if edit is not None:
+                    # API tests read the manifest. A changed native row also
+                    # runs the iPhone unit suite that proves its named tests.
+                    suites.update({"api", "ios"} if edit[1] else {"api"})
+                    continue
             if not release_only(path, ancestor, head):
                 suites.update(affected(path))
                 if "ios_ui" in affected(path):
@@ -507,11 +578,18 @@ def native_inputs_changed(event, base, head):
         ancestor = git("merge-base", base, head).decode().strip()
         raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
         paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
-        return not paths or any(
-            native_input(path)
-            for path in paths
-            if not release_only(path, ancestor, head)
-        )
+        if not paths:
+            return True
+        for path in paths:
+            if path == JOURNEY_MANIFEST:
+                edit = manifest_edit(ancestor, head)
+                if edit is not None:
+                    if edit[1]:
+                        return True
+                    continue
+            if not release_only(path, ancestor, head) and native_input(path):
+                return True
+        return False
     except (subprocess.CalledProcessError, UnicodeError, OSError):
         return True
 
