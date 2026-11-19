@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.20.0] - 2026-11-19
+
+### Changed
+- fix(ios): let the chat text field handle caret drags (KRI-1279) (#2392) <!-- release-pr: 2392 -->
+
 ## [0.89.19.0] - 2026-11-19
 
 ### Changed
