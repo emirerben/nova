@@ -388,7 +388,8 @@ import XCTest
         // The form keeps its scroll offset across roles; the learning section left it far below Placement.
         for _ in 0..<10 where !placement.exists { scrollForm(app, down: true) }
         reveal(placement, app: app)
-        XCTAssertTrue(placement.label.contains("Top Left"))
+        // TextRoleSpec.positionName is a catalogue string since #2347: "Top left", not the capitalised key.
+        XCTAssertTrue(placement.label.contains("Top left"), placement.label)
         let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app)
         XCTAssertTrue(shadow.buttons["Off"].isSelected)
