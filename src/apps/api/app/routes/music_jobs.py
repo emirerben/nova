@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
+from app.kria.media_sources import PROJECT_AUDIO_CONTENT_TYPES
 from app.models import Job, MusicTrack
 from app.services.job_storage_paths import (
     job_input_path_matches_owner,
@@ -202,18 +203,6 @@ _SLOT_UPLOAD_IMAGE_CT = {
 }
 # Voiceover audio (generative voiceover edits). Lands under voiceover-uploads/, not
 # music-uploads/, and never qualifies as a footage clip — see _validate_voiceover_path.
-_SLOT_UPLOAD_AUDIO_CT = {
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/mp4",
-    "audio/x-m4a",
-    "audio/aac",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/wave",
-    "audio/webm",
-    "audio/ogg",
-}
 _SLOT_UPLOAD_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi"}
 _SLOT_UPLOAD_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 _SLOT_UPLOAD_AUDIO_EXT = {".mp3", ".m4a", ".wav", ".webm", ".ogg", ".aac"}
@@ -238,7 +227,7 @@ def _kind_from_content_type(content_type: str) -> str | None:
         return "video"
     if ct in _SLOT_UPLOAD_IMAGE_CT:
         return "image"
-    if ct in _SLOT_UPLOAD_AUDIO_CT:
+    if ct in PROJECT_AUDIO_CONTENT_TYPES:
         return "audio"
     return None
 
