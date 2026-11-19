@@ -190,6 +190,47 @@ existing creation proof is checked again before native rendering. Native unit
 journeys verify the existing unit result where available; otherwise they run
 once as a selected batch. Fixture-backed exporter scenarios remain separate.
 
+## Baseline
+
+The repository is public, so hosted runner minutes cost nothing. What CI spends
+is the account's five concurrent macOS runners and the time people and agents
+wait for the required checks. `scripts/ci/ci-baseline.py` measures both from
+GitHub (read-only) so a CI change has a before and an after:
+
+```sh
+python3 scripts/ci/ci-baseline.py --days 14 --until 2026-11-19T00:00:00Z
+```
+
+It needs about 2,200 GitHub API calls for 14 days and stops before the per-run
+queries if the hourly allowance cannot cover them. Compare windows of the same
+length, and wait at least three working days after a change lands.
+
+Measured 2026-11-05 to 2026-11-19 (UTC), before KRI-1534:
+
+| Measure | Value |
+| --- | --- |
+| PRs merged to `main` | 277; a Mac ran on 256 (92%) |
+| Minutes from first check to last required check, all PRs | median 49.8, p90 120.5 (267 measured) |
+| ... when a Mac ran | median 51.5, p90 121.2 (250) |
+| ... when no Mac ran | median 26.5, p90 47.6 (17) |
+| Mac-minutes, all workflows | 50,393 |
+| ... on jobs that ended cancelled / failed | 8,721 (17%) / 7,991 (16%) |
+| ... on re-run attempts | 5,009 |
+| ... `CI` on pull requests / `iOS` on push / `iOS` nightly / TestFlight | 33,991 / 5,736 / 4,412 / 3,396 |
+| Cancelled Mac jobs | 291; median 17.0 min before the cancel, 59 within 5 min |
+| Nightly `CI` / `iOS` | 4 of 14 green / 0 of 14 green |
+
+How to read it:
+
+- The wait is measured on the merged head commit only: from the first check
+  that started (any attempt) to the latest attempt of the last of `lint`,
+  `test-api` and `build-and-test` to finish. Earlier pushes to the same PR are
+  not counted, and 10 PRs merged before a required check finished are left out.
+- Mac-minutes count every attempt of every macOS job, with part minutes rounded
+  up. Linux minutes are not reported: they are free and not scarce.
+- Cancelled Mac jobs had usually run for a long time, so starting the Mac a few
+  minutes later would recover little of that time.
+
 ## Verification and rollback
 
 ```sh
