@@ -1,3 +1,4 @@
+# CI live check for KRI-1540: a comment-only change to an API contract file.
 import json
 from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
