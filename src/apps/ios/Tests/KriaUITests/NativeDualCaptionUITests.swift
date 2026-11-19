@@ -75,29 +75,31 @@ final class NativeDualCaptionUITests: XCTestCase {
         XCTAssertTrue(spoken(app).waitForExistence(timeout: 5))
     }
 
-    /// 1, 2: every spoken × translated pair draws both lines, the small one under the big one, one row, in frame.
-    func testAllTwelvePairsDrawTheTranslatedLineUnderTheCaption() {
-        for spokenLanguage in Self.languages {
-            for translatedLanguage in Self.languages where translatedLanguage != spokenLanguage {
-                let pair = "\(spokenLanguage)-\(translatedLanguage)"
-                let app = launch(pair)
-                parkOnFirstLine(app)
-                wait("\(pair): the translated line is drawn on the preview") { self.position(self.translated(app)) != nil }
-                guard let small = position(translated(app)), let big = position(spoken(app)) else {
-                    XCTFail("\(pair): positions unreadable"); app.terminate(); continue
-                }
-                XCTAssertGreaterThan(small.y, big.y, "\(pair): attached under the spoken caption")
-                XCTAssertEqual(small.x, 50, accuracy: 3, "\(pair): centred like the spoken caption")
-                XCTAssertLessThan(small.y, 90, "\(pair): inside the frame budget")
-                // The shot is the fullscreen preview (a tap on empty sky opens it): the drawn frame alone, without the
-                // editor's selection outline and handle over the selected line.
-                preview(app).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
-                let fullscreen = app.descendants(matching: .any)["native-editor-preview-fullscreen"].firstMatch
-                XCTAssertTrue(fullscreen.waitForExistence(timeout: 5), "\(pair): fullscreen preview")
-                Thread.sleep(forTimeInterval: 1.0)
-                shot(app, "pair-\(pair)", element: fullscreen.exists ? fullscreen : preview(app))
-                app.terminate()
+    func testTurkishCaptionTranslationPairs() { checkTranslationPairs(spokenLanguage: "tr") }
+    func testGermanCaptionTranslationPairs() { checkTranslationPairs(spokenLanguage: "de") }
+    func testEnglishCaptionTranslationPairs() { checkTranslationPairs(spokenLanguage: "en") }
+    func testPortugueseCaptionTranslationPairs() { checkTranslationPairs(spokenLanguage: "pt") }
+
+    private func checkTranslationPairs(spokenLanguage: String) {
+        for translatedLanguage in Self.languages where translatedLanguage != spokenLanguage {
+            let pair = "\(spokenLanguage)-\(translatedLanguage)"
+            let app = launch(pair)
+            parkOnFirstLine(app)
+            wait("\(pair): the translated line is drawn on the preview") { self.position(self.translated(app)) != nil }
+            guard let small = position(translated(app)), let big = position(spoken(app)) else {
+                XCTFail("\(pair): positions unreadable"); app.terminate(); continue
             }
+            XCTAssertGreaterThan(small.y, big.y, "\(pair): attached under the spoken caption")
+            XCTAssertEqual(small.x, 50, accuracy: 3, "\(pair): centred like the spoken caption")
+            XCTAssertLessThan(small.y, 90, "\(pair): inside the frame budget")
+            // The shot is the fullscreen preview (a tap on empty sky opens it): the drawn frame alone, without the
+            // editor's selection outline and handle over the selected line.
+            preview(app).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).tap()
+            let fullscreen = app.descendants(matching: .any)["native-editor-preview-fullscreen"].firstMatch
+            XCTAssertTrue(fullscreen.waitForExistence(timeout: 5), "\(pair): fullscreen preview")
+            Thread.sleep(forTimeInterval: 1.0)
+            shot(app, "pair-\(pair)", element: fullscreen.exists ? fullscreen : preview(app))
+            app.terminate()
         }
     }
 
