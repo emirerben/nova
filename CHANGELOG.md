@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.22.0] - 2026-11-19
+
+### Changed
+- fix(kria): keep shot directions out of montage text (#2385) <!-- release-pr: 2385 -->
+
 ## [0.89.21.0] - 2026-11-19
 
 ### Changed
