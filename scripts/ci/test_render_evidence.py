@@ -85,6 +85,33 @@ class RenderEvidenceTests(unittest.TestCase):
         ):
             self.assertFalse(render_evidence.triggered([path]), path)
 
+    def test_the_ninety_second_slide_trim_runs_only_for_slide_post_or_render_changes(self):
+        """One test exports a 92-second source in real time: 172 s of a PR's Mac.
+
+        It proves the slide-post 90-second cap, so it stays on PRs that touch
+        slide-post or media-engine code and on every push to main.
+        """
+        trim = (
+            "SlidePostVideoRenderTests/"
+            "testNinetyTwoSecondSourceTrimsVideoAndAudioAtNinetySeconds"
+        )
+        self.assertIn(f"-skip-testing:KriaTests/{trim}", render_evidence.skip_args())
+        # Only that method: the class's other eight renders stay on every PR.
+        self.assertNotIn("SlidePostVideoRenderTests", render_evidence.TESTS)
+        for path in (
+            "src/apps/ios/Kria/Features/SlidePostVideoRender.swift",
+            "src/apps/ios/Kria/Features/SlidePostExport.swift",
+            "src/apps/ios/Kria/Core/SlidePostMedia.swift",
+            "src/apps/ios/Tests/KriaTests/SlidePostVideoRenderTests.swift",
+            "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Export.swift",
+        ):
+            self.assertTrue(render_evidence.triggered([path]), path)
+        for path in (
+            "src/apps/ios/Kria/Features/ChatWorkspaceView.swift",
+            "src/apps/api/app/services/slide_post_chat_edit.py",
+        ):
+            self.assertFalse(render_evidence.triggered([path]), path)
+
     def test_only_pull_requests_without_render_changes_skip(self):
         for event in ("push", "schedule", "workflow_dispatch", None):
             self.assertTrue(ci.render_evidence_selection(event, "a", "b"))
