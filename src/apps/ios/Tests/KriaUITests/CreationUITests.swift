@@ -1130,8 +1130,10 @@ final class CreationUITests: XCTestCase {
         if offered {
             let blackBars = app.buttons["video-shape-fit-fit"]
             XCTAssertTrue(vertical.isSelected && blackBars.isSelected, "\(runtime): seeded from the server default (Vertical + Black bars)", file: file, line: line)
-            XCTAssertGreaterThanOrEqual(vertical.frame.height, 44, "44pt touch target", file: file, line: line)
-            XCTAssertGreaterThanOrEqual(app.buttons["video-shape-orientation-landscape"].frame.height, 44, file: file, line: line)
+            // The picker sits inside the approval card at a fractional y, so a 44 pt row can read
+            // 43.99999999999994 (KRI-1538); the app still asks for minHeight 44.
+            XCTAssertGreaterThanOrEqual(vertical.frame.height, 43.9, "44pt touch target", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(app.buttons["video-shape-orientation-landscape"].frame.height, 43.9, file: file, line: line)
             XCTAssertEqual(vertical.label, "Video shape: Vertical 9:16", file: file, line: line)
             let capture = XCTAttachment(screenshot: app.screenshot())
             capture.name = "video-shape-confirm-\(runtime)"
@@ -1446,12 +1448,14 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(clean.waitForExistence(timeout: 15), "the approval card offers the cleanup choice")
 
         // Read the card the way a creator does: scroll up past its buttons, then bring "Clean up" back into
-        // view. "Keep original" and "Change direction" stay below it, so the reader is still above the
-        // follow threshold and the "Latest" pill is up when the button is tapped.
+        // view. On a card taller than the screen, "Keep original" and "Change direction" stay below it, so
+        // the reader is still above the follow threshold and the "Latest" pill is up when the button is
+        // tapped. Since KRI-1403 the card fits one screen (LongApprovalCardUITests pins that), so there is
+        // nothing to scroll past and no pill: both layouts must end with the render stage in view.
         let history = app.scrollViews.firstMatch
         history.swipeDown()
         let pill = app.buttons["chat-jump-to-latest"]
-        XCTAssertTrue(pill.waitForExistence(timeout: 3))
+        let readerWasAboveTheCard = pill.waitForExistence(timeout: 3)
         let composer = app.buttons["chat-send-message"]
         func cleanIsClear() -> Bool { clean.isHittable && clean.frame.maxY <= composer.frame.minY - 4 }
         // A swipe flings; drag by exactly what is needed so the buttons below "Clean up" stay off screen.
@@ -1462,7 +1466,9 @@ final class CreationUITests: XCTestCase {
             from.press(forDuration: 0.1, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.3)
         }
         XCTAssertTrue(cleanIsClear(), "Clean up must be on screen above the composer")
-        XCTAssertTrue(pill.exists, "precondition: the reader is above the card's buttons")
+        if readerWasAboveTheCard {
+            XCTAssertTrue(pill.exists, "precondition: the reader is above the card's buttons")
+        }
         clean.tap()
 
         // The server still reports a plain draft for a poll or two after Create (its decision writes only
@@ -1480,7 +1486,8 @@ final class CreationUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(4)
         while Date() < deadline, !feed.exists {
             XCTAssertFalse(footage.exists, "the footage stage must not flash while the render is queued")
-            XCTAssertTrue(shaping.exists, "the render stage stays until the plan feed takes over")
+            // The feed can take over between the loop's check and this one; either is the right screen.
+            XCTAssertTrue(shaping.exists || feed.exists, "the render stage stays until the plan feed takes over")
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertTrue(eventually(timeout: 3) { !pill.exists }, "the conversation sits at its end, so no Latest pill")
@@ -3184,7 +3191,13 @@ final class CreationUITests: XCTestCase {
 
     private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
-    private func fieldText(_ app: XCUIApplication, _ id: String) -> String { element(app, id).value as? String ?? "" }
+    /// While a section updates, the sheet swaps its text field for plain text with no identifier. Reading
+    /// `.value` of a missing element records a failure instead of returning, so a poll that lands in that
+    /// window failed the test before `eventually` could retry (KRI-1538).
+    private func fieldText(_ app: XCUIApplication, _ id: String) -> String {
+        let field = element(app, id)
+        return field.exists ? field.value as? String ?? "" : ""
+    }
 
     /// Scrolls the sheet until the element sits in the clear middle band (above the floating panel, below the
     /// header), then returns it. The bottom panel floats over the cards, so a bare tap can land on the glass.
