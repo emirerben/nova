@@ -492,6 +492,41 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["drawer-new-chat"].waitForExistence(timeout: 1.5), "Dragging a selection handle must not open the drawer")
     }
 
+    func testDraggingComposerCaretToBeginningInsertsTextThere() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        let prompt = "alpha beta gamma delta"
+        composer.typeText(prompt)
+        XCTAssertEqual(composer.value as? String, prompt)
+
+        let lineStart = composer.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+        let lineEnd = lineStart.withOffset(CGVector(dx: 171, dy: 0))
+        let drags: [(hold: TimeInterval, speed: XCUIGestureVelocity, overshoot: CGFloat, wait: TimeInterval)] = [
+            (0.4, .slow, 0, 0.2),
+            (0.6, .slow, 12, 0.8),
+            (0.15, .fast, 0, 0.2),
+            (0.25, .slow, 4, 0.6),
+        ]
+        for drag in drags {
+            lineEnd.tap()
+            composer.typeText("X")
+            XCTAssertEqual(composer.value as? String, prompt + "X", "Start the drag at the end of the prompt")
+            composer.typeText(XCUIKeyboardKey.delete.rawValue)
+            let end = lineStart.withOffset(CGVector(dx: -drag.overshoot, dy: 0))
+            lineEnd.press(forDuration: drag.hold, thenDragTo: end, withVelocity: drag.speed, thenHoldForDuration: drag.wait)
+            composer.typeText("X")
+            XCTAssertEqual(composer.value as? String, "X" + prompt, "Drag with hold \(drag.hold), overshoot \(drag.overshoot)")
+            composer.typeText(XCUIKeyboardKey.delete.rawValue)
+            XCTAssertEqual(composer.value as? String, prompt)
+        }
+    }
+
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
