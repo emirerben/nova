@@ -2,6 +2,35 @@ import XCTest
 @testable import Kria
 
 @MainActor final class NativeEditorExportTests: XCTestCase {
+    func testTemporaryExportCleansUpWhenFinalValidationThrows() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("temporary.mp4")
+        try Data([1]).write(to: file)
+        let export = NativeEditorTemporaryVideo(fileURL: file, cleanupURL: directory)
+        do {
+            _ = try await export.handingOff { throw URLError(.notConnectedToInternet) }
+            XCTFail("Validation failure must propagate")
+        } catch { XCTAssertTrue(error is URLError) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    func testSavedRecipeRouteUsesSeparateNativeExportInsteadOfCachedFile() async throws {
+        let h = try ExportHarness()
+        defer { h.cleanup() }
+        h.source.route = .savedRecipe
+        let operation = h.start()
+        await h.waitForSubmission()
+        h.scheduler.launch?(ExportSystemTask())
+        await h.waitForExport()
+        h.source.finish()
+        await operation.value
+        XCTAssertEqual(h.source.savedRecipeStarts, 1)
+        XCTAssertTrue(h.exporter.isSharing)
+        XCTAssertEqual(h.exporter.sharedFile, h.source.output.fileURL)
+    }
+
     func testSaveAndShareScheduleTheActualPreviewExport() async throws {
         for sharing in [false, true] {
             let h = try ExportHarness()
@@ -223,6 +252,7 @@ import XCTest
     var route = NativeEditorVideoDownloadRoute.sourcePreview
     let output: NativeEditorTemporaryVideo
     var starts = 0
+    var savedRecipeStarts = 0
     var sawCancellation = false
     var fails = false
     var progress: (@Sendable (Double) -> Void)?
@@ -242,6 +272,10 @@ import XCTest
         sawCancellation = Task.isCancelled
         if fails { throw NativeEditorVideoDownloadError.unavailable }
         return output
+    }
+    func exportSavedRecipe(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
+        savedRecipeStarts += 1
+        return try await exportDisplayedSourcePreview(progress: progress)
     }
     func finish() { continuation?.resume(); continuation = nil }
 }

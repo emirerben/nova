@@ -562,11 +562,15 @@
     {
       "id": "kri-1027-vertical-fill",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri1027_m1_vertical_fill_replay.py tests/pipeline/test_kri1027_montage_vertical_framing.py tests/kria/test_landscape_fit_ask.py tests/services/test_render_shape_chat_ask.py tests/pipeline/test_phone_guided_fit.py",
+      "api_tests": "tests/kria/test_kri1027_m1_vertical_fill_replay.py tests/pipeline/test_kri1027_montage_vertical_framing.py tests/kria/test_landscape_fit_ask.py tests/services/test_render_shape_chat_ask.py tests/pipeline/test_phone_guided_fit.py tests/pipeline/test_kri1514_montage_person_fill.py tests/pipeline/test_subject_matte.py",
       "paths": [
         "src/apps/api/app/kria/landscape_fit_ask.py",
         "src/apps/api/app/pipeline/phone_montage_framing.py",
+        "src/apps/api/app/pipeline/phone_person_window.py",
+        "src/apps/api/app/pipeline/subject_matte.py",
         "src/apps/api/tests/fixtures/kri1027_m1_vertical_fill.json",
+        "src/apps/api/tests/fixtures/kri1514_cusco_t5_person_fill.json",
+        "src/apps/api/tests/pipeline/test_kri1514_montage_person_fill.py",
         "src/apps/api/tests/kria/test_kri1027_m1_vertical_fill_replay.py",
         "src/apps/api/tests/kria/test_landscape_fit_ask.py",
         "src/apps/api/tests/pipeline/test_kri1027_montage_vertical_framing.py",
@@ -697,9 +701,11 @@
     {
       "id": "kri-994-review-receipts",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri994_review_receipts.py tests/tasks/test_montage_render_ready_review.py tests/kria/test_brief_montage_render_asks.py tests/kria/test_creative_brief.py",
+      "api_tests": "tests/kria/test_kri994_review_receipts.py tests/tasks/test_montage_render_ready_review.py tests/kria/test_brief_montage_render_asks.py tests/kria/test_creative_brief.py tests/kria/test_kri1515_montage_sentence_once.py",
       "paths": [
         "src/apps/api/app/kria/select_asks.py",
+        "src/apps/api/tests/fixtures/kri1515_cusco_t5_review.json",
+        "src/apps/api/tests/kria/test_kri1515_montage_sentence_once.py",
         "src/apps/api/tests/fixtures/kri994_don_julio_m2_review.json",
         "src/apps/api/tests/kria/test_kri994_review_receipts.py"
       ]
@@ -1171,9 +1177,10 @@
     {
       "id": "qendresa-20-title-look",
       "needs_native": false,
-      "api_tests": "tests/tasks/test_title_look_worker.py tests/pipeline/test_phone_title_look.py tests/pipeline/test_phone_title_look_lines.py tests/kria/test_title_look_receipts.py tests/agents/test_title_look_prompt.py tests/test_raw_chat_text_readers.py",
+      "api_tests": "tests/tasks/test_title_look_worker.py tests/pipeline/test_phone_title_look.py tests/pipeline/test_phone_title_look_lines.py tests/pipeline/test_phone_title_legibility.py tests/kria/test_title_look_receipts.py tests/agents/test_title_look_prompt.py tests/test_raw_chat_text_readers.py",
       "paths": [
-        "src/apps/api/app/pipeline/phone_title_look.py"
+        "src/apps/api/app/pipeline/phone_title_look.py",
+        "src/apps/api/app/pipeline/phone_title_legibility.py"
       ]
     },
     {
@@ -2274,6 +2281,14 @@
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ]
+    },
+    {
+      "id": "kri-1510-1511-cusco-t3-stickers",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1510_unsaid_planned_trigger.py tests/pipeline/test_kri1511_cut_keeps_sticker_hold.py tests/tasks/test_kri1511_sticker_hold_worker.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1511_cusco_t3/sticker1.json"
       ]
     },
     {
@@ -3917,6 +3932,16 @@
         "src/apps/api/tests/fixtures/narrated_alignment/kri1466_tor_moment.json",
         "src/apps/api/tests/pipeline/test_narrated_footage_fit.py",
         "src/apps/api/tests/tasks/test_kri1466_narrated_named_moment.py"
+      ]
+    },
+    {
+      "id": "kri-1470-pending-visual-go-ahead",
+      "needs_native": false,
+      "paths": [
+        "src/apps/api/app/kria/pending_visuals.py",
+        "src/apps/api/app/tasks/maintenance.py",
+        "src/apps/api/tests/kria/test_pending_visual_go_ahead_postgres.py",
+        "src/apps/api/tests/integration/test_pool_asset_unclaimed_resend_postgres.py"
       ]
     }
   ]

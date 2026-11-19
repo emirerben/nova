@@ -180,3 +180,80 @@ struct KriaStepRail: View {
         index < current ? KriaColor.mutedInk : index == current ? KriaColor.ink : KriaColor.zinc
     }
 }
+
+extension View {
+    /// Swiping the row left reveals a Delete capsule; a long swipe deletes. VoiceOver gets the same as a "Remove"
+    /// action. Vertical drags are left to the enclosing scroll view.
+    func kriaSwipeToDelete(label: String, identifier: String, isEnabled: Bool = true, action: @escaping () -> Void) -> some View {
+        modifier(KriaSwipeToDelete(label: label, identifier: identifier, isEnabled: isEnabled, action: action))
+    }
+}
+
+private struct KriaSwipeToDelete: ViewModifier {
+    let label: String
+    let identifier: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var offset: CGFloat = 0
+    @State private var restingOffset: CGFloat = 0
+    @State private var axis: Axis?
+    @State private var rowWidth: CGFloat = 0
+    private let revealWidth: CGFloat = 96
+    private let fullSwipeFraction: CGFloat = 0.6
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: .trailing) {
+            if offset < 0 {
+                Button(action: commit) {
+                    Image(systemName: "trash").font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                        .frame(width: revealWidth - 8)
+                        .frame(maxHeight: .infinity)
+                        .background(KriaColor.failureText, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(label)
+                .accessibilityIdentifier(identifier)
+                .transition(.opacity)
+            }
+            content
+                .offset(x: offset)
+                .accessibilityAction(named: Text(label)) { if isEnabled { commit() } }
+        }
+        .background(GeometryReader { geometry in Color.clear.onAppear { rowWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in rowWidth = width } })
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .simultaneousGesture(drag, including: isEnabled ? .all : .none)
+        .onChange(of: isEnabled) { _, enabled in if !enabled { settle(to: 0) } }
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                if axis == nil { axis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical }
+                guard axis == .horizontal else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { offset = min(0, max(-max(rowWidth, revealWidth), restingOffset + value.translation.width)) }
+            }
+            .onEnded { value in
+                defer { axis = nil }
+                guard axis == .horizontal else { return }
+                let predicted = restingOffset + value.predictedEndTranslation.width
+                if offset < -rowWidth * fullSwipeFraction || predicted < -rowWidth * 0.9 { commit() }
+                else { settle(to: offset < -revealWidth / 2 || predicted < -revealWidth ? -revealWidth : 0) }
+            }
+    }
+
+    private func settle(to target: CGFloat) {
+        restingOffset = target
+        withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85)) { offset = target }
+    }
+
+    private func commit() {
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        action()
+        settle(to: 0)
+    }
+}

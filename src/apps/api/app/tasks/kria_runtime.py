@@ -8968,6 +8968,22 @@ def _phone_source_video_count(job: Any) -> int | None:
     )
 
 
+def _montage_media_use(binding: Any, job: Any, variant: Mapping[str, Any]) -> dict[str, Any]:
+    """KRI-1515: the clips the creator approved (the binding's media snapshot, else the job's
+    clip list) against every media id the finished timeline plays; {} when unknown."""
+    from app.kria.brief_checks import media_use_facts  # noqa: PLC0415
+
+    snapshot = getattr(binding, "media_snapshot", None) or {}
+    paths = snapshot.get("clip_paths") or (job.all_candidates or {}).get("clip_paths") or []
+    attached = [str(path).rsplit("/", 1)[-1] for path in paths if path]
+    used = [
+        row.get("media_id")
+        for row in variant.get("story_timeline") or []
+        if isinstance(row, Mapping) and row.get("media_id")
+    ]
+    return media_use_facts(attached, used)
+
+
 def _cleanup_note_retake_cut_possible(contract: object) -> bool:
     """Could this render's speech cleanup have cut a restarted sentence (KRI-1176)?
 
@@ -9114,6 +9130,8 @@ def _approved_generation_requirements_review(
         facts = dataclasses.replace(
             facts,
             exclusions=exclusion_facts((job.all_candidates or {}).get("creator_strategy"), brief),
+            # KRI-1515: "use all these clips" against the clips the creator approved.
+            **_montage_media_use(binding, job, variant),
         )
         finished = {f.requirement_id for f in facts.exclusions} | {
             req.id for req in live.values() if only_video_ask(req)

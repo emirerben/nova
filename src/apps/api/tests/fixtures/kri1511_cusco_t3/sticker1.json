@@ -1,0 +1,489 @@
+{
+ "_about": "Cusco DJI kit T3 'Sticker 1' (2026-11-16, build 2015, server 6d36200c4), job a4f7b702-c3f9-412f-9922-871538bb496f, phone Talking with Clean up speech. words = the variant's overlay_transcript (source-take time); removed = its silence_cut.removed; transcript = the draft's clip-analysis transcript; beats = the Main Creator's reaction_beats; requirements = the brief rows r1-r5; placed = the phone_beat_receipt windows (source time); seen_on_screen_s = each sticker's span in the finished video (5 fps frame strip, fades included).",
+ "duration_s": 45.1,
+ "words": [
+  {
+   "text": "Şimdi",
+   "start_s": 0.0,
+   "end_s": 0.46
+  },
+  {
+   "text": "burada,",
+   "start_s": 0.46,
+   "end_s": 0.92
+  },
+  {
+   "text": "3",
+   "start_s": 1.76,
+   "end_s": 1.76
+  },
+  {
+   "text": "tane",
+   "start_s": 1.76,
+   "end_s": 2.0
+  },
+  {
+   "text": "hayvan",
+   "start_s": 2.0,
+   "end_s": 2.24
+  },
+  {
+   "text": "görüyorsunuz.",
+   "start_s": 2.24,
+   "end_s": 3.0
+  },
+  {
+   "text": "İnkalar",
+   "start_s": 4.86,
+   "end_s": 5.12
+  },
+  {
+   "text": "dünyayı",
+   "start_s": 5.12,
+   "end_s": 5.58
+  },
+  {
+   "text": "3",
+   "start_s": 5.58,
+   "end_s": 6.4
+  },
+  {
+   "text": "şekilde",
+   "start_s": 6.4,
+   "end_s": 6.74
+  },
+  {
+   "text": "görüyor.",
+   "start_s": 6.74,
+   "end_s": 7.0
+  },
+  {
+   "text": "Yeraltı,",
+   "start_s": 7.2,
+   "end_s": 7.68
+  },
+  {
+   "text": "şu",
+   "start_s": 8.58,
+   "end_s": 8.68
+  },
+  {
+   "text": "an",
+   "start_s": 8.68,
+   "end_s": 8.78
+  },
+  {
+   "text": "olduğumuz",
+   "start_s": 8.78,
+   "end_s": 9.1
+  },
+  {
+   "text": "dünya",
+   "start_s": 9.1,
+   "end_s": 9.44
+  },
+  {
+   "text": "yerüstü",
+   "start_s": 9.44,
+   "end_s": 10.2
+  },
+  {
+   "text": "ve",
+   "start_s": 10.2,
+   "end_s": 10.62
+  },
+  {
+   "text": "gökyüzü.",
+   "start_s": 10.62,
+   "end_s": 11.24
+  },
+  {
+   "text": "Ve",
+   "start_s": 11.88,
+   "end_s": 12.26
+  },
+  {
+   "text": "bu",
+   "start_s": 12.26,
+   "end_s": 12.38
+  },
+  {
+   "text": "üçünü",
+   "start_s": 12.38,
+   "end_s": 12.64
+  },
+  {
+   "text": "temsili",
+   "start_s": 12.64,
+   "end_s": 13.06
+  },
+  {
+   "text": "3",
+   "start_s": 13.06,
+   "end_s": 13.4
+  },
+  {
+   "text": "hayvan",
+   "start_s": 13.4,
+   "end_s": 13.62
+  },
+  {
+   "text": "kullanıyorlar.",
+   "start_s": 13.62,
+   "end_s": 14.12
+  },
+  {
+   "text": "Yeraltını",
+   "start_s": 15.6,
+   "end_s": 16.1
+  },
+  {
+   "text": "yılanla",
+   "start_s": 16.1,
+   "end_s": 16.74
+  },
+  {
+   "text": "temsil",
+   "start_s": 16.74,
+   "end_s": 16.96
+  },
+  {
+   "text": "ediyorlar.",
+   "start_s": 16.96,
+   "end_s": 17.42
+  },
+  {
+   "text": "Yerüstünü",
+   "start_s": 18.3,
+   "end_s": 18.78
+  },
+  {
+   "text": "puma.",
+   "start_s": 18.78,
+   "end_s": 19.18
+  },
+  {
+   "text": "Ve",
+   "start_s": 20.66,
+   "end_s": 21.04
+  },
+  {
+   "text": "gökyüzünü",
+   "start_s": 21.04,
+   "end_s": 21.5
+  },
+  {
+   "text": "kondor,",
+   "start_s": 21.5,
+   "end_s": 21.96
+  },
+  {
+   "text": "kondorkuşu.",
+   "start_s": 22.0,
+   "end_s": 22.98
+  },
+  {
+   "text": "Ve",
+   "start_s": 23.98,
+   "end_s": 24.48
+  },
+  {
+   "text": "hikayemizi,",
+   "start_s": 24.48,
+   "end_s": 26.04
+  },
+  {
+   "text": "dediğim",
+   "start_s": 26.26,
+   "end_s": 26.34
+  },
+  {
+   "text": "gibi",
+   "start_s": 26.34,
+   "end_s": 26.42
+  },
+  {
+   "text": "burası",
+   "start_s": 26.42,
+   "end_s": 26.7
+  },
+  {
+   "text": "bir",
+   "start_s": 26.7,
+   "end_s": 27.0
+  },
+  {
+   "text": "mimariden,",
+   "start_s": 27.0,
+   "end_s": 28.34
+  },
+  {
+   "text": "bu",
+   "start_s": 28.66,
+   "end_s": 29.68
+  },
+  {
+   "text": "harika",
+   "start_s": 29.68,
+   "end_s": 30.06
+  },
+  {
+   "text": "taş",
+   "start_s": 30.06,
+   "end_s": 30.54
+  },
+  {
+   "text": "işçiliğinden",
+   "start_s": 30.54,
+   "end_s": 31.9
+  },
+  {
+   "text": "daha",
+   "start_s": 31.9,
+   "end_s": 32.56
+  },
+  {
+   "text": "fazlası.",
+   "start_s": 32.56,
+   "end_s": 33.12
+  },
+  {
+   "text": "Burası",
+   "start_s": 33.38,
+   "end_s": 33.68
+  },
+  {
+   "text": "İnkalar'ın",
+   "start_s": 33.68,
+   "end_s": 34.9
+  },
+  {
+   "text": "dünyaya",
+   "start_s": 34.9,
+   "end_s": 35.26
+  },
+  {
+   "text": "nasıl",
+   "start_s": 35.26,
+   "end_s": 35.46
+  },
+  {
+   "text": "baktığını",
+   "start_s": 35.46,
+   "end_s": 35.98
+  },
+  {
+   "text": "bize",
+   "start_s": 35.98,
+   "end_s": 37.0
+  },
+  {
+   "text": "anlatıyor.",
+   "start_s": 37.0,
+   "end_s": 37.44
+  },
+  {
+   "text": "Ve",
+   "start_s": 38.24,
+   "end_s": 38.44
+  },
+  {
+   "text": "sizi",
+   "start_s": 38.44,
+   "end_s": 38.74
+  },
+  {
+   "text": "Cusco,",
+   "start_s": 38.74,
+   "end_s": 40.08
+  },
+  {
+   "text": "enfes",
+   "start_s": 40.64,
+   "end_s": 41.1
+  },
+  {
+   "text": "Ant",
+   "start_s": 41.1,
+   "end_s": 41.46
+  },
+  {
+   "text": "Dağları'nın",
+   "start_s": 41.46,
+   "end_s": 42.76
+  },
+  {
+   "text": "bayırlarında...",
+   "start_s": 42.76,
+   "end_s": 44.5
+  }
+ ],
+ "removed": [
+  [
+   1.045,
+   1.38
+  ],
+  [
+   3.125,
+   4.68
+  ],
+  [
+   7.829,
+   8.455
+  ],
+  [
+   11.365,
+   11.755
+  ],
+  [
+   14.245,
+   15.475
+  ],
+  [
+   17.545,
+   18.175
+  ],
+  [
+   19.305,
+   20.535
+  ],
+  [
+   23.105,
+   23.855
+  ],
+  [
+   36.105,
+   36.656
+  ],
+  [
+   37.565,
+   38.115
+  ]
+ ],
+ "transcript": "Şimdi burada üç tane hayvan görüyorsunuz. İnkalar dünyayı üç şekilde görüyor. Yeraltı, şu an olduğumuz dünya yerüstü ve gökyüzü. Ve bu üçünü temsili üç hayvan kullanıyorlar. Yeraltını yılanla temsil ediyorlar, yerüstünü puma ve gökyüzünü kondor kondor kuşu. Ve hikayemizi dediğim gibi burası bir mimariden bu harika taş işçiliğinden daha fazlası burası inkaların dünyaya nasıl baktığını bize anlatıyor. Ve sizi Kusko, enfes Ant Dağları'nın bayırlarında",
+ "beats": [
+  {
+   "beat_id": "snake",
+   "trigger": "yılanla",
+   "occurrence": "every",
+   "visual_role": "sticker"
+  },
+  {
+   "beat_id": "puma",
+   "trigger": "puma",
+   "occurrence": "every",
+   "visual_role": "sticker"
+  },
+  {
+   "beat_id": "condor",
+   "trigger": "kondor",
+   "occurrence": "every",
+   "visual_role": "sticker"
+  },
+  {
+   "beat_id": "llama",
+   "trigger": "lama",
+   "occurrence": "every",
+   "visual_role": "sticker"
+  }
+ ],
+ "requirements": [
+  {
+   "id": "r1",
+   "kind": "style",
+   "description": "Show the snake sticker when I say \"yılanla\", small and in a corner.",
+   "facts": {
+    "triggers": [
+     "yılanla"
+    ],
+    "display_mode": "pip"
+   }
+  },
+  {
+   "id": "r2",
+   "kind": "style",
+   "description": "Show the puma sticker when I say \"puma\", small and in a corner.",
+   "facts": {
+    "triggers": [
+     "puma"
+    ],
+    "display_mode": "pip"
+   }
+  },
+  {
+   "id": "r3",
+   "kind": "style",
+   "description": "Show the condor sticker when I say \"kondor\", small and in a corner.",
+   "facts": {
+    "triggers": [
+     "kondor"
+    ],
+    "display_mode": "pip"
+   }
+  },
+  {
+   "id": "r4",
+   "kind": "style",
+   "description": "Show the llama sticker when I say \"lama\", small and in a corner.",
+   "facts": {
+    "triggers": [
+     "lama"
+    ],
+    "display_mode": "pip"
+   }
+  },
+  {
+   "id": "r5",
+   "kind": "style",
+   "description": "Turkish captions.",
+   "facts": {
+    "captions": "on",
+    "caption_language": "tr"
+   }
+  }
+ ],
+ "placed": [
+  {
+   "beat_id": "snake",
+   "trigger": "yılanla",
+   "at_s": 16.1,
+   "end_s": 18.6,
+   "visual_label": "1777056B-9C94-489A-AC0E-BF723E17D5FD-yilan.png"
+  },
+  {
+   "beat_id": "puma",
+   "trigger": "puma",
+   "at_s": 18.78,
+   "end_s": 21.28,
+   "visual_label": "7D68F36D-AD4A-4879-A36E-1FF8A3535D90-puma.png"
+  },
+  {
+   "beat_id": "condor",
+   "trigger": "kondor",
+   "at_s": 21.5,
+   "end_s": 24.0,
+   "visual_label": "CEABF513-1FF3-46A8-9FFC-6E6D6744C2B7-kondor.png"
+  }
+ ],
+ "unplaced": [
+  {
+   "reason": "never_heard",
+   "beat_id": "llama",
+   "trigger": "lama"
+  }
+ ],
+ "seen_on_screen_s": {
+  "snake": [
+   12.0,
+   13.8
+  ],
+  "puma": [
+   14.0,
+   15.2
+  ],
+  "condor": [
+   15.6,
+   17.2
+  ]
+ }
+}

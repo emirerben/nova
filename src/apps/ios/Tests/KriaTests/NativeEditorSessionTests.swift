@@ -9,6 +9,69 @@ import XCTest
 @MainActor
 final class NativeEditorSessionTests: XCTestCase {
 
+    func testWatermarkExemptionNeverReturnsTheOldBrandedFile() async throws {
+        let (session, _, _, fake) = try await Self.devicePlacementSessionWithSpy()
+        defer { session.setObserversVisible(false) }
+        let owner = String(repeating: "a", count: 64)
+        fake.mediaLibraryOwner = owner
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+            verifiedFeatures: [], watermarkExemption: WatermarkExemption(ownerHash: owner))
+        let cached = URL(fileURLWithPath: "/tmp/old-branded-video.mp4")
+        let route = try await session.prepareVideoDownloadRoute(deviceLocalFile: cached)
+        XCTAssertEqual(route, .savedRecipe)
+        fake.capabilitiesError = .requestFailed(status: 503)
+        do {
+            _ = try await session.prepareVideoDownloadRoute(deviceLocalFile: cached)
+            XCTFail("A known exemption must not fall back to the branded cache offline")
+        } catch {}
+    }
+
+    func testWatermarkExemptionRejectsStaleAccountCapabilityResponse() async throws {
+        let (session, _, _, fake) = try await Self.devicePlacementSessionWithSpy()
+        defer { session.setObserversVisible(false) }
+        let owner = String(repeating: "a", count: 64)
+        fake.mediaLibraryOwner = owner
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+            verifiedFeatures: [], watermarkExemption: WatermarkExemption(ownerHash: owner))
+        fake.suspendNextCapabilities = true
+        let operation = Task { try await session.prepareVideoDownloadRoute(deviceLocalFile: nil) }
+        let suspended = await waitUntil(timeout: .seconds(3)) { fake.capabilitiesIsSuspended }
+        XCTAssertTrue(suspended)
+        fake.mediaLibraryOwner = String(repeating: "b", count: 64)
+        fake.resumeCapabilities()
+        do {
+            _ = try await operation.value
+            XCTFail("A grant from a previous account must not authorize export")
+        } catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    func testOrdinaryWatermarkedDownloadRetainsOfflineRoute() async throws {
+        let (session, _, _, fake) = try await Self.devicePlacementSessionWithSpy()
+        defer { session.setObserversVisible(false) }
+        fake.mediaLibraryOwner = String(repeating: "b", count: 64)
+        fake.capabilitiesError = .requestFailed(status: 503)
+        let expected = try session.videoDownloadRoute(deviceLocalFile: nil)
+        let actual = try await session.prepareVideoDownloadRoute(deviceLocalFile: nil)
+        XCTAssertEqual(actual, expected)
+    }
+
+    func testExemptSavedRecipeRejectsAnotherGenerationBeforeResolvingMedia() async throws {
+        let (session, _, _, fake) = try await Self.devicePlacementSessionWithSpy()
+        defer { session.setObserversVisible(false) }
+        let owner = String(repeating: "a", count: 64)
+        fake.mediaLibraryOwner = owner
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+            verifiedFeatures: [], watermarkExemption: WatermarkExemption(ownerHash: owner))
+        _ = try await session.prepareVideoDownloadRoute(deviceLocalFile: nil)
+        let prior = try XCTUnwrap(fake.deviceRenderResponse)
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "published", request: prior.request,
+            publishedGeneration: "another-generation")
+        do {
+            _ = try await session.exportSavedRecipe()
+            XCTFail("A newer edit must not replace the displayed edit during export")
+        } catch { XCTAssertTrue(error is NativeEditorVideoDownloadError) }
+    }
+
     func testRepeatedOpaqueSlotHydrationPreservesProjectScopedClipAndSourceIdentity() throws {
         let project = UUID()
         func hydrate(project: UUID, slotID: String?, assetID: String? = nil) throws -> EditorClip {

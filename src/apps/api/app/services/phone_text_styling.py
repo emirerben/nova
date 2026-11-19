@@ -1459,9 +1459,102 @@ def register_generation_timeline(clips):
             "x": clip.transform.position_x,
             "y": clip.transform.position_y,
             "rotation": clip.transform.rotation_degrees,
+            # KRI-1525: a backdrop (blur or picture) fills behind a scaled clip, so it is not
+            # drawn over black and its background cannot be sampled as letterboxed.
+            "backdrop": getattr(clip, "backdrop", None) is not None,
         }
         for clip in clips
     ]
+
+
+def register_generation_speaker_fit(landscape_fit: str) -> None:
+    """KRI-1525: the main-track fit (``"fit"`` letterboxes a sideways take, ``"fill"`` does not)
+    every speaker take of this generation will be compiled with, known before any text is placed.
+
+    Phone Talking chooses its caption look before the plan is compiled (KRI-632 face band, KRI-827
+    protected text), so `_ensure_generation_environment` samples faces and backgrounds before
+    `register_generation_timeline` has run. With the fit recorded, a take with no registered window
+    is sampled with the transform the compiler gives it (`fit_transform`) instead of as if it filled
+    the canvas. No-op outside a generation, after the environment was sampled, or with the switch
+    off (byte-identical)."""
+    from app.config import settings
+
+    policy = _POLICY.get()
+    if (
+        not policy
+        or policy.get("_environment_sampled")
+        or not settings.talking_fit_caption_geometry_enabled
+    ):
+        return
+    policy["_speaker_fit"] = landscape_fit
+
+
+def _default_window_scale(policy: dict, original, canvas) -> float:
+    """The scale a take with no registered window is drawn at: the recorded speaker fit's
+    letterbox (`fit_transform`), else 1 (cover-fill, today's assumption)."""
+    if policy.get("_speaker_fit") != "fit":
+        return 1
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform
+
+    width, height = display_dims(original)
+    return float(fit_transform(width, height, canvas, "fit").scale)
+
+
+def _whole_take_box(box, *, source_width, source_height, canvas) -> tuple[float, ...]:
+    """KRI-1525: ``box`` (fractions of the upright take) on the take's whole cover-filled layer, in
+    canvas fractions that may run past the canvas. A window scaled below 1 shrinks that whole layer
+    (the engine cover-fills, then scales about the centre), so its faces are mapped from it; the
+    cover crop (`face_box_to_canvas`) keeps only the middle and trims or drops a side face."""
+    cover = max(canvas.width / source_width, canvas.height / source_height)
+    layer_w = source_width * cover / canvas.width
+    layer_h = source_height * cover / canvas.height
+    return (
+        0.5 + (box.left - 0.5) * layer_w,
+        0.5 + (box.top - 0.5) * layer_h,
+        0.5 + (box.right - 0.5) * layer_w,
+        0.5 + (box.bottom - 0.5) * layer_h,
+    )
+
+
+def _drawn_face_box(box, *, scale, rotation, x, y, canvas) -> tuple[float, ...] | None:
+    """KRI-1525 review: ``box`` (a face on the take's whole cover-filled layer, `_whole_take_box`)
+    where the phone draws a tilted take: scaled about the canvas centre, turned ``rotation``
+    degrees clockwise on screen about it, then shifted by ``x``/``y`` (canvas fractions), as
+    `KriaMediaEngine` `Composition.transform` composes them. The turn is done in pixels (the
+    canvas is not square). Returns the box around the turned corners clipped to the canvas, or
+    None when none of the face is on screen."""
+    import math
+
+    angle = math.radians(rotation)
+    cos, sin = math.cos(angle), math.sin(angle)
+    width, height = canvas.width, canvas.height
+    xs, ys = [], []
+    for fx in (box[0], box[2]):
+        for fy in (box[1], box[3]):
+            dx, dy = (fx - 0.5) * width * scale, (fy - 0.5) * height * scale
+            # Clockwise on screen with y pointing down.
+            xs.append(0.5 + (dx * cos - dy * sin) / width + x)
+            ys.append(0.5 + (dx * sin + dy * cos) / height + y)
+    left, top = max(0.0, min(xs)), max(0.0, min(ys))
+    right, bottom = min(1.0, max(xs)), min(1.0, max(ys))
+    if right <= left or bottom <= top:
+        return None
+    return (left, top, right, bottom)
+
+
+def _drawn_over_black(window: dict) -> bool:
+    """KRI-1525: a centred, unrotated take scaled below the canvas with nothing behind it is drawn
+    over the engine's black base, so its background is the fitted picture with black bars."""
+    from app.config import settings
+
+    return (
+        settings.talking_fit_caption_geometry_enabled
+        and float(window["scale"]) < 1
+        and not window["rotation"]
+        and not window["x"]
+        and not window["y"]
+        and not window.get("backdrop")
+    )
 
 
 def _auto_caption_colour(look, policy: dict):
@@ -1832,6 +1925,7 @@ def _ensure_generation_environment(canvas):
     import time
     from pathlib import Path
 
+    from app.config import settings
     from app.pipeline.phone_guided_text_placement import face_box_to_canvas
     from app.pipeline.phone_text_background import sample_background
     from app.pipeline.render_geometry import sample_face_regions
@@ -1869,7 +1963,9 @@ def _ensure_generation_environment(canvas):
                             "source_duration": float(binding.original.duration_s),
                             "start_s": 0,
                             "end_s": 1800,
-                            "scale": 1,
+                            # KRI-1525: drawn as the compiler will draw it (letterboxed when the
+                            # generation's speaker fit is "fit"), not assumed to fill the canvas.
+                            "scale": _default_window_scale(policy, binding.original, canvas),
                             "x": 0,
                             "y": 0,
                             "rotation": 0,
@@ -1901,7 +1997,19 @@ def _ensure_generation_environment(canvas):
                         canvas_height=canvas.height,
                         crop=None,
                     )
-                    if mapped is not None:
+                    cropped = (
+                        None
+                        if mapped is None
+                        else (mapped.left, mapped.top, mapped.right, mapped.bottom)
+                    )
+                    whole = (
+                        _whole_take_box(
+                            region.box, source_width=width, source_height=height, canvas=canvas
+                        )
+                        if settings.talking_fit_caption_geometry_enabled
+                        else None
+                    )
+                    if cropped is not None or whole is not None:
                         for window in windows:
                             if (
                                 region.start_s > window["source_start"] + window["source_duration"]
@@ -1913,14 +2021,33 @@ def _ensure_generation_environment(canvas):
                                 window["x"] / canvas.width,
                                 window["y"] / canvas.height,
                             )
-                            if window["rotation"]:
+                            # KRI-1525: a scaled-down take shows its whole width, so its faces map
+                            # from the whole layer; the cover crop would trim or drop a side face.
+                            source = whole if whole is not None and float(scale) < 1 else cropped
+                            if window["rotation"] and whole is not None:
+                                # KRI-1525 review: a tilt turns the whole take, so the face is
+                                # protected where the turn draws it, and dropped when it is off
+                                # the picture (never the whole canvas for an unseen face).
+                                box = _drawn_face_box(
+                                    whole,
+                                    scale=float(scale),
+                                    rotation=float(window["rotation"]),
+                                    x=x,
+                                    y=y,
+                                    canvas=canvas,
+                                )
+                                if box is None:
+                                    continue
+                            elif window["rotation"]:
                                 box = (0.0, 0.0, 1.0, 1.0)  # conservative rotated-frame protection
+                            elif source is None:
+                                continue
                             else:
                                 box = (
-                                    (mapped.left - 0.5) * scale + 0.5 + x,
-                                    (mapped.top - 0.5) * scale + 0.5 + y,
-                                    (mapped.right - 0.5) * scale + 0.5 + x,
-                                    (mapped.bottom - 0.5) * scale + 0.5 + y,
+                                    (source[0] - 0.5) * scale + 0.5 + x,
+                                    (source[1] - 0.5) * scale + 0.5 + y,
+                                    (source[2] - 0.5) * scale + 0.5 + x,
+                                    (source[3] - 0.5) * scale + 0.5 + y,
                                 )
                             if box[2] > 0 and box[0] < 1 and box[3] > 0 and box[1] < 1:
                                 boxes.append(
@@ -1934,14 +2061,24 @@ def _ensure_generation_environment(canvas):
                 for window, at in observations:
                     if time.monotonic() - started > 18:
                         break
-                    pixels = (
-                        sample_background(path, at, canvas=canvas)
-                        if window["scale"] == 1
+                    if (
+                        window["scale"] == 1
                         and not window["rotation"]
                         and not window["x"]
                         and not window["y"]
-                        else None
-                    )
+                    ):
+                        pixels = sample_background(path, at, canvas=canvas)
+                    elif _drawn_over_black(window):
+                        # KRI-1525: the fitted picture over black, as the phone draws it, so a
+                        # caption on the bar is judged against the bar, not the footage.
+                        pixels = sample_background(
+                            path,
+                            at,
+                            canvas=canvas,
+                            focus={"x": 0.5, "y": 0.5, "zoom": float(window["scale"])},
+                        )
+                    else:
+                        pixels = None
                     if pixels:
                         frames.append(
                             {
@@ -1972,6 +2109,29 @@ def _ensure_generation_environment(canvas):
             "source_sampling_errors": source_errors,
         },
     )
+
+
+def generation_title_frames() -> list:
+    """The sampled take backgrounds of this generation as grey frames (`GreyFrame`), for the
+    title legibility pass; empty with no policy or no sampled frames."""
+    policy = _POLICY.get()
+    if not policy:
+        return []
+    from app.pipeline import caption_legibility as legibility
+    from app.pipeline.phone_text_background import HEIGHT, WIDTH
+
+    return [
+        legibility.GreyFrame(f["pixels"], WIDTH, HEIGHT, f["start_s"], f["end_s"])
+        for f in policy.get("_background_frames") or []
+    ]
+
+
+def register_title_legibility(receipt: dict | None) -> None:
+    """Hold the title legibility receipt `generation_style_fields` writes as
+    ``variant["title_legibility"]``."""
+    policy = _POLICY.get()
+    if policy is not None and receipt is not None:
+        policy["_title_legibility_receipt"] = receipt
 
 
 def generation_style_fields() -> dict:
@@ -2027,6 +2187,8 @@ def generation_style_fields() -> dict:
         )
     if policy.get("_caption_legibility_receipt") is not None:
         result["caption_legibility"] = copy.deepcopy(policy["_caption_legibility_receipt"])
+    if policy.get("_title_legibility_receipt") is not None:
+        result["title_legibility"] = copy.deepcopy(policy["_title_legibility_receipt"])
     return result
 
 

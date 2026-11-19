@@ -58,8 +58,17 @@ class DeviceRenderRequest(_DeviceModel):
         return self
 
 
+class WatermarkExemption(_DeviceModel):
+    owner_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @classmethod
+    def for_account(cls, user_id: uuid.UUID) -> WatermarkExemption:
+        return cls(owner_hash=hashlib.sha256(str(user_id).encode()).hexdigest())
+
+
 class DeviceRenderCapabilities(_DeviceModel):
     enabled: bool = False
+    watermark_exemption: WatermarkExemption | None = None
     recipe_versions: list[int] = Field(default_factory=list)
     verified_features: list[str] = Field(default_factory=list)
 
@@ -81,12 +90,15 @@ class DeviceRenderStatus(_DeviceModel):
 
 
 class DeviceRenderRequestOut(DeviceRenderRequest):
+    watermark_exemption: WatermarkExemption | None = None
     # Response only: never persist new keys into the strict v1 request.
     max_export_duration_s: float | None = Field(default=None, gt=0)
 
     @model_serializer(mode="wrap")
     def serialize_request(self, handler):
         data = super().serialize_request(handler)
+        if data.get("watermark_exemption") is None:
+            data.pop("watermark_exemption", None)
         if data.get("max_export_duration_s") is None:
             data.pop("max_export_duration_s", None)
         return data

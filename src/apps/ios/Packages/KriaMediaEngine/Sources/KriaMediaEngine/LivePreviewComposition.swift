@@ -17,10 +17,12 @@ public struct LivePreviewExportSnapshot: Sendable {
 @MainActor public final class LivePreviewComposition {
     public private(set) var recipe: EditRecipe
     public let preview: PreviewComposition
+    private let branding: KriaBranding.Options
     private var assetURLs: [String: URL]
     private var playbackRevision: UUID?
 
     public init(recipe: EditRecipe, assetURLs: [String: URL], branding: KriaBranding.Options = .none) async throws {
+        self.branding = branding
         self.recipe = recipe
         self.assetURLs = assetURLs
         self.preview = try await AVPlayerPreviewComposer(branding: branding).makePreview(recipe: recipe, assetURLs: assetURLs)
@@ -259,7 +261,11 @@ public struct LivePreviewExportSnapshot: Sendable {
     }
 
     public func updateText(recipe next: EditRecipe, assetURLs nextURLs: [String: URL]? = nil,
+                           branding nextBranding: KriaBranding.Options? = nil,
                            onPlaybackFrame: (@Sendable (Double) -> Void)? = nil) throws {
+        guard nextBranding == nil || nextBranding == branding else {
+            throw NativePreviewFeatureError("LivePreviewComposition-branding-changed")
+        }
         try next.validate()
         let urls = nextURLs ?? assetURLs
         func nonFontReferences(_ value: EditRecipe) -> [RenderAssetReference] {

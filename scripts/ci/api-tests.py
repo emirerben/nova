@@ -8,7 +8,11 @@ import subprocess
 import sys
 
 
-SHARD_COUNT = 2
+# Four shards: pytest took ~22 min per shard with two (2026-11-05..19), on free
+# Linux runners, and the API shards are the last required check to finish on
+# every PR that starts no Mac. test_api_tests.py keeps ci.yml's matrix equal to
+# this count, so a shard can never be left out.
+SHARD_COUNT = 4
 
 
 def test_files(api_root: Path) -> list[Path]:
@@ -36,7 +40,7 @@ def shard_files(api_root: Path, shard: int, shard_count: int = SHARD_COUNT) -> l
 
 
 def pytest_command(selected: list[Path]) -> list[str]:
-    """Keep the CI runner flags consistent across both isolated shards."""
+    """Keep the CI runner flags consistent across the isolated shards."""
     return [
         "pytest",
         *(str(path) for path in selected),

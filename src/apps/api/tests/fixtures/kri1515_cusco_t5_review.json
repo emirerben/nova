@@ -1,0 +1,713 @@
+{
+ "_source": "Cusco DJI T5 run 2026-11-17 (KRI-1513/KRI-1515): thread 6b52ecd6-657e-4cd7-bec3-1af22b996161, job 2207172d-78ca-4ee2-9a87-efb88da63db7, build 2016, server 80c96b04c. Copied from the admin job debug + thread events; the owner id in storage paths is replaced.",
+ "brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "edit_format": "montage"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make a montage from these clips.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r2",
+    "kind": "select",
+    "facts": {
+     "all": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make a montage from these clips.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "They were filmed sideways, so fill the whole screen, no black bars.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r4",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 20
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 20 seconds.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Cusco'da bir gün",
+    "description": null,
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   }
+  ]
+ },
+ "creator_request": "Full creator request (chronological):\nMake a montage from these clips. They were filmed sideways, so fill the whole screen, no black bars. Make it 20 seconds. Title: \"Cusco'da bir gün\"\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] Make a montage from these clips. facts={edit_format: montage}\n- [r2] [select/global] Make a montage from these clips. facts={all: true}\n- [r3] [style/global] They were filmed sideways, so fill the whole screen, no black bars. facts={landscape_fit: fill}\n- [r4] [timing/global] Make it 20 seconds. facts={duration_s: 20}\n- [r5] [text/title] \"Cusco'da bir gün\"\nLatest message: Make a montage from these clips. They were filmed sideways, so fill the whole screen, no black bars. Make it 20 seconds. Title: \"Cusco'da bir gün\"",
+ "clip_paths": [
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4",
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4",
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4",
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4",
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4",
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4",
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4",
+  "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4"
+ ],
+ "unified_montage": {
+  "route": {},
+  "story": {
+   "beats": 4,
+   "direction": "guided_story"
+  },
+  "title": "Cusco'da bir gün",
+  "labels": [],
+  "version": 1,
+  "clip_ids": [
+   "analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4",
+   "analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4",
+   "analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4",
+   "analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4",
+   "analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4",
+   "analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4",
+   "analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4",
+   "analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4"
+  ],
+  "best_parts": [
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 4.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4",
+    "source_end_s": 5.0,
+    "source_start_s": 2.7
+   },
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4",
+    "source_end_s": 5.417,
+    "source_start_s": 2.8
+   }
+  ],
+  "duration_s": 20.002000000000002,
+  "title_source": "creator",
+  "brief_version": 1,
+  "generation_id": "5953c242707443059259426267476bc3",
+  "ordering_basis": "attachment",
+  "endpoint_places": {},
+  "clip_durations_s": {
+   "analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4": 6.0,
+   "analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4": 5.5,
+   "analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4": 7.0,
+   "analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4": 6.5,
+   "analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4": 7.0,
+   "analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4": 7.0,
+   "analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4": 8.0,
+   "analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4": 5.5
+  },
+  "final_source_cuts": [
+   {
+    "media_id": "analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4",
+    "source_end_s": 2.0,
+    "source_start_s": 0.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4",
+    "source_end_s": 5.0,
+    "source_start_s": 2.7
+   },
+   {
+    "media_id": "analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4",
+    "source_end_s": 2.617,
+    "source_start_s": 0.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4",
+    "source_end_s": 5.417,
+    "source_start_s": 2.8
+   }
+  ],
+  "wants_per_clip_text": false,
+  "requirement_receipts": [
+   {
+    "stage": "understood",
+    "reason": "I can't verify this one automatically yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 1,
+    "generation_id": "5953c242707443059259426267476bc3",
+    "requirement_id": "r1",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I can't verify this one automatically yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 1,
+    "generation_id": "5953c242707443059259426267476bc3",
+    "requirement_id": "r2",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I'll check the framing on the finished video.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 1,
+    "generation_id": "5953c242707443059259426267476bc3",
+    "requirement_id": "r3",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 1,
+    "generation_id": "5953c242707443059259426267476bc3",
+    "requirement_id": "r4",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 1,
+    "generation_id": "5953c242707443059259426267476bc3",
+    "requirement_id": "r5",
+    "inferred_labels": [],
+    "target_media_ids": []
+   }
+  ],
+  "short_label_clip_ids": [],
+  "dropped_label_reasons": {},
+  "dropped_label_clip_ids": [],
+  "ordering_fallback_clip_ids": []
+ },
+ "variant": {
+  "ok": true,
+  "rank": 1,
+  "text_mode": "agent_text",
+  "duration_s": 21.602000000000004,
+  "intro_mode": "linear",
+  "variant_id": "guided_story",
+  "orientation": "portrait",
+  "brand_tail_s": 1.6,
+  "intro_layout": "linear",
+  "landscape_fit": "fill",
+  "landscape_framing": {
+   "ask": "fill",
+   "clips": [
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 0,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 0,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4",
+     "moment_id": "story-beat-1:1"
+    },
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 1,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 1,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4",
+     "moment_id": "story-beat-1:2"
+    },
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 0,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 0,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4",
+     "moment_id": "story-beat-2:1"
+    },
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 0,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 0,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4",
+     "moment_id": "story-beat-2:2"
+    },
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 2,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 2,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4",
+     "moment_id": "story-beat-3:1"
+    },
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 0,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 0,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4",
+     "moment_id": "story-beat-3:2"
+    },
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 2,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 2,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4",
+     "moment_id": "story-beat-4:1"
+    },
+    {
+     "mode": "centre_fill",
+     "faces": {
+      "used": 0,
+      "anchors": 6,
+      "decoded": 6,
+      "ignored": 0,
+      "detected": 0,
+      "face_sampling": "ok"
+     },
+     "reason": "no_face",
+     "media_id": "analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4",
+     "moment_id": "story-beat-4:2"
+    }
+   ],
+   "version": 1,
+   "asked_by": [
+    "r3"
+   ],
+   "landscape_fit": "fill",
+   "output_orientation": "portrait"
+  },
+  "render_status": "ready",
+  "text_elements": [
+   {
+    "z": null,
+    "id": "guided-title",
+    "role": "generative_intro",
+    "text": "Cusco'da bir gün",
+    "color": "#FFFFFF",
+    "end_s": 3.2,
+    "effect": "fade-in",
+    "motion": null,
+    "x_frac": 0.06998888888888888,
+    "y_frac": 0.6526,
+    "removed": false,
+    "size_px": 104,
+    "start_s": 0.0,
+    "position": "custom",
+    "reveal_s": null,
+    "alignment": "left",
+    "text_case": null,
+    "glow_color": null,
+    "size_class": null,
+    "fade_out_ms": null,
+    "font_family": "Pacifico",
+    "line_spacing": 1.0,
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_style": "standard",
+    "stroke_color": null,
+    "stroke_width": 0,
+    "word_timings": null,
+    "editor_preset": null,
+    "glow_strength": 0,
+    "source_params": {
+     "phone_text_style_version": 1
+    },
+    "behind_subject": false,
+    "letter_spacing": -0.025,
+    "max_width_frac": 0.68,
+    "shadow_enabled": false,
+    "shadow_opacity": null,
+    "highlight_color": "#D9FF70",
+    "visual_block_id": null,
+    "animation_phases": null,
+    "background_color": null,
+    "theme_transition": null
+   }
+  ],
+  "music_track_id": null,
+  "song_reference": null,
+  "story_timeline": [
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Open on the snowy mountain panorama with the supplied title.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-1",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4",
+    "media_id": "analysis-proxy-ios-08FAAC50-6726-4DDA-A7FB-C79DDCB71398.mp4",
+    "required": true,
+    "moment_id": "story-beat-1:1",
+    "beat_align": false,
+    "duration_s": 2.72,
+    "generation": "1794900132810069",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 2.72,
+    "source_end_s": 2.72,
+    "playback_rate": null,
+    "output_start_s": 0.0,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Open on the snowy mountain panorama with the supplied title.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-1",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4",
+    "media_id": "analysis-proxy-ios-5F85E832-93AE-4045-B88F-B754D3099A13.mp4",
+    "required": true,
+    "moment_id": "story-beat-1:2",
+    "beat_align": false,
+    "duration_s": 2.753,
+    "generation": "1794900133780534",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 5.353,
+    "source_end_s": 2.753,
+    "playback_rate": null,
+    "output_start_s": 2.6,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Move into the courtyard, following the order filmed.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-2",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4",
+    "media_id": "analysis-proxy-ios-98217D4C-9868-43F7-8BB2-8ACC0716A5A9.mp4",
+    "required": true,
+    "moment_id": "story-beat-2:1",
+    "beat_align": false,
+    "duration_s": 2.72,
+    "generation": "1794900138733245",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 7.953,
+    "source_end_s": 2.72,
+    "playback_rate": null,
+    "output_start_s": 5.233,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Move into the courtyard, following the order filmed.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-2",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4",
+    "media_id": "analysis-proxy-ios-30E846E3-21B2-487E-84EE-55156AB29D01.mp4",
+    "required": true,
+    "moment_id": "story-beat-2:2",
+    "beat_align": false,
+    "duration_s": 2.753,
+    "generation": "1794900141576742",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 10.586,
+    "source_end_s": 2.753,
+    "playback_rate": null,
+    "output_start_s": 7.833,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Explore the stonework through the hand movement and opening, then the paintings ",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-3",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4",
+    "media_id": "analysis-proxy-ios-4F5C1D93-65D3-4AC7-9A13-977438049FBA.mp4",
+    "required": true,
+    "moment_id": "story-beat-3:1",
+    "beat_align": false,
+    "duration_s": 2.253,
+    "generation": "1794900144173250",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 12.719,
+    "source_end_s": 2.253,
+    "playback_rate": null,
+    "output_start_s": 10.466,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Explore the stonework through the hand movement and opening, then the paintings ",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-3",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4",
+    "media_id": "analysis-proxy-ios-44E808F7-85C0-4407-860A-BC5E2D581A2D.mp4",
+    "required": true,
+    "moment_id": "story-beat-3:2",
+    "beat_align": false,
+    "duration_s": 2.287,
+    "generation": "1794900146142010",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 14.886,
+    "source_end_s": 4.987,
+    "playback_rate": null,
+    "output_start_s": 12.599,
+    "source_start_s": 2.7,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Finish outdoors with the patterned garden and city square.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-4",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4",
+    "media_id": "analysis-proxy-ios-0227FD3D-1CA5-478C-BBED-B2CAAB910762.mp4",
+    "required": true,
+    "moment_id": "story-beat-4:1",
+    "beat_align": false,
+    "duration_s": 2.753,
+    "generation": "1794900149256415",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 17.519,
+    "source_end_s": 2.753,
+    "playback_rate": null,
+    "output_start_s": 14.766,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Finish outdoors with the patterned garden and city square.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-4",
+    "gcs_path": "users/00000000-0000-0000-0000-000000000000/creation-threads/6b52ecd6-657e-4cd7-bec3-1af22b996161/analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4",
+    "media_id": "analysis-proxy-ios-93CE1743-589E-48AA-88AB-CC753EE53F39.mp4",
+    "required": true,
+    "moment_id": "story-beat-4:2",
+    "beat_align": false,
+    "duration_s": 2.603,
+    "generation": "1794900151163694",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 20.002,
+    "source_end_s": 5.403,
+    "playback_rate": null,
+    "output_start_s": 17.399,
+    "source_start_s": 2.8,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   }
+  ],
+  "edit_duration_s": 20.002000000000002,
+  "proposal_version": 1,
+  "render_destination": "device",
+  "resolved_archetype": "guided_story",
+  "music_playback_mode": "reference_only",
+  "render_generation_id": "8ba05f77-eb84-4c3d-ab9f-3c22307acef7",
+  "source_audio_preserved": true,
+  "context_label_text_elements": []
+ },
+ "creator_strategy": {
+  "pacing": "balanced",
+  "archetype": "day_vlog",
+  "direction": "guided_story",
+  "rationale": "Twenty seconds will allow the mountain pan and hand tracing the stonework to register, with shorter glimpses of the courtyard, exhibits and garden before the square closes the edit. Shooting order will give this day vlog a clear progression. Licensed music will connect the changing spaces; no speech subtitles are needed for the supplied ambient footage.",
+  "intro_hook": "Let the mountain panorama unfold before moving into the architectural details.",
+  "edit_format": "montage",
+  "media_scope": "all",
+  "caption_style": "none",
+  "opening_title": "Cusco'da bir gün",
+  "audio_strategy": "licensed_music",
+  "render_program": "guided",
+  "story_structure": [
+   "Open on the snowy mountain panorama with the supplied title.",
+   "Move into the courtyard, following the order filmed.",
+   "Explore the stonework through the hand movement and opening, then the paintings and displayed stone blocks.",
+   "Finish outdoors with the patterned garden and city square."
+  ],
+  "target_duration_s": 20,
+  "creator_duration_s": 20,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "selected_music_section": {
+   "status": "fallback_footage"
+  },
+  "target_duration_requested": true
+ },
+ "recorded_draft": "- Done: \"Cusco'da bir gün\"\nHave a look at these in the video:\n- Make a montage from these clips.\n- Make a montage from these clips.\n- They were filmed sideways, so fill the whole screen, no black bars. (I'll crop the sideways clips to fill the vertical frame, keeping faces in it, and check it on the finished video)\n- Make it 20 seconds.\nHeads-up for this video:\n- I can't use the opening hook idea (\"Let the mountain panorama unfold before moving into the architectural…\") on this video yet, so it won't be shown as text\n- The planned story structure (Open on the snowy mountain panorama wit…, Move into the courtyard, following the…, Explore the stonework through the hand…, Finish outdoors with the patterned gard…) sets the chapters (which clips are grouped together), but it won't reorder your clips: they stay in the order you gave\n- I can't use the day vlog story archetype on this video yet",
+ "recorded_review": "- Done: They were filmed sideways, so fill the whole screen, no black bars. (Cropped the 8 sideways clips to fill the vertical frame)\n- Done: Make it 20 seconds.\n- Done: \"Cusco'da bir gün\"\nHave a look at these in the video:\n- Make a montage from these clips.\n- Make a montage from these clips."
+}

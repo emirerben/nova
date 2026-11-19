@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     phone_editor_media_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
     phone_render_user_ids: list[UUID] = Field(default_factory=list)
+    phone_watermark_exempt_user_ids: list[UUID] = Field(default_factory=list)
     # Kill switch for the 2026-09-18 font/effect qualification relaxation in
     # `app/services/phone_rollout.py`. False (default): any bundled-registry
     # font (assets/fonts/font-registry.json) with correct variation
@@ -359,6 +360,15 @@ class Settings(BaseSettings):
     # Default off: windows stay on the cue word, byte-identical. Apply: `fly secrets set
     # BEAT_PHRASE_TIMING_ENABLED=true -a nova-video`, then restart the worker.
     beat_phrase_timing_enabled: bool = False
+    # KRI-1511: a sticker or corner photo shown from its spoken word keeps its time on screen
+    # when Clean up speech cuts a pause inside its window (Cusco T3: the puma's 2.5 s became
+    # 1.27 s). Its window is held in the cut video's time from its word, ending early only where
+    # the next card starts or the take ends, and never earlier than before. Phrase-sized photos,
+    # full-screen cutaways, video cards, the closing photo and hand-placed cards are unchanged.
+    # Phone Talking only (`remap_lanes_for_cut(held_card_ids=...)`). Default TRUE. False:
+    # exactly as before. Rollback: `fly secrets set CUT_KEEPS_STICKER_HOLD_ENABLED=false
+    # --app nova-video` + restart the worker.
+    cut_keeps_sticker_hold_enabled: bool = True
     # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
     # full-screen / "keep my face in frame" video and the phone Talking speaker
     # clip is landscape, `_run_phone_subtitled_job` samples the face across the
@@ -499,6 +509,18 @@ class Settings(BaseSettings):
     # phone Talking edit becomes one styled row per line, stacked off her face, with an
     # optional logo above it. Off = byte-identical single title row.
     title_look_enabled: bool = False
+    # Q1 run 4 (2026-11-17): the stacked title look's lines keep a fixed cream / yellow fill and no
+    # step looked at the pixels under them, so cream text on her cream t-shirt read as nothing.
+    # With this on, the final title block is measured on the take frames
+    # (`pipeline/phone_title_legibility.py`) and a line under 4.5:1 gets a dark outline (the
+    # `stroke_color` / `stroke_width` row fields the numbered labels already draw), unless she
+    # set that line's colour or an outline. Receipt: `variant["title_legibility"]`. The same
+    # switch covers the placement half of that fix: a title that had to SHRINK to fit under her
+    # face is retried, lines stacked ink to ink, in the band above her face
+    # (`phone_title_look.place_title_look`); a full-size title keeps its spot. Default TRUE.
+    # False: byte-identical rows and placement. Apply: `fly secrets set
+    # TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
+    title_legibility_enabled: bool = True
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
@@ -514,6 +536,14 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # Qendresa Q1 run 4 (2026-11-17): the brief filed her ending ('End with "comment REPO"',
+    # a text row whose `closing` fact is its literal) but the Main Creator's strategy had no
+    # `closing_title`, so the draft was held ("That exact text isn't in this draft."). With
+    # this on, the planner fills `closing_title` from that one live row on a phone Talking
+    # edit that draws closing text (`planner._with_brief_closing_title`). Default TRUE.
+    # False: byte-identical strategy. Rollback: `fly secrets set
+    # BRIEF_CLOSING_TITLE_FILL_ENABLED=false --app nova-video` + restart api + worker.
+    brief_closing_title_fill_enabled: bool = True
     # Item 14 (Qendresa's ending): when the creator asks to end on "comment <KEYWORD>"
     # (optionally with an arrow), a phone Talking edit draws her look instead of the
     # lime tag: a small white handwritten "comment", the keyword big in cream under it,
@@ -603,6 +633,11 @@ class Settings(BaseSettings):
         if self.clip_facts_enabled:
             return True
         return user_id is not None and str(user_id) in {str(u) for u in self.clip_facts_user_ids}
+
+    def phone_watermark_exempt_for(self, user_id: object) -> bool:
+        return user_id is not None and str(user_id) in map(
+            str, self.phone_watermark_exempt_user_ids
+        )
 
     def phone_rendering_for(self, user_id: object) -> bool:
         """Apply the rollout cohort, or enroll every account in device-only mode.
@@ -1148,6 +1183,16 @@ class Settings(BaseSettings):
     # before. Rollback: `fly secrets set UNSAID_CUE_REPORT_ENABLED=false --app nova-video` +
     # restart (api + worker).
     unsaid_cue_report_enabled: bool = True
+    # KRI-1510: the same report when the draft PLANNED a pop-in on the unsaid word (Cusco T3:
+    # the llama sticker on "lama", which the speaker never says). On a phone Talking draft whose
+    # takes' transcripts are all known and none says a planned beat's trigger (by the render's
+    # own matchers), that beat no longer counts as placed: the draft says "You don't say “lama”
+    # in your take, so nothing is shown for it" (approvable) instead of "Done", which only the
+    # finished video corrected ("I never heard lama in your voice"). Finished videos, title
+    # logos and unknown transcripts: unchanged. Needs UNSAID_CUE_REPORT_ENABLED. Default TRUE.
+    # False: exactly as before. Rollback: `fly secrets set UNSAID_PLANNED_CUE_REPORT_ENABLED=false
+    # --app nova-video` + restart (api + worker).
+    unsaid_planned_cue_report_enabled: bool = True
     # KRI-1484: a numbered list label shown while the recordings play behind the speaker (a
     # speaker-background window, never her full-screen take) is drawn on an opaque dark plate
     # (#141414, the label's cream letters unchanged), the text row's `background_color`. Her
@@ -1453,6 +1498,12 @@ class Settings(BaseSettings):
     # byte-identical to the pre-fix behaviour.
     # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
     kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
+    # KRI-1470: when only Visuals (screenshots/recordings) are still being checked, the turn's
+    # last run, or a creator's "skip that", goes on without them and names each file left
+    # out. Pending footage still waits. False: every pending Visual holds the turn with "I'm
+    # still checking N of your clips", exactly as before.
+    # Apply: fly secret KRIA_PENDING_VISUAL_GO_AHEAD_ENABLED=false + restart (api + worker).
+    kria_pending_visual_go_ahead_enabled: bool = True
     # A continued run takes its earlier run's Main Creator, brief-extractor and clip-intent
     # answers for the same input instead of paying again (`app.services.turn_checkpoint`).
     # False: every continued run calls the models again, exactly as before the checkpoint.
@@ -2478,6 +2529,13 @@ class Settings(BaseSettings):
     # restart workers); read lazily per matte compute, no deploy needed.
     matte_rvm_enabled: bool = True
 
+    # KRI-1514: a sideways montage clip cropped to fill a vertical video, with no face in it,
+    # follows the person or body part the RVM person matte finds (a hand on a wall) instead of
+    # keeping the middle (`app.pipeline.phone_person_window`). Kill switch: `fly secrets set
+    # MONTAGE_PERSON_FILL_ENABLED=false --app nova-video` + worker restart; new renders then
+    # keep the middle as before (nothing is sampled).
+    montage_person_fill_enabled: bool = True
+
     # Depth-based scene-occluder backbone (non-person subjects — landmarks,
     # objects, scenery with no person in frame). When True, the subject-matte
     # engine (`app.pipeline.subject_matte`) attempts a second pass with a
@@ -3128,6 +3186,16 @@ class Settings(BaseSettings):
     # full-frame face boxes, byte-identical (`phone_text_styling._faces_where_drawn`).
     speaker_frame_caption_faces_enabled: bool = True
 
+    # KRI-1525: phone Talking chooses its caption look before the plan is compiled (KRI-632 face
+    # band, KRI-827 protected text), so the faces and background frames it measures against were
+    # sampled with no clip transform: a sideways take drawn with black bars was read as filling the
+    # screen. Captions then shrank into the top strip (34-38 px) and took black ink from the
+    # footage while drawn on the black bar. On: the take's letterbox scale is known before the first
+    # sample, and a centred, scaled-down take is sampled as drawn (picture over black). Default TRUE
+    # (bug fix); false + worker restart = today's sampling, byte-identical
+    # (`phone_text_styling._ensure_generation_environment`).
+    talking_fit_caption_geometry_enabled: bool = True
+
     # Qendresa item 21: a pin may sit in the middle and carry TikTok's native text look.
     # Default off; with it off a stray middle_center pin is drawn as top_center, no look.
     clip_text_tiktok_look_enabled: bool = False
@@ -3385,6 +3453,12 @@ class Settings(BaseSettings):
     # Keep response compatibility during the backend-first rollout. Set true
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False
+    # KRI-1469: the 5-min reaper re-sends a `queued` Visuals analysis nobody has claimed
+    # (a later Visual of the same item was claimed 2 min after it was sent, or 10 min
+    # passed). Same attempt token and deadline, so a second copy is a no-op. False: an
+    # unclaimed row waits for its deadline (~1 h for a photo), exactly as before.
+    # Apply: fly secret POOL_UNCLAIMED_RESEND_ENABLED=false + restart the light process.
+    pool_unclaimed_resend_enabled: bool = True
 
     poster_ondemand_repair_enabled: bool = Field(
         default=False,

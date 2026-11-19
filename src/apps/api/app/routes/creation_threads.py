@@ -53,7 +53,7 @@ from app.kria.api_schemas import (
     ThreadDeltaOut,
 )
 from app.kria.brief import CreativeBrief
-from app.kria.device_render import DeviceRenderCapabilities
+from app.kria.device_render import DeviceRenderCapabilities, WatermarkExemption
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.language import is_status_question
 from app.kria.media_sources import (
@@ -4251,9 +4251,14 @@ async def capabilities(
         "idea_example_feedback": bool(settings.creator_editorial_taste_for(user.id)),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
+            watermark_exemption=(
+                WatermarkExemption.for_account(user.id)
+                if native_client and settings.phone_watermark_exempt_for(user.id)
+                else None
+            ),
             recipe_versions=[2] if phone_enabled else [],
             verified_features=(settings.phone_render_verified_features if phone_enabled else []),
-        ).model_dump(),
+        ).model_dump(exclude_none=True),
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),

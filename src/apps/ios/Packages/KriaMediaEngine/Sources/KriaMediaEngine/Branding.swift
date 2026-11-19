@@ -253,3 +253,15 @@ public enum KriaBranding {
     }
 }
 #endif
+
+public struct WatermarkExemption: Codable, Equatable, Sendable {
+    public let ownerHash: String
+
+    public init(ownerHash: String) { self.ownerHash = ownerHash }
+
+    public func branding(for owner: String?) -> KriaBranding.Options {
+        guard ownerHash.count == 64, owner == ownerHash,
+              ownerHash.allSatisfy({ "0123456789abcdef".contains($0) }) else { return .standard }
+        return KriaBranding.Options(watermark: false, outro: true)
+    }
+}

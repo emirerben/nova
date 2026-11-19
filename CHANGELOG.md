@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.14.0] - 2026-11-19
+
+### Changed
+- fix(kria): Talking captions measure a letterboxed take where the phone draws it (KRI-1525) (#2379) <!-- release-pr: 2379 -->
+
+## [0.89.13.0] - 2026-11-19
+
+### Changed
+- fix(kria): crop follows the person in no-face sideways clips; say a split sentence once (KRI-1514, KRI-1515) (#2377) <!-- release-pr: 2377 -->
+
+## [0.89.12.0] - 2026-11-19
+
+### Changed
+- fix(kria): Cusco T3 stickers: draft names an unsaid trigger before approval; pause cuts keep sticker holds (KRI-1510, KRI-1511) (#2375) <!-- release-pr: 2375 -->
+
+## [0.89.11.0] - 2026-11-19
+
+### Fixed
+- fix(cleanup): cut a restarted sentence only when it is said again in what stays (KRI-1518) (#2378) <!-- release-pr: 2378 -->
+
+## [0.89.10.0] - 2026-11-19
+
+### Changed
+- feat(ci): a journey-manifest edit selects the rows it changed, not everything (KRI-1541) (#2393) <!-- release-pr: 2393 -->
+
+## [0.89.9.0] - 2026-11-19
+
+### Changed
+- feat(ci): a pull request starts a Mac only when it changes an iPhone input (KRI-1540) (#2390) <!-- release-pr: 2390 -->
+
+## [0.89.8.0] - 2026-11-19
+
+### Changed
+- chore(ci): run the API tests as four shards instead of two (KRI-1539) (#2389) <!-- release-pr: 2389 -->
+
+## [0.89.7.0] - 2026-11-19
+
+### Changed
+- feat(ci): shadow the Mac-only-when-an-iPhone-input-changed rule (KRI-1536) (#2388) <!-- release-pr: 2388 -->
+
+## [0.89.6.0] - 2026-11-19
+
+### Changed
+- chore(ci): PRs skip the 172-second slide-post trim proof unless slide-post or render code changed (KRI-1537) (#2387) <!-- release-pr: 2387 -->
+
+## [0.89.5.0] - 2026-11-19
+
+### Changed
+- chore(ci): repeatable CI baseline for Mac-minutes and required-check wait (KRI-1535) (#2386) <!-- release-pr: 2386 -->
+
+## [0.89.4.0] - 2026-11-18
+
+### Changed
+- feat(ios): account-only watermark exemptions (KRI-1533) (#2383) <!-- release-pr: 2383 -->
+
+## [0.89.3.0] - 2026-11-18
+
+### Fixed
+- fix(ios): removed media stays in chat; swipe a chat media row to delete it (KRI-1454) (#2351) <!-- release-pr: 2351 -->
+
+## [0.89.2.0] - 2026-11-17
+
+### Changed
+- fix(kria): Qendresa Q1 run 4: ending no longer held, readable title above her face, centred card strip, done-list names unshown Visuals (KRI-1234) (#2381) <!-- release-pr: 2381 -->
+
+## [0.89.1.0] - 2026-11-17
+
+### Fixed
+- fix: a stuck Visual is re-sent and no longer blocks the chat (KRI-1469, KRI-1470) (#2380) <!-- release-pr: 2380 -->
+
 ## [0.89.0.0] - 2026-11-16
 
 ### Added

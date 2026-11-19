@@ -115,6 +115,20 @@ def mock_storage(fixture, monkeypatch):
     return signed_calls
 
 
+def test_watermark_exemption_is_response_only_and_account_scoped(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    monkeypatch.setattr(settings, "phone_watermark_exempt_user_ids", [fixture.user.id])
+    response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
+    assert response.status_code == 200
+    grant = response.json()["request"]["watermark_exemption"]
+    assert grant == {"owner_hash": hashlib.sha256(str(fixture.user.id).encode()).hexdigest()}
+    assert "watermark_exemption" not in device_status(fixture.job, "first").request.model_dump()
+    monkeypatch.setattr(settings, "phone_watermark_exempt_user_ids", [uuid.uuid4()])
+    response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
+    assert response.status_code == 200
+    assert "watermark_exemption" not in response.json()["request"]
+
+
 def test_foreign_job_is_filtered_before_recipe_lookup(fixture):
     fixture.db.execute.side_effect = [scalar(None), scalar(None)]
     response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
