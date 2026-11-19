@@ -296,6 +296,15 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   `low_alignment_score`, `filler_without_room`) and which cuts the re-listen dropped. Kill
   switch: `fly secrets set SPEECH_CLEANUP_FILLER_CHECK_ENABLED=false --app nova-video` +
   api and worker restart (it is part of the source policy fingerprint, so analyses redo).
+- "a label / caption comes a second late, in the silence, and cleanup kept that pause" →
+  whisper-1 stamped the words into the pause after their voice (Cusco T2, KRI-1506/1507).
+  `SPEECH_CLEANUP_LATE_WORDS_ENABLED` (default on, `app/pipeline/late_word_realign.py`) moves
+  such a run back onto the wordless voice before planning, only when silencedetect and the
+  KRI-1017 voicing detector agree; `diagnostics.late_words` on the analysis lists each moved
+  run (times only). The cut, the captions and the list labels all follow the moved words.
+  Kill switch: `fly secrets set SPEECH_CLEANUP_LATE_WORDS_ENABLED=false --app nova-video` +
+  api and worker restart (part of the source policy fingerprint, so analyses redo).
+  Failure modes: `docs/reviews/kri-1502-late-words-failure-modes.md`.
 - "cleanup cut whole words / a quiet second speaker" on a take with no real pause (two
   people talking, one far from the mic; a wrong-language or partial transcript) → the
   ambient silence floor sat above the quiet voice and the transcript had no token there.

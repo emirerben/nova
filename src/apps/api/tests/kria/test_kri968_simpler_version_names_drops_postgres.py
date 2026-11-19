@@ -99,11 +99,16 @@ PROD_ASK = "Should I try a different approach, or make this simpler version?"
 ASK = "Should I make it without these, or do you want to change your request?"
 # KRI-1285: prod listed this render promise as "Partly"; the reply now says it is planned.
 _PROMISE_LINE = '"SUPER EXCITED") (I\'ll show it the moment you say that word'
+# KRI-1508: so is the Talking captions plan (every voice, the creator's spellings), which
+# approval readiness already took as a promise (`talking_caption_promise`, KRI-1405).
+_CAPTIONS_PLAN_LINE = "Captions for both voices (Every voice in your take gets captions"
 
 
 def _as_planned(text: str) -> str:
     return "\n".join(
-        line.replace("- Partly: ", "- Will do at render: ", 1) if _PROMISE_LINE in line else line
+        line.replace("- Partly: ", "- Will do at render: ", 1)
+        if _PROMISE_LINE in line or _CAPTIONS_PLAN_LINE in line
+        else line
         for line in text.split("\n")
     )
 
