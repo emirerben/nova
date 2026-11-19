@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.9.0] - 2026-11-19
+
+### Changed
+- feat(ci): a pull request starts a Mac only when it changes an iPhone input (KRI-1540) (#2390) <!-- release-pr: 2390 -->
+
 ## [0.89.8.0] - 2026-11-19
 
 ### Changed
