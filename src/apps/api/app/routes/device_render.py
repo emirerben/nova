@@ -36,6 +36,7 @@ from app.kria.device_render import (
     DeviceExportCompleteOut,
     DeviceExportReservationBody,
     DeviceExportReservationOut,
+    DeviceExportTiming,
     DeviceRenderFailureBody,
     DeviceRenderFailureOut,
     DeviceRenderIdentity,
@@ -1883,7 +1884,13 @@ async def complete_device_export(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> DeviceExportCompleteOut:
-    result = await _complete_device_export(job_id, body, user.id, db)
+    result = await _complete_device_export(
+        job_id,
+        body,
+        user.id,
+        db,
+        timing=DeviceExportTiming.from_header(request.headers.get("X-Kria-Device-Timing")),
+    )
     if result.status == "checking":
         response.status_code = 202
         from app.tasks.export_verification import enqueue  # noqa: PLC0415
@@ -1898,6 +1905,7 @@ async def _complete_device_export(
     user_id: uuid.UUID,
     db: AsyncSession,
     *,
+    timing: DeviceExportTiming | None = None,
     verification_token: str | None = None,
     unverified: bool = False,
 ) -> DeviceExportCompleteOut:
@@ -1921,6 +1929,7 @@ async def _complete_device_export(
     attempt = record["attempts"].get(attempt_id)
     if attempt is None:
         raise HTTPException(409, "Export was not reserved")
+    timing_values = timing.model_dump(exclude_none=True) if timing is not None else {}
     if "actual_export_policy" in record:
         from app.tasks.export_verification import claim_valid  # noqa: PLC0415
 
@@ -1936,6 +1945,8 @@ async def _complete_device_export(
             if active and active != attempt_id:
                 raise HTTPException(409, "Another export is being checked")
             if "verification_task" not in attempt:
+                if timing_values:
+                    attempt["device_timing"] = timing_values
                 attempt["verification_task"] = {
                     "state": "queued",
                     "runs": 0,
@@ -2210,7 +2221,9 @@ async def _complete_device_export(
         or cleanup.retention_expires_at <= datetime.now(UTC)
     ):
         raise HTTPException(409, "Upload reservation expired")
-    record["attempts"][attempt_id]["publication_proof"] = {
+    if timing_values:
+        current_attempt["device_timing"] = timing_values
+    current_attempt["publication_proof"] = {
         "version": 1,
         "artifact_path": attempt["path"],
         "storage_generation": str(metadata.generation),

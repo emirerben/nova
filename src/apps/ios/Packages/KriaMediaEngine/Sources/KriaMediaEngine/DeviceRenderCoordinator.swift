@@ -88,15 +88,30 @@ public enum DeviceRenderContinuationStage: String, Codable, Sendable {
     case notStarted, exportStarted, outputReady
 }
 
-struct DeviceRenderTiming: Codable, Equatable, Sendable {
+public struct DeviceRenderTiming: Codable, Equatable, Sendable {
     struct Suspension: Codable, Equatable, Sendable {
         let suspendedAt: Date
         var resumedAt: Date?
     }
 
     let startedAt: Date
-    var lastCompletedExportMilliseconds: UInt64?
+    public internal(set) var lastCompletedExportMilliseconds: UInt64?
     var lastSuspension: Suspension?
+
+    public func elapsedMilliseconds(at now: Date) -> UInt64? {
+        Self.milliseconds(from: startedAt, to: now)
+    }
+
+    public var lastSuspensionMilliseconds: UInt64? {
+        guard let suspension = lastSuspension, let resumedAt = suspension.resumedAt else { return nil }
+        return Self.milliseconds(from: suspension.suspendedAt, to: resumedAt)
+    }
+
+    private static func milliseconds(from start: Date, to end: Date) -> UInt64? {
+        let value = end.timeIntervalSince(start) * 1000
+        guard (0...604_800_000).contains(value) else { return nil }
+        return UInt64(value)
+    }
 }
 
 public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
@@ -362,7 +377,16 @@ public protocol DeviceRenderPublishing: Sendable {
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool
     /// Reserve/upload/verify/publish idempotently by attempt ID. Never uploads source media.
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String,
+                 timing: DeviceRenderTiming?) async throws -> DevicePublication
 }
+extension DeviceRenderPublishing {
+    public func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String,
+                        timing: DeviceRenderTiming?) async throws -> DevicePublication {
+        try await publish(file: file, identity: identity, attemptID: attemptID, brandTail: brandTail)
+    }
+}
+
 public protocol DeviceSourceResolving: Sendable {
     func resolve(for recipe: EditRecipe) async throws -> [String: URL]
 }
@@ -894,7 +918,8 @@ public actor DeviceRenderCoordinator {
         guard stillCurrent else { try update(attempt, phase: .superseded); return }
         try update(attempt, phase: .syncing)
         let result = try await EngineSignpost.measureAsync("talk.save.publish") {
-            try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt, brandTail: exporter.brandTail)
+            try await publisher.publish(file: output, identity: saved.request.identity, attemptID: attempt,
+                                        brandTail: exporter.brandTail, timing: receipt?.timing)
         }
         guard current(attempt) else { return }
         try update(attempt, phase: result == .published ? .synced : .superseded)

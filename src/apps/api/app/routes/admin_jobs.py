@@ -48,6 +48,7 @@ from app.routes._admin_schemas import (
 )
 from app.routes.admin import _require_admin
 from app.services.device_render import (
+    DEVICE_RENDER_FIELD,
     apply_retry_variant_reset,
     device_status,
     mark_device_failed,
@@ -469,10 +470,12 @@ def _render_timing_breakdown(job: Job, runs: list[AgentRun]) -> RenderTimingBrea
         if count > 1:
             repeated_work.append(f"agent:{name} ran {count} times")
 
-    variants = (
-        (job.assembly_plan or {}).get("variants") if isinstance(job.assembly_plan, dict) else []
-    )
-    for variant in variants or []:
+    assembly = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    variants = assembly.get("variants") or []
+    device_records = assembly.get(DEVICE_RENDER_FIELD)
+    if not isinstance(device_records, dict):
+        device_records = {}
+    for variant in variants:
         if not isinstance(variant, dict):
             continue
         started = _parse_iso_datetime(variant.get("render_started_at"))
@@ -494,6 +497,39 @@ def _render_timing_breakdown(job: Job, runs: list[AgentRun]) -> RenderTimingBrea
                     },
                 )
             )
+
+        variant_id = variant.get("variant_id")
+        if not isinstance(variant_id, str):
+            continue
+        record = device_records.get(variant_id)
+        if not isinstance(record, dict):
+            continue
+        attempt_id = record.get("published_attempt")
+        attempts = record.get("attempts")
+        if not isinstance(attempt_id, str) or not isinstance(attempts, dict):
+            continue
+        if variant.get("render_generation_id") != attempt_id:
+            continue
+        attempt = attempts.get(attempt_id)
+        timing = attempt.get("device_timing") if isinstance(attempt, dict) else None
+        if not isinstance(timing, dict):
+            continue
+        for field, name in (
+            ("device_elapsed_ms", "device_elapsed"),
+            ("export_ms", "device_export"),
+            ("upload_ms", "device_upload"),
+            ("last_suspension_ms", "device_last_suspension"),
+        ):
+            elapsed_ms = timing.get(field)
+            if type(elapsed_ms) is int:
+                stages.append(
+                    RenderTimingStagePayload(
+                        name=name,
+                        elapsed_ms=elapsed_ms,
+                        source="device_reported",
+                        details={"variant_id": variant_id},
+                    )
+                )
 
     phase_counts: dict[str, int] = {}
     for stage in stages:
