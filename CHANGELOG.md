@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.8.0] - 2026-11-19
+
+### Changed
+- chore(ci): run the API tests as four shards instead of two (KRI-1539) (#2389) <!-- release-pr: 2389 -->
+
 ## [0.89.7.0] - 2026-11-19
 
 ### Changed
