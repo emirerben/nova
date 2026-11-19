@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from .checkers import DISCLAIMER, EVENT_CHECKERS, fold, run_checker
+from .checkers import DISCLAIMER, EVENT_CHECKERS, REPLY_CHECKERS, fold, run_checker
 from .models import (
     REQUEST_TYPES,
     FinalPlan,
@@ -26,12 +26,22 @@ from .models import (
 )
 
 
-def reply_overclaims(req: Requirement, status: str, reply: str | None) -> bool:
+def reply_overclaims(
+    req: Requirement, status: str, reply: str | None, *, acted: bool = True
+) -> bool:
     """True when the reply talks as if `req` was handled but it was not fully met, and
-    nothing in the reply says so."""
-    if reply is None or status == "met" or not req.claim_terms:
+    nothing in the reply says so.
+
+    A requirement that names `claim_terms` is judged by them. One that names none (the authored
+    briefs) is judged by the general rule: the turn applied ops (`acted`, so the reply reads as
+    "done"), a request was missed, and the reply never says anything was left undone. A turn that
+    applied nothing claims nothing. Reply-only checkers are exempt: there the reply is the thing
+    measured."""
+    if reply is None or status == "met":
         return False
     text = unicodedata.normalize("NFC", reply)
+    if not req.claim_terms:
+        return acted and req.checker not in REPLY_CHECKERS and not DISCLAIMER.search(text)
     names_it = any(re.search(term, text, re.IGNORECASE) for term in req.claim_terms)
     return names_it and not DISCLAIMER.search(text)
 
@@ -44,6 +54,7 @@ def score(
     footage: Footage,
     previous_plan: FinalPlan | None = None,
     addressed: set[str] | None = None,
+    ops: dict[str, list[dict]] | None = None,
 ) -> list[RequirementScore]:
     """met | partial | unmet for each requirement against the finished edit.
 
@@ -52,7 +63,7 @@ def score(
     """
     scores: list[RequirementScore] = []
     for req in requirements:
-        status, reason = run_checker(req, final_plan, footage, previous_plan, reply)
+        status, reason = run_checker(req, final_plan, footage, previous_plan, reply, ops)
         audited = addressed is None or req.id in addressed
         scores.append(
             RequirementScore(
@@ -60,7 +71,10 @@ def score(
                 request_type=req.request_type,
                 status=status,
                 reason=reason,
-                reply_overclaims=audited and reply_overclaims(req, status, reply),
+                reply_overclaims=audited
+                and reply_overclaims(
+                    req, status, reply, acted=ops is None or bool(ops.get("parsed"))
+                ),
             )
         )
     return scores
@@ -97,6 +111,7 @@ def score_thread(
             footage=footage,
             previous_plan=previous,
             addressed=addressed,
+            ops={"parsed": result.parsed_ops, "compiled": result.applied_ops},
         ):
             last[item.requirement_id] = item
             overclaimed[item.requirement_id] |= item.reply_overclaims

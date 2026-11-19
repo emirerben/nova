@@ -12,6 +12,7 @@ from typing import Any
 import structlog
 from sqlalchemy import text
 
+from app.agents.model_registry import WHISPER
 from app.config import settings
 from app.database import sync_engine
 from app.pipeline.clip_cache import (
@@ -59,7 +60,7 @@ def _spec(kind: str, analyzer: str | None) -> tuple[str, str, str, str]:
         from app.schemas.user_song import SONG_ANALYSIS_VERSION
 
         whisper_model = (
-            "whisper-1" if settings.whisper_backend == "openai-api" else settings.whisper_model
+            WHISPER if settings.whisper_backend == "openai-api" else settings.whisper_model
         )
         return (
             "nova.media.transcript" if analyzer == "transcript" else "nova.media.song_source",

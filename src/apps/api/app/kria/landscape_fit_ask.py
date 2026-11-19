@@ -94,8 +94,9 @@ class FitVerdict:
 
 def _clips(n: int) -> str:
     return say(
-        en=f"{n} sideways clip" if n == 1 else f"{n} sideways clips",
-        tr=f"{n} yatay klip",
+        en="{n} sideways clip" if n == 1 else "{n} sideways clips",
+        tr="{n} yatay klip",
+        n=n,
     )
 
 
@@ -103,12 +104,12 @@ def _planned(fit: LandscapeFit) -> FitVerdict:
     if fit == "fill":
         reason = say(
             en=(
-                "I'll crop the sideways clips to fill the vertical frame, keeping faces in it, "
-                "and check it on the finished video"
+                "I'll crop the sideways clips to fill the vertical frame, keeping faces and "
+                "people in view, and check it on the finished video"
             ),
             tr=(
-                "Yatay klipleri dikey ekranı dolduracak şekilde kırpacağım, yüzleri kadrajda "
-                "tutacağım ve bitmiş videoda kontrol edeceğim"
+                "Yatay klipleri dikey ekranı dolduracak şekilde kırpacağım, yüzleri ve kişileri "
+                "kadrajda tutacağım ve bitmiş videoda kontrol edeceğim"
             ),
         )
     else:
@@ -220,6 +221,7 @@ def judge_landscape_fit(
         )
     barred = sum(1 for row in rows if row.get("mode") == "letterbox")
     faced = sum(1 for row in rows if row.get("mode") == "face_fill")
+    personed = sum(1 for row in rows if row.get("mode") == "person_fill")
     cropped = n - barred
     if barred:
         return FitVerdict(
@@ -239,24 +241,73 @@ def judge_landscape_fit(
             ),
             checked=True,
         )
-    follows = (
-        say(
+    return FitVerdict(
+        "met",
+        _cropped_reason(rows, n=n, faced=faced, personed=personed),
+        checked=True,
+    )
+
+
+def _cropped_reason(rows: list[Mapping[str, Any]], *, n: int, faced: int, personed: int) -> str:
+    """Every sideways clip cropped: which crop follows a face or a person (KRI-1514), and
+    which keep the middle of the picture, so a shot that lost its subject is never hidden."""
+    middle = n - faced - personed
+    if not faced and not personed:
+        if all(row.get("reason") == "no_face" for row in rows):
+            return say(
+                en=(
+                    "Cropped the {clips_n} to fill the vertical frame; with no face or person to "
+                    "follow, the crop keeps the middle of the picture"
+                ),
+                tr=(
+                    "{clips_n} dikey ekranı dolduracak şekilde kırpıldı; takip edilecek yüz ya da "
+                    "kişi olmadığı için kadraj görüntünün ortasında kaldı"
+                ),
+                clips_n=_clips(n),
+            )
+        return say(
+            en=(
+                "Cropped the {clips_n} to fill the vertical frame; the crop keeps the middle of "
+                "the picture"
+            ),
+            tr=(
+                "{clips_n} dikey ekranı dolduracak şekilde kırpıldı; kadraj görüntünün ortasında "
+                "kaldı"
+            ),
+            clips_n=_clips(n),
+        )
+    follows = ""
+    if faced:
+        follows += say(
             en="; the crop follows the main face on {faced}",
             tr="; {faced} tanesinde kadraj ana yüzü takip ediyor",
             faced=faced,
         )
-        if faced
-        else ""
-    )
-    return FitVerdict(
-        "met",
-        say(
-            en="Cropped the {clips_n} to fill the vertical frame{follows}",
-            tr="{clips_n} dikey ekranı dolduracak şekilde kırpıldı{follows}",
-            clips_n=_clips(n),
-            follows=follows,
-        ),
-        checked=True,
+    if personed:
+        follows += say(
+            en="; the crop follows the person in the shot on {personed}",
+            tr="; {personed} tanesinde kadraj karedeki kişiyi takip ediyor",
+            personed=personed,
+        )
+    if middle:
+        follows += say(
+            en=(
+                "; the other one keeps the middle of the picture"
+                if middle == 1
+                else "; the other {middle} keep the middle of the picture"
+            ),
+            tr=(
+                "; diğeri görüntünün ortasını koruyor"
+                if middle == 1
+                else "; diğer {middle} tanesinde görüntünün ortası korunuyor"
+            ),
+            middle=middle,
+        )
+    return say(
+        en="Cropped the {clips_n} to fill the vertical frame{follows}",
+        tr="{clips_n} dikey ekranı dolduracak şekilde kırpıldı{follows}",
+        clips_n=_clips(n),
+        follows=follows,
     )
 
 

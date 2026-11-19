@@ -229,5 +229,6 @@
     "source": "hand_authored_golden",
     "case": "rewrite_one_clip_label_by_index",
     "lane": "kria_v2_text"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

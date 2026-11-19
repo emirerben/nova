@@ -53,22 +53,35 @@
     "expect_intents": [
       {
         "op": "group",
-        "source_quote_keywords": ["group", "paris"]
+        "source_quote_keywords": [
+          "group",
+          "paris"
+        ]
       },
       {
         "op": "label",
-        "source_quote_keywords": ["label", "city"]
+        "source_quote_keywords": [
+          "label",
+          "city"
+        ]
       },
       {
         "op": "label",
-        "source_quote_keywords": ["label", "activity"]
+        "source_quote_keywords": [
+          "label",
+          "activity"
+        ]
       },
       {
         "op": "caption",
-        "source_quote_keywords": ["weekend trip", "paris chapter"],
+        "source_quote_keywords": [
+          "weekend trip",
+          "paris chapter"
+        ],
         "creator_text": "Weekend trip"
       }
     ],
     "expect_any": true
-  }
+  },
+  "prompt_sha": "unpinned"
 }

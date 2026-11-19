@@ -10,16 +10,11 @@
       },
       {
         "file": "app/kria/planner.py",
-        "line": 6866,
+        "line": 7268,
         "tr": "{v1} güncellendi."
       }
     ],
     "caption": [
-      {
-        "file": "app/agents/clip_intent_planner.py",
-        "line": 264,
-        "tr": "yazı"
-      },
       {
         "file": "app/kria/intent_review_copy.py",
         "line": 22,
@@ -73,13 +68,25 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 256,
+        "line": 270,
         "tr": "başlık"
       },
       {
         "file": "app/services/finished_style_learning.py",
         "line": 623,
         "tr": "başlık"
+      }
+    ],
+    "{count} clips": [
+      {
+        "file": "app/pipeline/phone_plan_degrade.py",
+        "line": 276,
+        "tr": "{count} klibi"
+      },
+      {
+        "file": "app/services/kria_editor_ops_diff.py",
+        "line": 777,
+        "tr": "{count} {noun_tr}"
       }
     ]
   }

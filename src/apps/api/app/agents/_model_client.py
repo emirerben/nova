@@ -1,8 +1,9 @@
 """Model client implementations.
 
 `ModelDispatcher` is the public facade: agents are constructed with one and call
-`.invoke(model=...)`; the dispatcher routes to the right provider by model-name
-prefix. `gemini-*` → `GeminiClient`, `whisper-1` → `WhisperClient`.
+`.invoke(model=...)`; the dispatcher routes by the model's registered provider
+(`model_registry`): Google → `GeminiClient`, OpenAI/Anthropic → `_text_providers`, and
+Whisper → `WhisperClient`.
 
 Each provider client is responsible for:
   - translating runtime args into the SDK call shape
@@ -37,6 +38,8 @@ from app.agents._runtime import (
     TerminalError,
     TransientError,
 )
+from app.agents._tool_calls import ToolAnswer, ToolCall, ToolRequest, parse_arguments
+from app.agents.model_registry import WHISPER, provider_of
 from app.config import settings
 
 log = structlog.get_logger()
@@ -83,6 +86,9 @@ def _collect_gemini_stream(stream: Any, publish: Callable[[str], None]) -> Any:
     forwarded. The last chunk carries Gemini's aggregate usage metadata.
     """
     text_parts: list[str] = []
+    # Every part that is not thought text: function calls and the signatures Gemini 3 needs
+    # back on a later round of the same turn.
+    answer_parts: list[Any] = []
     last: Any = None
     finish_reason: Any = None
     model_version: Any = None
@@ -99,6 +105,8 @@ def _collect_gemini_stream(stream: Any, publish: Callable[[str], None]) -> Any:
         for candidate in chunk_candidates:
             for part in getattr(getattr(candidate, "content", None), "parts", None) or ():
                 value = getattr(part, "text", None)
+                if not (value and getattr(part, "thought", False)):
+                    answer_parts.append(part)
                 if not value:
                     continue
                 if getattr(part, "thought", False):
@@ -122,6 +130,7 @@ def _collect_gemini_stream(stream: Any, publish: Callable[[str], None]) -> Any:
         candidates=[SimpleNamespace(finish_reason=finish_reason)]
         if finish_reason is not None
         else [],
+        answer_parts=answer_parts,
     )
 
 
@@ -262,6 +271,7 @@ class GeminiClient(ModelClient):
         timeout_s: float = 30.0,
         thought_summary_callback: Callable[[str], None] | None = None,
         response_schema: dict[str, Any] | None = None,
+        tool_request: ToolRequest | None = None,
     ) -> ModelInvocation:
         from google.genai import errors as genai_errors  # type: ignore[import]
         from google.genai import types as genai_types  # type: ignore[import]
@@ -285,9 +295,17 @@ class GeminiClient(ModelClient):
             retry_options=genai_types.HttpRetryOptions(attempts=1),
             timeout=max(1, int(timeout_s * 1000)),
         )
-        if response_schema is not None:
+        if tool_request is not None:
+            if media_uri or response_schema is not None:
+                raise TerminalError("gemini tool calls take neither media nor a response schema")
+            contents = [
+                genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)]),
+                *_gemini_history(tool_request, genai_types),
+            ]
+            cfg_kwargs.update(_gemini_tool_config(tool_request, genai_types))
+        elif response_schema is not None:
             cfg_kwargs["response_json_schema"] = response_schema
-        if response_json:
+        if response_json and tool_request is None:
             cfg_kwargs["response_mime_type"] = "application/json"
         if max_output_tokens is not None:
             cfg_kwargs["max_output_tokens"] = max_output_tokens
@@ -381,7 +399,11 @@ class GeminiClient(ModelClient):
             # accepted and billable work, so retrying would risk a second call.
             raise ProviderOutcomeUnknownError(f"gemini sdk outcome unknown: {exc}") from exc
 
-        raw_text = getattr(response, "text", "") or ""
+        raw_text = (
+            _gemini_tool_answer(response).envelope()
+            if tool_request is not None
+            else getattr(response, "text", "") or ""
+        )
         usage = getattr(response, "usage_metadata", None)
         tokens_in = int(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0
         tokens_out = int(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0
@@ -401,6 +423,101 @@ class GeminiClient(ModelClient):
             tokens_tool=tokens_tool,
             token_details=_usage_details(usage),
         )
+
+
+def _gemini_tool_config(request: ToolRequest, types: Any) -> dict[str, Any]:
+    """System block, typed function declarations, and VALIDATED: calls are decoded against
+    their schemas. ANY (calls only) refuses a request whose schemas pass a size limit that a
+    phone edit's typed op tools exceed; VALIDATED and AUTO accept the full 91-tool set."""
+    return {
+        "system_instruction": request.system,
+        "tools": [
+            types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name=tool.name,
+                        description=tool.description,
+                        parameters_json_schema=tool.parameters,
+                    )
+                    for tool in request.tools
+                ]
+            )
+        ],
+        "tool_config": types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(mode="VALIDATED")
+        ),
+        "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+    }
+
+
+_GEMINI_SYNTHETIC_CALL_ID = "gemini-call-"
+
+
+def _gemini_history(request: ToolRequest, types: Any) -> list[Any]:
+    """Earlier rounds: the model's own parts (with their thought signatures), then one function
+    response per call. Another provider's answer has no signatures; Gemini 3 may refuse it, and
+    the caller then keeps the result it already has."""
+    contents: list[Any] = []
+    for exchange in request.history:
+        answer = exchange.answer
+        if answer.provider == "google" and answer.continuation:
+            parts = [types.Part.model_validate(part) for part in answer.continuation]
+        else:
+            parts = [
+                types.Part(
+                    function_call=types.FunctionCall(
+                        id=None if call.id.startswith(_GEMINI_SYNTHETIC_CALL_ID) else call.id,
+                        name=call.name,
+                        args=call.arguments or {},
+                    )
+                )
+                for call in answer.calls
+            ]
+        contents.append(types.Content(role="model", parts=parts))
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            id=None
+                            if result.call_id.startswith(_GEMINI_SYNTHETIC_CALL_ID)
+                            else result.call_id,
+                            name=result.name,
+                            response={"error" if result.is_error else "output": result.content},
+                        )
+                    )
+                    for result in exchange.results
+                ],
+            )
+        )
+    return contents
+
+
+def _gemini_tool_answer(response: Any) -> ToolAnswer:
+    parts = getattr(response, "answer_parts", None)
+    if parts is None:
+        candidates = getattr(response, "candidates", None) or ()
+        content = getattr(candidates[0], "content", None) if candidates else None
+        parts = getattr(content, "parts", None) or []
+    calls: list[ToolCall] = []
+    text: list[str] = []
+    continuation: list[dict[str, Any]] = []
+    for part in parts:
+        call = getattr(part, "function_call", None)
+        if call is not None:
+            calls.append(
+                ToolCall(
+                    id=call.id or f"{_GEMINI_SYNTHETIC_CALL_ID}{len(calls)}",
+                    name=str(call.name or ""),
+                    arguments=parse_arguments(call.args if call.args is not None else {}),
+                )
+            )
+        elif getattr(part, "text", None) and not getattr(part, "thought", False):
+            text.append(str(part.text))
+        if hasattr(part, "model_dump"):
+            continuation.append(part.model_dump(mode="json", exclude_none=True))
+    return ToolAnswer(provider="google", calls=calls, text="".join(text), continuation=continuation)
 
 
 def _jsonable(value: Any) -> Any:
@@ -551,7 +668,7 @@ class WhisperClient(ModelClient):
 
 
 class ModelDispatcher(ModelClient):
-    """Routes to provider client by model-name prefix. The single client agents hold."""
+    """Routes to provider client by registered provider. The single client agents hold."""
 
     def __init__(
         self,
@@ -582,9 +699,11 @@ class ModelDispatcher(ModelClient):
         timeout_s: float = 30.0,
         thought_summary_callback: Callable[[str], None] | None = None,
         response_schema: dict[str, Any] | None = None,
+        tool_request: ToolRequest | None = None,
     ) -> ModelInvocation:
-        if model in ("gpt-6.1-sol", "claude-sonnet-5-5"):
-            client = self._openai if model == "gpt-6.1-sol" else self._anthropic
+        provider = provider_of(model)
+        if provider in ("openai", "anthropic"):
+            client = self._openai if provider == "openai" else self._anthropic
             return client.invoke(
                 model=model,
                 prompt=prompt,
@@ -596,8 +715,10 @@ class ModelDispatcher(ModelClient):
                 thinking_level=thinking_level,
                 timeout_s=timeout_s,
                 response_schema=response_schema,
+                thought_summary_callback=thought_summary_callback,
+                tool_request=tool_request,
             )
-        if model.startswith("gemini"):
+        if provider == "google":
             return self._gemini.invoke(
                 model=model,
                 prompt=prompt,
@@ -610,8 +731,11 @@ class ModelDispatcher(ModelClient):
                 timeout_s=timeout_s,
                 thought_summary_callback=thought_summary_callback,
                 **({"response_schema": response_schema} if response_schema is not None else {}),
+                **({"tool_request": tool_request} if tool_request is not None else {}),
             )
-        if model == "whisper-1":
+        if tool_request is not None:
+            raise TerminalError(f"{model!r} does not take tool calls")
+        if model == WHISPER:
             return self._whisper.invoke(
                 model=model,
                 prompt=prompt,

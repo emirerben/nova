@@ -73,6 +73,7 @@ from app.services.apple_account_revocation import (
     validate_apple_revocation_configuration,
 )
 from app.services.auth_locks import account_lifecycle_lock_key, acquire_auth_locks
+from app.services.cleared_failures import record_cleared_failure
 from app.services.cloud_render_policy import cloud_render_mutation_block_reason
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
@@ -2047,11 +2048,34 @@ async def report_library_playback_failure(
     ).scalar_one_or_none()
     if owned is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    # Cigdem 2 (KRI-1497): a media-services reset is tagged, never downgraded. The editor tries to
+    # recover from it (KRI-626) but posts this report BEFORE trying, and a finished render whose
+    # retries run out reports nothing more, so this warning stays the only failure signal.
     log.warning(
         "editor_playback_failed",
         job_id=str(jid),
         user_id=str(user.id),
+        media_services_reset=_is_media_services_reset(body),
         **body.model_dump(),
+    )
+
+
+# AVErrorMediaServicesWereReset, and the expired-audio-session OSStatus ('!ses') the dead session
+# leaves on the next item: the same signature `NativeEditorSession.isMediaServicesResetFailure`
+# recovers from on the phone.
+_MEDIA_SERVICES_RESET_CODE = -11819
+_EXPIRED_AUDIO_SESSION_STATUS = 561210739
+
+
+def _is_media_services_reset(body: LibraryPlaybackDiagnostic) -> bool:
+    if body.error_domain == "AVFoundationErrorDomain" and (
+        body.error_code == _MEDIA_SERVICES_RESET_CODE
+        or body.underlying_code == _EXPIRED_AUDIO_SESSION_STATUS
+    ):
+        return True
+    return (
+        body.error_domain == "NSOSStatusErrorDomain"
+        and body.error_code == _EXPIRED_AUDIO_SESSION_STATUS
     )
 
 
@@ -2361,6 +2385,7 @@ async def retry_failed_job(
             },
         )
 
+    record_cleared_failure(locked_job, fallback_reason=f"no_reason_{locked_job.status}")
     locked_job.status = "queued"
     locked_job.error_detail = None
     locked_job.failure_reason = None

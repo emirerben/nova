@@ -1738,6 +1738,12 @@ import KriaMediaEngine
         XCTAssertEqual(oldPlayer.rate, 0, "Pausing the editor must leave no second audio stream")
     }
 
+    /// Failure modes: (1) a slow drag must finish composed stills of the photo or video overlay before Play; (2) the
+    /// newest drag request can still be rendering at the handoff, and its still must not cover playback once it lands;
+    /// (3) Play must play on from the scrub position into the overlay; (4) a new scrub pauses playback.
+    /// The drag used to sleep 60 ms per step and then wait 2.5 s of wall clock for a still. On a busy runner every still
+    /// took longer than a step, so each finished one was dropped for a newer request, and the last one missed the 2.5 s
+    /// (KRI-1379). The slow drag now awaits each still it asked for; the fast drag and Play run without waiting at all.
     func testPhotoAndVideoOverlayPlaybackAdvancesAfterScrubbing() async throws {
         let footage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         let imageURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
@@ -1759,18 +1765,16 @@ import KriaMediaEngine
                     fingerprint: try SHA256Fingerprinter().fingerprint(file: url), duration: kind == "video" ? 4 : nil), url: url)
             await session.prepareFixtureSourcePreview(url: footage, mediaSources: ["visual:paper-media:paper-media": media])
             XCTAssertEqual(session.sourcePreviewState, .ready)
-            // Slow dragging lets several composed stills finish before Play;
-            // the final request may still be rendering during the handoff.
-            for step in 0..<24 {
-                session.seek(to: 0.1 + Double(step) * 0.025)
-                try await Task.sleep(for: .milliseconds(60))
+            // A slow drag: each composed still finishes before the finger moves on.
+            for step in 0..<3 {
+                session.seek(to: 0.1 + Double(step) * 0.1)
+                await session.finishScrubFramesForTesting()
+                XCTAssertNotNil(session.scrubPreviewFrame, "The \(kind) still at drag step \(step) is on screen")
             }
+            // Then a fast one ending at 0.5, and Play before its newest still is ready.
+            for step in 0..<20 { session.seek(to: 0.3 + Double(step) * 0.01) }
             session.seek(to: 0.5)
-            for _ in 0..<100 {
-                if session.scrubPreviewFrame != nil { break }
-                try await Task.sleep(for: .milliseconds(25))
-            }
-            XCTAssertNotNil(session.scrubPreviewFrame)
+            XCTAssertNotNil(session.scrubPreviewFrame, "A drag keeps the last still until the newer one is ready")
             session.togglePlayback()
             for _ in 0..<160 {
                 if session.currentTime >= 1.5 { break }

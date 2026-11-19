@@ -56,7 +56,7 @@ struct NativeOverlayGenerationPanel: View {
             HStack {
                 Button { persist(); onBack() } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
                     .accessibilityLabel("Back to media").accessibilityIdentifier("overlay-generation-back")
-                Text(generatedDraft == nil ? "Generate media" : "Preview").font(KriaFont.body(16).weight(.semibold))
+                Text(generatedDraft == nil ? String(localized: "Generate media") : String(localized: "Preview")).font(KriaFont.body(16).weight(.semibold))
                 Spacer()
                 if generatedDraft == nil || !previousPlans.isEmpty {
                     Menu {
@@ -66,7 +66,7 @@ struct NativeOverlayGenerationPanel: View {
                         if !previousPlans.isEmpty {
                             Menu("Earlier previews") {
                                 ForEach(previousPlans.indices, id: \.self) { index in
-                                    Button(previousPlans[index].overlays.first?.title ?? "Earlier plan") {
+                                    Button(previousPlans[index].overlays.first?.title ?? String(localized: "Earlier plan")) {
                                         generatedDraft = nil
                                         let earlier = previousPlans.remove(at: index)
                                         if let plan { previousPlans.append(plan) }
@@ -193,7 +193,7 @@ struct NativeOverlayGenerationPanel: View {
     private func timing(_ row: OverlayProposal) -> String {
         let start = session.overlayOutputTime(row.startS).formatted(.number.precision(.fractionLength(1)))
         let end = session.overlayOutputTime(row.endS).formatted(.number.precision(.fractionLength(1)))
-        return "Appears at \(start)s to \(end)s"
+        return String(localized: "Appears at \(start)s to \(end)s")
     }
 
     private func proposalView(_ row: OverlayProposal) -> some View {
@@ -205,7 +205,7 @@ struct NativeOverlayGenerationPanel: View {
             }
             Text(row.title).font(KriaFont.body(14).weight(.semibold))
             Text(timing(row)).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-            Button(session.containsOverlayProposal(row.id) ? "Edit in timeline" : row.kind == .image ? "Review image" : "Add to timeline") { use(row) }
+            Button(session.containsOverlayProposal(row.id) ? String(localized: "Edit in timeline") : row.kind == .image ? String(localized: "Review image") : String(localized: "Add to timeline")) { use(row) }
                 .buttonStyle(KriaPrimaryButtonStyle())
                 .disabled(busy || (!session.containsOverlayProposal(row.id) && (stale || !row.isValid(duration: session.overlayBaseDuration) || (row.kind == .image && !generationAvailable)) && !hasRecoverablePreview(row)))
                 .accessibilityIdentifier("overlay-generation-use-" + row.id)
@@ -227,7 +227,7 @@ struct NativeOverlayGenerationPanel: View {
                 persist()
                 if let first = value.overlays.first, first.kind == .image, generationAvailable { busy = false; use(first) }
             } catch is CancellationError { }
-            catch { self.error = "Couldn’t plan overlays. " + error.localizedDescription }
+            catch { self.error = String(localized: "Couldn’t plan overlays. \(error.localizedDescription)") }
         }
     }
 
@@ -253,7 +253,7 @@ struct NativeOverlayGenerationPanel: View {
                 try recordApplied()
                 onAdded(row)
             } catch is CancellationError { }
-            catch { self.error = "Couldn’t add this overlay. Your preview is preserved. " + error.localizedDescription }
+            catch { self.error = String(localized: "Couldn’t add this overlay. Your preview is preserved. \(error.localizedDescription)") }
         }
     }
 

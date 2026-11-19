@@ -1,4 +1,5 @@
 import Foundation
+import KriaMediaEngine
 
 // KRI-125: uploads start while the user is still choosing, and the picker remembers what they
 // already chose. The types here are deliberately UI-free so the rules are unit-testable
@@ -183,6 +184,10 @@ struct TransientRetryPolicy {
 
     init(limit: Int) { self.limit = max(1, limit) }
 
+    /// The one-at-a-time limit on live `AVAssetExportSession` proxy transcodes, shared by every upload and by a
+    /// recorded take's prewarm: a second concurrent export invites `AVError.operationInterrupted` on older devices.
+    static let proxyExports = UploadAdmissionGate(limit: 1)
+
     var activeCount: Int { active }
     var waitingCount: Int { waiters.count }
 
@@ -220,4 +225,18 @@ struct TransientRetryPolicy {
         guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
         waiters.remove(at: index).continuation.resume(throwing: CancellationError())
     }
+}
+
+extension SourcePrewarmer {
+    /// The app's instance: proxies at the analysis preset, in the caches directory (the system may reclaim it), each
+    /// export waiting its turn in `UploadAdmissionGate.proxyExports`.
+    static let shared = SourcePrewarmer(
+        directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("KriaTakePrewarm", isDirectory: true),
+        admission: Admission(
+            acquire: { try await UploadAdmissionGate.proxyExports.acquire() },
+            release: { Task { @MainActor in UploadAdmissionGate.proxyExports.release() } }
+        ),
+        makeProxy: { source, destination in
+            try await AVFoundationProxyGenerator(preset: .analysis).makeProxy(for: source, destination: destination)
+        })
 }

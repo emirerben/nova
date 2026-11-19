@@ -15,7 +15,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._lines import direction_line, pacing_line, stated_length
 from app.kria.route_capabilities._types import (
+    EDITORIAL_PLAN_NOT_RUN,
+    KNOWN_GAP,
     Applied,
     AskDecline,
     Handling,
@@ -28,14 +31,14 @@ FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
-        lines.pacing_line(
+        pacing_line(
             lambda _value, _s: False,
             "a slide post shows each slide for its own time",
             "slayt gönderisi her slaytı kendi süresince gösteriyor",
         )
     ),
     "direction": NotApplied(
-        lines.direction_line(
+        direction_line(
             None,
             "a slide post shows your slides in order",
             "slayt gönderisi slaytlarını sırayla gösteriyor",
@@ -44,7 +47,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "caption_style": NotApplied(lines.caption_style),
     "audio_strategy": NotApplied(lines.slide_audio),
     "target_duration_s": NotApplied(
-        lines.stated_length(
+        stated_length(
             "a slide post's length follows its slides",
             "slayt gönderisinin uzunluğu slaytlarına bağlı",
         )
@@ -82,3 +85,23 @@ ASK_DECLINES: tuple[AskDecline, ...] = (
     ),
     AskDecline("captions", lambda req, _s: lines.asks_captions_on(req), lines.captions_decline),
 )
+
+# Planner-settable fields this route's code never reads and its table does not mention: today a
+# value the planner sets here is dropped without a word (KRI-1429). Kept equal to the code scan by
+# `tests/kria/test_route_field_coverage.py`; delete an entry when the field is read or listed.
+UNREAD_DECLARED: dict[str, str] = {
+    "editorial_plan": EDITORIAL_PLAN_NOT_RUN,
+    "execution_contract": KNOWN_GAP,
+    "font_family": KNOWN_GAP,
+    "image_layout": KNOWN_GAP,
+    "media_scope": KNOWN_GAP,
+    "mixed_media_timing": KNOWN_GAP,
+    "montage_audio": KNOWN_GAP,
+    "montage_cadence": KNOWN_GAP,
+    "opening_title_duration_s": KNOWN_GAP,
+    "render_program": KNOWN_GAP,
+    "selected_media_ids": KNOWN_GAP,
+    "split_screen": KNOWN_GAP,
+    "text_color": KNOWN_GAP,
+    "video_reuse_policy": KNOWN_GAP,
+}

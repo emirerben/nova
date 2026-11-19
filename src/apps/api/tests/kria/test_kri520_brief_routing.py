@@ -1,9 +1,9 @@
-"""KRI-520: the scope router understands Turkish redo / move / remove asks.
+"""KRI-520: the scope router understands Turkish move / remove asks.
 
 A Turkish "2. klibi başa al" or "son klibi sil" is a quick editor edit, not a slow
-full re-plan and re-render; "tekrar dene" / "sıfırdan yap" is a supported redo. The
-Turkish patterns fold text with ``loose_text`` (ASCII-typed Turkish matches) and never
-run on an English message; English routing is exactly what it was before.
+full re-plan and re-render. The Turkish patterns fold text with ``loose_text`` (ASCII-typed
+Turkish matches) and never run on an English message. Whether a turn is a redo is the brief
+extractor's reading, never the wording (KRI-1392).
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from app.kria.brief import (
     _asks_remove,
     _fold_for_redo,
     route_requirements,
-    wants_full_replan,
 )
 
 
@@ -30,87 +29,10 @@ CAN_EDIT = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True, can_ed
 WITH_LANE = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True)
 
 
-# ------------------------------------------------------------------------------ redo
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        # English.
-        "Try again",
-        "START OVER",
-        "do it again",
-        "redo this",
-        # Turkish, as typed with and without Turkish letters.
-        "tekrar hazırla",
-        "tekrar hazirla",
-        "TEKRAR HAZIRLA",
-        "yeniden oluştur",
-        "yeniden olustur",
-        "tekrar oluştur",
-        "yeniden yap",
-        "YENİDEN YAP",
-        "tekrar yap",
-        "baştan yap",
-        "bastan yap",
-        "BAŞTAN YAPALIM",
-        "Baştan kes",
-        "sıfırdan yap",
-        "sifirdan basla",
-        "SIFIRDAN",
-        "tekrar dene",
-        "yeniden dene",
-        "bir daha yap",
-        "bir daha dene",
-        "Bunu bir daha yap lütfen",
-        "olmadı, tekrar dene",
-        "videoyu tekrar hazırla",
-        "tekrar yapar mısın",
-    ],
-)
-def test_redo_phrases_replan(message: str) -> None:
-    assert wants_full_replan(message)
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        # English ordinary edits and negations are unchanged.
-        "make the title bigger again",
-        "cut the intro again, it's too slow",
-        "don't do that again",
-        "make the text bigger",
-        # Turkish ordinary edits.
-        "yaz rengini değiştir",
-        "tekrar kes",
-        "başlığı büyüt",
-        "sonra tekrar bakarız",
-        "yeniden",
-        "bir daha",
-        # "baştan sona" is start to finish, not "from the top".
-        "videoyu baştan sona izledim, güzel olmuş",
-        # Negated asks are not redo asks.
-        "tekrar yapma",
-        "bir daha yapma",
-        "tekrar deneme",
-        "yeniden yapmayın",
-        # A redo aimed at one element is an ordinary edit.
-        "başlığı tekrar yap",
-        "müziği bir daha yap",
-        "yazıyı yeniden oluştur",
-        "altyazıyı tekrar hazırla",
-        "2. klibi tekrar yap",
-    ],
-)
-def test_ordinary_turkish_and_english_edits_are_not_redo(message: str) -> None:
-    assert not wants_full_replan(message)
-
-
 def test_english_routing_reads_all_caps_like_lowercase() -> None:
     # KRI-781: the English fold used to map a capital I to a dotless ı, so all-caps
-    # English with an I never matched ("TRY AGAIN" -> "try agaın"). It now uses the
+    # English with an I never matched ("REMOVE CLIP 2" -> "remove clıp 2"). It now uses the
     # shared Turkish-aware fold, so capitals route exactly like lowercase.
-    assert wants_full_replan("TRY AGAIN") == wants_full_replan("try again") is True
     assert _asks_remove("REMOVE CLIP 2") == _asks_remove("remove clip 2") is True
     # English words that are also Turkish verbs/ordinals never reach the Turkish rules.
     assert not _asks_remove("Put video 3 at the start")
@@ -250,9 +172,9 @@ def test_ordinary_sentences_are_not_remove_asks(message: str) -> None:
             "çektiğim saate göre sırala",
             "replan",
         ),
-        # A redo phrase wins over everything.
-        ([_upd("select", "global")], CAN_EDIT, "son klibi sil ve baştan yap", "replan"),
-        ([], CAN_EDIT, "sıfırdan yap", "replan"),
+        # Wording alone never re-plans: the extractor's rebuild verdict does (KRI-1392).
+        ([_upd("select", "global")], CAN_EDIT, "son klibi sil ve baştan yap", "editor_ops"),
+        ([], CAN_EDIT, "sıfırdan yap", "editor_ops"),
         ([], CAN_EDIT, "başlığı büyüt", "editor_ops"),
         ([], CAN_EDIT, "başlığı tekrar yap", "editor_ops"),
     ],

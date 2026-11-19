@@ -4,7 +4,7 @@ Engines (per turn):
 
 * `recorded` — the fixture carries the outcome (a prod capture or an authored reference).
 * `v1_copilot` — the recorded *model output* is replayed through the REAL v1 copilot path:
-  `EditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` (the same call chain
+  `ChatEditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` (the same call chain
   `execute_copilot_edit` runs, minus the DB row locks). The reply and the resulting edit are
   computed, not stored, so a change to any of those functions moves the score.
 * `v2_kria` — cassettes execute the real agent, adapter, registry and edit compiler.
@@ -144,23 +144,44 @@ def discover_fixture_paths(root: Path = THREAD_DIR) -> list[Path]:
 # ── v1 copilot engine ────────────────────────────────────────────────────────
 
 
-def _plan_with_texts(plan: FinalPlan, elements: list[dict[str, Any]]) -> FinalPlan:
+def _plan_with_texts(
+    plan: FinalPlan,
+    elements: list[dict[str, Any]],
+    *,
+    chat_authored: bool = False,
+    title_texts: frozenset[str] = frozenset(),
+    title: str | None = None,
+    aliases: dict[str, PlanText] | None = None,
+) -> FinalPlan:
     """Project committed editor text elements back onto the plan, keeping the role a text
-    lane already had (the editor payload does not carry title/label roles)."""
-    roles = {t.id: t for t in plan.texts}
+    lane already had (the editor payload does not carry title/label roles).
+
+    ``chat_authored`` is the v1 chat path, where every new bar compiles as ``generative_intro``
+    whether it is the title or a caption: there the title is the bar the ops said was one
+    (``title_texts``, an ``add_text`` styled from the title) and every other new bar is a label,
+    the convention the prod capture uses. ``title`` is a ``set_title`` result, which the editor
+    keeps outside the text elements. ``aliases`` maps the text ids the model saw to the texts of
+    the edit before this turn (a recording keeps the ids it was asked with; a replay mints new
+    ones)."""
+    roles = {**{t.id: t for t in plan.texts}, **(aliases or {})}
     texts: list[PlanText] = []
     for element in elements:
         if element.get("removed"):
             continue
         known = roles.get(str(element.get("id")))
         compiled_role = element.get("role")
-        projected_role = (
-            "title"
-            if compiled_role in {"title", "generative_intro"}
-            else "label"
-            if compiled_role in {"label", "generative_sequence"}
-            else "other"
-        )
+        if chat_authored and str(element.get("id")).startswith("clip-label-"):
+            projected_role = "label"
+        elif chat_authored and compiled_role == "generative_intro":
+            projected_role = "title" if str(element.get("text")) in title_texts else "label"
+        else:
+            projected_role = (
+                "title"
+                if compiled_role in {"title", "generative_intro"}
+                else "label"
+                if compiled_role in {"label", "generative_sequence"}
+                else "other"
+            )
         texts.append(
             PlanText(
                 id=str(element.get("id")),
@@ -185,6 +206,19 @@ def _plan_with_texts(plan: FinalPlan, elements: list[dict[str, Any]]) -> FinalPl
                 ),
                 clip_id=known.clip_id if known else None,
             )
+        )
+    if title is not None:
+        old = next((t for t in texts if t.role == "title"), None)
+        texts = [t for t in texts if t.role != "title"]
+        texts.insert(
+            0,
+            PlanText(
+                id=old.id if old else "title",
+                role="title",
+                text=title,
+                start_s=old.start_s if old else 0.0,
+                end_s=old.end_s if old else min(2.5, plan.duration_s or 2.5),
+            ),
         )
     return plan.model_copy(update={"texts": texts})
 
@@ -245,11 +279,86 @@ def _plan_with_timeline_slots(plan: FinalPlan, slots: list[Any]) -> FinalPlan:
     )
 
 
+def _with_media_ids(slots: list[Any], snapshot: dict[str, Any]) -> list[Any]:
+    """Compiled slot rows carry a slot id and an upload index, not the media id the scorer and
+    the footage use. Restore it from the snapshot the model saw (rows it cannot place keep
+    their own identity)."""
+    by_slot = {s.get("slot_id"): s.get("media_id") for s in snapshot.get("slots") or []}
+    by_index = {p.get("clip_index"): p.get("media_id") for p in snapshot.get("source_pool") or []}
+    rows = []
+    for slot in slots:
+        row = slot.model_dump(mode="json") if hasattr(slot, "model_dump") else dict(slot)
+        media_id = (
+            row.get("media_id")
+            or by_slot.get(row.get("slot_id"))
+            or by_index.get(row.get("clip_index"))
+        )
+        rows.append({**row, "media_id": media_id} if media_id else row)
+    return rows
+
+
+# What a turn shows when the copilot call itself failed (the chat route answers 502).
+_FAILED_TURN_REPLY = "I couldn't finish that edit. Nothing changed."
+
+
+class _AnswerSequence:
+    """Replays one recorded answer per model call, in order (first answer, then repair rounds)."""
+
+    def __init__(self, answers: list[str]):
+        self.answers = answers
+        self.calls = 0
+
+    def invoke(self, **_: Any):
+        from app.agents._runtime import ModelInvocation, TerminalError
+
+        if self.calls >= len(self.answers):
+            raise TerminalError("no recorded answer for this round")
+        self.calls += 1
+        return ModelInvocation(raw_text=self.answers[self.calls - 1])
+
+
+def replay_turn_rounds(turn_id: str, payload: dict[str, Any]) -> Any:
+    """A KRI-797 recording through the copilot (typed tool calls or JSON, per ``output_mode``) and
+    the chat route's repair loop: the first answer, then one recorded answer per round. None:
+    the call failed."""
+    if payload.get("error"):
+        return None
+    import asyncio
+    import time
+
+    from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
+    from app.routes._copilot import _repaired
+    from app.services.creator_model_comparison import tools_agent
+
+    from ..runners.eval_runner import build_eval_run_context
+
+    client = _AnswerSequence([str(payload["raw_text"]), *payload.get("repairs", [])])
+    agent = ChatEditCopilotAgent(client)
+    if payload["output_mode"] == "tools":
+        agent = tools_agent(agent)
+    agent_input = EditCopilotInput.model_validate(payload["agent_input"])
+
+    def context(suffix: str = ""):
+        return build_eval_run_context(f"request-following:{turn_id}{suffix}", is_live=False)
+
+    output = agent.run(agent_input, ctx=context())
+    return asyncio.run(
+        _repaired(
+            agent,
+            agent_input,
+            output,
+            context,
+            deadline_monotonic=time.monotonic() + 3600,
+            timeout_override_s=None,
+        )
+    )
+
+
 def replay_v1_copilot(
     turn: Turn, plan_before: FinalPlan, *, mode: Mode = "replay"
-) -> tuple[FinalPlan, str, list[str]]:
+) -> tuple[FinalPlan, str, list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     """Run one recorded copilot turn through the real v1 chat-edit path."""
-    from app.agents.edit_copilot import EditCopilotAgent
+    from app.agents.edit_copilot import ChatEditCopilotAgent
     from app.routes._copilot import _honest_outcome
     from app.services.creation_editor_actions import _applied_summary, _rejection_reply
     from app.services.kria_editor_ops import KriaEditorOpError, compile_editor_ops
@@ -259,38 +368,75 @@ def replay_v1_copilot(
 
     payload = turn.copilot or {}
     agent_input = payload["agent_input"]
-    if mode == "live":
-        from app.agents._model_client import default_client
-
-        client = default_client()
+    if payload.get("output_mode") in ("tools", "json"):
+        output = replay_turn_rounds(turn.turn_id, payload)
+        if output is None:
+            return plan_before, _FAILED_TURN_REPLY, ["copilot failed: " + payload["error"]], [], []
     else:
-        client = CassetteModelClient(str(payload["raw_text"]))
-    output = EditCopilotAgent(client).run(
-        agent_input,
-        ctx=build_eval_run_context(f"request-following:{turn.turn_id}", is_live=mode == "live"),
-    )
+        if mode == "live":
+            from app.agents._model_client import default_client
+
+            client = default_client()
+        else:
+            client = CassetteModelClient(str(payload["raw_text"]))
+        output = ChatEditCopilotAgent(client).run(
+            agent_input,
+            ctx=build_eval_run_context(f"request-following:{turn.turn_id}", is_live=mode == "live"),
+        )
 
     # The same gate run_copilot_turn applies before it derives the honest outcome.
     ops = [] if (output.needs_clarification or output.intent != "edit") else output.ops
     outcome, reply = _honest_outcome(output, ops, supports_proposed=True)
     notes = [f"copilot outcome={outcome}", f"ops={[op.get('op') for op in ops]}"]
+    parsed = [dict(op) for op in ops]
     if not ops:
-        return plan_before, reply, notes
+        return plan_before, reply, notes, [], []
 
     job, variant = build_synthetic_variant_and_job(agent_input.get("variant_snapshot") or {}, ops)
     try:
         compiled = compile_editor_ops(job, variant, ops)
     except KriaEditorOpError as exc:
         notes.append(f"compile rejected: {exc}")
-        return plan_before, _rejection_reply(exc), notes
+        return plan_before, _rejection_reply(exc), notes, parsed, []
 
     changes = list(compiled.changes)
     notes.append(f"changes={changes}")
     elements = compiled.payload.text_elements
-    plan_after = _plan_with_texts(plan_before, elements) if elements is not None else plan_before
+    title_texts = frozenset(
+        str(op.get("text"))
+        for op in ops
+        if op.get("op") == "add_text" and op.get("style_from") == "title"
+    )
+    plan_after = plan_before
+    snapshot_bars = (agent_input.get("variant_snapshot") or {}).get("text_bars") or []
+    aliases = (
+        {str(bar["id"]): text for bar, text in zip(snapshot_bars, plan_before.texts, strict=True)}
+        if len(snapshot_bars) == len(plan_before.texts)
+        else {}
+    )
+    if elements is not None or compiled.payload.title is not None:
+        plan_after = _plan_with_texts(
+            plan_before,
+            elements if elements is not None else [t.model_dump() for t in plan_before.texts],
+            chat_authored=True,
+            title_texts=title_texts,
+            title=compiled.payload.title,
+            aliases=aliases,
+        )
     if compiled.payload.timeline_slots is not None:
-        plan_after = _plan_with_timeline_slots(plan_after, compiled.payload.timeline_slots)
-    return plan_after, f"{_applied_summary(changes)}. Everything else is unchanged.", notes
+        plan_after = _plan_with_timeline_slots(
+            plan_after,
+            _with_media_ids(
+                compiled.payload.timeline_slots, agent_input.get("variant_snapshot") or {}
+            ),
+        )
+    return (
+        plan_after,
+        f"{_applied_summary(changes)}. Everything else is unchanged.",
+        notes,
+        parsed,
+        parsed,
+    )
 
 
 def _proof(observed: _ObservedClient, *, prompt_version: str, compiler: Any) -> TurnExecutionProof:
@@ -325,7 +471,7 @@ def replay_v2_editor(
         raw = json.dumps(raw, ensure_ascii=False)
 
     from app.agents._model_client import default_client
-    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.agents.edit_copilot import ChatEditCopilotAgent, EditCopilotInput
     from app.kria.planner import adapt_editor_action
     from app.kria.registry import KRIA_TOOLS
     from app.routes._copilot import _honest_outcome
@@ -374,7 +520,7 @@ def replay_v2_editor(
             "original_request": payload.get("original_request"),
         }
     )
-    output = EditCopilotAgent(observed).run(
+    output = ChatEditCopilotAgent(observed).run(
         agent_input,
         ctx=build_eval_run_context(f"request-following:{turn.turn_id}", is_live=mode == "live"),
     )
@@ -386,7 +532,9 @@ def replay_v2_editor(
         "unexecuted: stage/save/DB dispatch/device apply/render/export",
     ]
     proof = _proof(
-        observed, prompt_version=EditCopilotAgent.spec.prompt_version, compiler=compile_editor_ops
+        observed,
+        prompt_version=ChatEditCopilotAgent.spec.prompt_version,
+        compiler=compile_editor_ops,
     )
     if not ops:
         snapshot_plan = _plan_with_texts(
@@ -523,10 +671,19 @@ def _v2_traces(fixture: RFFixture) -> dict[str, Any]:
 def replay_turns(fixture: RFFixture, *, mode: Mode = "replay") -> list[TurnResult]:
     v2 = _v2_traces(fixture)
     results: list[TurnResult] = []
-    current = FinalPlan()
+    current = fixture.initial_plan or FinalPlan()
     for turn in fixture.turns:
-        if turn.engine == "v1_copilot":
-            plan, reply, notes = replay_v1_copilot(turn, current, mode=mode)
+        if turn.engine == "v1_copilot" and mode == "replay" and "raw_text" not in turn.copilot:
+            # Authored with its snapshot, not yet recorded against a real model.
+            result = TurnResult(
+                turn_id=turn.turn_id,
+                engine=turn.engine,
+                plan_after=current,
+                reply=None,
+                unrecorded=True,
+            )
+        elif turn.engine == "v1_copilot":
+            plan, reply, notes, parsed, applied = replay_v1_copilot(turn, current, mode=mode)
             result = TurnResult(
                 turn_id=turn.turn_id,
                 engine=turn.engine,
@@ -537,6 +694,8 @@ def replay_turns(fixture: RFFixture, *, mode: Mode = "replay") -> list[TurnResul
                 if turn.expected_outcome
                 else None,
                 expected_reply=turn.expected_outcome.reply if turn.expected_outcome else None,
+                parsed_ops=parsed,
+                applied_ops=applied,
             )
         elif turn.engine == "v2_kria" and (turn.kria or {}).get("cassette"):
             plan, reply, notes, proof = replay_v2_editor(turn, current, mode=mode)
@@ -681,6 +840,7 @@ def score_reference(fixture: RFFixture, footage: Footage | None = None) -> Threa
         reference.reply,
         footage=footage,
         previous_plan=reference.plan_before,
+        ops={"parsed": reference.applied_ops, "compiled": reference.applied_ops},
     )
     turn = TurnResult(
         turn_id="reference",

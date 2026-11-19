@@ -61,6 +61,30 @@ Default off and byte-identical off (guard: `tests/services/test_creation_text_as
 | Tool result and side-effect identity | `CreatorAgentExecution` |
 | Rendered media | existing `PlanItem` and `Job` |
 
+### One latest editable document
+
+A draft head is current only while its stamps match the variant's generation (or the generation a
+phone publish was made from; `app/kria/editor_head.py`, read-only). **The server never moves a
+head when the generation moves**: approval execution, phone publish, speech cut and every other
+writer leave the head rows as they are, and a head on an old generation is not current and every
+reader ignores it. The server never merges draft content. `GET /draft` adds `head_current` and
+`base_generation`; the phone converges on the latest and replays its own staged AI edit.
+On a variant that has only `render_finished_at`, a head stamped with that value (written by this
+branch, or by `main`'s plan-review undo) is current; `main`'s draft PUT refused such rows and
+this branch accepts them.
+
+- **The one server write** is at Save: a v2 variant whose pinned `editor_draft` is not current
+  (409 `editor_draft_unavailable` forever before) has the PINNED row replaced by the committed
+  document (`editor_empty_drafts.replace_stranded_saved_draft`; the pin moves from that row to
+  its replacement and nowhere else, and no head is touched). The timeline GET serves the same
+  document without writing. An empty-state variant keeps its 409.
+- Editor-commit 409/412 carry `problem {code, recovery, current_base_generation}` beside the
+  unchanged `detail`; `reload` only for `baseline_conflict`, `GUIDED_REVISION_STALE`,
+  `deletion_target_stale`.
+- Heads already left behind: `python -m app.cli.repair_editor_heads` is a dry run by default;
+  `--apply` needs `--variant` and `--operation {retire,keep-ai-lanes}`, refuses a current head,
+  and needs the owner's approval before a production run.
+
 Runtime-v1 threads keep their existing controller and projections. A thread never
 changes runtime owner because a flag changes during its lifetime.
 
@@ -107,6 +131,26 @@ The compiler is non-mutating. Approval consumption calls the existing editor
 commit or speech-cut validator while the exact Job is locked, records the new
 generation in the accepted execution, commits, and only then publishes. A lost
 broker acknowledgement becomes `outcome_unknown`; it is never blindly retried.
+
+### Partial apply and repair (KRI-1386, KRI-1387)
+
+A rejected op rejects only itself. The confidence gate reads the model's own
+confidence, so one bad value no longer turns a whole edit into a question. The
+planner binds `editor_compile_check` (`validate_ops_per_op` on a detached copy of
+the job and projected variant) to the copilot, so an op the compiler refuses is
+found inside the turn instead of failing the draft later. A bulk media op and
+`patch_text_appearance` stay atomic: when one fails, its siblings are held back.
+
+Every rejected op the model could fix goes back to it in one `## REPAIR` block
+(`repair_feedback`), with the open op families or the valid index range where
+those fix it. A limit inside an open family (a text that follows its narration
+timing) is named, not re-asked, because asking again only repeats it. The model
+answers with corrected ops tagged `"repairs": "r<n>"` or an unmet entry. Kept
+ops are never re-asked. `run_copilot_turn` runs at most
+two repair rounds and only while one more copilot call fits before the turn
+deadline (one round for a stateless request). Each round is its own `agent_run`
+with `repair` in `input_json`. A rejected op no round fixed is named in
+`unmet_requests`, so the reply and the phone receipts say it was not done.
 
 ## Conversation contract
 
@@ -181,8 +225,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
 - **Router.** `route_requirements` is deterministic. `replan` when a new
   requirement is `order`/`select`, a per-clip text requirement arrives and the
   plan has no per-clip text lane, the kinds are mixed, there is no editable
-  render, or the message asks to redo it ("do it again based on my prompt").
-  Otherwise `editor_ops`. With a render present the Main Creator runs first (it
+  render, or the turn carries a rebuild verdict. Otherwise `editor_ops`. No
+  wording decides a rebuild (KRI-1392): the brief extractor's `request_scope`
+  does where it runs, and the copilot answers every other rendered turn with
+  ops, a question, or a refusal that offers a fresh version. Replying with the
+  word that offer quotes ("redo", "yeniden yap", "nochmal") re-plans; an
+  editor target that cannot be opened never re-plans, and its reply carries the
+  same offer. Evidence: `docs/reviews/kri-1384/routing-cues.md`. With a render present the Main Creator runs first (it
   extracts the requirements) and the copilot only when the router says
   `editor_ops`. `_validate_draft_plan` rejects an editor-ops-only plan when the
   route is `replan`.
@@ -919,7 +968,10 @@ not refused, asked about or re-planned.
   `NativeEditorSession.swift` and the files extending it (`NativeEditorRetiming.swift`,
   `NativeTextEditing.swift`) to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
   `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
-  an action has none.
+  an action has none. `test_every_agent_op_runs_from_iphone_chat` (KRI-1388) runs every op of every
+  `agent_ops` group through the real parser and compiler on a device snapshot, and
+  `test_an_unsupported_group_is_refused_on_a_phone` fails when an unsupported group starts to run.
+  Verdicts and evidence: `docs/reviews/kri-1384/parity-on-phone.md`.
 
 Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
 (`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
@@ -1065,6 +1117,26 @@ flash latencies in the `lane_c` replay are assumed. Worst case is three paid Mai
 one turn (each fenced under its own reservation; the planner is a pure call with no side effects).
 Check `agent_deadline_degraded` / `agent_deadline_fallback` log lines and `deadline_degraded` on
 `agent_run` events after rollout before tuning `degraded_timeout_s` / `deadline_ladder_reserve_s`.
+
+## A non-Gemini Main Creator (KRI-1385)
+
+Model facts (provider, reasoning efforts, degrade ladder, token price, media and tool support) live
+in one table, `app/agents/model_registry.py`. Dispatch, preflight, the ledger price, the comparison
+harness and the ladder above read it; `tests/agents/test_model_registry_sentinel.py` fails if any
+other module spells a non-Gemini model name. The ladder is the model's `effort_ladder`: a deadline
+steps one rung down once per model (Gemini 3 `high` -> `medium`, Sol `medium` -> `low`), and a
+truncation or a post-deadline fallback runs on the lightest rung.
+
+With `MAIN_CREATOR_MODEL=gpt-6.1-sol` the spec's fallback is `gemini-3.1-pro-preview`. When the next
+model is at another provider, any provider or ledger failure moves the turn to it: an outage (a
+5xx or a connection that never opened is a `TransientError`, released and retried within
+`max_attempts` first), an unknown outcome (held as `unknown` in the ledger, never repeated at that
+provider), a 4xx, a spent `planning` budget, or an attribution refusal. A schema or refusal failure
+still ends the turn. The fallback starts only with at least 10 s of turn budget left, and runs at a
+level its own vocabulary takes (Sol `xhigh` becomes Gemini `high`). Sol's calls spend the `planning`
+capability (`AI_OPENAI_PLANNING_BUDGET_USD`), metered even while `AI_COST_CONTROL_ENABLED` is off.
+The thinking row streams Sol's `concise` reasoning summary (and Anthropic's `summarized` thinking)
+into the same `ThoughtSummaryPublisher`. Evidence and rollout: `docs/reviews/kri-1384/sol-main-creator.md`.
 
 A compact per-clip evidence tier for large clip sets was tried and removed: it saved 9 to 13 percent of
 input tokens on a synthetic 27-clip prompt, input size is not the latency lever (thinking and answer

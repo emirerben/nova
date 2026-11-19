@@ -15,6 +15,7 @@ from app.agents._schemas.brief_extractor import (
 )
 from app.agents.main_creator import (
     _BRIEF_PROMPT_SECTION,
+    BRIEF_RECORD_SENTENCE,
     CHANGED_REQUEST_SECTION,
     with_full_opening_brief,
     with_insert_clip_brief,
@@ -30,6 +31,7 @@ from app.kria.brief import (
     parse_brief_updates,
     start_fresh_updates,
 )
+from app.kria.reply_language import conversation_language_line, model_language
 from app.pipeline.prompt_loader import load_prompt
 
 # A fingerprint of these files (app/agents/_prompt_fingerprint.py): main_creator.py is listed
@@ -39,13 +41,16 @@ BRIEF_EXTRACTOR_PROMPT_SOURCES = (
     "app/agents/brief_extractor.py",
     "app/agents/main_creator.py",
     "app/kria/brief.py",
+    "app/kria/reply_language.py",  # the CHAT LANGUAGE line
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/services/editor_limits.py",  # {{PLAYBACK_RATE_MIN}} {{PLAYBACK_RATE_MAX}}
     "prompts/brief_extractor.txt",
 )
 BRIEF_EXTRACTOR_PROMPT_VERSION = prompt_fingerprint("be", BRIEF_EXTRACTOR_PROMPT_SOURCES)
 _NARROW_BRIEF_SECTION = (
-    _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
+    _BRIEF_PROMPT_SECTION.replace(BRIEF_RECORD_SENTENCE, "")
+    .replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
     .replace(
         "Use that context when proposing `action`, but emit\nno `brief_updates` for it.",
@@ -178,6 +183,12 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
         if input.changes_request:
             # KRI-1360: the message answers "Change my request"; unset, the prompt is unchanged.
             prompt = f"{prompt.rstrip(chr(10))}\n\n{CHANGED_REQUEST_SECTION}\n"
+        if input.require_request_scope:
+            # A live rendered follow-up: this model is the one that reads the creator's message,
+            # so it reports the chat's language. "" with the reply-language kill switch off.
+            line = conversation_language_line(input.reply_language, beside="brief_updates")
+            if line:
+                prompt = f"{prompt.rstrip(chr(10))}\n\n{line}\n"
         return prompt
 
     def parse(self, raw_text: str, input: BriefExtractionInput) -> BriefExtractionOutput:  # noqa: A002, ARG002
@@ -189,6 +200,7 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
                 "clarification",
                 "delegates_all_choices",
                 "starts_fresh",
+                "conversation_language",
             }
             if (
                 not isinstance(data, dict)
@@ -242,6 +254,8 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
                 starts_fresh=starts_fresh,
                 request_scope=scope,
                 clarification=clarification,
+                # Unsupported or disabled codes are None, never a schema retry.
+                conversation_language=model_language(data.get("conversation_language")),
             )
         except (
             json.JSONDecodeError,

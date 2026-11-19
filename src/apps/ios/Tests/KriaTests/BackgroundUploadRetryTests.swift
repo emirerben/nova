@@ -1,3 +1,5 @@
+import AVFoundation
+import KriaMediaEngine
 import XCTest
 import UIKit
 @testable import Kria
@@ -576,6 +578,100 @@ import UIKit
         await coordinator.cancel(recordID: record.id)
     }
 
+    /// Use take on a recorded take that sits in Application Support. Run through a real `enqueue`: the proxy upload
+    /// reserved with the take's own digest, the digest and the transcode done during review rather than again after
+    /// the tap, and the take itself still there for Retake and recovery.
+    func testUseTakeReusesTheHashAndProxyMadeDuringReview() async throws {
+        PerfCounters.shared.reset()
+        let withReview = try await enqueueTake(prewarmFirst: true)
+        XCTAssertEqual(PerfCounters.shared.snapshot()["talk.use.prewarmProxyUsed"], 1, "the proxy built during review is the one uploaded, not a second transcode")
+        let without = try await enqueueTake(prewarmFirst: false)
+        XCTAssertEqual(PerfCounters.shared.snapshot()["talk.use.prewarmProxyUsed"], 1, "no prewarm, no reuse: the intake transcoded for itself")
+        defer { for run in [withReview, without] { try? FileManager.default.removeItem(at: run.take.deletingLastPathComponent()) } }
+
+        XCTAssertEqual(without.hashed, 1, "without a prewarm the intake hashes the take itself")
+        XCTAssertEqual(withReview.hashed, 0, "with one it hashes nothing: the digest from review is reused")
+        for run in [withReview, without] {
+            XCTAssertEqual(run.contractDigest, try SHA256Fingerprinter().fingerprint(file: run.take).hex, "the server is told the digest of the take's bytes")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: run.project.proxies, includingPropertiesForKeys: nil).count, 1)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: run.take.path), "the take is never consumed by its own upload")
+        }
+    }
+
+    /// Returns how many files `enqueue` hashed, the digest in the reservation's contract, the take and the project folder.
+    private func enqueueTake(prewarmFirst: Bool) async throws -> (hashed: Int, contractDigest: String?, take: URL, project: ProjectDirectory) {
+        let key = "kria.test.enqueue.\(UUID().uuidString)"
+        let projectID = UUID()
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "KriaTestTakes/\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let take = support.appending(path: "take.mov")
+        try await writeTestVideo(take)
+        let projectDirectory = BackgroundUploadCoordinator.projectDirectory(projectID)
+        addTeardownBlock {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: "\(key).preparing")
+            try? FileManager.default.removeItem(at: projectDirectory.root)
+        }
+        var contractDigest: String?
+        UploadRetryProtocol.handler = { transport in
+            if transport.request.httpMethod == "PUT" { return }
+            let body = (try? JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(transport.request))) as? [String: Any]
+            let file = (body?["files"] as? [[String: Any]])?.first
+            let proxy = (file?["upload_contract"] as? [String: Any])?["proxy"] as? [String: Any]
+            contractDigest = (proxy?["original"] as? [String: Any])?["sha256"] as? String
+            transport.finish(200, Data(#"[{"media_id":"analysis-proxy-1","upload_url":"https://uploads.test/put","gcs_path":"users/u/clip.mp4","content_type":"video/mp4","upload_headers":{}}]"#.utf8))
+        }
+        let configuration = UploadRetryProtocol.configuration()
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion())
+
+        if prewarmFirst {
+            let finished = expectation(description: "proxy built during review")
+            EngineSignpost.observer = { name, _, detail in if name == "talk.prewarm.proxy", detail == "ready" { finished.fulfill() } }
+            SourcePrewarmer.shared.start(key: UUID(), source: take)
+            await fulfillment(of: [finished], timeout: 60)
+            EngineSignpost.observer = nil
+            // The hash task is independent of the proxy: let it land before the tap.
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        let hashed = HashCount()
+        SHA256Fingerprinter.observer = { _ in hashed.bump() }
+        defer { SHA256Fingerprinter.observer = nil }
+
+        let accepted = await coordinator.enqueue(fileURL: take, projectID: projectID, source: .files, consentGiven: true,
+                                                 purpose: .analysisProxy, role: .clip, itemID: "item-1")
+        XCTAssertTrue(accepted)
+        if let record = coordinator.records.first { await coordinator.cancel(recordID: record.id) }
+        return (hashed.count, contractDigest, take, projectDirectory)
+    }
+
+    private final class HashCount: @unchecked Sendable {
+        private let lock = NSLock(); private var value = 0
+        func bump() { lock.withLock { value += 1 } }
+        var count: Int { lock.withLock { value } }
+    }
+
+    private func writeTestVideo(_ url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64])
+        writer.add(input); XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
+        for index in 0..<50 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)
+            let pixel = try XCTUnwrap(buffer); CVPixelBufferLockBaseAddress(pixel, [])
+            let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: 64, height: 64, bitsPerComponent: 8,
+                bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue))
+            context.setFillColor(UIColor(hue: CGFloat(index) / 50, saturation: 1, brightness: 1, alpha: 1).cgColor); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 25)))
+        }
+        input.markAsFinished(); await writer.finishWriting(); XCTAssertEqual(writer.status, .completed)
+    }
+
     /// KRI-114 P0-4: a background-task expiration must mark the entry `.expired`
     /// and leave the staged file alone -- never delete it -- so the next launch
     /// resumes it instead of finding nothing.
@@ -866,12 +962,21 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
         for transport in answered { transport.finish(200, reservationResponse) }
     }
 
+    /// The selection work each `select` started; nil for a choice that started nothing.
+    private(set) var started: [Task<Void, Never>?] = []
+
     @discardableResult
     func select(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, debounce: Duration = .zero, attached: Set<String> = [], contents: Data? = nil) throws -> URL {
         let file = FileManager.default.temporaryDirectory.appending(path: "pick-\(UUID().uuidString).mp4")
         try (contents ?? Data("clip \(identifier)".utf8)).write(to: file)
-        coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file }
+        started.append(coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file })
         return file
+    }
+
+    /// Waits for every selection started so far to finish: enqueued (reserved and recorded) or failed. Only for
+    /// reservations answered at once; a held one would keep its selection waiting.
+    func finishSelections() async {
+        for work in started { await work?.value }
     }
 
     func deselect(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil) async -> DeselectOutcome {
@@ -904,13 +1009,20 @@ extension BackgroundUploadRetryTests {
         return condition()
     }
 
+    // Failure modes of the selection tests (KRI-1379): they polled for the selection's effects with a 5 s wall-clock
+    // deadline, and a runner that stalled the test process for longer (CI: a synchronous test in this class took 21 s)
+    // failed them with the work still pending; the negative checks slept 200 ms, which proves nothing about work that
+    // has not run yet. They now await the selection work itself: it always ends (enqueued, failed or cancelled), so a
+    // pass or a failure no longer depends on how fast the runner is, and "nothing more was sent" is checked after
+    // everything that was started has finished.
+
     func testChoosingAnAssetStartsUploadingBeforeTheUserTapsDone() async throws {
         let h = harness()
         try h.select("asset-1")
 
-        let started = await waitUntil { h.coordinator.records.count == 1 }
+        await h.finishSelections()
 
-        XCTAssertTrue(started)
+        XCTAssertEqual(h.coordinator.records.count, 1)
         XCTAssertEqual(h.coordinator.preselectedIdentifiers(projectID: h.projectID, role: .clip, attachedMediaIDs: []), ["asset-1"],
                        "reopening the picker shows it as already chosen while it uploads")
         XCTAssertEqual(h.coordinator.reservedCount(projectID: h.projectID, role: .clip), 0, "once recorded it counts through `records`, never twice")
@@ -920,11 +1032,11 @@ extension BackgroundUploadRetryTests {
         let h = harness()
         try h.select("asset-1")
         try h.select("asset-1")   // e.g. the picker re-fires while the first is still being prepared
-        let started = await waitUntil { h.coordinator.records.count == 1 }
-        XCTAssertTrue(started)
+        await h.finishSelections()
+        XCTAssertEqual(h.coordinator.records.count, 1)
 
         try h.select("asset-1")   // and again once it is already on its way
-        try await Task.sleep(for: .milliseconds(200))
+        await h.finishSelections()
 
         XCTAssertEqual(h.received, 1, "one reservation, one upload")
         XCTAssertEqual(h.coordinator.records.count, 1)
@@ -937,12 +1049,12 @@ extension BackgroundUploadRetryTests {
         let h = harness(key: key, projectID: projectID)
 
         try h.select("asset-1", attached: ["media-1"])   // media-1 is still attached: a genuine duplicate
-        try await Task.sleep(for: .milliseconds(200))
+        await h.finishSelections()
         XCTAssertEqual(h.received, 0, "a live duplicate must not upload")
 
         try h.select("asset-1", attached: [])            // media-1 was removed on the web: this is a fresh choice
-        let started = await waitUntil { h.received == 1 }
-        XCTAssertTrue(started, "a stale entry must never make an asset impossible to add again")
+        await h.finishSelections()
+        XCTAssertEqual(h.received, 1, "a stale entry must never make an asset impossible to add again")
     }
 
     func testUnchoosingDuringTheDebounceNeverReachesTheServer() async throws {
@@ -961,8 +1073,8 @@ extension BackgroundUploadRetryTests {
     func testUnchoosingWhileUploadingCancelsItAndCleansUp() async throws {
         let h = harness()
         try h.select("asset-1")
-        let started = await waitUntil { h.coordinator.records.count == 1 }
-        XCTAssertTrue(started)
+        await h.finishSelections()
+        XCTAssertEqual(h.coordinator.records.count, 1)
         let uploadFile = try XCTUnwrap(h.coordinator.records.first).localFilePath
 
         let outcome = await h.deselect("asset-1")
@@ -1070,7 +1182,7 @@ extension BackgroundUploadRetryTests {
         let h = harness(key: key, projectID: projectID)
 
         try h.select("asset-1", attached: [])   // attached list has not caught up yet
-        try await Task.sleep(for: .milliseconds(200))
+        await h.finishSelections()
 
         XCTAssertEqual(h.received, 0, "a duplicate upload is exactly the bug this ticket is about")
     }
@@ -1218,8 +1330,9 @@ extension BackgroundUploadRetryTests {
 
     private struct Unreadable: Error {}
 
-    /// Chooses `identifier` with a `loadFile` that fails, counting how often Photos was asked for the file.
-    private func selectFailing(_ h: SelectionHarness, _ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, loads: LoadCounter) {
+    /// Chooses `identifier` with a `loadFile` that fails, counting how often Photos was asked for the file. Returns the
+    /// work the choice started (nil for a choice that is ignored), for the test to await.
+    private func selectFailing(_ h: SelectionHarness, _ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, loads: LoadCounter) -> Task<Void, Never>? {
         h.coordinator.select(.init(assetIdentifier: identifier, projectID: h.projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: []), debounce: .zero) {
             loads.count += 1
             throw Unreadable()
@@ -1233,13 +1346,11 @@ extension BackgroundUploadRetryTests {
     func testReSelectingAFailedAssetDoesNotRetryItOrStackAnotherError() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 1 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 1)
 
         for _ in 0..<8 {
-            selectFailing(h, "bad", loads: loads)   // what each later picker change does
-            try await Task.sleep(for: .milliseconds(30))
+            await selectFailing(h, "bad", loads: loads)?.value   // what each later picker change does
         }
 
         XCTAssertEqual(h.coordinator.failures.count, 1, "one line per failed clip, not one per tap")
@@ -1249,15 +1360,14 @@ extension BackgroundUploadRetryTests {
     func testEachFailedAssetKeepsExactlyOneLine() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad-1", loads: loads)
-        selectFailing(h, "bad-2", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 2 }
-        XCTAssertTrue(settled)
+        let first = selectFailing(h, "bad-1", loads: loads), second = selectFailing(h, "bad-2", loads: loads)
+        await first?.value
+        await second?.value
+        XCTAssertEqual(h.coordinator.failures.count, 2)
 
         for _ in 0..<5 {
-            selectFailing(h, "bad-1", loads: loads)
-            selectFailing(h, "bad-2", loads: loads)
-            try await Task.sleep(for: .milliseconds(30))
+            await selectFailing(h, "bad-1", loads: loads)?.value
+            await selectFailing(h, "bad-2", loads: loads)?.value
         }
 
         XCTAssertEqual(h.coordinator.failures.count, 2)
@@ -1269,15 +1379,13 @@ extension BackgroundUploadRetryTests {
     func testAFailureForTheSameAssetReplacesItsEarlierLine() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 1 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 1)
         let first = try XCTUnwrap(h.coordinator.failures.first)
 
         h.coordinator.dismissFailure(id: first.id)
-        selectFailing(h, "bad", loads: loads)
-        let retried = await waitUntil { loads.count == 2 && h.coordinator.failures.count == 1 }
-        XCTAssertTrue(retried, "dismissing makes it a real retry")
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertTrue(loads.count == 2 && h.coordinator.failures.count == 1, "dismissing makes it a real retry")
 
         XCTAssertNotEqual(h.coordinator.failures.first?.id, first.id, "a new attempt, a single line")
     }
@@ -1285,25 +1393,22 @@ extension BackgroundUploadRetryTests {
     func testUnTickingAFailedAssetClearsItsErrorAndTickingItAgainRetries() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "bad", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 1 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 1)
 
         h.coordinator.pruneSelectionFailures(projectID: h.projectID, role: .clip, itemID: nil, chosen: [])
         XCTAssertTrue(h.coordinator.failures.isEmpty, "un-ticked: its error goes with it")
 
-        selectFailing(h, "bad", loads: loads)
-        let retried = await waitUntil { loads.count == 2 && h.coordinator.failures.count == 1 }
-        XCTAssertTrue(retried, "ticked again: a real retry")
+        await selectFailing(h, "bad", loads: loads)?.value
+        XCTAssertTrue(loads.count == 2 && h.coordinator.failures.count == 1, "ticked again: a real retry")
     }
 
     func testPruningKeepsTickedAssetsAndOtherRolesAndProjects() async throws {
         let h = harness()
         let loads = LoadCounter()
-        selectFailing(h, "still-ticked", loads: loads)
-        selectFailing(h, "as-visual", role: .visual, itemID: "item-1", loads: loads)
-        let settled = await waitUntil { h.coordinator.failures.count == 2 }
-        XCTAssertTrue(settled)
+        await selectFailing(h, "still-ticked", loads: loads)?.value
+        await selectFailing(h, "as-visual", role: .visual, itemID: "item-1", loads: loads)?.value
+        XCTAssertEqual(h.coordinator.failures.count, 2)
         h.coordinator.reportFailure(projectID: UUID(), role: .clip, filename: "elsewhere.mov", message: "other project")
         h.coordinator.reportFailure(projectID: h.projectID, role: .clip, filename: "Selected item", message: "no asset key")
 

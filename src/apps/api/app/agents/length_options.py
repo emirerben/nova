@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
+
 MAX_OPTIONS = 4
-_MIN_SECONDS = 0.1  # editor_ops_v2.timeline.MIN_CLIP_S
 _MAX_LABEL_CHARS = 48
 _MAX_SECONDS = 120.0
 
@@ -43,7 +44,7 @@ def length_options(raw: Any, reply: str) -> list[dict[str, Any]]:
             or len(label) > _MAX_LABEL_CHARS
             or isinstance(seconds, bool)
             or not isinstance(seconds, int | float)
-            or not _MIN_SECONDS <= seconds <= _MAX_SECONDS
+            or not EDITOR_MIN_CLIP_S <= seconds <= _MAX_SECONDS
             or not _stated(float(seconds), reply)
         ):
             continue

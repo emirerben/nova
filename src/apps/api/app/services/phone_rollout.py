@@ -304,6 +304,12 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Collapsing split panels await native qualification", capability="splitCollapse"
         )
+    if "splitBlankPanel" in recipe.required_capabilities and not split_blank_supported(
+        require_client=False
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Blank split panels await native qualification", capability="splitBlankPanel"
+        )
     placements = [
         clip.visual_placement
         for track in recipe.tracks
@@ -626,6 +632,26 @@ def text_bend_planned_for(client_protocol: int | None) -> bool:
         and "textBend" in set(settings.phone_render_verified_features)
         and client_protocol is not None
         and client_protocol >= settings.text_bend_min_client_protocol
+    )
+
+
+DUAL_CAPTION_LANGUAGES: frozenset[str] = frozenset({"en", "de", "tr", "pt"})
+
+
+def dual_captions_planned_for(client_protocol: int | None) -> bool:
+    """May a phone edit carry a translated caption line under the spoken one?
+
+    Read like `caption_shape_planned_for`: ``client_protocol`` is the app build the creator
+    acted from (``creator_client_protocol`` on the Job, or the editor request's header). True
+    iff the kill switch is on, ``dualCaptions`` is in ``phone_render_verified_features`` and that
+    build declares at least ``dual_captions_min_client_protocol``. Any gate off: captions are
+    exactly today's, and no translated line is planned, compiled or offered in the editor.
+    """
+    return bool(
+        settings.dual_captions_enabled
+        and "dualCaptions" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.dual_captions_min_client_protocol
     )
 
 
@@ -2558,4 +2584,41 @@ def split_collapse_supported(*, require_client: bool | None = None) -> bool:
         split_screen_supported(require_client=require_client)
         and "splitCollapse" in set(settings.phone_render_verified_features)
         and split_collapse_client_supported(require_client=require_client)
+    )
+
+
+def split_blank_planned_for(client_protocol: int | None) -> bool:
+    """May an edit for the app build ``client_protocol`` carry a split panel's blank block?
+
+    Reads the sender's stamp and never the request context, like `split_collapse_planned_for`.
+    """
+    from app.services.client_protocol import SPLIT_BLANK_PANEL_PROTOCOL  # noqa: PLC0415
+
+    verified = set(settings.phone_render_verified_features)
+    return (
+        {"splitScreen", "splitBlankPanel"} <= verified
+        and client_protocol is not None
+        and client_protocol >= SPLIT_BLANK_PANEL_PROTOCOL
+    )
+
+
+def split_blank_client_supported(*, require_client: bool | None = None) -> bool:
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPLIT_BLANK_PANEL_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    protocol = current_client_protocol()
+    return not require_client or (protocol is not None and protocol >= SPLIT_BLANK_PANEL_PROTOCOL)
+
+
+def split_blank_supported(*, require_client: bool | None = None) -> bool:
+    """Blanks ride on split screen: both tokens must be verified."""
+    return (
+        split_screen_supported(require_client=require_client)
+        and "splitBlankPanel" in set(settings.phone_render_verified_features)
+        and split_blank_client_supported(require_client=require_client)
     )

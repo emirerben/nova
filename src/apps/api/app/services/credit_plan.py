@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from app.agents.model_registry import provider_of
+
 
 @dataclass(frozen=True, slots=True)
 class CreditAllocation:
@@ -51,18 +53,13 @@ def comparison_credit_preflight(packet, *, allocation=None, prepared=None):
 
         prepared = prepare_packet(packet)
     allocation = allocation or CreditAllocation()
-    providers = {
-        "gpt-6.1-sol": "openai",
-        "claude-sonnet-5-5": "anthropic",
-        "gemini-3.1-pro-preview": "google",
-    }
     repetitions = packet["repetitions"]
     if type(repetitions) is not int or repetitions < 1:
         raise ValueError("positive integer repetitions required")
     totals = {}
     arms = {arm["id"]: arm["model"] for arm in packet["arms"]}
     for row in prepared["rows"]:
-        provider = providers.get(arms.get(row["arm"]))
+        provider = provider_of(arms.get(row["arm"]))
         if provider is None:
             raise ValueError("unpriced comparison provider")
         cost = Decimal(str(row["estimated_max_usd"]))

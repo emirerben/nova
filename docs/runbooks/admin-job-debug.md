@@ -196,6 +196,35 @@ Guard: `tests/integration/test_admin_export_verification.py` (real Postgres).
 python scripts/admin.py --prod GET jobs/<job_id>/export-verification
 ```
 
+## Fleet report (KRI-1395)
+
+`GET /admin/agents/report?days=14[&environment=production]` answers "what does each agent
+and model cost, how fast is it, how often does it fail" without opening a job:
+
+```bash
+python scripts/admin.py --prod GET agents/report
+```
+
+- `agents`: one row per agent and model from `agent_run` in the window: `calls`, settled
+  cost, `latency_p50_ms` / `latency_p95_ms`, `failed_share` (any outcome outside
+  `SUCCESS_OUTCOMES`), `fallback_share` (`ok_fallback`) and the raw `outcomes`. A fallback
+  model's cost shows under its own row.
+- `unowned_runs`: runs with no job, template, track, session or plan item. They persist
+  with `agent_run.owner_label` (the raw `RunContext.job_id`, or `unowned`) and are pruned
+  by `cleanup_agent_runs` like job runs. Per-job views ignore them.
+- `chat_turns`: proposal outcomes from `edit_interaction_receipts`. Receipts exist only
+  for training-eligible creators, so this is a sample, not every chat turn.
+- `ledger`: `ai_cost_reservations` by provider and feature, including paid calls that have
+  no `agent_run` (`caption_correction`, `caption_translation`, `lyrics_whisper`). Compare
+  `ledger_settled_by_provider.openai` with the OpenAI usage dashboard for the same days;
+  `unsettled_estimate_usd` is liability the ledger still holds for in-flight or `unknown`
+  calls. Job-owned `agent_run` rows are kept `AGENT_RUN_RETENTION_DAYS` (30), so a longer
+  window sets `window_exceeds_retention`.
+
+Guards: `tests/routes/test_admin_agents_report_postgres.py` (real Postgres) and
+`tests/services/test_openai_metering.py`. End to end:
+`docs/reviews/kri-1395/scripts/fleet_report_e2e.py`.
+
 ## Eval harness opt-out
 
 The eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals

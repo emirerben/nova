@@ -130,7 +130,7 @@ struct KeychainTokenStore: TokenStore, @unchecked Sendable {
     private func deleteUnlocked() throws { let status = SecItemDelete(baseQuery as CFDictionary); guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status) } }
     private var baseQuery: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] }
 }
-struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
+struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { String(localized: "Secure sign-in storage is unavailable.") } }
 
 /// The two calls needed while a slide-post proposal is in flight. Keeping
 /// this narrow lets fixtures control the reply and live poll independently.
@@ -331,6 +331,8 @@ protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeC
     func editorVariants(jobID: UUID) async throws -> [[String: JSONValue]]
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
+    /// KRI-1501: translates the given caption cues for the translated-line track. Persists nothing.
+    func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
     /// Live plan & review (contract v2): `GET creation-threads/{id}/plan`.
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot
@@ -609,6 +611,11 @@ extension KriaAPIClient {
     }
 
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse {
+        _ = itemID; _ = variantID; _ = request
+        throw APIError.unsupported
+    }
+
+    func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
         _ = itemID; _ = variantID; _ = request
         throw APIError.unsupported
     }
@@ -977,7 +984,18 @@ struct DraftSnapshot: Codable, Sendable {
     let snapshot: [String: JSONValue]
     let canUndo: Bool
     let createdAt: Date
-    enum CodingKeys: String, CodingKey { case snapshot, etag; case draftID = "draft_id"; case itemID = "item_id"; case variantKey = "variant_key"; case draftRevision = "draft_revision"; case snapshotHash = "snapshot_hash"; case baseJobID = "base_job_id"; case baseGenerationID = "base_generation_id"; case canUndo = "can_undo"; case createdAt = "created_at" }
+    /// Additive server fields: the server re-bases the head onto the variant's current generation whenever it is
+    /// read and says so here. Absent from an older server, which leaves freshness to the phone.
+    var headCurrent: Bool? = nil
+    enum CodingKeys: String, CodingKey { case snapshot, etag; case draftID = "draft_id"; case itemID = "item_id"; case variantKey = "variant_key"; case draftRevision = "draft_revision"; case snapshotHash = "snapshot_hash"; case baseJobID = "base_job_id"; case baseGenerationID = "base_generation_id"; case canUndo = "can_undo"; case createdAt = "created_at"; case headCurrent = "head_current" }
+}
+
+/// A variant's current generation: `render_generation_id`, else `render_finished_at`, else "" (a variant that never
+/// finished a render has nothing to conflict with). The server's `variant_render_baseline`; every phone site that
+/// derives a generation from a variant dictionary goes through here so none can disagree with it or with the Save.
+func variantBaseline(_ variant: [String: JSONValue]?) -> String {
+    [variant?["render_generation_id"], variant?["render_finished_at"]]
+        .compactMap { $0?.stringValue }.first { !$0.isEmpty } ?? ""
 }
 
 struct OpenInEditorResponse: Codable, Sendable, Equatable {
@@ -1413,7 +1431,19 @@ enum KriaClientProtocolContract {
     /// 49 (KRI-720): cuts every take of a several-take Talking preview from the receipt's `phone_talking_multi_clip.speaker_removed`
     /// rows. The server serves a build below 49 that receipt with no `speaker_media_ids`, so it previews the finished video
     /// instead of later takes uncut.
-    static let version = 49
+    ///
+    /// 50 (KRI-1384): a newer chat head that puts a staged lane back to the saved value (chat "undo that")
+    /// returns that lane to the saved document when the creator has not touched it since. The server offers
+    /// chat undo only to this protocol (`chat_undo_min_client_protocol`).
+    ///
+    /// 51 (KRI-1421): decodes, draws and edits a split panel's blank block (`media_kind: "blank"` + `color`, no `clip_index`)
+    /// and the `splitBlankPanel` capability. The server offers `editor_capabilities.split_blank_panel` only to this protocol
+    /// (and only with `splitBlankPanel` verified) and answers 426 `client_update_required` (`split_blank_panel`) to an older
+    /// build that saves, polls the timeline of, or renders an edit that holds one.
+    /// 52 (two-language captions): draws a smaller translated caption line on its own editor track (cue `translation`,
+    /// `caption_meta.translation`), moves and styles it apart from the spoken line, and keeps both on Save. The server offers
+    /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
+    static let version = 52
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1798,10 +1828,8 @@ struct KriaAPI: KriaAPIClient {
                 return variant
             }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
-            // Same rule as the server's `variant_render_baseline`: a variant that never finished a
-            // render has "" as its baseline, which is a real value and not a conflict.
-            let generation = [variant["render_generation_id"], variant["render_finished_at"]]
-                .compactMap { $0?.stringValue }.first { !$0.isEmpty } ?? ""
+            // A variant that never finished a render has "" as its baseline, which is a real value and not a conflict.
+            let generation = variantBaseline(variant)
             if timeline["base_generation"] == .string(generation) {
                 variant["user_timeline"] = .object(timeline)
                 variant["editor_revision_number"] = timeline["revision_number"]
@@ -1812,12 +1840,16 @@ struct KriaAPI: KriaAPIClient {
             }
             if attempt < 2 { try await Task.sleep(for: .milliseconds(150 * (attempt + 1))) }
         }
-        throw APIError.conflict
+        throw APIError.baselineConflict
     }
     func editorCommit(itemID: String, variantID: String, request commit: EditorCommitRequest) async throws -> EditorCommitResponse {
         try await Perf.measureAsync("talk.save.editorCommit") {
             try await request(path: "plan-items/\(itemID)/variants/\(variantID)/editor-commit", method: "POST", bodyData: try JSONEncoder().encode(commit), decode: EditorCommitResponse.self)
         }
+    }
+    func captionTranslation(itemID: String, variantID: String, request translation: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
+        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/caption-translation", method: "POST",
+                          bodyData: try JSONEncoder().encode(translation), decode: CaptionTranslationResponse.self)
     }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
         struct Body: Encodable {
@@ -2066,7 +2098,8 @@ struct KriaAPI: KriaAPIClient {
             // `{"detail": {"code", "message"}}`. Read it last, so the string detail
             // and the problem envelope above keep precedence.
             let coded = Self.decodeCodedDetail(from: data)
-            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message ?? coded?.message, code: problem?.code ?? coded?.code))
+            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message ?? coded?.message, code: problem?.code ?? coded?.code,
+                recovery: problem?.recovery))
         }
         guard (200..<300).contains(http.statusCode) else {
             if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
@@ -2226,10 +2259,10 @@ struct KriaAPI: KriaAPIClient {
     /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
     /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
     /// legacy `{"detail": "..."}` string every other route still sends.
-    private static func decodeProblem(from data: Data) -> (code: String?, message: String?)? {
+    private static func decodeProblem(from data: Data) -> (code: String?, message: String?, recovery: String?)? {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let problem = body["problem"] as? [String: Any] else { return nil }
-        return (problem["code"] as? String, problem["message"] as? String)
+        return (problem["code"] as? String, problem["message"] as? String, problem["recovery"] as? String)
     }
     /// Decodes FastAPI's object detail (`{"detail": {"code", "message"}}`), e.g. the
     /// `provider_link_required` refusal from `auth/mobile/exchange`. Nil for the
@@ -2261,38 +2294,45 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .unsupportedPhoneEdit:
-            "This edit couldn’t be prepared for this iPhone. Your edits are still here. Undo the last change and try saving again."
+            String(localized: "This edit couldn’t be prepared for this iPhone. Your edits are still here. Undo the last change and try saving again.")
         case .phoneRenderingUnavailable:
-            "Rendering is temporarily unavailable. Your edits are still here."
+            String(localized: "Rendering is temporarily unavailable. Your edits are still here.")
         case .guidedStorySourceStale:
-            "The source changed or is unavailable. Your edits are still here."
+            String(localized: "The source changed or is unavailable. Your edits are still here.")
         case .invalidTextSettings:
-            "Text settings are invalid. Your edits are still here; review text, style, and timing."
+            String(localized: "Text settings are invalid. Your edits are still here; review text, style, and timing.")
         case .userSongUnavailable(let reason):
             reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
-                ?? "This edit no longer has a song. Reopen the editor to continue."
+                ?? String(localized: "This edit no longer has a song. Reopen the editor to continue.")
         case .userSongLipsyncLocked:
-            "Lip-sync keeps the song where you filmed it."
+            String(localized: "Lip-sync keeps the song where you filmed it.")
         case .userSongWindowOutOfRange(let reason):
             reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
-                ?? "That start point leaves less than a second of your song. Slide it earlier."
+                ?? String(localized: "That start point leaves less than a second of your song. Slide it earlier.")
         case .timeline(let code):
-            Self.timelineCopy[code] ?? "This save was rejected. Your edits are still here."
+            Self.timelineCopy[code] ?? String(localized: "This save was rejected. Your edits are still here.")
         case .serverMessage(let message):
             message
         case .rejected:
-            "This save was rejected. Your edits are still here."
+            String(localized: "This save was rejected. Your edits are still here.")
         }
+    }
+
+    /// The refusal for a 409/412 on Save that is not a version mismatch: the catalog's wording for its code, else the
+    /// generic rejected-save line. Both say the creator's edits are still there.
+    static func refusal(forConflictCode code: String?) -> EditorSaveError {
+        guard let code, Self.timelineCopy[code] != nil else { return .rejected }
+        return .timeline(code: code)
     }
 
     /// Specific, recoverable copy per timeline refusal. The set of codes is pinned by
     /// `Tests/Fixtures/editor_save_codes.json`, which the API's `test_editor_save_code_catalog`
     /// keeps equal to what the server can raise: a new server code fails CI until it is worded here.
     static let timelineCopy: [String: String] = {
-        let tooShort = "A clip is shorter than the 0.1 second minimum. Lengthen it a little and save again. Your edits are still here."
-        let pastEnd = "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here."
-        let reopen = "A clip’s footage is no longer available to this edit. Reopen the editor to continue."
-        let timeline = "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here."
+        let tooShort = String(localized: "A clip is shorter than the \(EditorLimits.minClipSeconds, format: .number) second minimum. Lengthen it a little and save again. Your edits are still here.")
+        let pastEnd = String(localized: "A clip runs past the end of its footage. Shorten it or move its start earlier, then save again. Your edits are still here.")
+        let reopen = String(localized: "A clip’s footage is no longer available to this edit. Reopen the editor to continue.")
+        let timeline = String(localized: "This timeline couldn’t be saved. Undo your last change and try again. Your edits are still here.")
         return [
             "TIMELINE_INVALID_WINDOW": tooShort,
             "TIMELINE_INVALID_DURATION": tooShort,
@@ -2301,63 +2341,66 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_UNKNOWN_CLIP": reopen,
             "sources_expired": reopen,
             "authored_source_required": reopen,
-            "TIMELINE_EMPTY": "A video needs at least one clip. Keep a clip and save again. Your edits are still here.",
-            "TIMELINE_TOO_LONG": "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here.",
-            "TIMELINE_BEATS_EXHAUSTED": "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here.",
+            "TIMELINE_EMPTY": String(localized: "A video needs at least one clip. Keep a clip and save again. Your edits are still here."),
+            "TIMELINE_TOO_LONG": String(localized: "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here."),
+            "TIMELINE_BEATS_EXHAUSTED": String(localized: "The song runs out of beats for these clips. Shorten a clip or remove one and save again. Your edits are still here."),
             "TIMELINE_INVALID_PARENT": timeline,
-            "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here.",
+            "TIMELINE_BLANK_OUTSIDE_SPLIT": String(localized: "A blank block has to stay inside a split panel. Undo your last change and try again. Your edits are still here."),
+            "TIMELINE_IMAGE_SPLIT_UNSUPPORTED": String(localized: "A photo can’t be split. Keep it whole or trim it instead. Your edits are still here."),
             "authored_seconds_required": timeline,
-            "split_screen_unavailable": "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here.",
-            "split_screen_requires_atomic_commit": "This edit’s clips and panel settings must be saved together. Update Kria and try saving again. Your edits are still here.",
+            "split_screen_unavailable": String(localized: "Split-screen editing isn’t available right now. Try saving again later. Your edits are still here."),
+            "split_screen_requires_atomic_commit": String(localized: "This edit’s clips and panel settings must be saved together. Update Kria and try saving again. Your edits are still here."),
             "GUIDED_REVISION_INVALID": timeline,
             "GUIDED_TEXT_IDENTITY_MISMATCH": timeline,
-            "GUIDED_TOMBSTONE_LIMIT": "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here.",
-            "GUIDED_REVISION_WIRE_UNSUPPORTED": "Update Kria to save this edit.",
-            "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
-            "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
-            "TIMELINE_TILT_WITH_LOOK": "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here.",
-            "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
-            "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
-            "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
-            "clip_tilt_zoom_unavailable": "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here.",
-            "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
-            "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
-            "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",
+            "GUIDED_TOMBSTONE_LIMIT": String(localized: "This edit has too many removed items to save. Restore or re-add a few and try again. Your edits are still here."),
+            "GUIDED_REVISION_WIRE_UNSUPPORTED": String(localized: "Update Kria to save this edit."),
+            "LOOK_PRESET_NOT_AVAILABLE": String(localized: "That clip look isn’t available for this video. Remove it and save again. Your edits are still here."),
+            "phone_edit_unsupported": String(localized: "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here."),
+            "TIMELINE_TILT_WITH_LOOK": String(localized: "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here."),
+            "clip_backdrop_media_not_in_pool": String(localized: "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here."),
+            "clip_backdrop_media_unavailable": String(localized: "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here."),
+            "clip_tilt_unavailable": String(localized: "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here."),
+            "clip_tilt_zoom_unavailable": String(localized: "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here."),
+            "transitions_disabled": String(localized: "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here."),
+            "song_shorter_than_video": String(localized: "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here."),
+            "music_track_unavailable": String(localized: "That song isn’t available any more. Pick another song and save again. Your edits are still here."),
             "track_duration_unknown": timeline,
             "video_duration_unknown": timeline,
             "guided_story_revision_unavailable": reopen,
-            "speaker_background_unsupported": "A background isn’t available for this edit. Remove it and save again. Your edits are still here.",
-            "speaker_background_disabled": "Backgrounds aren’t available right now. Remove it and save again. Your edits are still here.",
-            "speaker_background_media_not_in_pool": "That photo or video isn’t in this edit’s uploads any more. Pick another background and save again. Your edits are still here.",
-            "speaker_background_media_unavailable": "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here.",
-            "speaker_background_kind_mismatch": "That background doesn’t match its file. Pick it again and save again. Your edits are still here.",
-            "speaker_background_start_out_of_range": "The background video starts past its end. Pick it again and save again. Your edits are still here.",
+            "speaker_background_unsupported": String(localized: "A background isn’t available for this edit. Remove it and save again. Your edits are still here."),
+            "speaker_background_disabled": String(localized: "Backgrounds aren’t available right now. Remove it and save again. Your edits are still here."),
+            "speaker_background_media_not_in_pool": String(localized: "That photo or video isn’t in this edit’s uploads any more. Pick another background and save again. Your edits are still here."),
+            "speaker_background_media_unavailable": String(localized: "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here."),
+            "speaker_background_kind_mismatch": String(localized: "That background doesn’t match its file. Pick it again and save again. Your edits are still here."),
+            "speaker_background_start_out_of_range": String(localized: "The background video starts past its end. Pick it again and save again. Your edits are still here."),
             // Range on a phone Talking edit. The four reasons are the `clips.source_window` leaf's own codes; the
             // server can also answer a Save with one when the edit changed after the app last looked.
             "talking_range_multi_clip": EditorSaveError.talkingRangeSaveCopy("talking_range_multi_clip"),
             "talking_range_word_cuts": EditorSaveError.talkingRangeSaveCopy("talking_range_word_cuts"),
             "talking_range_processed_audio": EditorSaveError.talkingRangeSaveCopy("talking_range_processed_audio"),
             "talking_range_cut_mismatch": EditorSaveError.talkingRangeSaveCopy("talking_range_cut_mismatch"),
-            "talking_range_structure_changed": "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here.",
-            "talking_range_overlap": "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here.",
-            "talking_range_order": "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here.",
-            "talking_range_muted": "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here.",
-            "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
-            "speaker_background_color_disabled": "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here.",
-            "speaker_background_color_invalid": "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here.",
-            "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
-            "speaker_full_opening_disabled": "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here.",
-            "speaker_full_opening_invalid": "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here.",
-            "background_focus_disabled": "Aiming the background isn’t available for this video yet. Your edits are still here.",
-            "background_focus_invalid": "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here.",
-            "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
+            "talking_range_structure_changed": String(localized: "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here."),
+            "talking_range_overlap": String(localized: "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here."),
+            "talking_range_order": String(localized: "The parts of this video have to stay in their order. Put them back in order and save again. Your edits are still here."),
+            "talking_range_muted": String(localized: "Range can’t mute a part of this video. Turn the sound back on for it and save again. Your edits are still here."),
+            "talking_range_captions_missing": String(localized: "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here."),
+            "speaker_background_color_disabled": String(localized: "A plain colour behind you isn’t available on this edit yet. Pick a photo or video, or remove the background, then save again. Your edits are still here."),
+            "speaker_background_color_invalid": String(localized: "That colour can’t be used. Pick a swatch or a solid colour, then save again. Your edits are still here."),
+            "speaker_background_windows_disabled": String(localized: "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here."),
+            "speaker_full_opening_disabled": String(localized: "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here."),
+            "speaker_full_opening_invalid": String(localized: "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here."),
+            "background_focus_disabled": String(localized: "Aiming the background isn’t available for this video yet. Your edits are still here."),
+            "background_focus_invalid": String(localized: "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here."),
+            "speaker_background_window_invalid": String(localized: "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here."),
+            // KRI-1501: the server turned the translated caption line off while this edit carries one.
+            "caption_translation_disabled": String(localized: "Translated caption lines aren’t available right now. Turn the translated line off and save again. Your edits are still here."),
             // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
-            "client_update_required": "Update Kria to save this edit. Your edits are still here.",
+            "client_update_required": String(localized: "Update Kria to save this edit. Your edits are still here."),
         ]
     }()
 
     private static func talkingRangeSaveCopy(_ code: String) -> String {
-        NativePhoneTalkingSource.rangeClosedCopy(reason: code) + " Your edits are still here."
+        String(localized: "\(NativePhoneTalkingSource.rangeClosedCopy(reason: code)) Your edits are still here.")
     }
 
     /// A plain-English sentence (not a machine code) short enough to show as is.
@@ -2404,7 +2447,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .code(let message, _) where Self.isReadableServerMessage(message):
             let sentence = message.trimmingCharacters(in: .whitespacesAndNewlines)
             let closed = sentence.hasSuffix(".") || sentence.hasSuffix("!") || sentence.hasSuffix("?") ? sentence : sentence + "."
-            return .serverMessage("\(closed) Your edits are still here.")
+            return .serverMessage(String(localized: "\(closed) Your edits are still here."))
         case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
             return .invalidTextSettings
         default: return .rejected
@@ -2489,7 +2532,7 @@ private struct LibraryResponse: Decodable {
             let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return ProjectSummary(
                 id: UUID(uuidString: id) ?? UUID(),
-                title: cleanedTitle.isEmpty ? "Untitled video" : cleanedTitle,
+                title: cleanedTitle.isEmpty ? String(localized: "Untitled video") : cleanedTitle,
                 status: status == "ready" ? .ready : status == "failed" ? .failed : .rendering,
                 updatedAt: createdAt,
                 posterURL: posterURL.flatMap(URL.init(string:)),
@@ -2759,6 +2802,19 @@ enum APIError: Error, LocalizedError, Equatable {
     /// Detail-free conflict. Keeps `throw APIError.conflict`, `== .conflict`,
     /// and `catch APIError.conflict` working for every conflict, with or without a detail.
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
+    /// A generation mismatch the phone found itself (the preview's inputs or the variant moved past the loaded edit).
+    /// Carries the code explicitly so "reload" never depends on a conflict being detail-free.
+    static let baselineConflict = APIError.conflict(detail: ConflictDetail(
+        ConflictDetail.baselineConflictCode, code: ConflictDetail.baselineConflictCode, recovery: "reload"))
+    /// True only when a newer version exists: the server's `baseline_conflict` (as the plain `detail` or the problem
+    /// code) or its own `recovery: "reload"`, or the phone's own generation mismatch. Every other 409/412
+    /// (`TIMELINE_STALE`, `editor_draft_unavailable`, ...) is an ordinary refusal that a reload cannot fix.
+    var isBaselineConflict: Bool {
+        guard case let .conflict(detail) = self else { return false }
+        return detail.recovery == "reload"
+            || detail.code == ConflictDetail.baselineConflictCode
+            || detail.message == ConflictDetail.baselineConflictCode
+    }
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
     /// The machine code for this conflict: the runtime-v2 `KriaProblem.code`
@@ -2771,16 +2827,16 @@ enum APIError: Error, LocalizedError, Equatable {
     var requestFailureDetail: String? { if case let .requestFailed(_, detail) = self { detail.message } else { nil } }
     var errorDescription: String? {
         switch self {
-        case .sessionExpired: "Your session expired. Please sign in again."
-        case .conflict: "This edit changed elsewhere. Review your local changes before saving again."
-        case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."
-        case .editorNotReady: "This video has no ready edit to open."
-        case .nativeUpdateRequired: "Update Kria to continue creating projects."
-        case .unsupported: "This API client does not support native editor saves."
-        case .offline: "Kria couldn’t complete that request. Check your connection and try again."
+        case .sessionExpired: String(localized: "Your session expired. Please sign in again.")
+        case .conflict: String(localized: "This edit changed elsewhere. Review your local changes before saving again.")
+        case .contentPlanUnavailable: String(localized: "This video’s content plan is unavailable. Its editor cannot be opened.")
+        case .editorNotReady: String(localized: "This video has no ready edit to open.")
+        case .nativeUpdateRequired: String(localized: "Update Kria to continue creating projects.")
+        case .unsupported: String(localized: "This API client does not support native editor saves.")
+        case .offline: String(localized: "Kria couldn’t complete that request. Check your connection and try again.")
         case let .requestFailed(status, _) where RequestFailureCause(status: status) == .server:
-            "Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment."
-        case .requestFailed, .invalidResponse: "Kria couldn’t complete that request."
+            String(localized: "Kria hit a problem on its side. Your chat and footage are safe. Try again in a moment.")
+        case .requestFailed, .invalidResponse: String(localized: "Kria couldn’t complete that request.")
         }
     }
 }
@@ -2820,12 +2876,16 @@ struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     /// server sent one instead of the legacy `detail` string. See `decodeProblem`
     /// and `decodeCodedDetail`.
     let code: String?
-    init(_ message: String?, code: String? = nil) {
+    /// The runtime-v2 problem's `recovery` (`reload` only for a baseline conflict).
+    let recovery: String?
+    init(_ message: String?, code: String? = nil, recovery: String? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
         self.code = code
+        self.recovery = recovery
     }
     static func == (_: ConflictDetail, _: ConflictDetail) -> Bool { true }
+    static let baselineConflictCode = "baseline_conflict"
     /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
     var description: String { message == nil && code == nil ? "none" : "present" }
 }
@@ -2994,7 +3054,7 @@ enum GoogleOAuth {
 
 enum AuthError: Error, LocalizedError, Equatable {
     case interactiveRequired, invalidCredential, cancelled, notConfigured, stateMismatch, authorizationCodeMissing, tokenExchangeFailed
-    var errorDescription: String? { switch self { case .notConfigured: "Google sign-in is not configured for this build."; default: "Sign-in didn’t finish. Please try again." } }
+    var errorDescription: String? { switch self { case .notConfigured: String(localized: "Google sign-in is not configured for this build."); default: String(localized: "Sign-in didn’t finish. Please try again.") } }
 }
 private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 extension String { var sha256Hex: String { SHA256.hash(data: Data(utf8)).map { String(format: "%02x", $0) }.joined() } }
@@ -3049,9 +3109,10 @@ extension DraftSnapshot {
         // A chat draft stamps `editor_state_version` too (the phone's state carries it), but its flat
         // lane keys mark it as edits over the variant, not a committed snapshot (KRI-1333).
         if let authoritativeVariant,
-           authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
+           variantBaseline(authoritativeVariant) == (baseGenerationID ?? "")
+            || authoritativeVariant["render_generation_id"]?.stringValue == baseGenerationID,
            let payload = Self.object(snapshot["editor_payload"]), payload["editor_state_version"] == .number(2),
-           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }) {
+           !Self.stagedLaneKeys.contains(where: { payload[$0.key] != nil }), payload[Self.userSongKey] == nil {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
             var document = snapshot
@@ -3089,7 +3150,7 @@ extension DraftSnapshot {
             let directKeys = [
                 "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
-                "caption_margin_v", "caption_y_frac", "caption_animation_phases",
+                "caption_margin_v", "caption_y_frac", "caption_animation_phases", "caption_translation",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment", "speaker_background",
@@ -3109,6 +3170,10 @@ extension DraftSnapshot {
             // must not bring it back.
             if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
                 sections["caption_animation_phases"] = nil
+            }
+            // KRI-1501: the same for the translated-line track.
+            if !isIntentionalEmpty, authoritativeVariant["caption_translation"] == nil {
+                sections["caption_translation"] = nil
             }
             // Likewise a cleared Talk-to-camera background leaves the key off the variant (KRI-1165).
             if !isIntentionalEmpty, authoritativeVariant["speaker_background"] == nil {
@@ -3181,8 +3246,7 @@ extension DraftSnapshot {
                     sections["split_screen_sections"] = .array([])
                 }
             }
-            let baseline = [authoritativeVariant["render_generation_id"]?.stringValue,
-                authoritativeVariant["render_finished_at"]?.stringValue, baseGenerationID,
+            let baseline = [variantBaseline(authoritativeVariant), baseGenerationID,
                 editorPayload["base_generation"]?.stringValue].compactMap { $0 }.first { !$0.isEmpty } ?? ""
             editorPayload["base_generation"] = .string(baseline)
             editorPayload["sections"] = .object(sections)
@@ -3273,6 +3337,27 @@ extension DraftSnapshot {
         var sections: Set<EditorSection>
         /// `base` with the chat-changed lanes overlaid (decode with `EditorDocument`).
         var snapshot: [String: JSONValue]
+        /// The chat's song edit (`set_user_song`, KRI-1394). It is `EditorDocument.userSong`, which no snapshot
+        /// carries, so it travels beside `snapshot`. Set exactly when `sections` holds `.userSong`.
+        var userSong: EditorUserSongState?
+    }
+
+    /// The flat `user_song` key: the Save's `EditorCommitUserSong` section (`volume`, `window_start_s`,
+    /// `window_end_s`, `removed`), relative to the saved song like the editor's own song edits.
+    private static let userSongKey = "user_song"
+
+    /// The draft's song edit, nil when it holds none or a field is unreadable. Empty when the section
+    /// is the saved song (`removed: false`, no field set), as a chat undo of `set_user_song` writes it.
+    private static func stagedUserSong(_ value: JSONValue?) -> EditorUserSongState? {
+        guard let fields = object(value) else { return nil }
+        if fields["removed"] == .bool(true) { return EditorUserSongState(removed: true) }
+        var state = EditorUserSongState()
+        for (key, path) in [("volume", \EditorUserSongState.volume), ("window_start_s", \.windowStartS), ("window_end_s", \.windowEndS)] {
+            guard let field = fields[key], field != .null else { continue }
+            guard case let .number(number) = field, number.isFinite, number >= 0 else { return nil }
+            state[keyPath: path] = number
+        }
+        return state
     }
 
     /// Editor-commit key (flat draft key) -> lane. The server keeps the lanes a
@@ -3286,7 +3371,8 @@ extension DraftSnapshot {
         ("mix", .mix, ["mix"]), ("music_track_id", .music, ["music_track_id", "music_window"]),
         ("music_window", .music, ["music_track_id", "music_window"]), ("remove_music", .music, ["music_track_id", "music_window"]),
         ("background_music", .backgroundMusic, ["background_music"]), ("lyrics", .lyrics, ["lyrics"]),
-        ("orientation", .orientation, ["orientation"]), ("sound_effects", .soundEffects, ["sound_effects"]),
+        ("orientation", .orientation, ["orientation"]), ("landscape_fit", .landscapeFit, ["landscape_fit"]),
+        ("sound_effects", .soundEffects, ["sound_effects"]),
         ("media_overlays", .mediaOverlays, ["media_overlays"]), ("visual_blocks", .visualBlocks, ["visual_blocks"]),
         ("motion_scenes", .motionScenes, ["motion_scenes", "motion_runtime_hash"]),
         ("camera_effects", .cameraEffects, ["camera_effects"]),
@@ -3299,14 +3385,32 @@ extension DraftSnapshot {
     /// onto `base`, the rendered-variant-authoritative snapshot. Chat edits are
     /// UNSAVED: nothing renders until the creator saves. Returns nil when the
     /// draft is not an editor head, is stale (its `base_generation` is not the
-    /// variant's current `render_generation_id` — a save/render happened since),
+    /// variant's current baseline — a save/render happened since; a head the server marked `head_current` is never stale),
     /// was already applied (`appliedRevision`), or changes nothing.
     func stagedChatEdit(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> StagedChatEdit? {
+        guard let lanes = chatLanes(over: base, variant: variant, appliedRevision: appliedRevision),
+              !lanes.changed.isEmpty else { return nil }
+        return StagedChatEdit(sections: lanes.changed, snapshot: lanes.snapshot, userSong: lanes.userSong)
+    }
+
+    /// KRI-1384: the lanes a newer chat head carries at the saved value, as chat "undo that" writes
+    /// them. `stagedChatEdit` stages nothing for them, so an editor holding the undone edit drops it here.
+    func restoredChatSections(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> Set<EditorSection> {
+        chatLanes(over: base, variant: variant, appliedRevision: appliedRevision)?.restored ?? []
+    }
+
+    private func chatLanes(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?)
+        -> (changed: Set<EditorSection>, restored: Set<EditorSection>, snapshot: [String: JSONValue], userSong: EditorUserSongState?)? {
         guard let variant, snapshot["kind"]?.stringValue == "editor" else { return nil }
         if let appliedRevision, draftRevision <= appliedRevision { return nil }
-        guard let draftPayload = Self.object(snapshot["editor_payload"]),
-              let draftBase = draftPayload["base_generation"]?.stringValue, !draftBase.isEmpty,
-              draftBase == variant["render_generation_id"]?.stringValue else { return nil }
+        guard let draftPayload = Self.object(snapshot["editor_payload"]) else { return nil }
+        // The server re-bases the head whenever it is read, so `head_current == true` is its word that this head
+        // is the variant's. Re-deriving that here dropped heads the server had just certified. Without the flag
+        // (an older server) or with `false`, the head must name the variant's baseline itself.
+        if headCurrent != true {
+            guard let draftBase = draftPayload["base_generation"]?.stringValue, !draftBase.isEmpty,
+                  draftBase == variantBaseline(variant) else { return nil }
+        }
         // The flat keys are the complete compiled lane values; `sections` may be
         // absent (first chat edit on a non-editor head) or stale for a lane, so
         // the flat value wins and `sections` only fills lanes it does not carry.
@@ -3316,6 +3420,11 @@ extension DraftSnapshot {
         let baseSections = Self.object(payload["sections"]) ?? [:]
         var sections = baseSections
         var changed: Set<EditorSection> = []
+        var restored: Set<EditorSection> = []
+        // A video rendered before it stored its fit reports the saved fit only through its capability
+        // (`EditorDocument.effectiveLandscapeFit`), so a head writing that value puts the lane back.
+        let reportedFit = Self.object(Self.object(base["editor_capabilities"])?["landscape_fit"])?["value"]
+        func saved(_ key: String) -> JSONValue? { baseSections[key] ?? (key == "landscape_fit" ? reportedFit : nil) }
         for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
             var candidate = sections
             let removesMusic = lane.section == .music && draftPayload["remove_music"] == .bool(true)
@@ -3337,15 +3446,18 @@ extension DraftSnapshot {
                     else if let value = draftValue(key) { candidate[key] = value }
                 }
             }
-            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
+            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(saved($0)) }
                 || (removesMusic && candidate["music"] != baseSections["music"])
-            guard differs else { continue }
+            guard differs else { restored.insert(lane.section); continue }
             sections = candidate; changed.insert(lane.section)
         }
-        guard !changed.isEmpty else { return nil }
+        var userSong: EditorUserSongState?
+        if let song = Self.stagedUserSong(draftPayload[Self.userSongKey]) {
+            if song.isEmpty { restored.insert(.userSong) } else { userSong = song; changed.insert(.userSong) }
+        }
         payload["sections"] = .object(sections)
         var next = base; next["editor_payload"] = .object(payload)
-        return StagedChatEdit(sections: changed, snapshot: next)
+        return (changed, restored.subtracting(changed), next, userSong)
     }
 
     /// Merge chat `TimelineSlotEdit` rows (wire shape) onto the editor's richer
@@ -3474,7 +3586,7 @@ extension DraftSnapshot {
     }
 }
 
-enum UploadConsentError: Error, LocalizedError { case required; var errorDescription: String? { "Please confirm that you want Kria to use this cloud footage." } }
+enum UploadConsentError: Error, LocalizedError { case required; var errorDescription: String? { String(localized: "Please confirm that you want Kria to use this cloud footage.") } }
 struct UploadCoordinator: Sendable {
     func validate(source: UploadSource, purpose: UploadPurpose = .analysisProxy, consentGiven: Bool) throws {
         _ = source

@@ -193,9 +193,9 @@ struct ResultsView: View {
     let project: ProjectSummary
     let libraryJobID: UUID?
     @EnvironmentObject private var model: AppModel
-    @State private var showShare = false
     @State private var playbackURL: URL?
-    @State private var shareFileURL: URL?
+    /// The downloaded copy being shared. The file travels inside the sheet's item and is removed when the sheet goes.
+    @State private var shareFile: SharedVideoFile?
     @State private var player: AVPlayer?
     @State private var message: String?
     @State private var isRefreshingPlayback = false
@@ -246,18 +246,18 @@ struct ResultsView: View {
                 Button("Edit video") { showsEditor = true }
                     .buttonStyle(KriaPrimaryButtonStyle())
                 Button("Save to Photos") { Task { await saveToPhotos() } }.buttonStyle(KriaPrimaryButtonStyle()).disabled(playbackURL == nil)
-                Button(isPreparingShare ? "Preparing…" : "Share") { Task { await prepareShare() } }
+                Button(isPreparingShare ? String(localized: "Preparing…") : String(localized: "Share")) { Task { await prepareShare() } }
                     .buttonStyle(KriaSecondaryButtonStyle())
                     .disabled(playbackURL == nil || isPreparingShare)
             }
-            Button { Task { await refreshPlayback() } } label: { Label(isRefreshingPlayback ? "Refreshing link…" : "Refresh playback link", systemImage: "arrow.clockwise") }
+            Button { Task { await refreshPlayback() } } label: { Label(isRefreshingPlayback ? String(localized: "Refreshing link…") : String(localized: "Refresh playback link"), systemImage: "arrow.clockwise") }
                 .font(KriaFont.body(14).weight(.semibold)).disabled(isRefreshingPlayback)
-            Text(message ?? "Ready in your project receipt.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            Text(message ?? String(localized: "Ready in your project receipt.")).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
         }
         .padding(24)
         .task { await refreshPlayback(); await loadSongReference() }
-        .sheet(isPresented: $showShare, onDismiss: removeShareFile) {
-            if let shareFileURL { ShareSheetView(url: shareFileURL) }
+        .sheet(item: $shareFile) { file in
+            ShareSheetView(url: file.url).onDisappear { try? FileManager.default.removeItem(at: file.url) }
         }
         .fullScreenCover(isPresented: $showsEditor, onDismiss: {
             Task { await refreshPlayback(); await loadSongReference() }
@@ -295,7 +295,7 @@ struct ResultsView: View {
             let localFile = try await downloadFreshVideo()
             defer { try? FileManager.default.removeItem(at: localFile) }
             try await PhotoLibrarySaver().saveVideo(at: localFile)
-            message = "Saved to Photos."
+            message = String(localized: "Saved to Photos.")
         } catch { message = error.localizedDescription }
     }
 
@@ -303,9 +303,7 @@ struct ResultsView: View {
         isPreparingShare = true
         defer { isPreparingShare = false }
         do {
-            removeShareFile()
-            shareFileURL = try await downloadFreshVideo()
-            showShare = true
+            shareFile = SharedVideoFile(url: try await downloadFreshVideo())
         } catch { message = error.localizedDescription }
     }
 
@@ -321,12 +319,11 @@ struct ResultsView: View {
         playbackURL = result.playbackURL
         return result.fileURL
     }
+}
 
-    private func removeShareFile() {
-        guard let shareFileURL else { return }
-        try? FileManager.default.removeItem(at: shareFileURL)
-        self.shareFileURL = nil
-    }
+private struct SharedVideoFile: Identifiable {
+    let url: URL
+    var id: URL { url }
 }
 
 struct FinishedVideoDownloader {
@@ -364,8 +361,8 @@ enum NativeEditorVideoDownloadError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unavailable: "This video isn’t available to download yet."
-        case .rendering: "Save your changes and wait for the updated video before downloading."
+        case .unavailable: String(localized: "This video isn’t available to download yet.")
+        case .rendering: String(localized: "Save your changes and wait for the updated video before downloading.")
         }
     }
 }
@@ -381,8 +378,7 @@ struct NativeEditorVideoDownloader {
         // Fetch the selected editor variant at action time. The job-level
         // playback endpoint may point at a different library-preview variant.
         let variant = try await api.editorVariant(jobID: target.jobID, variantID: target.variantID)
-        let generation = variant["render_generation_id"]?.stringValue
-            ?? variant["render_finished_at"]?.stringValue
+        let generation = variantBaseline(variant)
         if let expected = target.expectedGenerationID, generation != expected {
             throw NativeEditorVideoDownloadError.rendering
         }

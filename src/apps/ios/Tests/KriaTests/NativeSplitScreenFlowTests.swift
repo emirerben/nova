@@ -40,6 +40,7 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         let session = makeSession(document)
         let selected = EditorSelection(kind: .clip, id: try XCTUnwrap(chosen.id))
         session.select(selected, seekToStart: false)
+        session.currentTime = 3
         session.createSplitScreen(panelCount: 3, scope: .selectedClip)
 
         let section = try XCTUnwrap(session.document.splitScreenSections.first)
@@ -186,6 +187,93 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         XCTAssertFalse(session.canUndo)
     }
 
+    /// KRI-1418. Samples 20 ms apart sit inside the 80 ms window a transaction normally waits for, so a preview that
+    /// only changes once the finger pauses or lifts never shows one of them while the finger is moving.
+    @MainActor
+    func testEveryDividerSampleReachesThePreviewWhileTheFingerIsStillMoving() async throws {
+        let source = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var document = EditorDocument(clips: [member(0, offset: 0, duration: 3, clipIndex: 0), member(1, offset: 0, duration: 3, clipIndex: 1)],
+                                      capabilities: Self.editable)
+        document.splitScreenSections = [.init(id: "s", durationS: 3, panelCount: 2)]
+        let session = makeSession(document)
+        session.currentTime = 0.5
+        await session.prepareFixtureSourcePreview(url: source)
+        func shown() -> [Double]? { session.displayedSourcePreviewRecipe?.splitScreenSections.first?.panelWeights }
+        XCTAssertEqual(shown(), [1, 1])
+
+        session.beginSplitDividerDrag(sectionID: "s", between: 0, and: 1)
+        var seen: [[Double]] = []
+        var expectedLast: [Double] = []
+        for step in 1...30 {
+            session.updateSplitDividerDrag(deltaFraction: 0.01 * Double(step))
+            expectedLast = try XCTUnwrap(session.splitContextAtPlayhead).section.panelWeights
+            try await Task.sleep(for: .milliseconds(20))
+            if let weights = shown(), weights != [1, 1], !seen.contains(weights) { seen.append(weights) }
+        }
+        XCTAssertGreaterThanOrEqual(seen.count, 5, "The picture follows the finger instead of waiting for it to stop: \(seen.count) of 30 samples were shown")
+        XCTAssertFalse(session.canUndo, "Live updates add no undo snapshot")
+
+        session.endSplitDividerDrag()
+        XCTAssertTrue(session.canUndo)
+        for _ in 0..<200 where shown() != expectedLast { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(shown(), expectedLast, "Release settles on the last sample")
+        session.undo()
+        for _ in 0..<200 where shown() != [1, 1] { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(shown(), [1, 1], "Undo puts the old ratio back on screen")
+    }
+
+    /// Opt-in (`TEST_RUNNER_KRIA_SPLIT_DRAG_BENCH=1`). Time from each touch sample to the on-screen composition
+    /// carrying its weights, then a 60 Hz paced drag counting the samples that reach the screen before release.
+    @MainActor
+    func testDividerDragPreviewLatencyBenchmark() async throws {
+        guard ProcessInfo.processInfo.environment["KRIA_SPLIT_DRAG_BENCH"] != nil else { throw XCTSkip("opt-in benchmark") }
+        let source = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var document = EditorDocument(clips: [member(0, offset: 0, duration: 3, clipIndex: 0), member(1, offset: 0, duration: 3, clipIndex: 1)],
+                                      capabilities: Self.editable)
+        document.splitScreenSections = [.init(id: "s", durationS: 3, panelCount: 2)]
+        let session = makeSession(document)
+        session.currentTime = 0.5
+        await session.prepareFixtureSourcePreview(url: source)
+        func shown() -> [Double]? { session.displayedSourcePreviewRecipe?.splitScreenSections.first?.panelWeights }
+        func milliseconds(_ duration: Duration) -> Double {
+            Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
+        }
+
+        session.beginSplitDividerDrag(sectionID: "s", between: 0, and: 1)
+        var latencies: [Double] = []
+        var timeouts = 0
+        for step in 1...80 {
+            let start = ContinuousClock.now
+            session.updateSplitDividerDrag(deltaFraction: 0.004 * Double(step))
+            let wanted = try XCTUnwrap(session.splitContextAtPlayhead).section.panelWeights
+            while shown() != wanted, start.duration(to: .now) < .seconds(5) { await Task.yield() }
+            if shown() == wanted { latencies.append(milliseconds(start.duration(to: .now))) } else { timeouts += 1 }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        session.endSplitDividerDrag()
+        for _ in 0..<200 where shown() != session.splitContextAtPlayhead?.section.panelWeights { try await Task.sleep(for: .milliseconds(20)) }
+
+        session.beginSplitDividerDrag(sectionID: "s", between: 0, and: 1)
+        var seen = Set<[Double]>()
+        let paced = ContinuousClock.now
+        for step in 1...90 {
+            session.updateSplitDividerDrag(deltaFraction: -0.003 * Double(step))
+            try await Task.sleep(for: .milliseconds(16))
+            if let weights = shown() { seen.insert(weights) }
+        }
+        let pacedSeconds = milliseconds(paced.duration(to: .now)) / 1000
+        session.endSplitDividerDrag()
+        let sorted = latencies.sorted()
+        func percentile(_ p: Double) -> Double { sorted.isEmpty ? -1 : sorted[min(sorted.count - 1, Int(p * Double(sorted.count)))] }
+        let report = String(format: "BENCH split-drag samples=%d timeouts=%d latency_ms min=%.1f p50=%.1f p90=%.1f max=%.1f | paced 90 samples in %.2fs shown_before_release=%d",
+                            latencies.count, timeouts, sorted.first ?? -1, percentile(0.5), percentile(0.9), sorted.last ?? -1, pacedSeconds, seen.count)
+        print(report)
+        let attachment = XCTAttachment(string: report + "\nlatencies_ms=" + latencies.map { String(format: "%.1f", $0) }.joined(separator: ","))
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(timeouts, 0)
+    }
+
     @MainActor
     func testSwapExchangesWholePanelsInOneStepWithoutTouchingClipsOrSizes() throws {
         let topA = member(0, offset: 0, duration: 2)
@@ -301,5 +389,31 @@ final class NativeSplitScreenFlowTests: XCTestCase {
         let bottomOnly = session.document
         session.setSplitScreenPanelCount(2)
         XCTAssertEqual(session.document, bottomOnly, "Dropping the panel would delete the section's only clip")
+    }
+
+    @MainActor
+    func testLayoutAndLengthChangesReportTheClipsTheyWouldDelete() throws {
+        let top = member(0, offset: 0, duration: 4), middle = member(1, offset: 0, duration: 4)
+        let bottomA = member(2, offset: 0, duration: 1), bottomB = member(2, offset: 2.5, duration: 1.5)
+        let removed: EditorTimelineSlot = {
+            var slot = member(2, offset: 0, duration: 4)
+            slot.removed = true
+            return slot
+        }()
+        var document = EditorDocument(clips: [top, middle, bottomA, bottomB, removed], capabilities: Self.editable)
+        document.splitScreenSections = [.init(id: "s", durationS: 4, panelCount: 3)]
+        let session = makeSession(document)
+
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", panelCount: 2), 2, "Both bottom clips go; a removed one is not counted")
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", panelCount: 3), 0)
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", duration: 4), 0)
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", duration: 2), 1, "Only the clip starting after the new end goes; one that is merely shortened stays")
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "s", duration: 1.5), 1)
+        XCTAssertEqual(session.splitClipsRemoved(sectionID: "missing", panelCount: 2), 0)
+
+        session.select(.init(kind: .clip, id: try XCTUnwrap(top.id)), seekToStart: false)
+        let before = session.document.clips.filter { !$0.removed }.count
+        session.setSplitScreenDuration(2)
+        XCTAssertEqual(before - session.document.clips.filter { !$0.removed }.count, 1, "The query matches what the setter deletes")
     }
 }

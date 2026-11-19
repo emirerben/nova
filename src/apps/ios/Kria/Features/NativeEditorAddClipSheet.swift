@@ -37,7 +37,7 @@ struct NativeEditorAddClipSheet: View {
                     .buttonStyle(.kriaIcon).accessibilityLabel("Close").accessibilityIdentifier("native-editor-add-clip-close")
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(choosingSource ? "Upload from" : "Add a clip or photo").kriaType(.heading).foregroundStyle(KriaColor.ink)
+                Text(choosingSource ? String(localized: "Upload from") : String(localized: "Add a clip or photo")).kriaType(.heading).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                 if !choosingSource {
                     Text("Adds to the end of your video.")
@@ -48,8 +48,8 @@ struct NativeEditorAddClipSheet: View {
                 sourceRows
             } else {
                 KriaSourceRow(options: [
-                    model.localAccountID == nil ? nil : .record(caption: "Film now", identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
-                    .upload(caption: "Use a photo or video", identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) {
+                    model.localAccountID == nil ? nil : .record(caption: String(localized: "Film now"), identifier: "native-editor-add-clip-record", isEnabled: !session.isAddingClip) { showsCamera = true },
+                    .upload(caption: String(localized: "Use a photo or video"), identifier: "native-editor-add-clip-upload", isEnabled: !session.isAddingClip) {
                         choosingSource = true
                     }
                 ].compactMap { $0 })
@@ -104,8 +104,8 @@ struct NativeEditorAddClipSheet: View {
 
     private var sourceRows: some View {
         VStack(spacing: 4) {
-            sourceRow("photo.on.rectangle.angled", "Photos", "Pick photos and videos from your library", id: "native-editor-add-clip-photos") { showingPhotosPicker = true }
-            sourceRow("folder", "Files", "From Files or iCloud", id: "native-editor-add-clip-files") { showingFileImporter = true }
+            sourceRow("photo.on.rectangle.angled", String(localized: "Photos"), String(localized: "Pick photos and videos from your library"), id: "native-editor-add-clip-photos") { showingPhotosPicker = true }
+            sourceRow("folder", String(localized: "Files"), String(localized: "From Files or iCloud"), id: "native-editor-add-clip-files") { showingFileImporter = true }
         }
         .disabled(session.isAddingClip)
     }

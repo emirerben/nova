@@ -75,7 +75,7 @@ def _mangling_correction(monkeypatch) -> list[list[str]]:
     is applied after it (failure mode 15), and that no model is called."""
     seen: list[list[str]] = []
 
-    def correct(texts, _language, *, model):
+    def correct(texts, _language, *, model, job_id=None):
         seen.append(list(texts))
         return [text.replace("Merope", "Meropa") for text in texts]
 

@@ -3,6 +3,12 @@ import KriaMediaEngine
 import SwiftUI
 import UIKit
 
+/// One opening of the slide post's AI sheet, and whether chat edit was on when it opened.
+struct SlidePostConversation: Identifiable {
+    let id = UUID()
+    let chatEnabled: Bool
+}
+
 /// Native workspace for a connected photo-and-video post. There is exactly ONE layout (the rich
 /// editor: header, preview with the AI button, strip ending in "+ Add", tool dock). It never depends
 /// on a fetched capability, so it can't silently fall back to another screen. The creation chat only
@@ -27,9 +33,9 @@ struct SlidePostWorkspaceView: View {
     /// The running Save to Photos / Share flow; cancelled when the editor goes away so it cannot keep polling
     /// (and prompt for Photos) from a screen the user already left.
     @State private var exportTask: Task<Void, Never>?
-    @State private var showsConversation = false
-    /// Chat-edit staging as decided when the AI sheet opened; it never flips while the sheet is up.
-    @State private var aiChatEnabled = false
+    /// The open AI sheet. Chat-edit staging is decided when it opens and travels inside it, so it never flips while
+    /// the sheet is up and the sheet never reads a separate flag stale (KRI-1379).
+    @State private var aiSheet: SlidePostConversation?
     @State private var pendingUploads: [UploadRecoveryRecord] = []
     @State private var uploadFailures: [UploadFailure] = []
     @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
@@ -120,16 +126,16 @@ struct SlidePostWorkspaceView: View {
     private var hasFailedUploads: Bool { hasSkippedFiles || hasFailedAssets }
     private var canRequestProposal: Bool { !session.isBusy && !hasAwaitedAssets && !hasPendingDraftAssets && !hasFailedDraftAssets && !session.readyAssets.isEmpty }
     private var proposalGuidance: String? {
-        if hasFailedDraftAssets { return "Retry or remove the failed photos and videos in your post before asking Kria." }
-        if hasAwaitedAssets || hasPendingDraftAssets { return "Wait for every photo and video to finish importing before asking Kria." }
-        if hasFailedAssets || hasPendingAssets { return "Kria will use the photos and videos that are ready." }
+        if hasFailedDraftAssets { return String(localized: "Retry or remove the failed photos and videos in your post before asking Kria.") }
+        if hasAwaitedAssets || hasPendingDraftAssets { return String(localized: "Wait for every photo and video to finish importing before asking Kria.") }
+        if hasFailedAssets || hasPendingAssets { return String(localized: "Kria will use the photos and videos that are ready.") }
         return nil
     }
 
     private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)-\(session.isRendering)-\(session.needsSubmissionObservation)-\(session.needsStateObservation)" }
     /// The selected video plays only while the app is active and nothing covers the preview (a sheet, an export).
     private var videoPlaybackAllowed: Bool {
-        scenePhase == .active && !showsConversation && !showsAttachments && !showsCaption && !showsSize
+        scenePhase == .active && aiSheet == nil && !showsAttachments && !showsCaption && !showsSize
             && !exporter.isSharing && !exporter.isBusy
     }
 
@@ -164,10 +170,10 @@ struct SlidePostWorkspaceView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $showsConversation) {
+        .sheet(item: $aiSheet) { sheet in
             SlidePostAISheet(
                 session: session, api: model.api, itemID: itemID,
-                chatEnabled: aiChatEnabled,
+                chatEnabled: sheet.chatEnabled,
                 canRequestProposal: canRequestProposal,
                 uploadGuidance: proposalGuidance,
                 dictationEnabled: effectiveCapabilities?.voiceDictationEnabled == true
@@ -205,8 +211,8 @@ struct SlidePostWorkspaceView: View {
             if phase == .active { session.startObserving(); Task { await refresh() } }
             else { session.stopObserving() }
         }
-        .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
-        .onChange(of: conversationCloseID) { _, _ in showsConversation = false }
+        .onChange(of: conversationAcceptedID) { _, _ in aiSheet = nil }
+        .onChange(of: conversationCloseID) { _, _ in aiSheet = nil }
         .onChange(of: videoPlaybackAllowed, initial: true) { _, allowed in videoPlayback.setAllowed(allowed) }
         .onChange(of: mode) { _, next in if next != .browse { session.selectedStickerID = nil } }
         // Media that finishes importing joins the post by itself; it waits out saves and AI edits.
@@ -376,10 +382,10 @@ struct SlidePostWorkspaceView: View {
 
     /// Why export cannot start right now (shown as a disabled row in the export menu); nil = it can.
     private var exportBlockReason: String? {
-        if session.isChatting { return "Kria is editing. Export when it finishes." }
-        if hasPendingDraftAssets { return "Wait for photos and videos to finish importing." }
-        if hasFailedDraftAssets { return "Retry or remove the photos and videos that couldn’t be prepared." }
-        guard let draft = session.draft else { return "Add photos and videos first." }
+        if session.isChatting { return String(localized: "Kria is editing. Export when it finishes.") }
+        if hasPendingDraftAssets { return String(localized: "Wait for photos and videos to finish importing.") }
+        if hasFailedDraftAssets { return String(localized: "Retry or remove the photos and videos that couldn’t be prepared.") }
+        guard let draft = session.draft else { return String(localized: "Add photos and videos first.") }
         return draft.validationMessage
     }
 
@@ -400,13 +406,13 @@ struct SlidePostWorkspaceView: View {
     private func transportRow(_ draft: SlidePostDraft) -> some View {
         let slideNumber = (draft.slides.firstIndex { $0.id == session.selectedSlide?.id } ?? 0) + 1
         let subtitle: String
-        if mode == .text { subtitle = "Slide \(slideNumber) · Text" }
-        else if mode == .look { subtitle = "Slide \(slideNumber) · Look" }
-        else if mode == .tilt { subtitle = "Slide \(slideNumber) · Tilt" }
-        else if mode == .crop { subtitle = "Slide \(slideNumber) · Crop" }
-        else if mode == .draw { subtitle = "Slide \(slideNumber) · Draw" }
-        else if session.hasUnsavedChanges { subtitle = "Unsaved changes" }
-        else { subtitle = "\(platformName(draft)) · \(draft.size.rawValue) · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
+        if mode == .text { subtitle = String(localized: "Slide \(slideNumber) · Text") }
+        else if mode == .look { subtitle = String(localized: "Slide \(slideNumber) · Look", comment: "Slide post status line: look (colour filter) mode") }
+        else if mode == .tilt { subtitle = String(localized: "Slide \(slideNumber) · Tilt", comment: "Slide post status line: tilt mode") }
+        else if mode == .crop { subtitle = String(localized: "Slide \(slideNumber) · Crop", comment: "Slide post status line: crop mode") }
+        else if mode == .draw { subtitle = String(localized: "Slide \(slideNumber) · Draw", comment: "Slide post status line: drawing mode") }
+        else if session.hasUnsavedChanges { subtitle = String(localized: "Unsaved changes") }
+        else { subtitle = String(localized: "\(platformName(draft)) · \(draft.size.rawValue) · \(draft.slides.count) slides") }
         return SlidePostTransportRow(
             subtitle: subtitle, unsaved: session.hasUnsavedChanges && mode != .text && mode != .look && mode != .tilt,
             canUndo: session.canUndoEdit || session.canUndo, canRedo: session.canRedoEdit,
@@ -426,7 +432,7 @@ struct SlidePostWorkspaceView: View {
                 SlidePostTone.stage
                 VStack(spacing: 10) {
                     if waiting || hasPendingAssets { ProgressView() }
-                    Text(waiting ? "Setting up your post…" : hasPendingAssets ? "Preparing your photos and videos…" : "Add photos and videos to start your post.")
+                    Text(waiting ? String(localized: "Setting up your post…") : hasPendingAssets ? String(localized: "Preparing your photos and videos…") : String(localized: "Add photos and videos to start your post."))
                         .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.zinc).multilineTextAlignment(.center)
                 }
                 .padding(.horizontal, 32)
@@ -434,7 +440,7 @@ struct SlidePostWorkspaceView: View {
                 .accessibilityIdentifier("slidepost-empty")
             }
             .overlay(alignment: .bottomTrailing) { aiButton }
-            SlidePostTransportRow(subtitle: "No slides yet", unsaved: false, canUndo: false, canRedo: false, onUndo: {}, onRedo: {})
+            SlidePostTransportRow(subtitle: String(localized: "No slides yet"), unsaved: false, canUndo: false, canRedo: false, onUndo: {}, onRedo: {})
             VStack(spacing: 8) {
                 SlidePostStrip(
                     slides: [], coverIndex: 0, selectedID: nil, asset: { _ in nil }, pending: pendingTiles(nil),
@@ -470,8 +476,8 @@ struct SlidePostWorkspaceView: View {
         VStack(spacing: 0) {
             richBanner
             if showsNoMetadataNotice, !panelOpen {
-                SlidePostNotice(title: "No dates or places on these photos",
-                                detail: "Kria can't sort by time or add locations. You can still reorder by hand, or ask for text you write yourself.")
+                SlidePostNotice(title: String(localized: "No dates or places on these photos"),
+                                detail: String(localized: "Kria can't sort by time or add locations. You can still reorder by hand, or ask for text you write yourself."))
                     .padding(.bottom, 8)
             }
             // KRI-185 rule: typing shrinks the preview to a fixed 120pt, it never covers it and never grows.
@@ -560,13 +566,13 @@ struct SlidePostWorkspaceView: View {
             .padding().accessibilityIdentifier("slidepost-merge-conflict")
         } else if let notice = session.pasteNotice {
             Button { session.pasteNotice = nil } label: {
-                NativeEditorBannerRow(title: "Paste", detail: notice, systemImage: "doc.on.clipboard", tint: KriaColor.ink, identifier: "slidepost-paste-notice")
+                NativeEditorBannerRow(title: String(localized: "Paste", comment: "Banner title: clipboard paste notice"), detail: notice, systemImage: "doc.on.clipboard", tint: KriaColor.ink, identifier: "slidepost-paste-notice")
             }
             .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if let error = session.error {
             VStack(alignment: .leading, spacing: 8) {
                 Button { session.error = nil } label: {
-                    NativeEditorBannerRow(title: session.canCheckAIResult ? "Checking your result" : "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
+                    NativeEditorBannerRow(title: session.canCheckAIResult ? String(localized: "Checking your result") : String(localized: "Something went wrong"), detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
                 }
                 .buttonStyle(.plain).accessibilityHint("Dismiss")
                 if session.canCheckAIResult {
@@ -578,15 +584,15 @@ struct SlidePostWorkspaceView: View {
                 }
             }
         } else if let issue = session.state?.validationErrors.first {
-            NativeEditorBannerRow(title: "Needs attention", detail: issue.message, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-validation")
+            NativeEditorBannerRow(title: String(localized: "Needs attention"), detail: issue.message, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-validation")
         } else if let notice = session.autoAppendNotice {
             Button { session.autoAppendNotice = nil } label: {
-                NativeEditorBannerRow(title: "Heads up", detail: notice, systemImage: "info.circle", tint: KriaColor.ink, identifier: "slidepost-notice")
+                NativeEditorBannerRow(title: String(localized: "Heads up"), detail: notice, systemImage: "info.circle", tint: KriaColor.ink, identifier: "slidepost-notice")
             }
             .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if hasFailedUploads {
             Button(action: addMedia) {
-                NativeEditorBannerRow(title: "Some files didn’t upload", detail: "Review files that need retrying.", systemImage: "arrow.clockwise", tint: KriaColor.ink, identifier: "slidepost-retry-files")
+                NativeEditorBannerRow(title: String(localized: "Some files didn’t upload"), detail: String(localized: "Review files that need retrying."), systemImage: "arrow.clockwise", tint: KriaColor.ink, identifier: "slidepost-retry-files")
             }
             .buttonStyle(.plain)
         }
@@ -610,7 +616,7 @@ struct SlidePostWorkspaceView: View {
 
     /// The editor's AI entry (same sparkles button as the video editor's preview), the page's only way into Kria chat.
     private var aiButton: some View {
-        KriaAIButton(identifier: "slidepost-openkria") { aiChatEnabled = chatEditOn; showsConversation = true }
+        KriaAIButton(identifier: "slidepost-openkria") { aiSheet = SlidePostConversation(chatEnabled: chatEditOn) }
     }
 
     private func richPreview(_ draft: SlidePostDraft, size: CGSize) -> some View {

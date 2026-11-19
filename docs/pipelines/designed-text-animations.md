@@ -13,7 +13,7 @@ The iPhone editor offers six animations on editable video text. They preserve th
 
 ## Contracts
 
-`app/agents/_schemas/text_animation_phases.py` owns the edge values. `generate_native_text_contract.py` generates the native enum. The mobile OpenAPI and shared generated types derive from the same schema.
+`app/agents/_schemas/text_animation_phases.py` owns the edge values. `generate_native_text_contract.py` generates the native enum. It also generates `EditorLimits` (minimum clip length, playback-rate range) from `app/services/editor_limits.py`, the one source for editor limits that code, prompts and the app read; `tests/test_editor_limits_single_source.py` rejects retyped copies. The mobile OpenAPI and shared generated types derive from the same schema.
 
 Protocol 23 is required to read a phone recipe containing a designed edge. A protocol-22 reader receives `client_update_required`, rather than failing while decoding an unknown enum value.
 

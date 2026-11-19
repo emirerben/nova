@@ -146,6 +146,7 @@ from app.services.creative_copy_decisions import (
     latest_open_creative_question,
     localize_question,
     media_digest,
+    positional_labels_grounded,
     question_message,
     wording_question,
 )
@@ -1255,6 +1256,10 @@ def _apply_explicit_render_intent(
                     continue
             if field == "shot_labels" and value is not None:
                 if not all(" ".join(label.split()) in quote for label in value):
+                    continue
+                if strategy.edit_format == "montage" and not positional_labels_grounded(
+                    value, creator_sources
+                ):
                     continue
             if field == "pinned_texts" and value is not None:
                 if not all(" ".join(pin.text.split()) in quote for pin in value):

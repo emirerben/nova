@@ -92,11 +92,18 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # the values before it were ce15504f / 8a7a2c85 / 68edb943 / d29283f2.
 # Re-pinned for KRI-1355: the brief section teaches the typed no-title ask (`title: "off"`);
 # the values before it were b52730bb / 72041f99 / 3116efd4 / 7cc917df.
+# Re-pinned for KRI-1384 (a limit is not a reason to ask; the brief records every stated ask
+# whatever the action); the values before it were 62cb90f0 / 2c83102a / f2f80a6e / d0df791e.
+# Re-pinned for KRI-1405 (typed `no_sound_effects`; a kept ask after the simpler-version tap is
+# restated as a change); the values before it were 06f5d356 / 1d71c192 / 071e27a1 / 08910143.
+# Re-pinned for the model-owned chat language: every Main Creator prompt now ends its turn with
+# the CHAT LANGUAGE line (`conversation_language`); the values before it were abe644f4 /
+# 05b2007d / d5b8a2cf / 271524fd.
 MAIN_PROMPT_SHA = {
-    "neither": "62cb90f09ed39561094307dcbe86fb5858d82957b0373a3ba5b14a1973912e00",
-    (True, True): "2c83102a5775194593119b0cd004a6593d9c9b3622815419da09aedf33c3f181",
-    (True, False): "f2f80a6e20025407fbe0a2dffb0176c7a534a42eac2faf3fea4de2649242bec8",
-    (False, True): "d0df791e74b22894ca12b7933e8f5c3d2144f9156b273939d998eb618efae5ed",
+    "neither": "3731664d04a3721259f88cc6429c51fc9f8b618144574b5bcee1fb1255f4fa43",
+    (True, True): "12f7087f5535d26d8c25a23f58a3b390653c4bd1aaf3bbced3f350a003e2efa3",
+    (True, False): "bcc90d2467a7b44da54e911b21db5fc44713cd98bc68251af45343fdef04d9b2",
+    (False, True): "823890fc955fa42dc3fde8f10296ab80b4c3ddab22b681b748bfe798f1fc8a9f",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

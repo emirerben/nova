@@ -19,14 +19,46 @@ extension LiveFrameConsumer {
     func consume(_ frame: CVPixelBuffer, mirrored: Bool, capturedAt: Double?) { consume(frame, mirrored: mirrored) }
 }
 
+/// What picking the background frame reads from one item's video output. `AVPlayerItemVideoOutput` in the app; a test
+/// scripts the looper's copies on its own clock with it.
+protocol LoopedVideoOutput: AnyObject {
+    func itemTime(forHostTime hostTimeInSeconds: CFTimeInterval) -> CMTime
+    func hasNewPixelBuffer(forItemTime itemTime: CMTime) -> Bool
+    func copyPixelBuffer(forItemTime itemTime: CMTime, itemTimeForDisplay outItemTimeForDisplay: UnsafeMutablePointer<CMTime>?) -> CVPixelBuffer?
+}
+
+extension AVPlayerItemVideoOutput: LoopedVideoOutput {}
+
+/// Picks the frame to draw from the items a video background plays, at a given host time. Kept apart from the player so
+/// the loop's timing can be driven frame by frame in a test instead of sampled from a live player (KRI-1379).
+struct LoopedFramePicker {
+    let orientation: CGImagePropertyOrientation
+    private(set) var latest: CIImage?
+    /// The size of the last decoded frame.
+    private(set) var decoded: CGSize?
+
+    init(orientation: CGImagePropertyOrientation) { self.orientation = orientation }
+
+    /// Only the item on screen is read: the looper preloads the next copy, and its output reports that copy's frame 0 as
+    /// new while this pass is still playing, which drew the first frame early and left a hole at the real loop point.
+    /// Until the item on screen has a new frame, the last one stays.
+    mutating func frame(onScreen current: AnyObject?, outputs: [(item: AnyObject, output: any LoopedVideoOutput)], hostTime: CFTimeInterval) -> CIImage? {
+        guard let current, let output = outputs.first(where: { $0.item === current })?.output else { return latest }
+        let time = output.itemTime(forHostTime: hostTime)
+        if output.hasNewPixelBuffer(forItemTime: time), let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
+            decoded = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+            latest = LiveBackgroundCompositor.coverFit(CIImage(cvPixelBuffer: buffer).oriented(orientation), into: LiveSpeakerMatteConfig.previewSize)
+        }
+        return latest
+    }
+}
+
 /// A looping, muted video as the background. Decoded by `AVPlayerItemVideoOutput`, pulled one frame per camera frame.
 final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable {
     private let player: AVPlayer
     private let outputAttributes: [String: Any]
-    private let orientation: CGImagePropertyOrientation
     private let lock = NSLock()
-    private var latest: CIImage?
-    private var decoded: CGSize?
+    private var picker: LoopedFramePicker
     /// The old way to loop (`loopedVideoBackground == false`).
     private var endObserver: NSObjectProtocol?
     /// The new way: `AVPlayerLooper` queues the next pass before this one ends, so there is no seek and no gap.
@@ -34,7 +66,7 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
     private var looperObservation: NSKeyValueObservation?
     /// One per item that can play: the looper rotates through a fixed few copies, and an output only sees the item it is on, so
     /// each copy has its own, attached before it starts and not when it becomes current (which lost its first frames).
-    private var outputs: [(item: AVPlayerItem, output: AVPlayerItemVideoOutput)] = []
+    private var outputs: [(item: AnyObject, output: any LoopedVideoOutput)] = []
 
     enum VideoError: Error { case noVideoTrack, zeroDuration }
 
@@ -47,7 +79,8 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
         let composition = AVMutableComposition()
         let picture = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         try picture?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: track, at: .zero)
-        orientation = Self.orientation(of: try await track.load(.preferredTransform))
+        let orientation = Self.orientation(of: try await track.load(.preferredTransform))
+        picker = LoopedFramePicker(orientation: orientation)
         var attributes: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         if tuning.drawnSizeVideoDecode,
            let size = Self.decodeSize(natural: try await track.load(.naturalSize), orientation: orientation) {
@@ -93,15 +126,7 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
 
     func frame() -> CIImage? {
         lock.lock(); defer { lock.unlock() }
-        // Only the item on screen: the looper preloads the next copy, and its output reports that copy's frame 0 as new while
-        // this pass is still playing, which drew the first frame early and left a hole at the real loop point.
-        guard let current = player.currentItem, let output = outputs.first(where: { $0.item === current })?.output else { return latest }
-        let time = output.itemTime(forHostTime: CACurrentMediaTime())
-        if output.hasNewPixelBuffer(forItemTime: time), let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
-            decoded = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
-            latest = LiveBackgroundCompositor.coverFit(CIImage(cvPixelBuffer: buffer).oriented(orientation), into: LiveSpeakerMatteConfig.previewSize)
-        }
-        return latest
+        return picker.frame(onScreen: player.currentItem, outputs: outputs, hostTime: CACurrentMediaTime())
     }
 
     /// How many looper items have an output waiting on them, and how many items the looper plays. For tests.
@@ -109,7 +134,7 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
     var loopedItemCount: Int { looper?.loopingPlayerItems.count ?? 0 }
 
     /// The size of the last decoded frame. For tests.
-    var decodedSize: CGSize? { lock.lock(); defer { lock.unlock() }; return decoded }
+    var decodedSize: CGSize? { lock.lock(); defer { lock.unlock() }; return picker.decoded }
 
     /// The size to decode a track of `natural` size at so the preview's cover fit draws it at 1:1, or nil when the track
     /// is already no larger. Decoding at the size that is drawn spares the decoder, the copy and the Core Image read from a

@@ -75,6 +75,9 @@ enum NativeEditorUITestFixtures {
         if arguments.contains("-ui-testing-editor-split-speaker") {
             return Fixture(shape: .speakerBackground, draft: splitSpeaker)
         }
+        if arguments.contains("-ui-testing-editor-split-multi") {
+            return Fixture(shape: .reorderClips, draft: splitScreenMulti)
+        }
         if arguments.contains("-ui-testing-editor-split-screen") {
             return Fixture(shape: .reorderClips, draft: splitScreenControls)
         }
@@ -89,6 +92,7 @@ enum NativeEditorUITestFixtures {
         if arguments.contains("-ui-testing-editor-gameday-reset") { UserDefaults.standard.removeObject(forKey: gamedaySavedKey) }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         var value = draft(for: shape)
+        if arguments.contains("-ui-testing-editor-dual-captions") { value = dualCaptions(arguments: arguments) }
         if arguments.contains("-ui-testing-editor-text-bend") {
             // KRI-646: the server advertises `editor_capabilities.text_bend` to a protocol-9 build on a device-rendered variant.
             var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
@@ -684,6 +688,76 @@ enum NativeEditorUITestFixtures {
         ])
     }()
 
+    // MARK: KRI-1501 two-language captions
+
+    /// The same two talking lines in each two-language-caption language. Line 0 in German is the longest case: as a
+    /// translated line it is wider than 0.9 of the frame at its default size and must shrink to stay one row.
+    static let dualCaptionLines: [String: [String]] = [
+        "tr": ["3 tane stratejide birleştiriyorlar.", "İlki en kolayı."],
+        "en": ["They combine it through three strategies.", "The first one is the easiest."],
+        "de": ["Sie verbinden das in drei Strategien, die kaum jemand nutzt.", "Die erste ist die einfachste."],
+        "pt": ["Eles combinam isso em três estratégias.", "A primeira é a mais fácil."],
+    ]
+
+    /// `-ui-testing-editor-dual-captions`: a phone Talking edit with a spoken caption track and a translated-line
+    /// track. `-ui-testing-editor-dual-pair-<spoken>-<translated>` picks the pair (default `tr-en`);
+    /// `-ui-testing-editor-dual-captions-no-capability` drops `editor_capabilities.caption_translation` (the server's
+    /// gate is closed for this build).
+    static func dualCaptions(arguments: [String]) -> EditorDraft {
+        let pair = arguments.first { $0.hasPrefix("-ui-testing-editor-dual-pair-") }?
+            .dropFirst("-ui-testing-editor-dual-pair-".count).split(separator: "-").map(String.init) ?? []
+        let spoken = pair.count == 2 && dualCaptionLines[pair[0]] != nil ? pair[0] : "tr"
+        let translated = pair.count == 2 && dualCaptionLines[pair[1]] != nil && pair[1] != spoken ? pair[1] : (spoken == "en" ? "tr" : "en")
+        let clips = [clip(900, start: 0, duration: 6)]
+        let windows: [(Double, Double)] = [(1.2, 3.7), (3.7, 5.6)]
+        let spokenLines = dualCaptionLines[spoken] ?? [], translatedLines = dualCaptionLines[translated] ?? []
+        var capabilities: [String: JSONValue] = [
+            "timeline": .bool(true),
+            "caption_cues": .object(["editable": .bool(true)]),
+            "caption_meta": .object(["editable": .bool(true)]),
+            "caption_editor_style": .bool(true),
+            "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+        ]
+        if !arguments.contains("-ui-testing-editor-dual-captions-no-capability") {
+            capabilities["caption_translation"] = .object(["languages": .array(["de", "en", "pt", "tr"].map(JSONValue.string))])
+        }
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "caption_cues": .array(windows.enumerated().map { index, window in .object([
+                "text": .string(spokenLines[index]), "start_s": .number(window.0), "end_s": .number(window.1),
+                "translation": .string(translatedLines[index]),
+            ]) }),
+            "caption_meta": .object([
+                "enabled": .bool(true), "style": .string("sentence"),
+                "translation": EditorCaptionTranslation(language: translated, sourceLanguage: spoken, outcome: "translated").json,
+            ]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "caption_language": .string(spoken),
+            "editor_capabilities": .object(capabilities),
+        ])
+    }
+
+    /// The translate route's stand-in for UI tests: each cue's text is looked up in `dualCaptionLines`; a text it does
+    /// not know comes back dropped, like a line the server's language check refuses.
+    static func dualCaptionTranslation(for request: CaptionTranslationRequest) -> CaptionTranslationResponse {
+        var source: String?
+        let lines = request.cues.map { cue -> CaptionTranslationResponse.Line in
+            for (language, texts) in dualCaptionLines {
+                if let index = texts.firstIndex(of: cue.text) {
+                    source = source ?? language
+                    return .init(id: cue.id, text: dualCaptionLines[request.language]?[index])
+                }
+            }
+            return .init(id: cue.id, text: nil)
+        }
+        let dropped = lines.filter { $0.text == nil }.map(\.id)
+        return CaptionTranslationResponse(language: request.language, sourceLanguage: source,
+            outcome: dropped.isEmpty ? "translated" : dropped.count == lines.count ? "unmet" : "partial",
+            translations: lines, droppedCueIDs: dropped)
+    }
+
     static let songCaptions: EditorDraft = {
         let clips = [clip(910, start: 0, duration: 6)]
         let lines = [["Midnight", "drive", "again"], ["Hold", "on", "tight"]]
@@ -782,6 +856,47 @@ enum NativeEditorUITestFixtures {
         catch { preconditionFailure("KRI-524 captured editor fixture is invalid: \(error)") }
     }()
 
+    /// Capabilities shared by every split fixture. `-ui-testing-editor-split-collapse` adds `split_collapse`, so new
+    /// sections shorten and lengthen with their longest panel; without it the section keeps the length it was given.
+    private static var splitCapabilities: JSONValue {
+        var capabilities: [String: JSONValue] = [
+            "timeline": .bool(true),
+            "split_screen": .object(["editable": .bool(true)]),
+            "original_audio": .object(["editable": .bool(true)]),
+            "clips": .object([
+                "audio": .object(["editable": .bool(true)]),
+                "source_crop": .object(["editable": .bool(true)]),
+                "playback_rate": .object(["editable": .bool(true)])
+            ])
+        ]
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-collapse") {
+            capabilities["split_collapse"] = .object(["editable": .bool(true)])
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-blank") {
+            capabilities["split_blank_panel"] = .object(["editable": .bool(true)])
+        }
+        return .object(capabilities)
+    }
+
+    /// Four ordinary 3 s clips (12 s), each from a 20 s source: whole-video splits, extending a one-clip split to
+    /// the whole video, and cutting a split into full-screen halves all need more than two clips to be observable.
+    /// `-ui-testing-editor-split-short-source` shrinks every source to 3.6 s so a drag past the footage is reachable.
+    static let splitScreenMulti: EditorDraft = {
+        let source: Double = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-short-source") ? 3.6 : 20
+        // Ids 989...992 land on source indices 0...3, so the DEBUG source buttons read Clip 1...Clip 4.
+        let clips = [clip(989, start: 0, duration: 3, sourceDuration: source),
+                     clip(990, start: 3, duration: 3, sourceDuration: source),
+                     clip(991, start: 6, duration: 3, sourceDuration: source),
+                     clip(992, start: 9, duration: 3, sourceDuration: source)]
+        return draft(clips: clips, text: [], captions: false, music: false,
+                     sections: ["timeline_slots": slots(for: clips),
+                                "mix": .object(["original_level": .number(0.8), "music_level": .number(0.3)])], rootExtras: [
+                        "render_destination": .string("device"),
+                        "editor_timeline_mode": .string("authored"),
+                        "editor_capabilities": splitCapabilities
+                     ])
+    }()
+
     static let splitScreenControls: EditorDraft = {
         let clips = [clip(989, start: 0, duration: 4, sourceDuration: 20),
                      clip(990, start: 4, duration: 2, sourceDuration: 20)]
@@ -790,16 +905,7 @@ enum NativeEditorUITestFixtures {
                                 "mix": .object(["original_level": .number(0.8), "music_level": .number(0.3)])], rootExtras: [
                         "render_destination": .string("device"),
                         "editor_timeline_mode": .string("authored"),
-                        "editor_capabilities": .object([
-                            "timeline": .bool(true),
-                            "split_screen": .object(["editable": .bool(true)]),
-                            "original_audio": .object(["editable": .bool(true)]),
-                            "clips": .object([
-                                "audio": .object(["editable": .bool(true)]),
-                                "source_crop": .object(["editable": .bool(true)]),
-                                "playback_rate": .object(["editable": .bool(true)])
-                            ])
-                        ])
+                        "editor_capabilities": splitCapabilities
                      ])
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-global-layers") {
             let label = text(1299, content: "GLOBAL", x: 0.5, y: 0.2)

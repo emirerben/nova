@@ -25,7 +25,10 @@ from app.agents.main_creator import (
     MainCreatorInput,
 )
 from app.config import settings
+from app.kria.reply_language import conversation_language_line
 from tests.agents.test_main_creator_agent import _input, _manifest
+
+pytestmark = pytest.mark.journey("kri-586-hook-copy")
 
 # (clip_intents_enabled, brief_enabled) -> sha256 of the deliberate v56 no-song baseline.
 # v55 (KRI-598) adds the unavailable-`guided_voiceover` rule, so all four renders changed.
@@ -110,11 +113,16 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # brief-on hashes re-pinned (before: 9fc58bb0… / 891266d1…); brief-off unchanged.
 # KRI-1355: the brief section teaches the typed no-title ask (`facts.title == "off"`): the two
 # brief-on hashes re-pinned (before: ae8b21b4… / 3b5a507b…); brief-off unchanged.
+# KRI-1384: the base prompt says a limit is not a reason to ask, and the brief section records
+# every stated ask whatever the action: all four re-pinned (before: 5ac96e9a… / 42a19e30… /
+# 4ad9471f… / 68d42cab…).
+# KRI-1405: the brief section teaches `no_sound_effects` and restating a kept ask: the two
+# brief-on hashes re-pinned (before: 1dd7c57f… / 389e0842…); brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "5ac96e9a1909de36430a3641ab104edafae4a20af1fa9bf8f30f20d25705ec77",
-    (True, False): "42a19e30cae3fadac2dd65318b2af49ca4a5d70332e17f714aa5875af6433914",
-    (False, True): "4ad9471f016b045c48ca1c328d4334a7c69179c221770d5c17416b09e98c0631",
-    (False, False): "68d42cab5cc0d03ccf3cf164d19bccba9193f01a9409d802acc0454b4adce777",
+    (True, True): "c017d2f4a74f003fcc6f6d0550d15ff81550adea85353283afff1c7e27f29ebb",
+    (True, False): "67797ad5d4390601c8802c280fe68759ecdd697c64d2093aede2f1a7c4c063d1",
+    (False, True): "42af559e0ce1c14a60b9cedb4f88e0b89f8e152c43caeacfe8f82845ab5c8017",
+    (False, False): "05f0b6f7a774d08fa47fe57ebc60baaab793b0cda14625cfbdef91d03bac09c2",
 }
 
 
@@ -155,7 +163,9 @@ def test_prompt_without_a_song_preserves_base_under_editorial_skills(
         + "\n\n"
     )
     assert prompt.startswith(skills)
-    base_prompt = prompt.removeprefix(skills)
+    # The chat-language line (model-owned reply language) follows the unchanged base.
+    line = conversation_language_line(None)
+    base_prompt = prompt.removeprefix(skills).removesuffix(f"\n\n{line}\n") + "\n"
     assert (
         hashlib.sha256(base_prompt.encode()).hexdigest()
         == PRE_CHANGE_PROMPT_SHA[(clip_intents, brief)]

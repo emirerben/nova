@@ -124,13 +124,11 @@ def _fake_engine_capturing():
     return engine, captured
 
 
-def test_persist_skips_unparseable_job_id():
-    """A non-UUID, non-prefixed string (eval harness, garbage) is still
-    dropped silently — there is nothing sensible to FK on."""
+def _persist_unowned(job_id):
     engine, captured = _fake_engine_capturing()
     with patch("app.database.sync_engine", engine):
         persist_agent_run(
-            job_id="random-string-not-a-uuid",
+            job_id=job_id,
             segment_idx=None,
             agent_name="t",
             prompt_version="1",
@@ -145,8 +143,27 @@ def test_persist_skips_unparseable_job_id():
             output_dict={"b": 2},
             raw_text="hi",
         )
-    assert captured == []
-    engine.begin.assert_not_called()
+    return captured
+
+
+def test_persist_keeps_unparseable_job_id_under_owner_label():
+    """A non-UUID string (eval harness) has nothing to FK on, but the run is no longer lost:
+    the fleet report counts it through ``owner_label``."""
+    captured = _persist_unowned("random-string-not-a-uuid")
+    assert len(captured) == 1
+    row = captured[0]
+    assert row["owner_label"] == "random-string-not-a-uuid"
+    assert row["job_id"] is None and row["template_id"] is None
+    assert row["music_track_id"] is None and row["plan_item_id"] is None
+
+
+def test_persist_keeps_a_run_with_no_job_id_as_unowned():
+    assert _persist_unowned(None)[0]["owner_label"] == "unowned"
+
+
+def test_persist_leaves_owner_label_empty_for_an_owned_run():
+    job = uuid.uuid4()
+    assert _persist_unowned(str(job))[0]["owner_label"] is None
 
 
 def test_persist_routes_creator_agent_session_without_job_id():
@@ -564,10 +581,10 @@ def test_agent_run_persists_track_context_to_music_track_id(
     assert captured[0]["music_track_id"] == str(track_uuid)
 
 
-def test_agent_run_skips_persist_for_malformed_track_context(
+def test_agent_run_keeps_malformed_track_context_as_unowned(
     sample_agent: SampleAgent, mock_client: MockModelClient
 ):
-    """A track-prefixed but non-UUID suffix (legacy/eval) is still dropped."""
+    """A track-prefixed but non-UUID suffix has no FK to write, but the run is kept."""
     engine, captured = _fake_engine_capturing()
     mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 50})
     with patch("app.database.sync_engine", engine):
@@ -575,7 +592,7 @@ def test_agent_run_skips_persist_for_malformed_track_context(
             SampleInput(topic="x"),
             ctx=RunContext(job_id="track:song-1"),
         )
-    assert captured == []
+    assert [row["owner_label"] for row in captured] == ["track:song-1"]
 
 
 def test_agent_run_skips_persist_when_opted_out(

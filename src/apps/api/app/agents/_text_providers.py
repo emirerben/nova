@@ -1,50 +1,110 @@
 """Native text APIs. No SDK retries, no provider fallbacks, no hidden reasoning storage.
 
-Only the two priced experiment models are enabled. Media requires an explicit
-future contract; a Gemini URI must never be sent to another provider.
+Models, providers and reasoning efforts come from ``model_registry``. Media requires an
+explicit future contract; a Gemini URI must never be sent to another provider. A caller that
+passes ``thought_summary_callback`` gets the provider's reasoning summary streamed to it; the
+summary never enters ``raw_text``.
 """
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from threading import Event
 from typing import Any
+
+import httpx
+import structlog
 
 from app.agents._runtime import (
     ModelInvocation,
+    ProviderDeadlineExceededError,
     ProviderOutcomeUnknownError,
     TerminalError,
     TransientError,
 )
+from app.agents._tool_calls import (
+    ToolAnswer,
+    ToolCall,
+    ToolRequest,
+    described_nesting,
+    parse_arguments,
+)
+from app.agents.model_registry import Provider, exact_spec
 from app.config import settings
 
-TEXT_MODELS = {"gpt-6.1-sol": "openai", "claude-sonnet-5-5": "anthropic"}
-TEXT_EFFORTS = {
-    "gpt-6.1-sol": ("low", "medium", "high", "xhigh"),
-    "claude-sonnet-5-5": ("low", "medium", "high", "xhigh", "max"),
-}
+log = structlog.get_logger()
+_STREAM_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="text-stream")
+# Raised before any byte of the request left this process.
+_NEVER_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
-def paid_provider(model: str) -> str | None:
-    return "google" if model.startswith("gemini") else TEXT_MODELS.get(model)
-
-
-def _preflight(model, expected, media_uri, media_mime, thinking_budget, thinking_level):
-    if model != expected:
+def _preflight(model, provider: Provider, media_uri, media_mime, thinking_budget, thinking_level):
+    spec = exact_spec(model)
+    if spec is None or spec.provider != provider:
         raise TerminalError("unsupported text model")
-    if media_uri or media_mime or thinking_budget is not None:
+    if ((media_uri or media_mime) and not spec.supports_media) or thinking_budget is not None:
         raise TerminalError("text provider does not support media or thinking_budget")
-    if thinking_level is not None and thinking_level not in TEXT_EFFORTS[model]:
+    if thinking_level is not None and thinking_level not in spec.efforts:
         raise TerminalError("unsupported reasoning effort")
 
 
+def _causes(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    link: BaseException | None = exc
+    while link is not None and all(link is not seen for seen in chain):
+        chain.append(link)
+        link = link.__cause__ or link.__context__
+    return chain
+
+
 def _translate(exc: Exception) -> Exception:
-    # A 5xx or transport failure can follow accepted, billable work. Only a
-    # concrete rejection is safe to release/retry. Never include SDK bodies.
+    # A provider response with a status is the provider's decision: a 5xx or 429 bills nothing
+    # and may be retried, another 4xx is final. Without one, only a connection that never
+    # opened is safe to retry. A read that ran out is our own deadline; any other failure after
+    # the request was sent may follow accepted, billable work. Never include SDK bodies.
     status = getattr(exc, "status_code", None)
-    if status == 429:
-        return TransientError("text provider rate limited")
+    if status == 429 or (isinstance(status, int) and status >= 500):
+        return TransientError(f"text provider unavailable (HTTP {status})")
     if status is not None and 400 <= status < 500 and status != 408:
         return TerminalError(f"text provider rejected request (HTTP {status})")
+    chain = _causes(exc)
+    if any(isinstance(link, _NEVER_SENT) for link in chain):
+        return TransientError("text provider unreachable")
+    if any(isinstance(link, httpx.TimeoutException) for link in chain):
+        return ProviderDeadlineExceededError("text provider outcome unknown after its deadline")
     return ProviderOutcomeUnknownError("text provider outcome unknown")
+
+
+def _publish(callback: Callable[[str], None], text: str) -> None:
+    if not text:
+        return
+    try:
+        callback(text)
+    except Exception:  # noqa: BLE001 - display delivery is optional
+        log.warning("text_thought_summary_publish_failed")
+
+
+def _stream_within(timeout_s: float, consume: Callable[[Event], Any]) -> Any:
+    """Run a streamed call against one total deadline, as the Gemini client does.
+
+    The SDK timeout bounds each read, not the stream, so a model that keeps sending summary
+    chunks could otherwise outlive the turn. On the deadline the worker stops at its next
+    event; anything it publishes meanwhile lands on a fenced publisher attempt and is dropped.
+    """
+    stop = Event()
+    future = _STREAM_POOL.submit(consume, stop)
+    try:
+        return future.result(timeout=max(0.1, timeout_s))
+    except FutureTimeoutError as exc:
+        stop.set()
+        if future.cancel():
+            raise TransientError(f"text stream cancelled before start after {timeout_s:.1f}s")
+        raise ProviderDeadlineExceededError(
+            f"text provider outcome unknown after {timeout_s:.1f}s"
+        ) from exc
 
 
 class OpenAITextClient:
@@ -72,17 +132,26 @@ class OpenAITextClient:
         timeout_s=30.0,
         response_schema=None,
         thought_summary_callback=None,
+        tool_request: ToolRequest | None = None,
     ):
-        _preflight(model, "gpt-6.1-sol", media_uri, media_mime, thinking_budget, thinking_level)
+        _preflight(model, "openai", media_uri, media_mime, thinking_budget, thinking_level)
+        _tools_preflight(model, tool_request, response_schema)
+        reasoning = {"effort": thinking_level or "medium"}
+        if thought_summary_callback is not None:
+            # Sol returned no summary parts for "auto" or "detailed" in 4 of 4 Main Creator calls
+            # and returned them for "concise" in 2 of 2 (docs/reviews/kri-1384/thinking-row.md).
+            reasoning["summary"] = "concise"
         kwargs = dict(
             model=model,
             input=prompt,
             store=False,
-            reasoning={"effort": thinking_level or "medium"},
+            reasoning=reasoning,
             max_output_tokens=max_output_tokens or 8192,
             timeout=timeout_s,
         )
-        if response_schema is not None:
+        if tool_request is not None:
+            kwargs.update(_openai_tool_kwargs(tool_request, prompt))
+        elif response_schema is not None:
             kwargs["text"] = {
                 "format": {
                     "type": "json_schema",
@@ -94,8 +163,30 @@ class OpenAITextClient:
         elif response_json:
             kwargs["text"] = {"format": {"type": "json_object"}}
         client = self._get().with_options(max_retries=0)
+
+        def consume(stop: Event):
+            final = None
+            with client.responses.create(**kwargs, stream=True) as stream:
+                for event in stream:
+                    if stop.is_set():
+                        return None
+                    kind = getattr(event, "type", "")
+                    if kind == "response.reasoning_summary_text.delta":
+                        _publish(thought_summary_callback, event.delta)
+                    elif kind == "response.reasoning_summary_part.added" and event.summary_index:
+                        _publish(thought_summary_callback, "\n\n")
+                    elif kind in ("response.completed", "response.incomplete", "response.failed"):
+                        final = event.response
+            if final is None:
+                raise ValueError("stream ended without a response")
+            return final
+
         try:
-            response = client.responses.create(**kwargs)
+            response = (
+                client.responses.create(**kwargs)
+                if thought_summary_callback is None
+                else _stream_within(timeout_s, consume)
+            )
             usage = response.usage
             if usage is None:
                 raise ValueError("missing usage")
@@ -107,7 +198,7 @@ class OpenAITextClient:
             refused = any(
                 getattr(c, "type", "") == "refusal"
                 for item in response.output
-                for c in getattr(item, "content", [])
+                for c in getattr(item, "content", None) or []
             )
             reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
             status = (
@@ -120,7 +211,11 @@ class OpenAITextClient:
                 else "incomplete"
             )
             return ModelInvocation(
-                raw_text=response.output_text,
+                raw_text=(
+                    _openai_tool_answer(response).envelope()
+                    if tool_request is not None
+                    else response.output_text
+                ),
                 tokens_in=usage.input_tokens,
                 tokens_out=max(0, usage.output_tokens - thoughts),
                 tokens_thoughts=thoughts,
@@ -130,6 +225,8 @@ class OpenAITextClient:
                 finish_status=status,
                 token_details={"output_tokens_inclusive": usage.output_tokens},
             )
+        except (TransientError, TerminalError):
+            raise
         except Exception as exc:
             raise _translate(exc) from exc
 
@@ -159,10 +256,10 @@ class AnthropicTextClient:
         timeout_s=30.0,
         response_schema=None,
         thought_summary_callback=None,
+        tool_request: ToolRequest | None = None,
     ):
-        _preflight(
-            model, "claude-sonnet-5-5", media_uri, media_mime, thinking_budget, thinking_level
-        )
+        _preflight(model, "anthropic", media_uri, media_mime, thinking_budget, thinking_level)
+        _tools_preflight(model, tool_request, response_schema)
         config = {"effort": thinking_level or "high"}
         if response_schema is not None:
             config["format"] = {"type": "json_schema", "schema": response_schema}
@@ -176,9 +273,36 @@ class AnthropicTextClient:
             thinking={"type": "adaptive"},
             output_config=config,
         )
+        if tool_request is not None:
+            kwargs.update(_anthropic_tool_kwargs(tool_request, prompt))
         client = self._get().with_options(max_retries=0)
+
+        def consume(stop: Event):
+            # Thinking text is empty unless a summary is asked for (the "omitted" default).
+            summarized = {**kwargs, "thinking": {"type": "adaptive", "display": "summarized"}}
+            blocks = 0
+            with client.messages.stream(**summarized) as stream:
+                for event in stream:
+                    if stop.is_set():
+                        return None
+                    if event.type == "content_block_start" and (
+                        event.content_block.type == "thinking"
+                    ):
+                        if blocks:
+                            _publish(thought_summary_callback, "\n\n")
+                        blocks += 1
+                    elif event.type == "content_block_delta" and (
+                        event.delta.type == "thinking_delta"
+                    ):
+                        _publish(thought_summary_callback, event.delta.thinking)
+                return stream.get_final_message()
+
         try:
-            response = client.messages.create(**kwargs)
+            response = (
+                client.messages.create(**kwargs)
+                if thought_summary_callback is None
+                else _stream_within(timeout_s, consume)
+            )
             usage = response.usage
             writes = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
             reads = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
@@ -194,10 +318,15 @@ class AnthropicTextClient:
                 if reason == "refusal"
                 else "completed"
                 if reason in ("end_turn", "stop_sequence")
+                or (reason == "tool_use" and tool_request is not None)
                 else "incomplete"
             )
             return ModelInvocation(
-                raw_text="".join(block.text for block in response.content if block.type == "text"),
+                raw_text=(
+                    _anthropic_tool_answer(response).envelope()
+                    if tool_request is not None
+                    else "".join(block.text for block in response.content if block.type == "text")
+                ),
                 tokens_in=usage.input_tokens + writes + reads,
                 tokens_out=max(0, usage.output_tokens - thoughts),
                 tokens_thoughts=thoughts,
@@ -211,5 +340,163 @@ class AnthropicTextClient:
                     "output_tokens_inclusive": usage.output_tokens,
                 },
             )
+        except (TransientError, TerminalError):
+            raise
         except Exception as exc:
             raise _translate(exc) from exc
+
+
+# ── Tool calling (KRI-1393) ────────────────────────────────────────────────────
+
+
+def _tools_preflight(model, tool_request, response_schema) -> None:
+    if tool_request is None:
+        return
+    spec = exact_spec(model)
+    if spec is None or not spec.supports_tools:
+        raise TerminalError("model does not take tool calls")
+    if response_schema is not None:
+        raise TerminalError("a tool-calling request has no response schema")
+
+
+def _openai_tool_kwargs(request: ToolRequest, prompt: str) -> dict[str, Any]:
+    """Instructions + the user turn + earlier rounds. The tool schemas stay non-strict: strict
+    mode needs every property required, and the agent's parser stays the validator."""
+    items: list[Any] = [{"role": "user", "content": prompt}]
+    for exchange in request.history:
+        answer = exchange.answer
+        if answer.provider == "openai" and answer.continuation:
+            items.extend(answer.continuation)
+        else:
+            items.extend(
+                {
+                    "type": "function_call",
+                    "call_id": call.id,
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments or {}, ensure_ascii=False),
+                }
+                for call in answer.calls
+            )
+        items.extend(
+            {"type": "function_call_output", "call_id": result.call_id, "output": result.content}
+            for result in exchange.results
+        )
+    return {
+        "instructions": request.system,
+        "input": items,
+        "tools": [
+            {
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": described_nesting(tool.parameters),
+                "strict": False,
+            }
+            for tool in request.tools
+        ],
+        "tool_choice": "required",
+        "parallel_tool_calls": True,
+        "prompt_cache_key": request.cache_key or None,
+        # With store=False, a later round needs the reasoning items back as encrypted content.
+        "include": ["reasoning.encrypted_content"],
+    }
+
+
+def _openai_tool_answer(response: Any) -> ToolAnswer:
+    calls: list[ToolCall] = []
+    continuation: list[dict[str, Any]] = []
+    for item in response.output:
+        if getattr(item, "type", "") == "function_call":
+            calls.append(
+                ToolCall(id=item.call_id, name=item.name, arguments=parse_arguments(item.arguments))
+            )
+        if getattr(item, "type", "") in ("reasoning", "function_call", "message"):
+            continuation.append(item.model_dump(mode="json", exclude_none=True))
+    return ToolAnswer(
+        provider="openai",
+        calls=calls,
+        text=response.output_text or "",
+        continuation=continuation,
+    )
+
+
+# Block fields the Messages API takes back, per block type. A response block can carry fields a
+# request block does not accept.
+_ANTHROPIC_REPLAY_FIELDS = {
+    "thinking": ("type", "thinking", "signature"),
+    "redacted_thinking": ("type", "data"),
+    "text": ("type", "text"),
+    "tool_use": ("type", "id", "name", "input"),
+}
+
+
+def _anthropic_tool_kwargs(request: ToolRequest, prompt: str) -> dict[str, Any]:
+    """The static system block carries the cache breakpoint: tools and system are the cached
+    prefix, the per-turn user message follows it. Forced tool choice is refused with thinking on
+    (Sonnet 5.5), so the choice is auto and the prompt asks for the calls."""
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    for exchange in request.history:
+        answer = exchange.answer
+        if answer.provider == "anthropic" and answer.continuation:
+            content = answer.continuation
+        else:
+            content = [
+                {
+                    "type": "tool_use",
+                    "id": call.id,
+                    "name": call.name,
+                    "input": call.arguments or {},
+                }
+                for call in answer.calls
+            ]
+        messages.append({"role": "assistant", "content": content})
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": result.call_id,
+                        "content": result.content,
+                        "is_error": result.is_error,
+                    }
+                    for result in exchange.results
+                ],
+            }
+        )
+    return {
+        "system": [
+            {"type": "text", "text": request.system, "cache_control": {"type": "ephemeral"}}
+        ],
+        "messages": messages,
+        "tools": [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": described_nesting(tool.parameters),
+            }
+            for tool in request.tools
+        ],
+        "tool_choice": {"type": "auto"},
+    }
+
+
+def _anthropic_tool_answer(response: Any) -> ToolAnswer:
+    calls: list[ToolCall] = []
+    text: list[str] = []
+    continuation: list[dict[str, Any]] = []
+    for block in response.content:
+        kind = getattr(block, "type", "")
+        if kind == "tool_use":
+            calls.append(
+                ToolCall(id=block.id, name=block.name, arguments=parse_arguments(block.input))
+            )
+        elif kind == "text":
+            text.append(block.text)
+        fields = _ANTHROPIC_REPLAY_FIELDS.get(kind)
+        if fields is not None:
+            dumped = block.model_dump(mode="json")
+            continuation.append({key: dumped[key] for key in fields if key in dumped})
+    return ToolAnswer(
+        provider="anthropic", calls=calls, text="".join(text), continuation=continuation
+    )

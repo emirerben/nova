@@ -15,9 +15,9 @@ Flow:
   5. enrich slots with beat-density energy (same as manual path)
   6. persist recipe_cached + write a TemplateRecipeVersion row
 
-`transition_picker`, `shot_ranker`, and `clip_router` are NOT called here —
-they need user-clip metadata which only exists at job time. Those agents are
-invoked from the is_agentic branch in `template_orchestrate.py`.
+`clip_router` is NOT called here — it needs user-clip metadata which only
+exists at job time. It is invoked from the is_agentic branch in
+`template_orchestrate.py`.
 
 Trigger: this task is enqueued by
   - `POST /admin/templates` when is_agentic=True
@@ -622,7 +622,7 @@ def agentic_template_build_task(
                 # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
                 # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
                 # via `analyze_template_schema.txt` which requires the field. Downstream
-                # agents (text_designer, clip_router, shot_ranker) read a real
+                # agents (text_designer, clip_router) read a real
                 # model-generated creative_direction in both regimes; what changes is just
                 # the source (recipe-embedded vs separate Pass-1 paragraph). To restore the
                 # standalone Pass-1 call set "two_pass" here.

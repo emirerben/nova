@@ -14,32 +14,21 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
-# prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
-# archetype bank + success-factor bank are part of the prompt).
-# 2026-07-09 — removed unused quote output; banks untouched.
-# 2026-06-11 — added goal, content_mode (existing_footage|create_new|mixed) and
-#              current_situation outputs: the interview now forks on "footage you
-#              have vs videos you'll film" and grounds WHERE the creator's daily
-#              life happens (stops the planner assuming they live where past-trip
-#              footage was shot — the Buenos Aires incident).
-# 2026-06-06.1 — added $tiktok_analysis block (deep TikTok profile analysis from
-#                analyze_tiktok_profile task — creator's own proven hooks/themes/voice).
-#                Injected call-time only; not stored on the questionnaire row. Absent
-#                when the analysis hasn't landed → prompt byte-identical to baseline.
-# 2026-06-06 — interview_turns replaces flat fields as primary input; added
-#              an aha-moment reveal output field.
-# 2026-06-05 — added posts_per_week (int 1-7) so the plan agent can emit the right
-#              number of ideas per week; resolve_posts_per_week() provides a legacy
-#              fallback for personas that predate this field.
-# 2026-05-31 — concrete-pillar constraint: content_pillars + sample_topics must be
-#              filmable real-life moments, never abstract concepts ("Analytical
-#              Thinking") — stops the abstract pillar that seeds plan-agent cringe.
-# 2026-05-30.2 — added $preferences block (feedback-loop preference_summary) so
-#                "update persona from feedback" re-tunes the lane toward what works.
-# 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
-# 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-11-08-research-21"
+from app.agents._prompt_fingerprint import prompt_fingerprint
+
+# Derived from the files the prompt is built from, so editing any of them moves the
+# version and no PR edits a shared line (docs/pipelines/prompt-version-history.md).
+# The banks are part of the prompt; the weekly research PR needs no version bump.
+PERSONA_PROMPT_SOURCES: tuple[str, ...] = (
+    "app/agents/persona_generator.py",
+    "app/agents/persona_examples.py",
+    "app/agents/_schemas/persona.py",
+    "app/kria/reply_language.py",
+    "prompts/generate_persona.txt",
+    "prompts/persona_archetypes.json",
+    "prompts/tiktok_success_factors.json",
+)
+PERSONA_PROMPT_VERSION = prompt_fingerprint("pe", PERSONA_PROMPT_SOURCES)
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8

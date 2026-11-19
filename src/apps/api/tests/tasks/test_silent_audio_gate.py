@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.journey("kri-653-silent-take")
+
 requires_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is required")
 
 
@@ -84,16 +86,13 @@ class TestSilentAudioFailureCopy:
             SilentAudioPlanDeclined,
             UnsupportedPhonePlan,
         )
-        from app.tasks.content_plan_build import (
-            CREATOR_FACING_DETAIL_CODES,
-            job_failure_message,
-        )
+        from app.tasks.content_plan_build import job_failure_message
         from app.tasks.kria_runtime import _DETERMINISTIC_JOB_FAILURE_CODES
 
         assert issubclass(SilentAudioPlanDeclined, UnsupportedPhonePlan)
-        assert "silent_audio_declined" in CREATOR_FACING_DETAIL_CODES
         assert "silent_audio_declined" in _DETERMINISTIC_JOB_FAILURE_CODES
         detail = "Your video has no sound, so there's nothing to caption or cut. Record it again."
+        assert SilentAudioPlanDeclined(detail).creator_detail == detail
         assert job_failure_message("silent_audio_declined", detail) == detail
         # With no stored detail it still reads as this problem, never the generic iPhone line.
         assert "no sound" in (job_failure_message("silent_audio_declined", None) or "")

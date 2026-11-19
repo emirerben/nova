@@ -38,7 +38,7 @@ def _parse_owner(
     """Route a ``RunContext.job_id`` to ``(job_uuid, template_uuid, track_uuid)``.
 
     Exactly zero or one of the three values will be non-null; an all-None tuple
-    means the row should be dropped (eval harness, malformed prefix).
+    means the run has no owner row (eval harness, malformed prefix).
 
     Optional trailing context segments after the UUID are tolerated. Callers
     use them as log/trace labels to distinguish flows on the same owner — e.g.
@@ -124,6 +124,7 @@ def persist_agent_run(
     output_dict: dict[str, Any] | None,
     raw_text: str | None,
     error: str | None = None,
+    fallback_kind: str | None = None,
 ) -> None:
     """Insert one agent_run row. Swallows all errors. Uses the sync engine
     directly to stay decoupled from any caller-owned session/transaction.
@@ -142,6 +143,7 @@ def persist_agent_run(
             session_uuid = uuid.UUID(creator_agent_session_id)
         except (ValueError, AttributeError):
             session_uuid = None
+    owner_label: str | None = None
     if (
         job_uuid is None
         and template_uuid is None
@@ -149,7 +151,7 @@ def persist_agent_run(
         and plan_item_uuid is None
         and session_uuid is None
     ):
-        return
+        owner_label = (job_id or "unowned")[:200]
 
     try:
         # Lazy import: keeps agent import path light (eval harness, tests).
@@ -163,17 +165,17 @@ def persist_agent_run(
                     """
                     INSERT INTO agent_run (
                         job_id, plan_item_id, template_id, music_track_id,
-                        creator_agent_session_id,
+                        creator_agent_session_id, owner_label,
                         segment_idx, agent_name, prompt_version, model,
                         input_json, raw_text, output_json, outcome, attempts,
                         tokens_in, tokens_out, tokens_thoughts, tokens_cached,
                         tokens_tool, token_details, environment, usage_purpose,
                         test_run_id, provider_request_id, price_version,
                         reserved_cost_usd, settled_cost_usd, cost_reservation_id,
-                        cost_usd, latency_ms, error_message
+                        cost_usd, latency_ms, error_message, fallback_kind
                     ) VALUES (
                         :job_id, :plan_item_id, :template_id, :music_track_id,
-                        :creator_agent_session_id,
+                        :creator_agent_session_id, :owner_label,
                         :segment_idx, :agent_name, :prompt_version, :model,
                         CAST(:input_json AS JSONB), :raw_text,
                         CAST(:output_json AS JSONB), :outcome, :attempts,
@@ -181,7 +183,8 @@ def persist_agent_run(
                         :tokens_tool, CAST(:token_details AS JSONB), :environment,
                         :usage_purpose, :test_run_id, :provider_request_id,
                         :price_version, :reserved_cost_usd, :settled_cost_usd,
-                        :cost_reservation_id, :cost_usd, :latency_ms, :error_message
+                        :cost_reservation_id, :cost_usd, :latency_ms, :error_message,
+                        :fallback_kind
                     )
                     """
                 ),
@@ -191,6 +194,7 @@ def persist_agent_run(
                     "template_id": str(template_uuid) if template_uuid else None,
                     "music_track_id": str(track_uuid) if track_uuid else None,
                     "creator_agent_session_id": str(session_uuid) if session_uuid else None,
+                    "owner_label": owner_label,
                     "segment_idx": segment_idx,
                     "agent_name": agent_name,
                     "prompt_version": prompt_version,
@@ -217,6 +221,7 @@ def persist_agent_run(
                     "cost_usd": round(cost_usd, 6),
                     "latency_ms": latency_ms,
                     "error_message": error,
+                    "fallback_kind": fallback_kind,
                 },
             )
     except Exception as exc:  # noqa: BLE001 — never break an agent call

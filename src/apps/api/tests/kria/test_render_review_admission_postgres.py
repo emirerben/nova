@@ -1012,7 +1012,7 @@ async def test_review_sweep_is_time_boxed_and_never_runs_inside_the_chat_reconci
         )
         db.commit()
 
-    # Another module's queued turn (its broker was stubbed there, and its 35 s lease runs out while
+    # Another module's queued turn (its broker was stubbed there, and its lease runs out while
     # a slow run is still going) is dispatchable when this test sweeps. A real publish would need
     # Redis, which the free regression workflow does not run: the sweep is under test, not delivery.
     # The sweep takes the oldest 50 eligible turns, so a crowded database must not hide the turn

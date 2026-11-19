@@ -9,12 +9,39 @@ struct NativeSplitPanelPick: Equatable {
     let selection: EditorSelection?
 }
 
+/// A request to open the Split tool's picker aimed at one panel (a timeline gap tap). `token` makes a repeat
+/// request for the same panel a new one.
+struct NativeSplitAddRequest: Equatable {
+    let sectionID: String
+    let panel: Int
+    let token = UUID()
+}
+
+/// What a panel holds at the playhead.
+enum NativeSplitPlayback {
+    enum PanelState { case playing, gap, empty }
+
+    /// `empty`: the panel has no footage at all. `gap`: it has footage, but none at the playhead (before, between or
+    /// after its clips). `playing`: a clip of it covers the playhead.
+    @MainActor static func state(session: NativeEditorSession, context: NativeSplitContext, panel: Int) -> PanelState {
+        let local = min(max(0, session.currentTime - context.sectionStart), context.section.durationS - 0.000001)
+        let members = session.document.clips.filter {
+            !$0.removed && $0.splitSectionID == context.sectionID && $0.splitPanelIndex == panel
+        }
+        guard !members.isEmpty else { return .empty }
+        let covers = members.contains { $0.splitOffsetS <= local && local < $0.splitOffsetS + ($0.durationS ?? 0) }
+        return covers ? .playing : .gap
+    }
+}
+
 /// Preview controls for the split section under the playhead. The preview is the control surface: a Sky tint on the
 /// selected panel, a white line between panels that drags to resize, and a round swap button on that line.
 /// Everything is laid out from the panels drawn at the playhead (`NativeSplitContext.activePanels`), so a collapse
 /// section's controls follow the picture when a panel ends.
-/// The tint and panel elements never take touches. Only the divider bands do, and this view sits above the canvas
-/// gesture surface so the canvas move gesture and its empty tap (fullscreen) never see a touch that starts on a band.
+/// A panel with no footage shows its real look, the section background, as the export does. The picker and the
+/// timeline gap are the ways in. The tint and panel elements never take touches. Only the divider bands do, and this
+/// view sits above the canvas gesture surface so the canvas move gesture and its empty tap (fullscreen) never see a
+/// touch that starts on a band.
 struct NativeSplitPreviewOverlay: View {
     @ObservedObject var session: NativeEditorSession
     @Binding var pick: NativeSplitPanelPick?
@@ -49,7 +76,7 @@ struct NativeSplitPreviewOverlay: View {
                 .offset(x: rect.minX, y: rect.minY)
                 .allowsHitTesting(false)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(NativeSplitScreenRows.panelTitle(index: index, count: section.panelCount)) panel")
+                .accessibilityLabel("\(NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: index, count: section.panelCount))) panel")
                 .accessibilityAddTraits(selected == index ? [.isButton, .isSelected] : .isButton)
                 .accessibilityAction { Self.choose(panel: index, context: context, session: session, pick: $pick) }
                 .accessibilityIdentifier("native-editor-split-panel-\(index)")
@@ -135,7 +162,7 @@ private struct NativeSplitDividerHandle: View {
     }
 
     private var upperTitle: String {
-        NativeSplitScreenRows.panelTitle(index: upper, count: section.panelCount).lowercased()
+        NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: upper, count: section.panelCount))
     }
 
     var body: some View {

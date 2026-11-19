@@ -17,30 +17,30 @@ enum TakeStopReason: String, Codable, Sendable, CaseIterable {
 
     var creatorMessage: String {
         switch self {
-        case .user: "You stopped the recording."
-        case .backgrounded: "Recording stopped when Kria went to the background."
-        case .audioInterruptionBegan: "Recording stopped because a call or another app took the microphone."
-        case .captureSessionInterrupted: "Recording stopped because iOS took the camera away."
-        case .runtimeError: "Recording stopped because the camera hit an error."
-        case .routeLost: "Recording stopped because the microphone was disconnected."
-        case .mediaServicesReset: "Recording stopped because iOS restarted its audio services."
-        case .viewRemoved: "Recording stopped because the camera screen closed."
-        case .sessionTornDown: "Recording stopped because the camera was shut down."
-        case .systemFinished: "Recording stopped on its own."
+        case .user: String(localized: "You stopped the recording.")
+        case .backgrounded: String(localized: "Recording stopped when Kria went to the background.")
+        case .audioInterruptionBegan: String(localized: "Recording stopped because a call or another app took the microphone.")
+        case .captureSessionInterrupted: String(localized: "Recording stopped because iOS took the camera away.")
+        case .runtimeError: String(localized: "Recording stopped because the camera hit an error.")
+        case .routeLost: String(localized: "Recording stopped because the microphone was disconnected.")
+        case .mediaServicesReset: String(localized: "Recording stopped because iOS restarted its audio services.")
+        case .viewRemoved: String(localized: "Recording stopped because the camera screen closed.")
+        case .sessionTornDown: String(localized: "Recording stopped because the camera was shut down.")
+        case .systemFinished: String(localized: "Recording stopped on its own.")
         }
     }
 
     /// What the camera card says when the loss hit the preview and no take was running.
     var previewMessage: String {
         switch self {
-        case .user, .systemFinished: "The camera stopped."
-        case .backgrounded: "The camera stopped when Kria went to the background."
-        case .audioInterruptionBegan: "Audio was interrupted."
-        case .captureSessionInterrupted: "Camera capture was interrupted."
-        case .runtimeError: "Camera capture failed."
-        case .routeLost: "The microphone connection changed."
-        case .mediaServicesReset: "Audio services restarted."
-        case .viewRemoved, .sessionTornDown: "The camera was shut down."
+        case .user, .systemFinished: String(localized: "The camera stopped.")
+        case .backgrounded: String(localized: "The camera stopped when Kria went to the background.")
+        case .audioInterruptionBegan: String(localized: "Audio was interrupted.")
+        case .captureSessionInterrupted: String(localized: "Camera capture was interrupted.")
+        case .runtimeError: String(localized: "Camera capture failed.")
+        case .routeLost: String(localized: "The microphone connection changed.")
+        case .mediaServicesReset: String(localized: "Audio services restarted.")
+        case .viewRemoved, .sessionTornDown: String(localized: "The camera was shut down.")
         }
     }
 }

@@ -144,18 +144,27 @@ def _guided_voiceover_downgrade_notice(manifest: ResolvedCreatorManifest) -> str
 def _asked_media_left_out_notice(kind: str | None, ask: str) -> str:
     """KRI-594: a photo or video the creator's brief asks for, named in their own words."""
 
-    noun_en, noun_tr = ("photo", "fotoğraf") if kind == "image" else ("video", "video")
+    photo = kind == "image"
     return say(
-        en='This version leaves out the {noun_en} you asked for: "{ask}".',
-        tr='Bu sürümde istediğin {noun_tr} yok: "{ask}".',
-        noun_en=noun_en,
+        en='This version leaves out the photo you asked for: "{ask}".'
+        if photo
+        else 'This version leaves out the video you asked for: "{ask}".',
+        tr='Bu sürümde istediğin fotoğraf yok: "{ask}".'
+        if photo
+        else 'Bu sürümde istediğin video yok: "{ask}".',
         ask=ask,
-        noun_tr=noun_tr,
     )
 
 
 def _captions_kept_notice() -> str:
     return say(en=CAPTIONS_KEPT_NOTICE, tr=_CAPTIONS_KEPT_NOTICE_TR)
+
+
+def _captions_always_on(strategy: CreativeStrategy) -> bool:
+    """A strategy that turns captions off on an edit whose renderer always shows them."""
+    return strategy.caption_style == "none" and (
+        strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
+    )
 
 
 def transcript_labels_dropped_notice() -> str:
@@ -426,6 +435,9 @@ class RefusedStrategy:
     # reply that follows when the creator accepts the simpler version).
     fields: tuple[str, ...] = ()
     agreed: str = ""
+    # What the simplification changes, without the question that asks for it: said on its own
+    # when something else holds the edit too, so no reply asks a question it has no card for.
+    detail: str = ""
 
 
 SONG_CAPTIONS_NEED_SONG_CODE = "song_captions_need_song"
@@ -833,8 +845,50 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
     )
 
 
+def _floored_capacity_s(
+    manifest: ResolvedCreatorManifest | None, before: CreativeStrategy, after: CreativeStrategy
+) -> float | None:
+    """The clips' real length when the compiler's whole-second once-only cap
+    (`normalize_creator_strategy_media`) is what cut ``before``'s length to ``after``'s."""
+    planned = after.target_duration_s
+    if manifest is None or not planned < before.target_duration_s:
+        return None
+    durations = {media.media_id: media.duration_s for media in manifest.media}
+    selected = [durations.get(media_id) for media_id in after.selected_media_ids]
+    if not selected or any(not duration or duration <= 0 for duration in selected):
+        return None
+    capacity = sum(selected)
+    return capacity if int(capacity) == planned else None
+
+
+def _length_lost(
+    before: CreativeStrategy,
+    after: CreativeStrategy,
+    manifest: ResolvedCreatorManifest | None,
+) -> bool:
+    """Whether the check moved a length the creator stated by more than a rounding.
+
+    A model-chosen length is no creator ask: the compiler's cap to what the clips can run
+    stays silent (prod thread aa36d140: 14.005 s planned on a 14.03 s clip, "can't be 14.005
+    seconds" on every turn). A stated one may move by max(0.5 s, 5 %), measured against the
+    clips' real length when the compiler's whole-second cap set the plan.
+    """
+    wanted, planned = before.target_duration_s, after.target_duration_s
+    if wanted == planned:
+        return False
+    if not before.target_duration_requested and before.creator_duration_s is None:
+        return False
+    capacity = _floored_capacity_s(manifest, before, after)
+    reached = min(wanted, capacity) if capacity is not None else planned
+    return abs(wanted - reached) > max(0.5, wanted * 0.05) + 1e-9
+
+
 def _dropped_fields(
-    before: CreativeStrategy, after: CreativeStrategy, *, stated_settings: bool = False
+    before: CreativeStrategy,
+    after: CreativeStrategy,
+    *,
+    stated_settings: bool = False,
+    manifest: ResolvedCreatorManifest | None = None,
 ) -> tuple[str, ...]:
     """The strategy fields a check lost (`selected_media_ids` = a selected clip left out)."""
     prior = before.model_dump(mode="json")
@@ -851,7 +905,6 @@ def _dropped_fields(
         "execution_contract",
         "mixed_media_timing",
         "licensed_sfx",
-        "target_duration_s",
     )
     if stated_settings:
         # KRI-476: the creator's own seconds for the title and their explicit ask for
@@ -863,6 +916,8 @@ def _dropped_fields(
         for key in fields
         if prior.get(key) not in (None, [], "") and prior.get(key) != next_values.get(key)
     ]
+    if _length_lost(before, after, manifest):
+        lost.append("target_duration_s")
     # PR 1556 review: a clip the strategy selected that the checked plan no longer has is
     # a lost ask (a reorder, or a clip added to the selection, is not).
     kept = set(next_values.get("selected_media_ids") or ())
@@ -948,26 +1003,29 @@ def _length_reason(
             )
         several = len(numbers) > 1
         which = _join_numbers(numbers)
+        # Whole sentences per count: German inflects around the clip word (KRI-1362).
         return say(
             en=(
-                "Only {v1} {which} "
-                "{v2} in this edit and "
-                "{v3} about {possible:g} seconds, "
+                "Only clips {which} are in this edit and together they run about "
+                "{possible:g} seconds, so the video can't be {wanted:g} seconds."
+            )
+            if several
+            else (
+                "Only clip {which} is in this edit and it runs about {possible:g} seconds, "
                 "so the video can't be {wanted:g} seconds."
             ),
             tr=(
-                "Bu düzenlemede yalnızca {which}. {v4} var ve "
-                "{v5}yaklaşık {possible:g} saniye sürüyor, bu "
-                "yüzden video {wanted:g} saniye olamıyor."
+                "Bu düzenlemede yalnızca {which}. klipler var ve birlikte yaklaşık "
+                "{possible:g} saniye sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
+            )
+            if several
+            else (
+                "Bu düzenlemede yalnızca {which}. klip var ve yaklaşık {possible:g} saniye "
+                "sürüyor, bu yüzden video {wanted:g} saniye olamıyor."
             ),
-            v1="clips" if several else "clip",
             which=which,
-            v2="are" if several else "is",
-            v3="together they run" if several else "it runs",
             possible=possible,
             wanted=wanted,
-            v4="klipler" if several else "klip",
-            v5="birlikte " if several else "",
         )
     return say(
         en=(
@@ -1009,20 +1067,22 @@ def _lost_in_words(
             which = _join_numbers(numbers)
             reasons.append(
                 say(
-                    en="{v1} {which} can't be in this edit.",
-                    tr="{which}. {v2} bu düzenlemeye giremiyor.",
-                    v1="Clips" if several else "Clip",
+                    en="Clips {which} can't be in this edit."
+                    if several
+                    else "Clip {which} can't be in this edit.",
+                    tr="{which}. klipler bu düzenlemeye giremiyor."
+                    if several
+                    else "{which}. klip bu düzenlemeye giremiyor.",
                     which=which,
-                    v2="klipler" if several else "klip",
                 )
             )
             agreed.append(
                 say(
-                    en="I left out {v1} {which}.",
-                    tr="{which}. {v2} dışarıda bıraktım.",
-                    v1="clips" if several else "clip",
+                    en="I left out clips {which}." if several else "I left out clip {which}.",
+                    tr="{which}. klipleri dışarıda bıraktım."
+                    if several
+                    else "{which}. klibi dışarıda bıraktım.",
                     which=which,
-                    v2="klipleri" if several else "klibi",
                 )
             )
         elif field == "target_duration_s":
@@ -1144,7 +1204,12 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
             return RefusedStrategy(
                 question=say(
                     en=(
-                        'You picked {clips} clip{v1}, so "{pin_text}" '
+                        'You picked {clips} clip, so "{pin_text}" '
+                        "can't go on clip {pin_clip}. Which clip should it be on?"
+                    )
+                    if clips == 1
+                    else (
+                        'You picked {clips} clips, so "{pin_text}" '
                         "can't go on clip {pin_clip}. Which clip should it be on?"
                     ),
                     tr=(
@@ -1152,7 +1217,6 @@ def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
                         "konamaz. Hangi klibe koyayım?"
                     ),
                     clips=clips,
-                    v1="" if clips == 1 else "s",
                     pin_text=pin.text,
                     pin_clip=pin.clip,
                 ),
@@ -1288,12 +1352,18 @@ def check_strategy_for_runtime_v2(
     draft_audio_strategy: str | None = None,
     creator_asked_camera_sound: bool = False,
     creator_asked_no_music: bool = False,
+    creator_asked_no_captions: bool = True,
 ) -> CheckedStrategy | RefusedStrategy:
     """Run v1's plan compile over a v2 strategy; never raises a policy error.
 
     ``draft_audio_strategy`` (the draft's sound route) and ``creator_asked_camera_sound`` (a
     live brief ask to keep the camera sound) only matter on footage with no sound at all
     (KRI-1365).
+
+    ``creator_asked_no_captions`` (KRI-1465) only matters when the strategy turns captions off
+    on an edit that always shows them. ``False`` = the caller read the brief and no live ask
+    wants no captions: keeping them is a notice, never the "simpler version?" question. The
+    default is for a caller that does not know the brief, which asks as before.
 
     Both keywords serve a guided-voiceover downgrade (KRI-594): ``creator_text`` is the
     creator's own words (it tells an "all 7 clips" ask apart from "all my photos and
@@ -1328,13 +1398,18 @@ def check_strategy_for_runtime_v2(
     strategy, title_notice = _talking_top_text_as_title(manifest, strategy)
     if title_notice:
         notices.append(title_notice)
+    if not creator_asked_no_captions and _captions_always_on(strategy):
+        # KRI-1465 (prod thread 78787267): before the baseline is taken, like the repairs
+        # above. The plan said "none" but no live ask wants no captions, so there is no
+        # choice of the creator's to lose: "Should I make a simpler version?" asked them to
+        # give up nothing, right after another hold. Said as a notice instead.
+        strategy = strategy.model_copy(update={"caption_style": "auto"})
+        notices.append(_captions_kept_notice())
     original = strategy
     # What a dropped request is judged against: the creator's strategy, with a guided
     # voiceover contract already swapped out when its downgrade keeps every request.
     baseline = original
-    if strategy.caption_style == "none" and (
-        strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
-    ):
+    if _captions_always_on(strategy):
         # Both renderers always caption (the item stores "none" as NULL, which
         # the worker reads as sentence captions), so say so instead of
         # approving a caption-free edit that renders with captions.
@@ -1409,6 +1484,16 @@ def check_strategy_for_runtime_v2(
         # whole manifest for the guided specialist. Runtime-v2 dispatches without
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
+    capacity = _floored_capacity_s(manifest, strategy, checked)
+    if capacity is not None and (
+        strategy.target_duration_s <= capacity or not _length_lost(strategy, checked, manifest)
+    ):
+        # The plan runs the clips' real length, not the whole-second floor: a length the
+        # clips already run keeps its fraction (approval readiness's re-check finds it
+        # unchanged), and a stated one within tolerance renders what the check accepted.
+        checked = checked.model_copy(
+            update={"target_duration_s": min(strategy.target_duration_s, capacity)}
+        )
     # Some compiler paths already repair an unavailable optional treatment. Keep
     # their notices and apply the same first-turn policy as a typed refusal.
     if simplify_unsupported:
@@ -1418,7 +1503,9 @@ def check_strategy_for_runtime_v2(
                 omitted_fields.add(field)
     all_notices = (*notices, *(localize_known_message(n) for n in edit_plan.notices))
     dropped = (
-        _dropped_fields(baseline, checked, stated_settings=ask_about_stated_settings)
+        _dropped_fields(
+            baseline, checked, stated_settings=ask_about_stated_settings, manifest=manifest
+        )
         if ask_before_simplifying
         else ()
     )
@@ -1458,6 +1545,7 @@ def check_strategy_for_runtime_v2(
             code="simplification_requires_choice",
             fields=(*dropped, *(("left_out_media",) if left_out_media else ())),
             agreed=agreed,
+            detail=details,
         )
     return CheckedStrategy(
         strategy=checked, notices=all_notices, omitted_fields=tuple(sorted(omitted_fields))

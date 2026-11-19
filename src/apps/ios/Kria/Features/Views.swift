@@ -39,7 +39,7 @@ struct ProjectsView: View {
                                 .buttonStyle(KriaSecondaryButtonStyle())
                         }
                     case .empty, .loaded:
-                        KriaEmptyState(title: "Start with a few clips.", action: "Create a project") { Task { await model.createProject() } }
+                        KriaEmptyState(title: String(localized: "Start with a few clips."), action: String(localized: "Create a project")) { Task { await model.createProject() } }
                     }
                 } else {
                     if let error = model.errorMessage {
@@ -65,7 +65,7 @@ struct ProjectRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             VStack(alignment: .leading, spacing: 8) { Text(project.title).font(KriaFont.headline(21)); KriaStatusPill(status: project.status); Text(project.updatedAt, style: .relative).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc) }
             Spacer(); Image(systemName: "chevron.right").foregroundStyle(KriaColor.zinc)
-        }.padding(12).background(Color.white.opacity(0.7)).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous)).accessibilityElement(children: .combine).accessibilityHint("Open project")
+        }.padding(12).background(Color.white.opacity(0.7)).clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous)).accessibilityElement(children: .combine).accessibilityHint(String(localized: "Open project"))
     }
 }
 
@@ -96,7 +96,7 @@ struct ProjectDetailView: View {
             Button("Create with Kria") { showThread = true }
                 .buttonStyle(KriaPrimaryButtonStyle())
             if currentProject.status == .ready { NavigationLink("View finished cut", destination: ResultsView(project: currentProject)).font(KriaFont.body(16).weight(.semibold)) }
-            KriaSectionLabel(title: "Receipts")
+            KriaSectionLabel(title: String(localized: "Receipts"))
             Text("Your changes and renders will appear here as a calm, reviewable history.").foregroundStyle(KriaColor.zinc)
         }.padding(20) }.navigationTitle("").sheet(isPresented: $showThread) { CreationThreadView(project: currentProject) }
     }
@@ -276,7 +276,7 @@ struct GalleryView: View {
                                         GalleryProjectCard(project: project)
                                     }
                                     .buttonStyle(.plain)
-                                    .accessibilityLabel("\(project.isSlidePost ? "Open post" : "Play") \(project.workspaceTitle)")
+                                    .accessibilityLabel(project.isSlidePost ? String(localized: "Open post \(project.workspaceTitle)") : String(localized: "Play \(project.workspaceTitle)"))
                                 } else {
                                     Button {
                                         model.selectProject(project)
@@ -317,9 +317,9 @@ private enum GalleryFilter: CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
-        case .all: "All"
-        case .ready: "Ready"
-        case .inProgress: "In progress"
+        case .all: String(localized: "All", comment: "Gallery filter: show everything")
+        case .ready: String(localized: "Ready")
+        case .inProgress: String(localized: "In progress")
         }
     }
 }
@@ -363,7 +363,7 @@ private struct GalleryProjectCard: View {
                 .font(KriaFont.body(13).weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
             if project.isSlidePost {
-                Text(project.slideCount.map { "Slider · \($0) slides" } ?? "Slider")
+                Text(project.slideCount.map { String(localized: "Slider · \($0) slides") } ?? String(localized: "Slider"))
                     .font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
             }
             Text(project.updatedAt, style: .relative)
@@ -393,21 +393,21 @@ struct AccountView: View {
                 if auth.profileState == .failed {
                     profileFailureRow
                 }
-                AccountSection(title: "Preferences") {
+                AccountSection(title: String(localized: "Preferences")) {
                     NavigationLink(destination: TextPreferencesView(api: model.api)) {
-                        AccountRowLabel(title: "Text preferences", trailingSymbol: "chevron.right")
+                        AccountRowLabel(title: String(localized: "Text preferences"), trailingSymbol: "chevron.right")
                     }.accessibilityIdentifier("account-text-preferences")
                 }
                 AccountNotificationsSection()
-                AccountSection(title: "Privacy") {
+                AccountSection(title: String(localized: "Privacy")) {
                     AccountCaptureContextRow()
                 }
-                AccountSection(title: "About") {
-                    AccountLinkRow(title: "Privacy Policy", url: KriaLegal.privacyURL)
+                AccountSection(title: String(localized: "About")) {
+                    AccountLinkRow(title: String(localized: "Privacy Policy"), url: KriaLegal.privacyURL)
                         .accessibilityIdentifier("kria-privacy-link")
-                    AccountLinkRow(title: "Terms of Service", url: KriaLegal.termsURL)
+                    AccountLinkRow(title: String(localized: "Terms of Service"), url: KriaLegal.termsURL)
                         .accessibilityIdentifier("kria-terms-link")
-                    AccountLinkRow(title: "Contact support", url: KriaLegal.supportURL)
+                    AccountLinkRow(title: String(localized: "Contact support"), url: KriaLegal.supportURL)
                         .accessibilityIdentifier("kria-support-link")
                 }
                 #if DEBUG
@@ -417,7 +417,7 @@ struct AccountView: View {
                     }
                 }
                 #endif
-                AccountSection(title: "Account") {
+                AccountSection(title: String(localized: "Account")) {
                     Button {
                         showsSignOutConfirmation = true
                     } label: {
@@ -550,13 +550,13 @@ private struct AccountNotificationsSection: View {
 
     var body: some View {
         if notifications.control != .hidden {
-            AccountSection(title: "Notifications") {
+            AccountSection(title: String(localized: "Notifications")) {
                 VStack(alignment: .leading, spacing: 2) {
                     if notifications.control == .retryCleanup {
                         Button {
                             Task { await notifications.disable() }
                         } label: {
-                            AccountRowLabel(title: "Retry notification cleanup", trailingSymbol: "arrow.clockwise")
+                            AccountRowLabel(title: String(localized: "Retry notification cleanup"), trailingSymbol: "arrow.clockwise")
                         }
                         .disabled(notifications.isRequestingPermission)
                         .accessibilityIdentifier("account-notifications-retry")
@@ -728,7 +728,7 @@ private struct ApprovalCard: View {
     let decide: (String) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            KriaSectionLabel(title: "Ready for your approval")
+            KriaSectionLabel(title: String(localized: "Ready for your approval"))
             Text(approval.consequenceSummary).font(KriaFont.body(16))
             if let cost = approval.costSummary { Text(cost).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
             HStack {

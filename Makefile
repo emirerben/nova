@@ -1,10 +1,11 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         ios-generate ios-build ios-test ios-verify \
-        kria-replay verify-kria verify-kria-turns verify-protected-text verify-phone-render \
+        kria-replay kria-replay-job verify-kria verify-kria-turns verify-protected-text verify-phone-render verify-converge \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
-        workspace-pull workspace-push workspace-status
+        workspace-pull workspace-push workspace-status \
+        check-test-registries sync-test-registries
 
 PYTHON ?= python3
 API_DIR := src/apps/api
@@ -28,6 +29,19 @@ dev-api:
 kria-replay:
 	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m app.cli.kria_replay $(FIXTURE))
 
+# Real replay of a failed production creation job: its footage and request, the production
+# flag snapshot, real models, a local worker. Prints the video path or the failure reason.
+# Needs gcloud read access to the bucket and ADMIN_PROD_API_KEY (docs/runbooks/replay-from-job-id.md).
+# MAX_COST_USD (at most 2.00): the ledger reserves Sol/OpenAI planning against it, and the run
+# stops once its agent runs settled more (Gemini included; the crossing call can overshoot).
+# MAIN_CREATOR=production (default) plans on the model production planned the job on;
+# MAIN_CREATOR=snapshot on today's production setting.
+MAX_COST_USD ?= 1.00
+MAIN_CREATOR ?= production
+kria-replay-job:
+	@test -n "$(JOB)" || { echo "usage: make kria-replay-job JOB=<production job id> [MAX_COST_USD=1.00] [MAIN_CREATOR=production|snapshot]"; exit 2; }
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) scripts/replay_job.py $(JOB) --max-cost-usd $(MAX_COST_USD) --main-creator $(MAIN_CREATOR))
+
 verify-kria:
 	KRIA_VERIFY_PYTHON="$(abspath $(API_PYTHON))" bash scripts/verify-kria.sh
 
@@ -39,6 +53,12 @@ verify-kria-turns:
 # "couldn't refresh"). Exit 0 pass, 1 fail, 3 pass with drift to review.
 verify-phone-render:
 	$(PYTHON) formal/ios_edit_flow/verify.py
+
+# TLA+ model of the iPhone editor converging onto the latest version (no merge choice state).
+# Runs the spec, five negative controls and a source-drift check. Same tools as the target
+# above. Exit 0 pass, 1 fail, 3 pass with drift to review.
+verify-converge:
+	$(PYTHON) formal/ios_edit_flow/verify_converge.py
 
 # KRI-827: text stays off the creator's marked object (and faces) for every row's whole
 # visible interval; writes .protected-verify/report.json + montage.png, exits 1 on a false
@@ -245,6 +265,22 @@ verify-editor-timeline:
 		tests/tasks/test_carousel_timed_lane_projection.py)
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
+
+# Journey tests and iOS UI test groups are derived from markers in the tests.
+# `check` names every hand-kept entry that no longer matches the tree; `sync`
+# follows git renames of files, Swift classes and test methods into those
+# entries, the Makefile, scripts and workflows (stage a file rename first).
+check-test-registries:
+	@status=0; \
+	$(PYTHON) scripts/ci/journey_registry.py check || status=1; \
+	$(PYTHON) scripts/ios/ui_tests.py check || status=1; \
+	exit $$status
+
+sync-test-registries:
+	@status=0; \
+	$(PYTHON) scripts/ios/ui_tests.py sync || status=1; \
+	$(PYTHON) scripts/ci/journey_registry.py sync || status=1; \
+	exit $$status
 
 api-install-dev:
 	@if [ ! -x "$(API_PYTHON)" ]; then \

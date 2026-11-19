@@ -3,6 +3,8 @@ import SwiftUI
 /// One destination owns both the visible inspector and the rail highlight.
 enum NativeEditorPanel: Equatable {
     case text(String), textCreation, captions, visuals, sounds
+    /// KRI-1501: the translated caption line's own track (opened from Captions, the timeline or the preview).
+    case translation
     /// KRI-1118: the Talk-to-camera speaker background.
     case background
     /// The framed Talk-to-camera speaker, opened by tapping them on the preview (size + corners).
@@ -15,7 +17,7 @@ enum NativeEditorPanel: Equatable {
     var tool: NativeEditorTool {
         switch self {
         case .text, .textCreation: return .text
-        case .captions: return .captions
+        case .captions, .translation: return .captions
         case .visuals: return .visuals
         case .background, .speaker: return .background
         case .sounds: return .sounds
@@ -37,11 +39,12 @@ struct NativeEditorPanelResizeGrabber: View {
     let accessibilityIdentifier: String
     var topAligned = false
     var bounds: ClosedRange<CGFloat> = 0...1
-    var accessibilityTitle = "Editor panel size"
-    var accessibilityHint = "Swipe up or down to resize the editor panel"
+    var accessibilityTitle = String(localized: "Editor panel size")
+    var accessibilityHint = String(localized: "Swipe up or down to resize the editor panel")
     /// Spoken value, given the current value and its bounds.
     var describe: (CGFloat, ClosedRange<CGFloat>) -> String = { value, bounds in
-        "\(Int(((value - bounds.lowerBound) / max(0.0001, bounds.upperBound - bounds.lowerBound)) * 100)) percent expanded"
+        let percent = Int(((value - bounds.lowerBound) / max(0.0001, bounds.upperBound - bounds.lowerBound)) * 100)
+        return String(localized: "\(percent) percent expanded")
     }
     /// Signed fraction of the span added by a VoiceOver "increment".
     var incrementFraction: CGFloat = 0.25
@@ -94,7 +97,21 @@ struct NativeEditorPanelResizeDrag: ViewModifier {
     var dismiss: NativeEditorPanelDismiss?
     @State private var dragOrigin: CGFloat?
     @State private var feedback = 0
+    @State private var didDismiss = false
     @GestureState private var isDragging = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Springs the pulled-down panel back to rest, continuing at the finger's release speed.
+    /// The pull is a transform driver, so this is the only place its snap-back is animated.
+    private func snapBack(releaseVelocity: CGFloat = 0) {
+        guard let dismiss else { return }
+        let pull = dismiss.pull.wrappedValue
+        let offset = NativeEditorPanelDismissRule.offset(forPull: pull)
+        let velocity = KriaGesturePhysics.unitVelocity(
+            NativeEditorPanelDismissRule.offsetVelocity(forPull: pull, pullVelocity: releaseVelocity),
+            from: offset, to: 0)
+        withAnimation(DrawerMotion.settle(reduceMotion: reduceMotion, velocity: velocity)) { dismiss.pull.wrappedValue = 0 }
+    }
 
     private func clamp(_ value: CGFloat) -> CGFloat {
         min(bounds.upperBound, max(bounds.lowerBound, value))
@@ -131,13 +148,22 @@ struct NativeEditorPanelResizeDrag: ViewModifier {
                     }
                     .onEnded { value in
                         if let dismiss, let origin = dragOrigin {
-                            dismiss.pull.wrappedValue = 0
                             if NativeEditorPanelDismissRule.shouldDismiss(
                                 pull: pull(value.translation.height, origin: origin),
                                 projectedPull: pull(value.predictedEndTranslation.height, origin: origin),
                                 startedAtMinimum: origin <= bounds.lowerBound
                             ) {
+                                // Closing is not a snap-back: leave the panel where the finger left it so the
+                                // removal starts from there, then clear the pull once it is gone (or if it stayed).
+                                didDismiss = true
                                 dismiss.complete()
+                                Task { @MainActor in
+                                    try? await Task.sleep(for: .milliseconds(450))
+                                    didDismiss = false
+                                    if dismiss.pull.wrappedValue != 0 { snapBack() }
+                                }
+                            } else {
+                                snapBack(releaseVelocity: value.velocity.height)
                             }
                         }
                         dragOrigin = nil
@@ -146,7 +172,7 @@ struct NativeEditorPanelResizeDrag: ViewModifier {
             )
             // A cancelled drag never reaches onEnded; don't leave the panel pulled down.
             .onChange(of: isDragging) { _, dragging in
-                if !dragging, let dismiss, dismiss.pull.wrappedValue != 0 { dismiss.pull.wrappedValue = 0 }
+                if !dragging, !didDismiss, let dismiss, dismiss.pull.wrappedValue != 0 { snapBack() }
             }
             .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: feedback)
     }
@@ -185,8 +211,12 @@ enum NativeEditorPanelDismissRule {
 
     /// The panel follows the finger 1:1 at first, then resists.
     static func offset(forPull pull: CGFloat) -> CGFloat {
-        guard pull > 0 else { return 0 }
-        return maxOffset * pull / (pull + maxOffset)
+        KriaGesturePhysics.rubberBand(pull, limit: maxOffset)
+    }
+
+    /// How fast the panel is moving for a given finger speed, through the same resistance curve.
+    static func offsetVelocity(forPull pull: CGFloat, pullVelocity: CGFloat) -> CGFloat {
+        pullVelocity * KriaGesturePhysics.rubberBandSlope(pull, limit: maxOffset)
     }
 }
 
@@ -293,12 +323,14 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
     var identifier: ((Tab) -> String)?
     /// A segment that cannot be chosen right now; the screen shows why next to the control.
     var isEnabled: ((Tab) -> Bool)?
+    /// Display title; defaults to the raw value looked up as a localization key.
+    var title: ((Tab) -> String)?
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(tabs, id: \.self) { value in
                 Button { selection = value } label: {
-                    Text(value.rawValue)
+                    (title.map { Text(verbatim: $0(value)) } ?? Text(LocalizedStringKey(value.rawValue)))
                         .font(KriaFont.body(14).weight(value == selection ? .semibold : .regular))
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         .lineLimit(1)
@@ -307,6 +339,7 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(value == selection ? KriaColor.paper : .clear, in: Capsule())
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .disabled(!(isEnabled?(value) ?? true))

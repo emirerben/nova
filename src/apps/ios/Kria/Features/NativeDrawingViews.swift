@@ -24,12 +24,12 @@ extension Color {
 extension DrawingTexture {
     var label: String {
         switch self {
-        case .pen: "Pen"
-        case .marker: "Marker"
-        case .highlighter: "Highlighter"
-        case .neon: "Neon"
-        case .chalk: "Chalk"
-        case .spray: "Spray"
+        case .pen: String(localized: "Pen", comment: "Drawing brush")
+        case .marker: String(localized: "Marker", comment: "Drawing brush")
+        case .highlighter: String(localized: "Highlighter", comment: "Drawing brush")
+        case .neon: String(localized: "Neon", comment: "Drawing brush")
+        case .chalk: String(localized: "Chalk", comment: "Drawing brush")
+        case .spray: String(localized: "Spray", comment: "Drawing brush")
         }
     }
 }
@@ -186,7 +186,7 @@ struct NativeDrawingToolbar: View {
         .accessibilityIdentifier("native-editor-draw-toolbar")
     }
 
-    private func iconButton(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    private func iconButton(_ symbol: String, label: LocalizedStringKey, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 17, weight: .medium)).frame(width: 44, height: 44)
         }
@@ -212,9 +212,9 @@ struct NativeDrawingPanel: View {
 
     var body: some View {
         NativeEditorLanePanel(
-            title: "Drawing", tabs: Tab.allCases, tab: $tab, onDone: onDone,
+            title: "Drawing", tabs: Tab.allCases, tab: $tab, onDone: onDone, heading: String(localized: "Drawing"),
             onDelete: session.canDeleteDrawings ? { _ = session.deleteSelection(EditorSelection(kind: .drawing, id: id)) } : nil,
-            removeLabel: "Delete drawing", removeID: "native-editor-remove-drawing"
+            removeLabel: String(localized: "Delete drawing"), removeID: "native-editor-remove-drawing"
         ) {
             if let drawing {
                 VStack(alignment: .leading, spacing: 14) {
@@ -341,19 +341,19 @@ struct NativeDrawingAnimationControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                heading("Entrance")
+                heading(String(localized: "Entrance", comment: "Drawing animation: how it appears"))
                 LazyVGrid(columns: grid, alignment: .leading, spacing: 10) {
-                    entranceTile("Draw", .draw)
-                    entranceTile("Fade", .fade)
-                    entranceTile("None", .none)
+                    entranceTile("Draw", String(localized: "Draw", comment: "Drawing entrance: strokes are drawn on"), .draw)
+                    entranceTile("Fade", String(localized: "Fade", comment: "Animation: fade in or out"), .fade)
+                    entranceTile("None", String(localized: "None", comment: "Animation: no effect"), .none)
                 }
             }
             speedSection
             VStack(alignment: .leading, spacing: 6) {
-                heading("Exit")
+                heading(String(localized: "Exit", comment: "Drawing animation: how it disappears"))
                 LazyVGrid(columns: grid, alignment: .leading, spacing: 10) {
-                    exitTile("None", .none)
-                    exitTile("Fade", .fade)
+                    exitTile("None", String(localized: "None", comment: "Animation: no effect"), .none)
+                    exitTile("Fade", String(localized: "Fade", comment: "Animation: fade in or out"), .fade)
                 }
             }
         }
@@ -375,10 +375,10 @@ struct NativeDrawingAnimationControls: View {
     private var speedSection: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                heading("Draw speed")
+                heading(String(localized: "Draw speed"))
                 Spacer()
                 // One line for every entrance, so the section never changes height when the entrance does.
-                Text(drawsOn ? String(format: "%.1f×", NativeDrawingSpeed.multiplier(position: speedPosition)) : "Draw only")
+                Text(drawsOn ? String(localized: "\(NativeDrawingSpeed.multiplier(position: speedPosition), format: .number.precision(.fractionLength(1)))×") : String(localized: "Draw only"))
                     .font(KriaFont.body(13)).foregroundStyle(drawsOn ? KriaColor.zinc : KriaColor.mutedInk).monospacedDigit()
             }
             // Continuous on purpose: a `step` makes iOS draw a tick dot per step.
@@ -396,7 +396,7 @@ struct NativeDrawingAnimationControls: View {
                 guard old != new else { return nil }
                 return new.isDefault ? .impact(weight: .medium) : .selection
             }
-            .accessibilityValue(String(format: "%.1f times", NativeDrawingSpeed.multiplier(position: speedPosition)))
+            .accessibilityValue(String(localized: "\(NativeDrawingSpeed.multiplier(position: speedPosition), format: .number.precision(.fractionLength(1))) times"))
             .accessibilityIdentifier("native-editor-drawing-draw-speed")
             HStack {
                 Text("Slower"); Spacer(); Text("Faster")
@@ -411,15 +411,15 @@ struct NativeDrawingAnimationControls: View {
         Text(title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
     }
 
-    private func entranceTile(_ title: String, _ value: DrawingEntrance) -> some View {
-        NativeDrawingAnimationTile(title: title, selected: drawing.entrance == value, clock: clock,
+    private func entranceTile(_ title: String, _ label: String, _ value: DrawingEntrance) -> some View {
+        NativeDrawingAnimationTile(title: label, selected: drawing.entrance == value, clock: clock,
                                    identifier: "native-editor-drawing-entrance-\(title.lowercased())") { time in
             NativeDrawingAnimationPreviewMath.entrance(value, drawSeconds: NativeDrawingSpeed.seconds(position: speedPosition), clock: time)
         } pick: { session.setDrawingEntrance(id: id, entrance: value) }
     }
 
-    private func exitTile(_ title: String, _ value: DrawingExit) -> some View {
-        NativeDrawingAnimationTile(title: title, selected: drawing.exit == value, clock: clock,
+    private func exitTile(_ title: String, _ label: String, _ value: DrawingExit) -> some View {
+        NativeDrawingAnimationTile(title: label, selected: drawing.exit == value, clock: clock,
                                    identifier: "native-editor-drawing-exit-\(title.lowercased())") { time in
             NativeDrawingAnimationPreviewMath.exit(value, clock: time)
         } pick: { session.setDrawingExit(id: id, exit: value) }

@@ -64,6 +64,10 @@ _ARROW_RIGHT_MAX = 0.96
 _ROW_LEFT_MIN = 0.04
 _CURVE_POINTS = 24
 CTA_OUTLINE_PX = 6
+# KRI-1482: her cut-out in a corner frame starts above the sampled face box (her hair, as a
+# share of the face's height); a little air keeps the outline and the arrow's stroke off it.
+_CUTOUT_HAIR_FRAC = 0.15
+_CUTOUT_AIR = 0.01
 
 
 @dataclass(frozen=True)
@@ -255,6 +259,38 @@ def _clears(parts: Sequence[NormalizedBox], others: Sequence[NormalizedBox]) -> 
     return all(p.coverage_by(o) <= _MAX_COVERAGE for p in parts for o in others)
 
 
+def _touches(parts: Sequence[NormalizedBox], others: Sequence[NormalizedBox]) -> bool:
+    return any(p.intersection_area(o) > 0.0 for p in parts for o in others)
+
+
+def _cutout_boxes(
+    sampled: Sequence[tuple[tuple[float, float], Sequence[NormalizedBox]]],
+    frame: tuple[float, float, float],
+    full_screen_windows: Sequence[tuple[float, float]],
+) -> list[NormalizedBox]:
+    """KRI-1482: where the matted speaker is drawn in a corner ``frame`` (width, x, y) over
+    each sampled part of the ending outside a full-screen span: from the top of her hair down
+    to the layer's edge, the layer's full width (her shoulders fill it). A part where no face
+    was seen keeps the whole layer clear."""
+    width, x_center, y_center = (float(value) for value in frame)
+    boxes: list[NormalizedBox] = []
+    for (start, end), faces in sampled:
+        middle = (start + end) / 2
+        if any(a <= middle <= b for a, b in full_screen_windows):
+            continue
+        drawn = [pst.frame_face_box(face, frame) for face in faces]
+        top = min(
+            (face.top - _CUTOUT_HAIR_FRAC * face.height for face in drawn),
+            default=y_center - width / 2,
+        )
+        boxes.append(
+            NormalizedBox(
+                x_center - width / 2, top, x_center + width / 2, y_center + width / 2
+            ).padded(_CUTOUT_AIR)
+        )
+    return boxes
+
+
 def build_cta_ending(
     text: str,
     *,
@@ -270,8 +306,20 @@ def build_cta_ending(
     position_x: float = 0.0,
     caption_boxes: Callable[[tuple[float, float]], Sequence[NormalizedBox]] | None = None,
     sample: Any = None,
+    all_faces: bool = False,
+    speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: Sequence[tuple[float, float]] = (),
+    avoid: Sequence[NormalizedBox] = (),
 ) -> CtaEnding | None:
-    """The CTA ending for ``text`` ("comment READ"), or None to keep the lime tag."""
+    """The CTA ending for ``text`` ("comment READ"), or None to keep the lime tag.
+
+    ``all_faces`` (KRI-1475: the creator asked to keep text off faces) keeps the block and
+    the arrow off every detected face, not only the speaker's.
+
+    ``speaker_frame`` (width, x, y fractions; KRI-1482) is where the matted speaker is drawn
+    small in a corner: the block and the arrow then keep off her face AND her cut-out there,
+    except inside ``full_screen_windows`` (she fills the frame). ``avoid`` are other things on
+    screen during the ending (a label, a card) the block never touches."""
     try:
         return _build(
             text,
@@ -287,6 +335,10 @@ def build_cta_ending(
             position_x=position_x,
             caption_boxes=caption_boxes,
             sample=sample,
+            all_faces=all_faces,
+            speaker_frame=speaker_frame,
+            full_screen_windows=full_screen_windows,
+            avoid=avoid,
         )
     except Exception as exc:  # noqa: BLE001 - fall back to the lime tag, never fail a draft
         log.warning("cta_ending_failed", error=str(exc)[:200])
@@ -308,6 +360,10 @@ def _build(
     position_x: float,
     caption_boxes: Callable[[tuple[float, float]], Sequence[NormalizedBox]] | None,
     sample: Any,
+    all_faces: bool = False,
+    speaker_frame: tuple[float, float, float] | None = None,
+    full_screen_windows: Sequence[tuple[float, float]] = (),
+    avoid: Sequence[NormalizedBox] = (),
 ) -> CtaEnding | None:
     from app.pipeline.phone_text_style import undrawable_text  # noqa: PLC0415
 
@@ -354,17 +410,37 @@ def _build(
         size = max(min_size, round(size * _SHRINK_STEP))
     lead_box = pst._measure_title_box(lead_row, canvas=canvas)
 
-    faces, face_receipt = pst._face_boxes(
-        clip_path,
-        window=(start_s, end_s),
-        keep_segments=keep_segments,
-        display_width=display_width,
-        display_height=display_height,
-        canvas=canvas,
-        scale=scale,
-        sample=sample or pst.sample_face_regions,
-        position_x=position_x,
+    sampled: list[tuple[tuple[float, float], list[NormalizedBox]]] = []
+
+    def faces_over(part: tuple[float, float]) -> tuple[list[NormalizedBox], dict[str, Any]]:
+        boxes, part_receipt = pst._face_boxes(
+            clip_path,
+            window=part,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            scale=scale,
+            sample=sample or pst.sample_face_regions,
+            position_x=position_x,
+            all_faces=all_faces,
+        )
+        sampled.append((part, boxes))
+        return boxes, part_receipt
+
+    # KRI-1482: her face where it is DRAWN over the ending (mapped into a corner frame, full
+    # frame inside a full-screen span). No frame: one sample of the whole window, as before.
+    faces, face_receipts = pst._as_drawn(
+        faces_over, (start_s, end_s), speaker_frame, full_screen_windows
     )
+    face_receipt = face_receipts[0]
+    cutout = (
+        _cutout_boxes(sampled, speaker_frame, full_screen_windows)
+        if speaker_frame is not None
+        else []
+    )
+    # Never touched at all (the faces above keep the block's small `_MAX_COVERAGE` tolerance).
+    hard = [*cutout, *avoid]
     captions = list(caption_boxes((start_s, end_s))) if caption_boxes else []
 
     def layout(top: float, cx: float, h_scale: float):
@@ -421,7 +497,7 @@ def _build(
                     h_scale = max(0.3, 1.0 - over / max(span, 1e-6))
                     result = layout(top, cx, h_scale)
         parts_boxes = [b for b in (result[1], result[3], result[5]) if b is not None]
-        if not _clears(parts_boxes, faces):
+        if not _clears(parts_boxes, faces) or _touches(parts_boxes, hard):
             continue
         if _clears(parts_boxes, captions):
             chosen = (top, result, parts_boxes, False)
@@ -446,5 +522,7 @@ def _build(
         "face_collision": False,
         "text_overlap": overlap,
         **face_receipt,
+        # KRI-1482: placed against her cut-out in the corner frame (absent otherwise).
+        **({"speaker_frame": True, "cutout": [b.as_dict() for b in cutout]} if cutout else {}),
     }
     return CtaEnding(rows=[l_row, k_row], drawings=[drawing] if drawing else [], receipt=receipt)

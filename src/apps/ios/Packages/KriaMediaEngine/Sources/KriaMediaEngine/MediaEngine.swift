@@ -92,7 +92,9 @@ public actor AssetImportCoordinator {
     /// `preferLink` lets the import share the source's bytes instead of duplicating them
     /// (see `AssetFileCoordinator.linkAsset`). Default `false`: an external source (a
     /// Files/iCloud pick, a download) must stay a snapshot the user can't alter mid-upload.
-    public func importAsset(from source: URL, id: String? = nil, preferLink: Bool = false) throws -> MediaAsset {
+    /// `reusing` is a digest someone already computed for these bytes. It is trusted only when the imported file has the
+    /// identity it was computed from, which a hardlink has and a copy never does; otherwise the file is hashed as before.
+    public func importAsset(from source: URL, id: String? = nil, preferLink: Bool = false, reusing known: KnownFingerprint? = nil) throws -> MediaAsset {
         try project.createIfNeeded()
         let rawAssetID = id ?? UUID().uuidString
         let assetID = rawAssetID.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_").replacingOccurrences(of: "..", with: "_")
@@ -105,7 +107,12 @@ public actor AssetImportCoordinator {
         } else {
             try copier.copyAsset(from: source, to: destination)
         }
-        let fingerprint = try SHA256Fingerprinter().fingerprint(file: destination)
+        let fingerprint: AssetFingerprint
+        if let known, (try? FileIdentity(of: destination)) == known.identity {
+            fingerprint = known.fingerprint
+        } else {
+            fingerprint = try SHA256Fingerprinter().fingerprint(file: destination)
+        }
         return MediaAsset(id: assetID, relativePath: project.root.relativePath(to: destination), fingerprint: fingerprint)
     }
 }
@@ -173,6 +180,8 @@ public struct ProxyPreset: Equatable, Sendable {
     public var width: Int; public var height: Int; public var videoCodec: String; public var audioCodec: String
     public init(width: Int = 960, height: Int = 540, videoCodec: String = "h264", audioCodec: String = "aac") { self.width = width; self.height = height; self.videoCodec = videoCodec; self.audioCodec = audioCodec }
     public static let `default` = ProxyPreset()
+    /// The proxy the server analyses a phone-rendered clip from. The upload prepare step and the take pre-warm must agree on it.
+    public static let analysis = ProxyPreset(width: 640, height: 360)
 }
 public protocol ThumbnailSampling: Sendable { func sample(asset: URL, at times: [TimeInterval], destinationDirectory: URL) async throws -> [ThumbnailSample] }
 public protocol WaveformExtracting: Sendable { func extract(asset: URL, bucketCount: Int) async throws -> Waveform }
@@ -281,16 +290,16 @@ public enum MediaEngineError: Error, Equatable, Sendable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .avFoundationUnavailable: "Video editing isn’t available on this device."
-        case .exportUnavailable: "This video can’t be exported right now."
-        case .exportFailed: "The export didn’t finish. Try again."
-        case .thumbnailWriteFailed: "Couldn’t generate a preview thumbnail."
-        case .waveformFailed: "Couldn’t read this clip’s audio."
-        case .insufficientStorage: "Your iPhone is low on storage. Free up space and try again."
-        case .unsupportedCapability: "This clip uses a format this iPhone can’t process."
-        case .missingAsset(let id): "One of the clips in this video is missing (\(id))."
-        case .missingBrandingResource(let file): "This app build is missing a Kria branding file (\(file)). Reinstall the app and try again."
-        case .cancelled: "Export was cancelled."
+        case .avFoundationUnavailable: String(localized: "Video editing isn’t available on this device.")
+        case .exportUnavailable: String(localized: "This video can’t be exported right now.")
+        case .exportFailed: String(localized: "The export didn’t finish. Try again.")
+        case .thumbnailWriteFailed: String(localized: "Couldn’t generate a preview thumbnail.")
+        case .waveformFailed: String(localized: "Couldn’t read this clip’s audio.")
+        case .insufficientStorage: String(localized: "Your iPhone is low on storage. Free up space and try again.")
+        case .unsupportedCapability: String(localized: "This clip uses a format this iPhone can’t process.")
+        case .missingAsset(let id): String(localized: "One of the clips in this video is missing (\(id)).")
+        case .missingBrandingResource(let file): String(localized: "This app build is missing a Kria branding file (\(file)). Reinstall the app and try again.")
+        case .cancelled: String(localized: "Export was cancelled.")
         }
     }
 }
@@ -305,6 +314,6 @@ public struct NativePreviewFeatureError: Error, Sendable, LocalizedError {
     public init(_ feature: String, isStructural: Bool = false) { self.feature = feature; self.isStructural = isStructural }
 
     public var errorDescription: String? {
-        "This video uses a preview feature (\(feature)) that isn’t supported yet."
+        String(localized: "This video uses a preview feature (\(feature)) that isn’t supported yet.")
     }
 }

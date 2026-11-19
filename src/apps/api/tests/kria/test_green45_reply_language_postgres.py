@@ -1,23 +1,25 @@
-"""Green 5 (2026-11-04): a chat that starts with a stock chip answers in the phone's language.
+"""Green 5 (2026-11-04): a chat that starts with a stock chip answers in the creator's language.
 
 The creator (who types English: Green 2, 3 and 4 were all English) opened a new chat on a phone
-set to Turkish and tapped "Suggest an edit." first. The chip text is stock (KRI-520 ignores it),
-the chat had no language yet, so `resolve_reply_language` fell back to ``Accept-Language`` (tr).
-The turn worker snapshots that language when it claims the turn, so the whole chip turn, the
-creative direction and the heads-up lines, came back in Turkish, although the creator's own
-message 14 s later was English.
+set to Turkish and tapped "Suggest an edit." first. The chat had no language yet, so it fell back
+to ``Accept-Language`` (tr) and the whole chip turn came back in Turkish.
 
-Ways the fix could fail (written before the fix):
-1. A chip-first chat still takes the device language although the creator has typed messages
-   in another language in earlier chats.
-2. The history overrides what the creator types in THIS chat (a Turkish message here after
-   English chats must still answer in Turkish).
-3. History made only of chip taps or stock sentences counts as "typed".
+Since the model-owned reply language (2026-11-16), no message is re-read or scored: a new chat
+with no stored language starts from the STORED language of the creator's latest other chat
+(what that chat's model decided), then the device language. The turn's model then reports the
+language of this chat's own message.
+
+Ways it could fail:
+1. A chip-first chat still takes the device language although the creator's latest other chat
+   has a stored language.
+2. Another chat's messages are re-scored instead of its stored language read (a Turkish lyrics
+   paste in an English chat would then decide the new chat).
+3. A creator with no stored language anywhere loses the device fallback (KRI-784 behaviour).
 4. Another creator's chats leak into this creator's language.
-5. A creator with no typed history loses the device fallback (KRI-784 behaviour).
-6. The switch off is byte-identical (device language again).
+5. The switch off is the device language again.
 
-Evidence level: real `submit_turn` on the local test Postgres, no model call.
+Evidence level: real `submit_turn` and the real create route on the local test Postgres, no
+model call.
 """
 
 from __future__ import annotations
@@ -164,15 +166,26 @@ def _language(thread_id: uuid.UUID) -> str | None:
         return (db.get(CreationThread, thread_id).state or {}).get("reply_language")
 
 
+def _store(thread_id: uuid.UUID, language: str) -> None:
+    """What the earlier chat's model decided, stored with its turn."""
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        thread.state = {**(thread.state or {}), "reply_language": language}
+        db.commit()
+
+
 async def _english_creator_with_new_chat() -> tuple[uuid.UUID, uuid.UUID]:
     user_id, earlier, _ = _seed_runtime_project()
+    # The earlier chat holds Turkish lyrics the creator pasted, but its model decided English.
     await _send(user_id, earlier, GREEN4_MESSAGE, locale=TURKISH_PHONE)
-    assert _language(earlier) == "en"
+    await _send(user_id, earlier, "Vazgeçmem dünyaları\nÖnüme serseler de", locale=TURKISH_PHONE)
+    _store(earlier, "en")
     return user_id, _second_thread(user_id)
 
 
 @pytest.mark.asyncio
-async def test_green5_chip_first_answers_in_the_language_the_creator_types() -> None:
+async def test_green5_chip_first_takes_the_latest_chats_stored_language() -> None:
+    """1, 2: the stored English of the earlier chat wins over its Turkish lyrics and the phone."""
     user_id, green5 = await _english_creator_with_new_chat()
 
     await _send(user_id, green5, CHIP, locale=TURKISH_PHONE)
@@ -181,20 +194,21 @@ async def test_green5_chip_first_answers_in_the_language_the_creator_types() -> 
 
 
 @pytest.mark.asyncio
-async def test_what_the_creator_types_in_this_chat_still_wins() -> None:
-    """2: a Turkish message here, after English chats, is answered in Turkish."""
+async def test_a_typed_message_is_not_scored_at_submit() -> None:
+    """The new chat starts from the stored language; this turn's model decides the rest."""
     user_id, chat = await _english_creator_with_new_chat()
 
     await _send(user_id, chat, "Videoyu daha kısa yapar mısın lütfen?", locale="en-US")
 
-    assert _language(chat) == "tr"
+    assert _language(chat) == "en"
 
 
 @pytest.mark.asyncio
-async def test_chip_taps_are_not_typed_history() -> None:
-    """3, 5: a creator who only ever tapped chips keeps the device fallback."""
+async def test_a_creator_with_no_stored_language_keeps_the_device_fallback() -> None:
+    """3: nothing stored anywhere, the device decides."""
     user_id, earlier, _ = _seed_runtime_project()
-    await _send(user_id, earlier, CHIP, locale="en-US")
+    await _send(user_id, earlier, CHIP)  # no locale: nothing stored
+    assert _language(earlier) is None
     chat = _second_thread(user_id)
 
     await _send(user_id, chat, CHIP, locale=TURKISH_PHONE)
@@ -215,7 +229,7 @@ async def test_another_creators_chats_do_not_count() -> None:
 
 @pytest.mark.asyncio
 async def test_switch_off_is_the_device_language(monkeypatch: pytest.MonkeyPatch) -> None:
-    """6: off, the chip-first chat takes the device language exactly as before."""
+    """5: off, the chip-first chat takes the device language."""
     monkeypatch.setattr(settings, "kria_reply_language_history_enabled", False)
     user_id, green5 = await _english_creator_with_new_chat()
 
@@ -253,7 +267,7 @@ def _greeting(user_id: uuid.UUID, *, accept_language: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_a_new_chat_greets_in_the_language_the_creator_types() -> None:
+async def test_a_new_chat_greets_in_the_latest_chats_stored_language() -> None:
     user_id, _green5 = await _english_creator_with_new_chat()
     await async_engine.dispose()  # the route runs on the test client's own event loop
 
@@ -262,7 +276,7 @@ async def test_a_new_chat_greets_in_the_language_the_creator_types() -> None:
 
 @pytest.mark.asyncio
 async def test_a_new_creator_is_greeted_in_the_device_language() -> None:
-    """5: no typed history, the device language greets as before (KRI-784)."""
+    """3: nothing stored, the device language greets as before (KRI-784)."""
     user_id, _thread, _ = _seed_runtime_project()
 
     assert _greeting(user_id, accept_language=TURKISH_PHONE).startswith("Ne yapıyoruz?")

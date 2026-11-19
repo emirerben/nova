@@ -118,8 +118,10 @@ def _derive(fixture, footage) -> tuple[dict, CreativeBrief, list[dict]]:  # noqa
     return strategy, CreativeBrief(version=1, requirements=requirements), rows
 
 
-def test_the_thread_corpus_is_the_34_the_plan_names() -> None:
-    assert len(discover_fixture_paths()) == 34
+def test_the_thread_corpus_never_shrinks_below_the_34_the_plan_names() -> None:
+    # A floor, not an exact pin: recording more threads must not need a test edit, while a
+    # silently dropped fixture directory still fails here.
+    assert len(discover_fixture_paths()) >= 34
 
 
 @pytest.mark.asyncio

@@ -15,5 +15,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "KRI-815 chat input: one footage line per clip, every claim grounded in a clip line except the date, which the writer lists in needs_check instead of presenting as fact. 18s of footage -> inside the spoken band."
-  }
+  },
+  "prompt_sha": "da9c7613c11339b5"
 }

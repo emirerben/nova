@@ -131,12 +131,12 @@ def test_retiming_both_lands_on_one_span_and_repeating_changes_nothing(monkeypat
 
 
 def test_a_partner_that_cannot_read_at_the_new_span_refuses_and_changes_nothing(monkeypatch):
-    # The text reads at 8 s (27 words); its 40-word translation needs at least 10 s.
+    # The text shows at 1 s (27 words, a frame each); its 40-word translation needs 1.33 s.
     job, variant = _pair(monkeypatch, partner_words=40)
     rows = variant["text_elements"]
     before = copy.deepcopy(variant)
 
-    with pytest.raises(ValueError, match="10"):
-        _compile(job, variant, _retime("opening", rows, 8.0))
+    with pytest.raises(ValueError, match="1.33333"):
+        _compile(job, variant, _retime("opening", rows, 1.0))
 
     assert variant == before

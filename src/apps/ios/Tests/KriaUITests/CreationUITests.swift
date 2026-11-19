@@ -492,6 +492,41 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["drawer-new-chat"].waitForExistence(timeout: 1.5), "Dragging a selection handle must not open the drawer")
     }
 
+    func testDraggingComposerCaretToBeginningInsertsTextThere() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        let prompt = "alpha beta gamma delta"
+        composer.typeText(prompt)
+        XCTAssertEqual(composer.value as? String, prompt)
+
+        let lineStart = composer.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+        let lineEnd = lineStart.withOffset(CGVector(dx: 171, dy: 0))
+        let drags: [(hold: TimeInterval, speed: XCUIGestureVelocity, overshoot: CGFloat, wait: TimeInterval)] = [
+            (0.4, .slow, 0, 0.2),
+            (0.6, .slow, 12, 0.8),
+            (0.15, .fast, 0, 0.2),
+            (0.25, .slow, 4, 0.6),
+        ]
+        for drag in drags {
+            lineEnd.tap()
+            composer.typeText("X")
+            XCTAssertEqual(composer.value as? String, prompt + "X", "Start the drag at the end of the prompt")
+            composer.typeText(XCUIKeyboardKey.delete.rawValue)
+            let end = lineStart.withOffset(CGVector(dx: -drag.overshoot, dy: 0))
+            lineEnd.press(forDuration: drag.hold, thenDragTo: end, withVelocity: drag.speed, thenHoldForDuration: drag.wait)
+            composer.typeText("X")
+            XCTAssertEqual(composer.value as? String, "X" + prompt, "Drag with hold \(drag.hold), overshoot \(drag.overshoot)")
+            composer.typeText(XCUIKeyboardKey.delete.rawValue)
+            XCTAssertEqual(composer.value as? String, prompt)
+        }
+    }
+
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -951,8 +986,9 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(picker.frame.contains(selectionPoint), "The selected video must be inside the visible Photos picker")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: selectionPoint.x, dy: selectionPoint.y)).tap()
-        // The gallery stays open until the creator confirms with the pinned Add button.
-        XCTAssertTrue(done.isEnabled)
+        // The gallery stays open until the creator confirms with the pinned Add button. PhotosUI hands the pick
+        // over from its own process, so Add turns on a moment after the tap, not within it.
+        XCTAssertTrue(eventually(timeout: 5) { done.isEnabled }, "picking a video turns on Add")
         XCTAssertEqual(done.label, "Add 1 clip")
         done.tap()
         // Filling the picker advances the attachment flow after dismissal.
@@ -2472,10 +2508,26 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10), "the keyboard is open")
         keepScreenshot(app, "First-prompt chips at the end of the transcript, keyboard open")
 
-        let transcript = app.scrollViews["Conversation history"].exists ? app.scrollViews["Conversation history"] : app.scrollViews.firstMatch
-        for _ in 0..<6 where chip.exists && chip.isHittable { transcript.swipeDown() }
-        XCTAssertTrue(eventually { !(chip.exists && chip.isHittable) }, "scrolling the transcript up carries the chips off screen")
-        XCTAssertTrue(app.keyboards.firstMatch.exists || app.textFields["Message Kria"].exists)
+        // The transcript is not a scroll view to XCUITest (it is a labelled container), and the first scroll view
+        // in the tree is the keyboard's suggestion bar. Drag the page itself, inside the strip the creator sees
+        // between the header and the composer, so the drag never reaches the keyboard and dismisses it.
+        let transcript = app.otherElements["Conversation history"].firstMatch
+        XCTAssertTrue(transcript.exists, "the transcript is on screen")
+        let headerBottom = app.buttons["Open projects"].frame.maxY
+        func chipsAreOnThePage() -> Bool {
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'suggestion-chip-'")).allElementsBoundByIndex
+                .contains { $0.frame.minY < composer.frame.minY && $0.frame.maxY > headerBottom }
+        }
+        XCTAssertTrue(chipsAreOnThePage(), "the chips start on the page, above the composer")
+        for _ in 0..<6 where chipsAreOnThePage() {
+            let origin = transcript.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: transcript.frame.width / 2, dy: headerBottom + 24 - transcript.frame.minY))
+            let end = origin.withOffset(CGVector(dx: transcript.frame.width / 2, dy: composer.frame.minY - 12 - transcript.frame.minY))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        XCTAssertTrue(eventually { !chipsAreOnThePage() }, "scrolling the transcript up carries the chips off the page")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard stays open")
+        XCTAssertTrue(app.buttons["chat-jump-to-latest"].waitForExistence(timeout: 5), "the reader left the end of the transcript, where the chips are")
         keepScreenshot(app, "Transcript scrolled up, chips gone, keyboard open")
     }
 
@@ -2860,17 +2912,24 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually(timeout: 10) { !app.descendants(matching: .any)["plan-feed.change.title"].exists },
                       "an older decision collapses to a one-line row")
         attach(app, "plan-feed-midway")
-        app.buttons["plan-feed.block.title"].tap()
-        XCTAssertTrue(eventually(timeout: 5) { app.descendants(matching: .any)["plan-feed.change.title"].exists }, "tapping a collapsed row expands it")
-        XCTAssertFalse(app.descendants(matching: .any)["plan-feed.change.title"].isEnabled && false)
-        app.buttons["plan-feed.block.title"].tap()
-        XCTAssertTrue(eventually(timeout: 5) { !app.descendants(matching: .any)["plan-feed.change.title"].exists })
 
         // Everything decided: the status line turns to "Making your video" on an indeterminate track, then the
         // Review plan entry that expands every block.
         let title = app.staticTexts["plan-feed.title"]
         XCTAssertTrue(eventually(timeout: 60) { title.label == "Making your video" })
         XCTAssertEqual(app.otherElements["plan-feed.progress"].value as? String ?? app.descendants(matching: .any)["plan-feed.progress"].value as? String, "in progress")
+        // Rows are tapped only once every section is decided: before that, each new section moves the rows between
+        // XCUITest reading a frame and tapping it (KRI-1379). The last section, and a row after each tap, still spring
+        // into place, so each tap waits for the row to hold still. Look is the newest, so it starts open, and it sits
+        // above the panel; the first rows are under the header by now.
+        let look = app.buttons["plan-feed.block.look"]
+        let lookChange = app.descendants(matching: .any)["plan-feed.change.look"]
+        XCTAssertTrue(holdsStill(look), "the newest row settles")
+        look.tap()
+        XCTAssertTrue(eventually(timeout: 5) { !lookChange.exists }, "tapping an open row collapses it")
+        XCTAssertTrue(holdsStill(look), "the collapsed row settles")
+        look.tap()
+        XCTAssertTrue(eventually(timeout: 5) { lookChange.exists }, "tapping the collapsed row expands it again")
         let review = app.buttons["plan-feed.review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"), "a skipped section counts as decided")
@@ -3569,5 +3628,16 @@ final class CreationUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return true
+    }
+
+    /// True once `element` reports the same frame on two reads in a row. XCUITest taps where the element was when it
+    /// last read the frame, so a tap on a row that is still animating can land on its neighbour.
+    private func holdsStill(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        var previous = CGRect.null
+        return eventually(timeout: timeout) {
+            let frame = element.frame
+            defer { previous = frame }
+            return frame == previous
+        }
     }
 }

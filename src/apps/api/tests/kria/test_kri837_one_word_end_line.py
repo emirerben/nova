@@ -71,6 +71,8 @@ from app.pipeline.phone_opening_cut import apply_take_window
 from app.pipeline.silence_cut import build_cut_plan, no_op_plan, remap_words
 from app.tasks import generative_build as gb
 
+pytestmark = pytest.mark.journey("kri-628-opening-cut")
+
 # The prompt exactly as the kit has it (T1_lucas_full_take_talking/PROMPT.txt).
 PROMPT = (
     'Talking-to-camera edit of Lucas, our waiter at Don Julio. Start at my "What\'s your name?" '

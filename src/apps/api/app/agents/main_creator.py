@@ -15,7 +15,9 @@ from typing import Any, ClassVar, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic.json_schema import SkipJsonSchema
 
+from app.agents._fallback import FallbackOutcome
 from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import (
@@ -38,10 +40,11 @@ from app.agents._schemas.creator_policy import (
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
+from app.agents.model_registry import cross_provider_fallback
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
 from app.kria.brief import LONG_REQUEST_MAX_UPDATES, BriefUpdate, parse_brief_updates
-from app.kria.reply_language import prompt_language_line
+from app.kria.reply_language import conversation_language_line, model_language
 from app.kria.take_trim import refile_take_trim
 from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
 from app.pipeline.phone_talking_cutaways import HOOK_FREE_S, MAX_WINDOW_S, TAIL_FREE_S
@@ -84,6 +87,7 @@ MAIN_CREATOR_PROMPT_SOURCES = (
     "app/agents/main_creator.py",
     "app/agents/prompt_vocab.py",
     "app/agents/_schemas/text_animation_phases.py",  # {{TEXT_ANIMATION_EDGES}}
+    "app/services/editor_limits.py",  # {{PLAYBACK_RATE_MIN}} {{PLAYBACK_RATE_MAX}}
     "app/agents/_writing_context.py",
     "app/kria/reply_language.py",
     "app/kria/brief.py",
@@ -906,6 +910,20 @@ plays and whether it plays straight through.
 """.strip("\n")
 
 
+_BRIEF_RECORD_ANCHOR = "never re-list a requirement that is already in the contract and unchanged."
+# KRI-1384: gpt-6.1-sol read the contract literally. On a first turn the contract is the
+# creator's own message, so every ask looked "already in the contract", and an `ask_user` turn
+# returned no requirements at all. The planner keeps a question turn's requirements. The brief
+# extractor has no `action` and strips this sentence.
+BRIEF_RECORD_SENTENCE = (
+    ' A requirement is in the contract only when the contract lists it under "Creative brief'
+    " vN\"; a contract that is only the creator's own words has nothing recorded yet, so record"
+    " every requirement those words state. Record them whatever `action` is: an `ask_user` turn"
+    " (about footage, a limit of this edit, or a hook) still returns every requirement the"
+    " message states, so the creator never repeats them; only a change or removal whose target"
+    " you would have to guess waits for the answer."
+)
+
 # KRI-188: Creative Brief extraction. Rendered into the `$brief_section` slot
 # (appended to the clip-intents line, so "" adds no bytes) ONLY when
 # `MainCreatorInput.brief_enabled` is true; flag off is byte-identical.
@@ -1141,7 +1159,8 @@ in their words, or null>", "hold_s": 2.0 or null}}; a photo at a SPOKEN word is 
 timed_card. Play footage faster or
 slower ("speed the river shots up 2x", "slow motion on the pour", "klipleri 2 kat hızlandır",
 "time-lapse") => a `style` requirement with {"playback_rate": 2}: source seconds per output
-second, 2 = twice as fast, 0.5 = half speed, between 0.25 and 4; "slow motion" / "ağır çekim"
+second, 2 = twice as fast, 0.5 = half speed, between {{PLAYBACK_RATE_MIN}} and \
+{{PLAYBACK_RATE_MAX}}; "slow motion" / "ağır çekim"
 with no number = 0.5, "speed up" / "time-lapse" with no number = 2. Scope it `clip:<media_id>`
 when the creator names one attached clip, else "global" with the creator's words for the footage
 kept in `description` ("the river shots"); the server picks the clips from those words. Never
@@ -1156,6 +1175,8 @@ requirement with {"audio_intent": "source_muted"}; "keep it low / quieter under 
 not a mute and records no audio_intent.
 "No music" / "without music" / "müzik olmasın" / "müziksiz" => an `audio` requirement with
 {"audio_intent": "no_music"}; it never mutes the footage's own sound.
+"No sound effects" / "keine Soundeffekte" / "efekt sesi olmasın" => an `audio` requirement with
+{"audio_intent": "no_sound_effects"}; it never mutes the footage's own sound or the music.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
 historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
 "global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
@@ -1168,7 +1189,10 @@ as a SEPARATE requirement with its complete description; never certify those cha
 {"noise_reduction": "engine"}; never for music, muting or keeping the noise. For "original
 camera audio, remove only the wind noise", record both the unchanged-source intent and a
 separate wind-removal requirement. After an explicit simpler
-choice drops wind removal, preserve the source-audio requirement and its typed intent.
+choice drops wind removal, preserve the source-audio requirement and its typed intent. When the
+creator, after choosing the simpler version, answers that one of the asks it leaves out stays
+("keep the captions", "Untertitel behalten"), restate that requirement as a `change` of the same
+id with its full description and facts: that keeps it in the video.
 On a voiceover edit (the creator records their own voice over the clips), the creator may want
 ONE clip's own sound kept: that clip's sound faintly under the voice => an `audio` requirement
 scoped `clip:<media_id>` of THAT clip with {"clip_sound": "under_voice"} (only the named clips
@@ -1294,7 +1318,7 @@ scratch", "forget my earlier instructions", "Baştan başla", "sıfırdan yap").
 withdraws every requirement in the contract, so record as an `add` each requirement the current
 message itself states, even one the contract already had. Otherwise set it to false.
 """.strip("\n")
-)
+).replace(_BRIEF_RECORD_ANCHOR, _BRIEF_RECORD_ANCHOR + BRIEF_RECORD_SENTENCE, 1)
 
 _BRIEF_INSERT_CLIP_SENTENCE = (
     " A clip the creator asks to play IN THE MIDDLE of the talk, with the talk PAUSED until the"
@@ -1419,6 +1443,17 @@ class MainCreatorOutput(BaseModel):
     creative_decision: CreativeCopyDecision | None = Field(
         default=None, exclude_if=lambda v: v is None
     )
+    # The language the creator writes to Kria in, read by this model from their own words
+    # (never the video's lyrics, titles or quotes). None = could not tell, or not offered now;
+    # the chat then keeps its stored language (app.kria.reply_language).
+    conversation_language: Literal["en", "tr", "de"] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    # KRI-1429: what the parse boundary dropped from an answer that otherwise stood (a story plan
+    # that cannot run on this edit). SERVER-owned: out of the model-facing schema and out of every
+    # dump, so no stored or wire form of an answer changes. The runtime reads the attribute and
+    # stores the kinds on the `agent_run` row; the fleet report shows the rate per agent.
+    fallbacks: SkipJsonSchema[list[FallbackOutcome]] = Field(default_factory=list, exclude=True)
 
 
 class CreativeCopyDecision(BaseModel):
@@ -1439,9 +1474,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         prompt_id="main_creator",
         prompt_version=MAIN_CREATOR_PROMPT_VERSION,
         model=settings.main_creator_model,
-        fallback_models=("gemini-3.6-flash",)
-        if settings.main_creator_model.startswith("gemini")
-        else (),
+        # A plan is idempotent, so a model at another provider may answer after an outage, a
+        # spend cap or an unknown outcome at the first (KRI-1385).
+        fallback_models=cross_provider_fallback(settings.main_creator_model)
+        or ("gemini-3.6-flash",),
         # KRI-118 item 4: bumped from 2 -> 3 alongside `schema_retry_limit`
         # below -- `_run_on_model`'s loop bounds EVERY retry path (transient/
         # refusal/schema) by `max_attempts`, so a `schema_retry_limit` above
@@ -1677,17 +1713,22 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n\nFor newly authored audience-facing hook/title copy only "
                 "(not the chat reply): " + turkish_audience_instruction("tr")
             )
-        # KRI-520: the reply-language instruction goes last, where it wins over the
-        # English examples above. "" for English/unknown: byte-identical prompt.
-        language_line = prompt_language_line(input.reply_language)
+        # The chat-language instruction follows the turn, where it wins over the English
+        # examples above (only the per-turn server note and changed-request section follow).
+        # The stored language is context only: the model reports the language the creator
+        # writes in. "" with the reply-language kill switch off.
+        language_line = conversation_language_line(input.reply_language)
+        if language_line:
+            prompt = f"{prompt.rstrip(chr(10))}\n\n{language_line}\n"
         if input.server_note:
             prompt = f"{prompt.rstrip(chr(10))}\n\nSERVER CHECK\n{input.server_note}\n"
         if input.changes_request and input.brief_enabled:
             prompt = f"{prompt.rstrip(chr(10))}\n\n{CHANGED_REQUEST_SECTION}\n"
-        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
+        return prompt
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
         self._schema_feedback = ""
+        fallbacks: list[FallbackOutcome] = []
         try:
             data = json.loads(raw_text)
             if not isinstance(data, dict):
@@ -1695,6 +1736,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = _hoist_misplaced_declarations(data)
             data = _hoist_misplaced_brief_updates(data)
             data = _repair_creative_decision(data)
+            reported_language = data.get("conversation_language")
+            if isinstance(data.get("action"), dict) and "conversation_language" in data["action"]:
+                # Written inside `action` (extra="forbid"): read it there instead of a retry.
+                action_data = dict(data["action"])
+                nested_language = action_data.pop("conversation_language")
+                reported_language = reported_language or nested_language
+                data = {**data, "action": action_data}
             raw_action = _repair_action_envelope(data.get("action"))
             raw_action = _repair_story_structure(raw_action)
             if isinstance(raw_action, dict) and raw_action.get("kind") == "propose_strategy":
@@ -1896,6 +1944,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                                 ),
                             )
                             strategy = strategy.model_copy(update={"editorial_plan": None})
+                            if not fallbacks:  # `finish` can run twice; one record per answer
+                                fallbacks.append(
+                                    FallbackOutcome(
+                                        kind="editorial_plan_dropped",
+                                        detail=",".join(misfit)[:120],
+                                    )
+                                )
                     return strategy
 
                 unrenderable: list[str] = []
@@ -1935,6 +1990,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 and data.get("delegates_all_choices") is True
                 and not brief_updates,
                 starts_fresh=input.brief_enabled and data.get("starts_fresh") is True,
+                # Unsupported or disabled codes ("xx", "de" with German off) are None, not a
+                # schema retry: the chat keeps its stored language.
+                conversation_language=model_language(reported_language),
+                fallbacks=fallbacks,
             )
         except ValidationError as exc:
             # Tell the retry which contract fields failed, without echoing

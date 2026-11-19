@@ -15,6 +15,8 @@ struct NativeSfxTrimBar: View {
     private let handleWidth: CGFloat = 16
     private let barHeight: CGFloat = 52
     @State private var dragOrigin: Double?
+    /// A system-cancelled drag never reaches `onEnded`; without this the shared origin goes stale and the undo transaction stays open.
+    @GestureState private var dragActive = false
 
     var body: some View {
         GeometryReader { geo in
@@ -32,10 +34,10 @@ struct NativeSfxTrimBar: View {
                     .frame(width: max(0, x(end) - x(start) + handleWidth * 2))
                     .offset(x: x(start) - handleWidth)
                     .allowsHitTesting(false)
-                handle(label: "Trim start", value: start, position: x(start) - handleWidth / 2, usable: usable) { origin, delta in
+                handle(label: String(localized: "Trim start"), value: start, position: x(start) - handleWidth / 2, usable: usable) { origin, delta in
                     onChange(min(max(0, origin + delta), end - minimum), end)
                 } adjust: { step in onChange(min(max(0, start + step), end - minimum), end) }
-                handle(label: "Trim end", value: end, position: x(end) - handleWidth / 2, usable: usable) { origin, delta in
+                handle(label: String(localized: "Trim end"), value: end, position: x(end) - handleWidth / 2, usable: usable) { origin, delta in
                     onChange(start, max(start + minimum, min(source, origin + delta)))
                 } adjust: { step in onChange(start, max(start + minimum, min(source, end + step))) }
             }
@@ -55,12 +57,16 @@ struct NativeSfxTrimBar: View {
             .contentShape(Rectangle())
             .offset(x: position - (44 - handleWidth) / 2)
             .gesture(DragGesture(minimumDistance: 0)
+                .updating($dragActive) { _, active, _ in active = true }
                 .onChanged { gesture in
                     if dragOrigin == nil { dragOrigin = value; onBegin() }
                     let delta = Double(gesture.translation.width / usable) * source
                     drag(dragOrigin ?? value, delta)
                 }
                 .onEnded { _ in dragOrigin = nil; onEnd() })
+            .onChange(of: dragActive) { _, active in
+                if !active, dragOrigin != nil { dragOrigin = nil; onEnd() }
+            }
             .accessibilityElement()
             .accessibilityLabel(label)
             .accessibilityValue(String(format: "%.2f seconds", value))

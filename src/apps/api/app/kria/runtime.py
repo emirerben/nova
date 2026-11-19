@@ -48,15 +48,17 @@ from app.kria.intent_review_copy import INTENT_REVIEW_TURN_VALUE
 from app.kria.language import is_help_question, is_status_question
 from app.kria.removed_messages import REMOVED_WHILE_WAITING
 from app.kria.reply_language import (
-    asks_for_video_text,
-    creator_typed_language,
-    needs_typed_history,
-    own_words_enabled,
+    creator_stored_language,
+    locale_language,
     remember_reply_language,
     reply_language_for,
-    resolve_reply_language,
     say,
     thread_reply_language,
+)
+from app.kria.turn_outcome import (
+    APPROVAL_EXPIRED_CODE,
+    SOURCE_REPLACED_CODE,
+    outcome_diagnostics,
 )
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
@@ -854,34 +856,6 @@ async def _validate_scoped_turn(
     return scope
 
 
-async def _answers_video_text_question(db: AsyncSession, thread: CreationThread) -> bool:
-    """True when the open question asks for words for the video (KRI-1363).
-
-    Read only when a message would move the chat to another language, so a normal turn pays
-    nothing for it.
-    """
-    if not own_words_enabled():
-        return False
-    rows = (
-        await db.execute(
-            select(
-                CreationThreadEvent.role,
-                CreationThreadEvent.payload,
-                CreationThreadEvent.event_type,
-                CreationThreadEvent.content,
-            )
-            .where(
-                CreationThreadEvent.thread_id == thread.id,
-                CreationThreadEvent.role.in_({"user", "assistant"}),
-            )
-            .order_by(CreationThreadEvent.sequence)
-        )
-    ).all()
-    return asks_for_video_text(
-        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
-    )
-
-
 async def submit_turn(
     db: AsyncSession,
     *,
@@ -894,8 +868,8 @@ async def submit_turn(
 ) -> tuple[TurnAccepted, bool]:
     """Commit a user event and pending turn together, before broker I/O.
 
-    ``locale`` is the request's raw ``Accept-Language``: the chat's reply language
-    falls back to it when the creator's words don't say (KRI-520).
+    ``locale`` is the request's raw ``Accept-Language``: a chat with no stored language and
+    no stored language on the creator's latest other chat starts from it (KRI-520).
 
     ``_expected_revision_override`` is internal: set only on the single re-entry
     after an overdue approval was lazily expired (that expiry bumps the thread
@@ -1105,39 +1079,24 @@ async def submit_turn(
         and body.moment_order is None
     ):
         duplicate = await find_duplicate_send(db, thread, body.message)
-    # KRI-520: the chat's reply language after this message, stored on the locked
-    # thread row (committed with the event below; rolled back with a refusal).
-    previous_language = thread_reply_language(thread)
-    # Green 5: a chat that has not told yet and a message that does not say (a chip tap)
-    # takes the language the creator types in their other chats before the device's.
-    typed_elsewhere = (
-        await creator_typed_language(db, creator_id=creator_id, exclude_thread_id=thread.id)
-        if needs_typed_history(body.message, previous_language)
-        else None
-    )
-    reply_language = resolve_reply_language(
-        body.message, previous=previous_language, locale=locale, typed_elsewhere=typed_elsewhere
-    )
-    if (
-        previous_language is not None
-        and reply_language != previous_language
-        and await _answers_video_text_question(db, thread)
-    ):
-        # KRI-1363: words typed for a title are the video's language, not the chat's.
-        reply_language = resolve_reply_language(
-            body.message,
-            previous=previous_language,
-            locale=locale,
-            typed_elsewhere=typed_elsewhere,
-            answers_video_text=True,
-        )
-    remember_reply_language(thread, reply_language)
+    # The chat's language is decided by the model that reads this message (the worker stores its
+    # `conversation_language`). No word is scored here: an instant reply below uses the stored
+    # language, and a chat nothing has told yet starts from the creator's latest other chat's
+    # stored language, then the device's, kept on the locked row as the model's context.
+    reply_language = thread_reply_language(thread)
+    if reply_language is None:
+        reply_language = await creator_stored_language(
+            db, creator_id=creator_id, exclude_thread_id=thread.id
+        ) or locale_language(locale)
+        remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
+    inert_code = ""
     with reply_language_for(reply_language):
         if scope is not None:
             pass  # "Update: captions, music" is never a status or help question
         elif duplicate is not None:
             inert_response = ("progress", duplicate_reply(duplicate))
+            inert_code = "duplicate_send"
         elif is_status_question(body.message):
             status = getattr(active, "status", None)
             if status in {"pending", "planning"}:
@@ -1164,6 +1123,7 @@ async def submit_turn(
                     tr="Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi.",
                 )
             inert_response = ("progress", message)
+            inert_code = "status_question"
         elif is_help_question(body.message):
             inert_response = (
                 "question",
@@ -1179,6 +1139,7 @@ async def submit_turn(
                     ),
                 ),
             )
+            inert_code = "help_question"
 
     if inert_response is not None:
         turn_value, message = inert_response
@@ -1243,7 +1204,10 @@ async def submit_turn(
             mode="respond",
             turn_value=turn_value,
             response=message,
-            **({"diagnostics": {"suggestion_pin": refusal}} if refusal is not None else {}),
+            diagnostics={
+                **({"suggestion_pin": refusal} if refusal is not None else {}),
+                **outcome_diagnostics("inert", inert_code),
+            },
         )
         db.add(
             CreatorAgentTurn(
@@ -2676,7 +2640,7 @@ async def _expire_blocking_approval(
         approval=approval,
         execution=locked.execution,
         plan_item=locked.plan_item,
-        code="approval_expired",
+        code=APPROVAL_EXPIRED_CODE,
         message=_thread_say(
             thread,
             en=(
@@ -2690,9 +2654,6 @@ async def _expire_blocking_approval(
         ),
         approval_status="expired",
     )
-
-
-SOURCE_REPLACED_CODE = "source_replaced"
 
 
 async def _approvals_made_for_replaced_source(
@@ -3244,7 +3205,7 @@ async def decide_approval(
             approval=approval,
             execution=execution,
             plan_item=plan_item,
-            code="approval_expired",
+            code=APPROVAL_EXPIRED_CODE,
             message=_APPROVAL_EXPIRED_COPY,
             approval_status="expired",
             event_message=_thread_say(

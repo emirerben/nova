@@ -12,7 +12,14 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_serializer,
+    model_validator,
+)
 
 from app.kria.recipes import EditRecipeV1
 from app.kria.recipes_v2 import EditRecipeV2
@@ -58,8 +65,17 @@ class DeviceRenderRequest(_DeviceModel):
         return self
 
 
+class WatermarkExemption(_DeviceModel):
+    owner_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @classmethod
+    def for_account(cls, user_id: uuid.UUID) -> WatermarkExemption:
+        return cls(owner_hash=hashlib.sha256(str(user_id).encode()).hexdigest())
+
+
 class DeviceRenderCapabilities(_DeviceModel):
     enabled: bool = False
+    watermark_exemption: WatermarkExemption | None = None
     recipe_versions: list[int] = Field(default_factory=list)
     verified_features: list[str] = Field(default_factory=list)
 
@@ -81,12 +97,15 @@ class DeviceRenderStatus(_DeviceModel):
 
 
 class DeviceRenderRequestOut(DeviceRenderRequest):
+    watermark_exemption: WatermarkExemption | None = None
     # Response only: never persist new keys into the strict v1 request.
     max_export_duration_s: float | None = Field(default=None, gt=0)
 
     @model_serializer(mode="wrap")
     def serialize_request(self, handler):
         data = super().serialize_request(handler)
+        if data.get("watermark_exemption") is None:
+            data.pop("watermark_exemption", None)
         if data.get("max_export_duration_s") is None:
             data.pop("max_export_duration_s", None)
         return data
@@ -171,6 +190,25 @@ class DeviceExportReservationOut(_DeviceModel):
 class DeviceExportCompleteBody(_DeviceModel):
     identity: DeviceRenderIdentity
     attempt_id: uuid.UUID
+
+
+_PhaseMilliseconds = Annotated[int, Field(strict=True, ge=0, le=7 * 24 * 60 * 60 * 1000)]
+
+
+class DeviceExportTiming(_DeviceModel):
+    device_elapsed_ms: _PhaseMilliseconds | None = None
+    export_ms: _PhaseMilliseconds | None = None
+    upload_ms: _PhaseMilliseconds | None = None
+    last_suspension_ms: _PhaseMilliseconds | None = None
+
+    @classmethod
+    def from_header(cls, value: str | None) -> DeviceExportTiming | None:
+        if not value or len(value) > 256:
+            return None
+        try:
+            return cls.model_validate_json(value)
+        except ValidationError:
+            return None
 
 
 class DeviceExportCompleteOut(_DeviceModel):

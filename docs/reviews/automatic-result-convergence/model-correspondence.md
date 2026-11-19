@@ -1,5 +1,16 @@
 # Automatic convergence: semantic handoff to the shared model owner
 
+## Current policy: latest wins
+
+The native editor no longer has a merge choice. It converges onto the latest version, keeps the
+creator's non-overlapping edits on top, and lets the latest version win any overlap. Edits the
+latest version replaced go to Undo, rebuilt on the latest generation. Nothing blocks Save, play
+or export. The formal model is `formal/ios_edit_flow/Converge.tla` (`make verify-converge`), with
+its source map in `formal/ios_edit_flow/converge-correspondence.md`. It replaces
+`MergeDecision.tla`. The slide-post editor still asks for a conflict choice (KRI-1369). The
+"Switching discards your unsaved edits" prompt still exists (KRI-1368). The sections below are
+the original snapshot. Where they describe a native merge choice, the policy above supersedes them.
+
 Native checkpoint: `4cbe7d2a7a5b89d0decdbd4a1405d2323250aa7a` (descends from reviewed `c929d5f30eafa1e98bc26813a282ed0e3b777cf3`).
 Git tree: `3658a5d94647ab7159ac75bdc0a65e656cdbadaa`.
 Base: `05d9720d8b3f838f8b91963e183eb7206c34e538`.
@@ -10,7 +21,7 @@ This is an implementation snapshot with independent static review, not a native 
 
 `NativeEditorSession.saveOnce` now owns a UUID-scoped `EditorSaveHistory`. Post-submission undo/redo checkpoints are independent of the capped visible undo stack. Save acknowledgements, catches and teardown check journal ownership; load invalidates the journal. A successful save consumes only submitted deletion intents and rebases both retained undo and redo history. A stale completion must neither replace a newer document nor clear its busy state. The earlier model's small save count/dirty flag does not itself prove the history-cap behavior.
 
-`NativeEditorSession.runPromptRevisionSync` supplies chat-staged edits as the remote side of a three-way merge, rather than copying dirty lanes before/after rebase. Original clean base, current local content, latest committed clean content and staged remote edits remain distinct. A genuine overlap creates a pending merge and blocks Save; a successful merge changes destination job/item/variant only after resolution. Independent changes should converge without a confirmation prompt. Song edits require a conservative authority fence; job/generation metadata is not asserted to be an asset identity.
+`NativeEditorSession.runPromptRevisionSync` supplies chat-staged edits as the remote side of a three-way merge, rather than copying dirty lanes before/after rebase. Original clean base, current local content, latest committed clean content and staged remote edits remain distinct. A genuine overlap converges onto the latest version, which wins the overlap; the replaced edits stay in Undo and nothing blocks Save. (Snapshot text said: a pending merge blocks Save until resolved.) Independent changes should converge without a confirmation prompt. Song edits require a conservative authority fence; job/generation metadata is not asserted to be an asset identity.
 
 The working tree also changes covered `ChatWorkspaceView.retryApprovedRender`: when a fresh projection no longer identifies an exact failed execution, it returns without dispatch and without telling the user to refresh manually. Existing live polling continues. The failed-execution/revision requirement for the actual mutation is unchanged. This post-checkpoint delta requires correspondence review; no hash was resynced.
 
@@ -20,7 +31,7 @@ The hash-only audit against registry sync `b12bed356ff155ede19908dec43ef89b4c006
 
 - Latest-job notification during Save retains a lifetime/request ticket. Busy-to-idle starts an authoritative project read as a separate asynchronous step. Newer notifications supersede tickets; stale reads cannot consume or adopt them. Read failures retry within a bounded attempt budget and one five-minute read window, honoring per-thread monotonic Retry-After deadlines across tickets. An ordinary sixty-second hint resumes in the owned task without another notification. Truly excessive waits or exhausted attempts pause visibly until a later project update.
 - Dirty new-job adoption attempts an authoritative editable-base merge. Missing matching editable content retains an explicit fallback. Runtime1 does not call the v2 draft route. Readiness checks and watchers feed the same paced queue.
-- `NativeEditorMerge` keeps timeline-dependent content and song authority conservative, merges stable identities/independent fields, preserves unchanged remote opaque rows, validates selected typed output, and reconciles deletion intents with chosen live entities. Conflict resolution is a user transition, not an automatic remote overwrite.
+- `NativeEditorMerge` keeps timeline-dependent content and song authority conservative, merges stable identities/independent fields, preserves unchanged remote opaque rows, validates selected typed output, and reconciles deletion intents with chosen live entities. In the native editor the latest version wins every overlap and the creator's replaced edits go to Undo. SlidePost conflict resolution is still a user transition (KRI-1369).
 - SlidePost uses a durable owner/environment/item journal, one stable request UUID and expected-current-job compare-and-swap. Read deadlines, POST attempt budget and target identity survive session recreation. Strict keyed API admission has no legacy fallback. These states are outside the phone-render model's existing scope.
 - Keyed backend delivery uses a permanent first-render claim, bounded pending publication, persisted staged-result completion, terminal late-write fences and bounded finalize recovery. Policy timeout is not proof of worker death; it cancels the original receipt and never automatically recomputes uncertain work. A staged result can complete without recompute. These server states are not proven by the existing phone-render model.
 

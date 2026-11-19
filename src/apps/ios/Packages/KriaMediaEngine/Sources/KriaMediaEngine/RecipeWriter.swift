@@ -32,7 +32,7 @@ final class RecipeWriter: @unchecked Sendable {
         reader.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: duration, preferredTimescale: 60_000))
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         video = AVAssetReaderVideoCompositionOutput(videoTracks: try await asset.loadTracks(withMediaType: .video), videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
-        video.videoComposition = preview.playerItem.videoComposition
+        video.videoComposition = Self.exportComposition(preview.playerItem.videoComposition)
         video.alwaysCopiesSampleData = false
         videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
@@ -68,6 +68,23 @@ final class RecipeWriter: @unchecked Sendable {
         writer.shouldOptimizeForNetworkUse = true
     }
 
+    /// Test hook: sees every composed frame, in order, before it is converted for the encoder.
+    nonisolated(unsafe) static var frameTap: ((CVPixelBuffer) -> Void)?
+
+    /// The player's composition, drawn by the compositor that overlaps frames. Anything else is handed on untouched.
+    static func exportComposition(_ source: AVVideoComposition?) -> AVVideoComposition? {
+        guard ExportFrameOverlap.framesInFlight > 1,
+              let source, let copy = source.mutableCopy() as? AVMutableVideoComposition else { return source }
+        if source.customVideoCompositorClass == RecipeVideoCompositor.self {
+            copy.customVideoCompositorClass = RecipeExportVideoCompositor.self
+        } else if source.customVideoCompositorClass == RecipeLookVideoCompositor.self {
+            copy.customVideoCompositorClass = RecipeExportLookVideoCompositor.self
+        } else {
+            return source
+        }
+        return copy
+    }
+
     func run(progress: (@Sendable (Double) -> Void)?) async throws {
         do {
             try Task.checkCancellation()
@@ -95,8 +112,16 @@ final class RecipeWriter: @unchecked Sendable {
                 var advanced = false
                 if !videoDone && videoInput.isReadyForMoreMediaData {
                     try autoreleasepool {
+                        let copyStart = DispatchTime.now().uptimeNanoseconds
                         if let sample = video.copyNextSampleBuffer() {
-                            guard videoInput.append(try encodingPixels.convert(sample)) else { throw writer.error ?? MediaEngineError.exportFailed }
+                            EngineSignpost.stage("talk.stage.copyNext", since: copyStart)
+                            if let tap = Self.frameTap, let image = CMSampleBufferGetImageBuffer(sample) { tap(image) }
+                            let convertStart = DispatchTime.now().uptimeNanoseconds
+                            let converted = try encodingPixels.convert(sample)
+                            EngineSignpost.stage("talk.stage.convert", since: convertStart)
+                            let appendStart = DispatchTime.now().uptimeNanoseconds
+                            defer { EngineSignpost.stage("talk.stage.append", since: appendStart) }
+                            guard videoInput.append(converted) else { throw writer.error ?? MediaEngineError.exportFailed }
                             let value = min(0.99, max(0, CMSampleBufferGetPresentationTimeStamp(sample).seconds / duration))
                             if value - lastProgress >= 0.01 { progress?(value); lastProgress = value }
                         } else {
@@ -124,7 +149,7 @@ final class RecipeWriter: @unchecked Sendable {
                     }
                     advanced = true
                 }
-                if !advanced { try await Task.sleep(for: .milliseconds(2)) }
+                if !advanced { let sleepStart = DispatchTime.now().uptimeNanoseconds; try await Task.sleep(for: .milliseconds(2)); EngineSignpost.stage("talk.stage.idleSleep", since: sleepStart) }
             }
             guard reader.status == .completed else { throw reader.error ?? MediaEngineError.exportFailed }
             try Task.checkCancellation()

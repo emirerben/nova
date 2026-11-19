@@ -1840,8 +1840,7 @@
       "fix_prs": [],
       "paths": [
         "src/apps/api/app/kria/planner.py",
-        "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/web/src/app/plan/_components/workspace/ChatCreationWorkspace.tsx"
+        "src/apps/api/app/tasks/kria_runtime.py"
       ],
       "regression_tests": [
         "tests/kria/test_turn_auto_continue_postgres.py",
@@ -2917,7 +2916,8 @@
       "id": "kri-551-consented-retakes",
       "tickets": [
         "KRI-551",
-        "KRI-829"
+        "KRI-829",
+        "KRI-1518"
       ],
       "symptom": "Consented voiceover preflight never called the existing retake detector, retaining the N3 abandoned kilometer-30 delivery.",
       "boundary": "planner",
@@ -2954,6 +2954,7 @@
       ],
       "regression_tests": [
         "tests/agents/test_retake_detector.py",
+        "tests/agents/test_kri1518_retake_needs_kept_redelivery.py",
         "tests/services/test_speech_cleanup_preflight.py",
         "tests/services/test_speech_cleanup_retakes_consent.py",
         "tests/services/test_speech_cleanup_decision.py",
@@ -2984,6 +2985,7 @@
         "malformed detector positions",
         "detector failure",
         "EN/TR repetition",
+        "retake span with no kept re-delivery (KRI-1518)",
         "legacy client refusal",
         "keep original",
         "same-analysis reapproval",
@@ -4755,6 +4757,277 @@
       "neighbours_gap": [
         "Original-footage/device replay and live-model behavior",
         "Whole-clip first-draft acceptance belongs to KRI-1295"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1386-partial-apply-repair",
+      "tickets": [
+        "KRI-1386",
+        "KRI-1387",
+        "KRI-1384"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1386",
+      "symptom": "One invalid op in a chat edit dropped every valid sibling (the turn became a question or 'Nothing was changed'), and parser or compiler rejections never went back to the model to fix.",
+      "boundary": "parser",
+      "paths": [
+        "src/apps/api/app/agents/edit_copilot.py",
+        "src/apps/api/app/routes/_copilot.py",
+        "src/apps/api/app/services/kria_editor_ops.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_copilot_partial_apply_repair.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Recorded answers through the real copilot prompt and parser, editor_compile_check, run_copilot_turn and compile_editor_ops; only the provider transport is scripted. Mutants (confidence drop restored, no repair, no pre-compile, rejections not named, deadline ignored) each fail at least one case.",
+        "live_model": "Not run; no paid call was needed for this contract.",
+        "native_output": "Not applicable: the change is server-side op selection; the phone applies the same op vocabulary.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Three asks with one unfixable value: two apply, the third named",
+        "A top_left alignment mistake repaired so style and timing both apply",
+        "Stale index repaired with the valid range, or named after two rounds",
+        "A dropped sibling never shifts a later index",
+        "Atomic bulk and text-appearance bundles never apply in part",
+        "Compile-only refusal reaches the model and is repaired",
+        "No repair without time for one copilot call; a failed repair keeps the partial edit",
+        "Text-timing conflict passes through to the runtime question"
+      ],
+      "neighbours_gap": [
+        "Live-model repair quality (does the model fix what the block names) is unmeasured until the KRI-1389 baseline",
+        "The typed native wire cannot carry the repairs tag; untagged fixes match by op name only (KRI-1393)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1464-restated-request-retires-clips",
+      "tickets": [
+        "KRI-1464"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1464",
+      "symptom": "Clips the creator took out of a retyped request (brief requirements superseded by the creator) were planned again from the first message on a later tap, and the first prompt's clip picker came back word for word.",
+      "boundary": "planner",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/kria/planner.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1464_restated_request_retires_asks.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Thread 78787267 turn ac3bfabd (2026-11-14 21:51Z) through the real runtime-v2 planner path over the recorded brief and messages; only the planner inventory and resolver answer are replayed. Without the brief the reply equals the recorded 21:51:34Z reply byte for byte; with the retire step switched off the three rows come back.",
+        "live_model": "Not run; no paid call is authorized.",
+        "native_output": "Not applicable: a chat-turn decision, nothing renders.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "A live requirement that still names the clip keeps it",
+        "A server waiver or an unmarked removal retires nothing",
+        "An ask the brief never recorded, or no brief, is asked as before",
+        "A leave-out for the same words is kept",
+        "A longer or (while a live ask names it) shorter near miss is kept",
+        "An inventory reused for a picker tap (KRI-950) is filtered too"
+      ],
+      "neighbours_gap": [
+        "The harness plans a montage manifest; the incident was a Voiceover edit (the clip-intent step is shared)",
+        "Only include asks are retired; a withdrawn order, label or caption ask other than KRI-1111's cases can still come back",
+        "A one-word include is matched by that word alone: it is retired when only withdrawn asks contain it",
+        "The typed message still does not close the open clip picker itself"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1466-narrated-named-moment",
+      "tickets": [
+        "KRI-1466"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1466",
+      "symptom": "A phone Voiceover clip came on screen on its spoken cue from its first frame and, being last, was slowed to half speed over the rest of the voice, so the named moment (TOR on the big screen) played about 6 s after the word and the review still read as fine.",
+      "boundary": "compiler",
+      "paths": [
+        "src/apps/api/app/pipeline/narrated_footage_fit.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/kria/brief_checks.py"
+      ],
+      "regression_tests": [
+        "tests/pipeline/test_narrated_footage_fit.py",
+        "tests/tasks/test_kri1466_narrated_named_moment.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": "narrated_footage_fit_enabled",
+      "evidence": {
+        "offline_replay": "Job c8fcb7c0 (2026-11-14) through the real _run_phone_narrated_job, compiler and review with the recorded clip lengths, analysed moments and steps; word times and the alignment agent's answer are reconstructed. With the switch off the recipe and record equal the recorded ones (goal clip from 0.0 at 0.496x, TOR at about 16 s) and the review is the recorded line.",
+        "live_model": "Not run; no paid call is authorized.",
+        "native_output": "Not inspected: no device or simulator export of the new recipe yet.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Wrong-content control: the TOR moment recorded on another clip moves nothing",
+        "Words that fit the whole clip or no recorded moment locate nothing",
+        "A clip the creator ends on (order intent or last_clip) keeps its step and in-point",
+        "A filming-guide edit is left alone",
+        "Footage repeats only with video_reuse_policy allow_repeat",
+        "Fillers carry no labels or seats in the record; the editor cut equals the recipe",
+        "The review says when a located moment plays late"
+      ],
+      "neighbours_gap": [
+        "A moment the clip analysis did not record is not located, and the review then stays neutral",
+        "A gap the unseen footage cannot fill completely keeps the old slow-down",
+        "A typed 'each clip only once' has no plan carrier: unseen footage of a clip can still return",
+        "Scripted (filming guide) Voiceover edits and the cloud narrated render are unchanged",
+        "The spoken cue's own time is not in the record: lateness is measured from the clip's start",
+        "A filler between two named clips makes the clip-timing receipt read can't check instead of met"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1465-narrated-needless-holds",
+      "tickets": [
+        "KRI-1465"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1465",
+      "symptom": "A phone Voiceover first draft was held twice for asks the video then delivered: 'German captions, word by word.' and 'Keep the crowd quietly under my voice.' read 'I can't confirm this draft does it yet', then the plan's captions-off repair asked 'Should I make a simpler version?' again; the review said both were left out as agreed.",
+      "boundary": "verifier",
+      "paths": [
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/strategy_policy.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1465_narrated_needless_holds.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "narrated_caption_render_promise_enabled",
+      "evidence": {
+        "offline_replay": "The incident brief rows (thread 78787267, 2026-11-14) through the real build_receipts, assess_readiness, strategy policy, planner step and the runtime's first turn over Postgres; the de1 kit's clips and voiceover stand in for the incident's media. Red before the fix: 23 of 47 tests failed (r2 and r11 held, the second question returned verbatim, '.:' in the reply); with the three changes switched back the runtime writes the recorded first hold word for word.",
+        "live_model": "Not run; no paid call is authorized.",
+        "native_output": "Not inspected: the finished video's caption language and word highlight were not re-checked on a device.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Captions in another language than the stated voiceover language keep the hold",
+        "A captions look, place or colour ask, a spelling ask and 'no captions' are judged as before",
+        "A real unsupported ask next to r2 and r11 still holds, and the card names only it",
+        "'Mute the crowd noise under my voice' stays a mute; the crowd as a picture is no sound ask",
+        "Talking, montage, cloud voiceover and editor verdicts are unchanged (r11 reads met on a cloud voiceover, like 'crowd noise')",
+        "A live no-captions ask still gets the simpler-version question",
+        "Hold copy in EN, TR and DE has no '.:' , '.;' or '..'",
+        "The caption promise kill switch restores the hold"
+      ],
+      "neighbours_gap": [
+        "With German replies on, readiness reads every render promise as needs_choice (its promise texts are English and Turkish only); predates this fix",
+        "Word-by-word on an auto caption style is approved, not guaranteed: the review says so when the render drew sentences",
+        "The crowd-under-voice ask is still read from words; a typed fact needs a brief-writer prompt change",
+        "'Keep the crowd quietly under my voice, no music' in one row keeps the hold",
+        "Where the plan's caption_style none came from in the incident was not verified"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1376-phone-plan-degrade",
+      "tickets": [
+        "KRI-1376",
+        "KRI-1374"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1376",
+      "symptom": "One row the phone cannot draw (an unsupported look or zoom on a clip, a transition after the last clip, right-to-left words in a staggered slice) refused the whole approved video as phone_plan_unsupported, and a confirmed text with no clear spot at its size (a guided text, or a word-timed text on a Voiceover edit) asked for a choice instead of shrinking; a confirmed text the contract does not pin in time (role any) with no spot at any readable size at 0 s asked for a choice although it fits later (prod 22d2bf99, ff749bf5).",
+      "boundary": "compiler",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_guided_plan.py",
+        "src/apps/api/app/pipeline/phone_narrated_spoken_text.py",
+        "src/apps/api/app/pipeline/phone_plan_degrade.py",
+        "src/apps/api/app/pipeline/phone_plan_repair.py",
+        "src/apps/api/app/pipeline/portable_text_layout.py"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_phone_plan_degrade.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "One bad row per gate (look, zoom, last-clip transition, right-to-left staggered text) and a look on every clip, through the real worker task (_run_generative_job -> unified montage planner -> guided compiler -> pin-time contract check); with the degrade patched to identity every gate's row refuses as phone_plan_unsupported. A word-timed text that crowds the captions renders smaller through _run_phone_narrated_job; with shrink_sizes pinned to its own size it stops to ask, typed spoken_text_unplaced. Prod 22d2bf99 and ff749bf5 replayed at plan level (scripts/replay_phone_contract_gate.py): the English any text moves to 3.2 s at 82 px and the text checks pass; with _later_starts patched to [] the walled any text refuses needs_choice.",
+        "live_model": "Not run; the change is deterministic compile-time behaviour. replay_creator.py could not run on a prod job: admin.py --prod GET exposes no source bytes or signed URLs, and its --render needs a Celery worker on the shared Redis.",
+        "native_output": "Not run; the degraded recipe passes verify_phone_recipe and the pilot check, no device export inspected.",
+        "production": "Not deployed. All 42 prod phone_plan_unsupported jobs from 2026-09-18 to 2026-11-10 (admin.py --prod GET jobs/<id>/debug) failed on a contract refusal, another lane or a gate main already repairs; none on a gate this change degrades."
+      },
+      "neighbours_covered": [
+        "Unsupported look, zoom on a video clip, transition after the last clip, right-to-left words in a staggered slice",
+        "A look on every clip renders with one note and one requirement_recovery per clip",
+        "Four kinds of reject in one plan all render with their notes; a degrade that does not fix its row ends in the row's typed refusal",
+        "A word-timed Voiceover text that fits keeps its size and gets no note; one that does not renders smaller with one note, in Turkish for a Turkish chat",
+        "The approval card's degrade notes follow the chat language",
+        "A row degraded twice (zoom, then golden hour on a landscape clip) gets one note naming both",
+        "Photo notes name what the photo lost: zoom, look, color adjustments, freeze, speed change, crop on a card",
+        "An animation the creator chose and a script face the build lacks still refuse, typed, with the same failure code",
+        "A text size the creator chose never shrinks; the refusal stays a typed needs_choice",
+      "A confirmed any text with no spot at any size at its time shows later at its length, with one note and a moved recovery (and a shrunk one when it also shrinks), in Turkish for a Turkish chat; an opening text never moves off 0 s",
+        "The compile records nothing; only the worker records the compile it keeps",
+        "Turkish chat gets the notes in Turkish"
+      ],
+      "neighbours_gap": [
+        "Photo treatment and a freeze on a still are covered at the compile call only: the worker fixture has no Visuals photo",
+        "Narrated: only the word-timed text shrinks. The title is pinned exact text whose entrance already falls back to a plain fade; pins are the creator's; steps, voice tail and captions are footage or captions-lane limits",
+        "Subtitled, voiceover montage, speech montage, voiceover cut and caption gates are not swept",
+        "A planner-placed licensed sound effect that is unavailable now names its row (sfx_unpublished, sfx_format, sfx_duration) but still refuses the guided video"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1382-creation-health",
+      "tickets": [
+        "KRI-1382"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1382",
+      "journey": "kri-1382-creation-health",
+      "symptom": "A refused or recovering creation turn finished as an ordinary assistant message with no failure code, so a creation that delivered nothing counted as a success and failed creations left no evidence to count.",
+      "boundary": "persistence",
+      "paths": [
+        "src/apps/api/app/kria/turn_outcome.py",
+        "src/apps/api/app/services/cleared_failures.py",
+        "src/apps/api/app/services/creation_health.py",
+        "src/apps/api/app/services/job_failure_reasons.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_turn_outcome_postgres.py",
+        "tests/routes/test_admin_creation_health_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real run_kria_turn and the real completion transaction on Postgres with the planner's own refusal builders (strategy check, request recovery, ask_user refusals through adapt_creator_action); the report is read back with creation_health. Mutants (ask_user refusal unstamped, superseded turn stamped as a failure, device render failure read as in progress, one pooled failure share) each fail at least one case.",
+        "live_model": "Not run; no paid call was needed for this contract.",
+        "native_output": "Not applicable: server-side counting; no iPhone output changes.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Strategy refusals, request recovery, approval readiness holds and unclassified recovery replies are each counted under their own code",
+        "A main-creator ask_user refusal is a refusal; an ordinary clarifying ask_user stays a success",
+        "A turn closed by a newer message is not an attempt",
+        "An iPhone render that failed (awaiting_device with a failure reason) is a failed render, not in progress",
+        "Finished-but-partial renders are successes and draft jobs are not attempts",
+        "A planner conflict question and a moment-order question are blocked turns, the same code the commit gate records",
+        "A repeated send and a status or help question are inert turns, not attempts; admin test renders (synthetic user) are not attempts",
+        "A Job a failed approval dispatch compensated (status failed, kria_dispatch_aborted) is a failed render",
+        "An iPhone retry, auto-resume, admin retry and the creator's Retry on a failed Create video log the failure they clear (the chat turn's own failure too, on its plan diagnostics), so a retried failure stays a failed attempt (retry is its own attempt)",
+        "Title wording and authorship proposals are routine hand-offs, not blocked turns; each kind keeps its own top reasons so refusals are never cut by the volume of failed codes"
+      ],
+      "neighbours_gap": [
+        "A refusal reply built outside the stamped sites and the central conflict-question markers still counts as a success until it is stamped; the editor-capacity, length-waiting, editor copilot (unsupported, stale, failed, no-op), editor-target and clips-changed-while-planning replies are stamped at their site and covered by the codes test, not by a replay of each",
+        "A failure cleared by a worker re-enqueue or an in-place variant re-render (the same attempt run again) is not logged; neither is a turn failure cleared by a self-healed render_dispatch_outcome_unknown (the video was delivered) or an export the server repaired automatically (see repair_history on the device record) or a phone failure while an accepted video exists"
       ],
       "red_control": "not_applicable"
     }

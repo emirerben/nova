@@ -187,6 +187,12 @@ protocol NativePersonSegmenting: AnyObject {
     func confidence(for frame: CIImage, canvas: CGRect) throws -> SubjectConfidenceMap?
     /// The speaker matte's full-resolution 8-bit mask (row 0 = top). Defaults to `confidence` (`SpeakerMatte.swift`).
     func personMask(for frame: CIImage, canvas: CGRect, config: SpeakerMatteConfig) throws -> CVPixelBuffer?
+    /// True when `personMask` may run on several threads at once. The export overlaps frames only for such a segmenter.
+    var supportsConcurrentRequests: Bool { get }
+}
+
+extension NativePersonSegmenting {
+    var supportsConcurrentRequests: Bool { false }
 }
 
 /// Per-composition temporal state + sanity + rate limiting. Shared by every compositor instance a
@@ -283,6 +289,10 @@ final class VisionPersonSegmenter: PixelSegmenting {
                                               .outputColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
     private var pool: CVPixelBufferPool?
     private var poolSize: (Int, Int) = (0, 0)
+    private let poolLock = NSLock()
+
+    /// Each call builds its own request and handler and renders through a thread-safe CIContext and pool.
+    var supportsConcurrentRequests: Bool { true }
 
     func confidence(for frame: CIImage, canvas: CGRect) throws -> SubjectConfidenceMap? {
         guard let buffer = render(frame, canvas: canvas, maxSide: NativeSubjectMatte.inputMaxSide),
@@ -299,7 +309,11 @@ final class VisionPersonSegmenter: PixelSegmenting {
 
     /// Vision's buffer as is: no `[Float]` copy and no downsample (the speaker matte scales it in Core Image).
     func personMask(for frame: CIImage, canvas: CGRect, config: SpeakerMatteConfig) throws -> CVPixelBuffer? {
+        let t0 = DispatchTime.now().uptimeNanoseconds
         guard let buffer = segmentationInput(for: frame, canvas: canvas, config: config) else { return nil }
+        EngineSignpost.stage("talk.stage.visionInput", since: t0)
+        let t1 = DispatchTime.now().uptimeNanoseconds
+        defer { EngineSignpost.stage("talk.stage.visionPerform", since: t1) }
         return try segmentationMask(forInput: buffer, config: config)
     }
 
@@ -337,6 +351,7 @@ final class VisionPersonSegmenter: PixelSegmenting {
     }
 
     private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        poolLock.lock(); defer { poolLock.unlock() }
         if pool == nil || poolSize != (width, height) {
             var created: CVPixelBufferPool?
             let attributes: [String: Any] = [

@@ -17,7 +17,11 @@
     "labels": {
       "label_version": "2026-05-15",
       "genre": "acoustic",
-      "vibe_tags": ["wistful", "intimate", "nostalgic"],
+      "vibe_tags": [
+        "wistful",
+        "intimate",
+        "nostalgic"
+      ],
       "energy": "low",
       "pacing": "slow",
       "mood": "bittersweet but hopeful",
@@ -31,5 +35,6 @@
   "meta": {
     "source": "hand_authored_golden",
     "case": "acoustic ballad — wistful intimate labels with downstream-fit dissolve + sentimental copy_tone"
-  }
+  },
+  "prompt_sha": "da60e8413cab95ba"
 }

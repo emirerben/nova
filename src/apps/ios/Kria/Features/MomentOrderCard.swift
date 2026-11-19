@@ -6,6 +6,57 @@ import SwiftUI
 // source-window picker on this iPhone's original of the take, "Not in my clips" leaves the moment out, "You pick"
 // lets Kria choose a part. A moment the clip record placed starts pointed at its evidence.
 
+/// Where a dragged row lands. Rows have different heights, so every step is measured in the row it passes.
+/// `heights` are in current row order.
+enum MomentReorderMath {
+    /// A flick at least this fast (points/second) can carry a row one place past where its distance alone puts it.
+    static let flickSpeed: CGFloat = 500
+
+    /// The index a drag of `translation` reaches: one place at a time while the drag covers more than half of the next row.
+    static func target(from index: Int, translation: CGFloat, heights: [CGFloat], spacing: CGFloat) -> Int {
+        var remaining = translation
+        var current = index
+        while remaining > 0, current < heights.count - 1 {
+            let next = heights[current + 1]
+            guard remaining > next / 2 else { break }
+            current += 1
+            remaining -= next + spacing
+        }
+        while remaining < 0, current > 0 {
+            let previous = heights[current - 1]
+            guard -remaining > previous / 2 else { break }
+            current -= 1
+            remaining += previous + spacing
+        }
+        return current
+    }
+
+    /// Where a release lands: by distance, or one place further when the finger was flicked that way.
+    static func releaseTarget(from index: Int, translation: CGFloat, predictedTranslation: CGFloat, velocity: CGFloat,
+                              heights: [CGFloat], spacing: CGFloat) -> Int {
+        let byDistance = target(from: index, translation: translation, heights: heights, spacing: spacing)
+        guard velocity.isFinite, abs(velocity) >= flickSpeed else { return byDistance }
+        let byFlick = target(from: index, translation: predictedTranslation, heights: heights, spacing: spacing)
+        let extra = velocity > 0 ? min(1, max(0, byFlick - byDistance)) : max(-1, min(0, byFlick - byDistance))
+        return min(max(0, byDistance + extra), heights.count - 1)
+    }
+
+    /// How far the layout moves the row when it goes from `index` to `target`.
+    static func distance(from index: Int, to target: Int, heights: [CGFloat], spacing: CGFloat) -> CGFloat {
+        guard index != target, heights.indices.contains(index), heights.indices.contains(target) else { return 0 }
+        if target > index { return (index + 1...target).reduce(0) { $0 + heights[$1] + spacing } }
+        return -(target..<index).reduce(0) { $0 + heights[$1] + spacing }
+    }
+
+    /// How far the row at `row` steps aside while `dragged` is held over `target`.
+    static func neighbourShift(row: Int, dragged: Int, target: Int, draggedHeight: CGFloat, spacing: CGFloat) -> CGFloat {
+        let step = draggedHeight + spacing
+        if target > dragged, row > dragged, row <= target { return -step }
+        if target < dragged, row >= target, row < dragged { return step }
+        return 0
+    }
+}
+
 /// How a moment question is shown under its message.
 enum MomentOrderCardMode {
     /// The newest unanswered question: interactive. `problem` is the server's reason for refusing the last answer.
@@ -64,7 +115,12 @@ private struct MomentOrderActiveCard: View {
     /// The row being dragged by its handle, how far it has moved, and each row's measured height.
     @State private var draggingKey: String?
     @State private var dragOffset: CGFloat = 0
+    /// Where the held row would land if released now; the rows between step aside live.
+    @State private var dragTarget: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var rowHeights: [String: CGFloat] = [:]
+    /// A system-cancelled drag never reaches `onEnded`; without this the row stays lifted.
+    @GestureState private var handleActive = false
 
     struct PickTarget: Identifiable { let key: String; var id: String { key } }
 
@@ -162,7 +218,7 @@ private struct MomentOrderActiveCard: View {
         .padding(.top, 4).padding(.trailing, 12).padding(.bottom, 12)
         .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[key] = $0 }
-        .offset(y: dragging ? dragOffset : 0)
+        .offset(y: dragging ? dragOffset : neighbourShift(of: key))
         .zIndex(dragging ? 1 : 0)
         .shadow(color: .black.opacity(dragging ? 0.12 : 0), radius: 8, y: 2)
     }
@@ -174,16 +230,24 @@ private struct MomentOrderActiveCard: View {
             .frame(width: 44, height: 44).contentShape(Rectangle())
             .highPriorityGesture(
                 DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                    .updating($handleActive) { _, active, _ in active = true }
                     .onChanged { value in
                         guard !isSending else { return }
                         draggingKey = key
                         dragOffset = value.translation.height
+                        let target = liveTarget(for: key, translation: value.translation.height)
+                        if target != dragTarget {
+                            withAnimation(reduceMotion ? nil : .snappy(duration: 0.2)) { dragTarget = target }
+                        }
                     }
                     .onEnded { value in
                         guard !isSending else { return }
-                        settle(key, translation: value.translation.height)
+                        drop(key, value: value)
                     }
             )
+            .onChange(of: handleActive) { _, active in
+                if !active, draggingKey == key { cancelDrag() }
+            }
             .accessibilityElement()
             .accessibilityLabel(strings.reorder(words))
             .accessibilityAction(named: strings.moveUp(words)) { if !isSending { moveUp(key) } }
@@ -194,25 +258,47 @@ private struct MomentOrderActiveCard: View {
     private func moveUp(_ key: String) { withAnimation(.easeOut(duration: 0.18)) { draft.moveUp(key) } }
     private func moveDown(_ key: String) { withAnimation(.easeOut(duration: 0.18)) { draft.moveDown(key) } }
 
-    /// Moves the row one place at a time while the drag has covered more than half of the next row.
-    private func settle(_ key: String, translation: CGFloat) {
-        var remaining = translation
-        withAnimation(.easeOut(duration: 0.18)) {
-            while remaining > 0, let index = draft.order.firstIndex(of: key), index < draft.order.count - 1 {
-                let next = rowHeights[draft.order[index + 1]] ?? 100
-                guard remaining > next / 2 else { break }
-                draft.moveDown(key)
-                remaining -= next + Self.rowSpacing
-            }
-            while remaining < 0, let index = draft.order.firstIndex(of: key), index > 0 {
-                let previous = rowHeights[draft.order[index - 1]] ?? 100
-                guard -remaining > previous / 2 else { break }
-                draft.moveUp(key)
-                remaining += previous + Self.rowSpacing
-            }
-            draggingKey = nil
-            dragOffset = 0
+    private var orderedHeights: [CGFloat] { draft.order.map { rowHeights[$0] ?? 100 } }
+
+    private func liveTarget(for key: String, translation: CGFloat) -> Int {
+        guard let index = draft.order.firstIndex(of: key) else { return 0 }
+        return MomentReorderMath.target(from: index, translation: translation, heights: orderedHeights, spacing: Self.rowSpacing)
+    }
+
+    /// How far a neighbour steps aside while another row is held over its new place.
+    private func neighbourShift(of key: String) -> CGFloat {
+        guard let held = draggingKey, let target = dragTarget,
+              let dragged = draft.order.firstIndex(of: held), let row = draft.order.firstIndex(of: key) else { return 0 }
+        return MomentReorderMath.neighbourShift(row: row, dragged: dragged, target: target,
+                                                draggedHeight: rowHeights[held] ?? 100, spacing: Self.rowSpacing)
+    }
+
+    /// Lands the row by distance or flick, then lets it settle from where the finger left it at the speed it was going.
+    private func drop(_ key: String, value: DragGesture.Value) {
+        guard let index = draft.order.firstIndex(of: key) else { return cancelDrag() }
+        let heights = orderedHeights
+        let target = MomentReorderMath.releaseTarget(
+            from: index, translation: value.translation.height, predictedTranslation: value.predictedEndTranslation.height,
+            velocity: value.velocity.height, heights: heights, spacing: Self.rowSpacing)
+        let moved = MomentReorderMath.distance(from: index, to: target, heights: heights, spacing: Self.rowSpacing)
+        // One transaction without animation: the new order, the neighbours back at rest, and the row's offset
+        // rebased so it stays exactly under the finger. Only then does the spring carry it home.
+        var instant = Transaction(); instant.disablesAnimations = true
+        withTransaction(instant) {
+            if target > index { for _ in index..<target { draft.moveDown(key) } }
+            if target < index { for _ in target..<index { draft.moveUp(key) } }
+            dragTarget = nil
+            dragOffset = value.translation.height - moved
         }
+        let velocity = KriaGesturePhysics.unitVelocity(value.velocity.height, from: dragOffset, to: 0)
+        let spring = DrawerMotion.settle(reduceMotion: reduceMotion, velocity: velocity)
+        guard spring != nil else { draggingKey = nil; dragOffset = 0; return }
+        withAnimation(spring, completionCriteria: .logicallyComplete) { dragOffset = 0 } completion: { draggingKey = nil }
+    }
+
+    /// A drag the system cancelled puts everything back without reordering.
+    private func cancelDrag() {
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.18)) { draggingKey = nil; dragOffset = 0; dragTarget = nil }
     }
 
     /// The row's own three answers as wrapping chips (Paper S2.11): ink when chosen, fill otherwise. They sit on

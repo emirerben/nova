@@ -745,3 +745,64 @@ async def test_failed_first_render_change_ask_replans_with_the_change(monkeypatc
     with sync_session() as db:
         head = db.get(CreatorEditDraft, case.draft_id)
         assert head.is_head and head.snapshot_json == before
+
+
+@pytest.mark.asyncio
+async def test_a_change_with_a_new_version_word_in_it_still_corrects_the_saved_draft(monkeypatch):
+    """KRI-1392: "different" on a re-plan cue list sent this correction to Main Creator."""
+    case, item_id = _seed()
+    copilot, creator = _agents(monkeypatch, item_id)
+    copilot.return_value.ops = [
+        {"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Inter"}}
+    ]
+    async with session_factory() as db:
+        result = await planner.plan_live_turn(
+            db,
+            thread_id=case.thread_id,
+            item_id=item_id,
+            creator_id=case.user_id,
+            user_message="Make the font different",
+        )
+    assert [intent.tool_name for intent in result.plan.intents] == ["draft.apply_editor_ops"]
+    assert result.plan.diagnostics["editor_recovery_basis"]["draft_id"] == str(case.draft_id)
+    creator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_rebuild_verdict_on_a_failed_draft_replans_instead_of_refusing(monkeypatch):
+    """The extractor reads a new-version ask; the correction refusal must not answer it."""
+    from app.agents._schemas.creator_agent import AskUser
+    from tests.kria.test_creative_brief import _ASK
+
+    case, item_id = _seed()
+    copilot, _ = _agents(monkeypatch, item_id)
+    runs = []
+
+    class Planner:
+        def __init__(self, client):
+            pass
+
+        def run(self, agent_input, **kwargs):
+            runs.append(agent_input)
+            return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[], creative_decision=None)
+
+    class Extractor:
+        def __init__(self, client):
+            pass
+
+        def run(self, *args, **kwargs):
+            return SimpleNamespace(brief_updates=[], request_scope="rebuild", clarification=None)
+
+    monkeypatch.setattr(planner, "MainCreatorAgent", Planner)
+    monkeypatch.setattr(planner, "BriefExtractorAgent", Extractor)
+    async with session_factory() as db:
+        result = await planner.plan_live_turn(
+            db,
+            thread_id=case.thread_id,
+            item_id=item_id,
+            creator_id=case.user_id,
+            user_message="Make me a new version",
+        )
+    assert len(runs) == 1
+    assert "Nothing was changed" not in (result.plan.response or "")
+    copilot.assert_not_awaited()

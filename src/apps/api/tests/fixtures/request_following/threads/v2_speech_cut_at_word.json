@@ -1,0 +1,307 @@
+{
+  "fixture_id": "v2_speech_cut_at_word",
+  "provenance": "authored",
+  "footage": "food_day",
+  "description": "Deterministic v2 cassette over a snapshot the real builder produced: the creator names a spoken phrase, the model copies the phrase's last word end from SPEECH WORDS, and the compiler trims the front there. Compile-only evidence.",
+  "turns": [
+    {
+      "turn_id": "cut-the-phrase",
+      "user_message": "Cut the part where I say 'um let me start over'.",
+      "engine": "v2_kria",
+      "kria": {
+        "cassette": {
+          "agent_input": {
+            "utterance": "Cut the part where I say 'um let me start over'.",
+            "variant_snapshot": {
+              "allowed_op_families": [
+                "caption",
+                "clip",
+                "music",
+                "text",
+                "title",
+                "transition"
+              ],
+              "base_generation": "gen-1",
+              "has_narrated_captions": true,
+              "max_duration_s": 240,
+              "remaining_duration_s": 230.0,
+              "slots": [
+                {
+                  "key": "F1",
+                  "slot_id": "F1",
+                  "parent_segment_id": null,
+                  "clip_index": 0,
+                  "in_s": 0.0,
+                  "duration_s": 6.0,
+                  "duration_beats": null,
+                  "source_duration_s": 8.0,
+                  "output_start_s": 0.0,
+                  "output_end_s": 6.0,
+                  "removed": false,
+                  "transition_after": "cut",
+                  "transition_duration_s": null,
+                  "look_preset": "none",
+                  "media_kind": "video"
+                },
+                {
+                  "key": "F2",
+                  "slot_id": "F2",
+                  "parent_segment_id": null,
+                  "clip_index": 1,
+                  "in_s": 0.0,
+                  "duration_s": 4.0,
+                  "duration_beats": null,
+                  "source_duration_s": 5.0,
+                  "output_start_s": 6.0,
+                  "output_end_s": 10.0,
+                  "removed": false,
+                  "transition_after": "cut",
+                  "transition_duration_s": null,
+                  "look_preset": "none",
+                  "media_kind": "video"
+                }
+              ],
+              "text_bars": [
+                {
+                  "id": "title",
+                  "role": "title",
+                  "text": "Sunday reset",
+                  "start_s": 0.0,
+                  "end_s": 3.0,
+                  "font_family": "Inter",
+                  "size_px": 72,
+                  "color": "#FFFFFF",
+                  "effect": "static",
+                  "alignment": "center",
+                  "position": "middle"
+                }
+              ],
+              "total_duration_s": 10.0,
+              "timeline_patch_capabilities": {
+                "duration_s": true,
+                "in_s": true,
+                "removed": true,
+                "transition_after": true,
+                "transition_duration_s": true,
+                "look_preset": true,
+                "playback_rate": false,
+                "source_crop": false
+              },
+              "source_pool": [
+                {
+                  "clip_index": 0,
+                  "media_id": "0",
+                  "kind": "video",
+                  "generation": "6f994bbd8c57",
+                  "duration_s": 8.0,
+                  "used": true,
+                  "ready": true
+                },
+                {
+                  "clip_index": 1,
+                  "media_id": "1",
+                  "kind": "video",
+                  "generation": "891ace725834",
+                  "duration_s": 5.0,
+                  "used": true,
+                  "ready": true
+                }
+              ],
+              "replacement_source_pool": [
+                {
+                  "clip_index": 0,
+                  "media_id": "0",
+                  "kind": "video",
+                  "generation": "6f994bbd8c57",
+                  "duration_s": 8.0,
+                  "used": true,
+                  "ready": true
+                },
+                {
+                  "clip_index": 1,
+                  "media_id": "1",
+                  "kind": "video",
+                  "generation": "891ace725834",
+                  "duration_s": 5.0,
+                  "used": true,
+                  "ready": true
+                }
+              ],
+              "captions": {
+                "cues": [
+                  {
+                    "id": "cue-1",
+                    "text": "um let me start over",
+                    "start_s": 0.2,
+                    "end_s": 1.7
+                  },
+                  {
+                    "id": "cue-2",
+                    "text": "so this is my sunday reset",
+                    "start_s": 2.1,
+                    "end_s": 3.95
+                  }
+                ],
+                "cues_editable": true,
+                "meta": {
+                  "enabled": true,
+                  "style": "sentence",
+                  "font": null,
+                  "y_frac": null,
+                  "size_px": null,
+                  "color": null,
+                  "highlight_color": null,
+                  "stroke_width": null,
+                  "shadow_enabled": null,
+                  "appearance": null
+                },
+                "total_cues": 2,
+                "truncated": false
+              },
+              "music": {
+                "swappable": false,
+                "removable": true,
+                "current_track_id": "00000000-0000-0000-0000-000000000007",
+                "current_track_title": null,
+                "candidates": []
+              },
+              "mix": {
+                "music_level": 0.5
+              },
+              "speech": {
+                "source": "caption_words",
+                "words": [
+                  {
+                    "text": "um",
+                    "start_s": 0.2,
+                    "end_s": 0.45
+                  },
+                  {
+                    "text": "let",
+                    "start_s": 0.55,
+                    "end_s": 0.75
+                  },
+                  {
+                    "text": "me",
+                    "start_s": 0.78,
+                    "end_s": 0.9
+                  },
+                  {
+                    "text": "start",
+                    "start_s": 0.95,
+                    "end_s": 1.3
+                  },
+                  {
+                    "text": "over",
+                    "start_s": 1.3,
+                    "end_s": 1.7
+                  },
+                  {
+                    "text": "so",
+                    "start_s": 2.1,
+                    "end_s": 2.3
+                  },
+                  {
+                    "text": "this",
+                    "start_s": 2.35,
+                    "end_s": 2.6
+                  },
+                  {
+                    "text": "is",
+                    "start_s": 2.62,
+                    "end_s": 2.75
+                  },
+                  {
+                    "text": "my",
+                    "start_s": 2.78,
+                    "end_s": 2.9
+                  },
+                  {
+                    "text": "sunday",
+                    "start_s": 2.95,
+                    "end_s": 3.4
+                  },
+                  {
+                    "text": "reset",
+                    "start_s": 3.4,
+                    "end_s": 3.95
+                  }
+                ],
+                "pauses": [
+                  {
+                    "start_s": 1.7,
+                    "end_s": 2.1,
+                    "after": "over"
+                  },
+                  {
+                    "start_s": 3.95,
+                    "end_s": 10.0,
+                    "after": "reset"
+                  }
+                ]
+              },
+              "beat_marks": [
+                0.48,
+                0.97,
+                1.46,
+                1.95,
+                2.44,
+                2.93,
+                3.42
+              ],
+              "editor_ops_version": 2
+            }
+          },
+          "model_output": {
+            "intent": "edit",
+            "ops": [
+              {
+                "op": "trim_output_start",
+                "start_s": 1.7
+              }
+            ],
+            "confidence": 0.95,
+            "reply": "Cut the opening through 'over', so the video now starts at 'so'.",
+            "suggestions": [],
+            "needs_clarification": false
+          }
+        }
+      }
+    }
+  ],
+  "requirements": [
+    {
+      "id": "cut-at-word-end",
+      "kind": "timing",
+      "scope": "clip:F1",
+      "request_type": "restructure",
+      "checker": "clip_source_start",
+      "params": {
+        "clips": {
+          "F1": 1.7
+        }
+      },
+      "source": "Cut the part where I say 'um let me start over'.",
+      "introduced_in_turn": 0
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "F1",
+          "start_s": 0.0,
+          "end_s": 4.3,
+          "source_start_s": 1.7
+        },
+        {
+          "clip_id": "F2",
+          "start_s": 4.3,
+          "end_s": 8.3,
+          "source_start_s": 0.0
+        }
+      ],
+      "texts": []
+    }
+  }
+}

@@ -39,6 +39,8 @@ from tests.pipeline.user_song_helpers import (
     unmatched,
 )
 
+pytestmark = pytest.mark.journey("kri-561-song-order")
+
 QID = "q-timeline"
 
 

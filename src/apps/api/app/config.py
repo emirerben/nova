@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     phone_editor_media_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
     phone_render_user_ids: list[UUID] = Field(default_factory=list)
+    phone_watermark_exempt_user_ids: list[UUID] = Field(default_factory=list)
     # Kill switch for the 2026-09-18 font/effect qualification relaxation in
     # `app/services/phone_rollout.py`. False (default): any bundled-registry
     # font (assets/fonts/font-registry.json) with correct variation
@@ -359,6 +360,15 @@ class Settings(BaseSettings):
     # Default off: windows stay on the cue word, byte-identical. Apply: `fly secrets set
     # BEAT_PHRASE_TIMING_ENABLED=true -a nova-video`, then restart the worker.
     beat_phrase_timing_enabled: bool = False
+    # KRI-1511: a sticker or corner photo shown from its spoken word keeps its time on screen
+    # when Clean up speech cuts a pause inside its window (Cusco T3: the puma's 2.5 s became
+    # 1.27 s). Its window is held in the cut video's time from its word, ending early only where
+    # the next card starts or the take ends, and never earlier than before. Phrase-sized photos,
+    # full-screen cutaways, video cards, the closing photo and hand-placed cards are unchanged.
+    # Phone Talking only (`remap_lanes_for_cut(held_card_ids=...)`). Default TRUE. False:
+    # exactly as before. Rollback: `fly secrets set CUT_KEEPS_STICKER_HOLD_ENABLED=false
+    # --app nova-video` + restart the worker.
+    cut_keeps_sticker_hold_enabled: bool = True
     # KRI-547 kill switch: when the approved brief asks for a vertical / 9:16 /
     # full-screen / "keep my face in frame" video and the phone Talking speaker
     # clip is landscape, `_run_phone_subtitled_job` samples the face across the
@@ -499,6 +509,18 @@ class Settings(BaseSettings):
     # phone Talking edit becomes one styled row per line, stacked off her face, with an
     # optional logo above it. Off = byte-identical single title row.
     title_look_enabled: bool = False
+    # Q1 run 4 (2026-11-17): the stacked title look's lines keep a fixed cream / yellow fill and no
+    # step looked at the pixels under them, so cream text on her cream t-shirt read as nothing.
+    # With this on, the final title block is measured on the take frames
+    # (`pipeline/phone_title_legibility.py`) and a line under 4.5:1 gets a dark outline (the
+    # `stroke_color` / `stroke_width` row fields the numbered labels already draw), unless she
+    # set that line's colour or an outline. Receipt: `variant["title_legibility"]`. The same
+    # switch covers the placement half of that fix: a title that had to SHRINK to fit under her
+    # face is retried, lines stacked ink to ink, in the band above her face
+    # (`phone_title_look.place_title_look`); a full-size title keeps its spot. Default TRUE.
+    # False: byte-identical rows and placement. Apply: `fly secrets set
+    # TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
+    title_legibility_enabled: bool = True
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
@@ -514,6 +536,14 @@ class Settings(BaseSettings):
     # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
     # + `fly machine restart <id>` (api + worker).
     phone_subtitled_closing_title_enabled: bool = True
+    # Qendresa Q1 run 4 (2026-11-17): the brief filed her ending ('End with "comment REPO"',
+    # a text row whose `closing` fact is its literal) but the Main Creator's strategy had no
+    # `closing_title`, so the draft was held ("That exact text isn't in this draft."). With
+    # this on, the planner fills `closing_title` from that one live row on a phone Talking
+    # edit that draws closing text (`planner._with_brief_closing_title`). Default TRUE.
+    # False: byte-identical strategy. Rollback: `fly secrets set
+    # BRIEF_CLOSING_TITLE_FILL_ENABLED=false --app nova-video` + restart api + worker.
+    brief_closing_title_fill_enabled: bool = True
     # Item 14 (Qendresa's ending): when the creator asks to end on "comment <KEYWORD>"
     # (optionally with an arrow), a phone Talking edit draws her look instead of the
     # lime tag: a small white handwritten "comment", the keyword big in cream under it,
@@ -603,6 +633,11 @@ class Settings(BaseSettings):
         if self.clip_facts_enabled:
             return True
         return user_id is not None and str(user_id) in {str(u) for u in self.clip_facts_user_ids}
+
+    def phone_watermark_exempt_for(self, user_id: object) -> bool:
+        return user_id is not None and str(user_id) in map(
+            str, self.phone_watermark_exempt_user_ids
+        )
 
     def phone_rendering_for(self, user_id: object) -> bool:
         """Apply the rollout cohort, or enroll every account in device-only mode.
@@ -701,7 +736,10 @@ class Settings(BaseSettings):
     main_creator_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_copilot_model: str = "gemini-3.1-pro-preview"
     edit_copilot_thinking_level: str = "high"
-    edit_copilot_output_mode: Literal["json", "native", "json_guarded"] = "json"
+    # "tools" (KRI-1393): one typed tool per open editor operation, rules in a cached system
+    # block, rejected ops repaired through tool results. Needs a model whose registry entry
+    # `supports_tools`. Read at agent construction.
+    edit_copilot_output_mode: Literal["json", "native", "json_guarded", "tools"] = "json"
     edit_director_model: str = "gemini-3.1-pro-preview"
     # Eval-only comparison model. It is never contacted by the production
     # Director endpoint, whose explicit review is capped at one paid request.
@@ -729,6 +767,11 @@ class Settings(BaseSettings):
     ai_openai_image_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_openai_narration_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_anthropic_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
+    # The `planning` capability: Main Creator and copilot calls on OpenAI/Anthropic. Always
+    # metered, inside the provider monthly budget. 0 rejects every reserve, and the Main
+    # Creator then answers on its Gemini fallback.
+    ai_openai_planning_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_anthropic_planning_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_usage_environment: Literal["production", "development", "lab", "test"] = "development"
     # Optional operator-approved envelope for a local development manual-QA
     # session. It fills attribution for background Celery work that cannot
@@ -939,6 +982,15 @@ class Settings(BaseSettings):
     # otherwise captions are byte-identical to before and the receipt says what was not drawn.
     # Apply: `fly secrets set PHONE_CAPTION_SHAPE_ENABLED=true` (api + worker) + restart.
     phone_caption_shape_enabled: bool = False
+    # Two-language captions: the spoken-language caption keeps its words and a smaller
+    # translated line (its own editor track) shows for the same stretch of speech. Default
+    # FALSE. Applied only when `dualCaptions` is in PHONE_RENDER_VERIFIED_FEATURES and the app
+    # build declares >= `dual_captions_min_client_protocol` (its editor draws, moves and keeps
+    # the translated line); otherwise captions are byte-identical and a chat ask is told the
+    # translated line is not drawn yet. Languages: en/de/tr/pt.
+    # Apply: `fly secrets set DUAL_CAPTIONS_ENABLED=true` (api + worker) + restart.
+    dual_captions_enabled: bool = False
+    dual_captions_min_client_protocol: int = 52
     # Qendresa item 15: the card layout on phone Talking edits. Screenshot / recording cards
     # take her size and place (up to full width, in the band above her face or below her
     # caption row, never on her face or captions), up to 14 cards, a named screenshot may open
@@ -949,6 +1001,16 @@ class Settings(BaseSettings):
     # byte-identical to before.
     # Apply: `fly secrets set TALKING_CARD_LAYOUT_ENABLED=true` (api + worker) + restart.
     talking_card_layout_enabled: bool = False
+    # KRI-1478: a wide screenshot / recording card (the item-15 layout above) is drawn as a
+    # full-width strip in the same band, cut to its measured text column so the page is
+    # readable, with a hard cut in and out; a second visual for the same mention shares the
+    # window instead of being dropped as "overlap". A card with no measurable column, a
+    # portrait picture and every edited card stay today's whole-picture card. Default FALSE
+    # (new look: one phone check first). Applied only when the card layout is, and `sourceCrop`
+    # and `mediaCards` are in PHONE_RENDER_VERIFIED_FEATURES. Otherwise byte-identical.
+    # Apply: `fly secrets set TALKING_CARD_STRIP_ENABLED=true` (api + worker) + restart.
+    # Rollback: `fly secrets set TALKING_CARD_STRIP_ENABLED=false` (api + worker) + restart.
+    talking_card_strip_enabled: bool = False
     # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
     # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
     # recipe's existing `animationPhases`. Default TRUE; the editor capability
@@ -967,6 +1029,14 @@ class Settings(BaseSettings):
     # compile is byte-identical to before. Apply: `fly secrets set
     # PHONE_CAPTION_ROW_BUDGET_ENABLED=false` (api + worker) + restart.
     phone_caption_row_budget_enabled: bool = True
+    # KRI-1476: a face the brief keeps text off (`keep_text_off`) no longer throws captions the
+    # creator placed in the middle to the lower third. The caption ladder tries the spots just
+    # under the asked one first and the middle row reaches y 0.68 (under a talking face). The
+    # face ask itself is unchanged: every text still keeps off the face. Default TRUE. False:
+    # the ladder and the row are as before (a middle block on her chin falls to 0.86).
+    # Rollback: `fly secrets set KEEP_TEXT_OFF_CAPTION_SPOT_ENABLED=false` (api + worker) +
+    # restart.
+    keep_text_off_caption_spot_enabled: bool = True
     # Prompt fidelity (animation): "with animations" / "animated text" reaches the rendered text.
     # Default TRUE. brief_view reads an animation ask at any text scope, an unnamed ask gets one
     # tasteful entrance (`animation_ask.DEFAULT_TEXT_ENTRANCE`), the creation text pass applies
@@ -1051,6 +1121,15 @@ class Settings(BaseSettings):
     # (api + worker); rollback = `...=false` + restart. Design:
     # docs/reviews/speaker-background-windows-failure-modes.md (S64-S69).
     background_follows_talk_enabled: bool = False
+    # Çiğdem S2 "Cigdem 2" (2026-11-15, KRI-1494): when the creator NAMES a pace for the
+    # pictures behind them ("changing every 3-5 seconds"), no background window outlasts it by more
+    # than 1 s: a small overshoot brings the next picture in early, and a long hold after a
+    # picture's own sentence is filled by pictures already shown. Without a named pace S57 stands
+    # (a longer scene beats a repeat). Default TRUE; rollback = `fly secrets set
+    # BACKGROUND_KEEPS_ASKED_PACE_ENABLED=false --app nova-video` + restart (worker): layouts are
+    # then byte-identical to S57 and the review says when a picture stays longer than asked.
+    # Design: docs/reviews/cigdem-s2-failure-modes.md (E).
+    background_keeps_asked_pace_enabled: bool = True
     # Qendresa item 16 (builds on KRI-1162): the speaker starts FULL SCREEN in their own take (no
     # person mask, no background, no corner) and then drops into the background / corner for the
     # rest of the edit. Recipe field `speaker_background.full_screen_windows` (capability
@@ -1086,6 +1165,43 @@ class Settings(BaseSettings):
     # --app nova-video` + restart (api + worker). Design:
     # docs/reviews/qendresa-list-labels-failure-modes.md.
     spoken_list_labels_enabled: bool = False
+    # KRI-1471: the same list ask filed with its example in the description ("show each one as
+    # big text, like “1. Spec-kit”" as a per-clip or whole-video text with no literal, or the
+    # example as a per-clip literal) is a list label on a phone Talking edit, not clip text, so
+    # the draft is no longer held for "None of the N clips got its own text". And a list she
+    # counts aloud ("Number one, ... Number two, ...") gives the other labels. Needs
+    # SPOKEN_LIST_LABELS_ENABLED. Default TRUE. False: those rows and takes are read exactly as
+    # before. Rollback: `fly secrets set LIST_LABEL_EXAMPLE_ASK_ENABLED=false --app nova-video`
+    # + restart (api + worker).
+    list_label_example_ask_enabled: bool = True
+    # KRI-1486: a visual asked for words the take never says ("show the trending page when I
+    # talk about what's hot this week") is reported, not held. On a phone Talking edit whose
+    # take has a transcript that says none of the ask's typed trigger words, the receipt is
+    # "You don't say “...” in your take, so nothing is shown for it" (draft and finished video)
+    # and the draft is approvable; before, "No pop-in for ..." held it for a choice nobody could
+    # make. Words she does say, or no transcript: unchanged. Default TRUE. False: exactly as
+    # before. Rollback: `fly secrets set UNSAID_CUE_REPORT_ENABLED=false --app nova-video` +
+    # restart (api + worker).
+    unsaid_cue_report_enabled: bool = True
+    # KRI-1510: the same report when the draft PLANNED a pop-in on the unsaid word (Cusco T3:
+    # the llama sticker on "lama", which the speaker never says). On a phone Talking draft whose
+    # takes' transcripts are all known and none says a planned beat's trigger (by the render's
+    # own matchers), that beat no longer counts as placed: the draft says "You don't say “lama”
+    # in your take, so nothing is shown for it" (approvable) instead of "Done", which only the
+    # finished video corrected ("I never heard lama in your voice"). Finished videos, title
+    # logos and unknown transcripts: unchanged. Needs UNSAID_CUE_REPORT_ENABLED. Default TRUE.
+    # False: exactly as before. Rollback: `fly secrets set UNSAID_PLANNED_CUE_REPORT_ENABLED=false
+    # --app nova-video` + restart (api + worker).
+    unsaid_planned_cue_report_enabled: bool = True
+    # KRI-1484: a numbered list label shown while the recordings play behind the speaker (a
+    # speaker-background window, never her full-screen take) is drawn on an opaque dark plate
+    # (#141414, the label's cream letters unchanged), the text row's `background_color`. Her
+    # zoomed README pages have text in every band, so outline and size alone left labels
+    # unreadable. Needs `authoredText` in PHONE_RENDER_VERIFIED_FEATURES (else today's look).
+    # Default FALSE: a new look, one phone check first; false = byte-identical rows. Apply:
+    # `fly secrets set LIST_LABEL_PLATE_ENABLED=true --app nova-video` + restart (api + worker).
+    # Rollback: `...=false` + restart (saved rows keep their plate; new renders have none).
+    list_label_plate_enabled: bool = False
     # KRI-1192: the app bundles Noto Sans KR / Noto Sans Arabic (the script-fallback faces that
     # draw Hangul and Arabic captions) from protocol 35. A phone recipe naming one requires
     # `scriptFonts` (verified in PHONE_RENDER_VERIFIED_FEATURES after the device check) and an
@@ -1152,6 +1268,11 @@ class Settings(BaseSettings):
     # restart. Rollback: the flag false + restart, never a code revert.
     color_moments_enabled: bool = False
     color_moments_min_client_protocol: int = 48
+    # KRI-1384: chat "undo that" is offered only to app builds declaring
+    # `X-Kria-Client-Protocol` >= this. An older editor keeps a staged chat lane that a newer
+    # draft head puts back to the saved value, so its undo would say done and change nothing.
+    # Kill switch: `fly secrets set CHAT_UNDO_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    chat_undo_min_client_protocol: int = 50
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
@@ -1377,6 +1498,12 @@ class Settings(BaseSettings):
     # byte-identical to the pre-fix behaviour.
     # Apply: fly secret KRIA_TURN_AUTO_CONTINUE_MAX_RUNS=1 + restart (api + worker).
     kria_turn_auto_continue_max_runs: int = Field(default=4, ge=0, le=8)
+    # KRI-1470: when only Visuals (screenshots/recordings) are still being checked, the turn's
+    # last run, or a creator's "skip that", goes on without them and names each file left
+    # out. Pending footage still waits. False: every pending Visual holds the turn with "I'm
+    # still checking N of your clips", exactly as before.
+    # Apply: fly secret KRIA_PENDING_VISUAL_GO_AHEAD_ENABLED=false + restart (api + worker).
+    kria_pending_visual_go_ahead_enabled: bool = True
     # A continued run takes its earlier run's Main Creator, brief-extractor and clip-intent
     # answers for the same input instead of paying again (`app.services.turn_checkpoint`).
     # False: every continued run calls the models again, exactly as before the checkpoint.
@@ -1435,22 +1562,54 @@ class Settings(BaseSettings):
     # `brief_checks._check_closing_card`, KRI-1346 / #2256). Default FALSE; false + restart (api +
     # worker) = byte-identical replies. Guard: `tests/kria/test_reply_consistency.py`.
     kria_honest_reply_lines_enabled: bool = False
+    # KRI-1485: a hold / draft / review reply longer than the chat's 1200 characters is fitted
+    # line by line (`brief_checks.fit_reply_rows`) instead of cut mid-sentence: rows with the
+    # same status, ask and reason fold into one line naming each label, Done rows lose their
+    # reasons, then fold into "…and N more done"; a Partly / Couldn't / Will-do row and its
+    # reason are never dropped or shortened (the list may then run past 1200). Only the held
+    # reply, bound by `KriaTurnPlan.response`, may end "…and N more". Default TRUE. Rollback:
+    # `fly secrets set KRIA_REPLY_LINE_FIT_ENABLED=false --app nova-video` + restart (api +
+    # worker) = the old cut at 1200 characters, byte-identical.
+    kria_reply_line_fit_enabled: bool = True
+    # KRI-1472: "Only my voice." filed as its own sound ask (the typed `voice_only` fact) is
+    # judged like "No music" (`app.kria.voice_only_ask`): done on a Talking edit with no music,
+    # "This video has music." when there is some. Before, no checker owned it, so a Talking
+    # draft was held for "A Talking video can't do this" and the ask was listed as left out.
+    # Default TRUE. False: the ask is read exactly as before. Rollback: `fly secrets set
+    # VOICE_ONLY_ASK_ENABLED=false --app nova-video` + restart (api + worker).
+    voice_only_ask_enabled: bool = True
+    # KRI-1488: a `select` row with no typed fact and no quoted words ("Use my talking video."
+    # filed on its own, Çiğdem S1 2026-11-15) is met when the edit is made from the ONE video the
+    # creator attached (`brief_checks._check_single_take_pointer`). Before, a phone Talking draft
+    # answered "A Talking video can't do this", held the draft and listed the row as left out.
+    # Several videos or a quoted word keep today's verdict. Default TRUE. False: byte-identical.
+    # Rollback: `fly secrets set SINGLE_TAKE_POINTER_ASK_ENABLED=false --app nova-video` + restart
+    # (api + worker).
+    single_take_pointer_ask_enabled: bool = True
+    # KRI-1489: a pop-in ask that DESCRIBES its moments ("when I mention the launch and Vela's 2
+    # posts") instead of quoting the spoken words is answered by the pop-ins the plan placed on
+    # other words when there are at least as many spare pop-ins as unmatched names
+    # (`brief_checks._described_names_uncovered`; counts only, no word matching). Before, the
+    # brief writer's `triggers` were matched word for word against the planner's spoken words,
+    # so the draft was held for "No pop-in for launch, Vela's 2 posts" though all four pictures
+    # were placed. Quoted words stay exact. Default TRUE. False: byte-identical. Rollback: `fly
+    # secrets set DESCRIBED_POPIN_NAMES_ENABLED=false --app nova-video` + restart (api + worker).
+    described_popin_names_enabled: bool = True
 
-    # Green 5 (2026-11-04): a chat nothing has told its language yet (a "Suggest an edit." tap,
-    # media only, "ok") takes the language of the creator's latest message typed in another of
-    # their chats before the device language (`reply_language.creator_typed_language`). Default
-    # TRUE; false + restart (api) = byte-identical (device language, KRI-784).
+    # Green 5 (2026-11-04): a chat with no stored language yet starts from the stored language of
+    # the creator's latest other chat before the device language
+    # (`reply_language.creator_stored_language`; no message is re-read). Default TRUE; false +
+    # restart (api) = device language only (KRI-784).
     kria_reply_language_history_enabled: bool = True
     # KRI-1362 (B): German chat replies. Chat sentences come from app/kria/copy/de.json, keyed
     # by the English sentence (missing line = English); German is detected from the creator's
     # words and the device language, and the models are told to reply in German. Default
     # FALSE until a German speaker has reviewed de.json; false = en/tr only, byte-identical.
     kria_german_replies_enabled: bool = False
-    # KRI-1363: the chat language follows only the words the creator says to Kria. Quoted
-    # text and a typed answer to a wording question are text for the video and never move
-    # the chat to the video's language; an established chat moves only on a message with no
-    # word of its language. Default TRUE; false + restart (api) = the previous detector,
-    # byte-identical.
+    # KRI-1363: the runtime-v1 (web) chat-language detector reads only the words the creator
+    # says to Kria: quoted text is text for the video. Runtime-v2 (Kria) chats never score
+    # words (their model reports `conversation_language`). Default TRUE; false + restart
+    # (api) = the previous detector, byte-identical.
     kria_reply_language_own_words_enabled: bool = True
     # KRI-1097 wave 2 (prompt fidelity on every route). ROUTE_REGISTRY_ENABLED: each render
     # route reads its own capability table (`app.kria.route_capabilities`), so voiceover,
@@ -1535,7 +1694,7 @@ class Settings(BaseSettings):
     kria_suggestion_duplicates_enabled: bool = False
     kria_suggestion_generated_overlay_enabled: bool = False
     # The suggestion agent (OpenAI Responses, strict json_schema). A model outside
-    # `agents/_text_providers.TEXT_MODELS` is refused at call time, not here.
+    # `agents/model_registry.py` is refused at call time, not here.
     kria_suggester_model: str = "gpt-6.1-sol"
     # Per-run spend ceiling, and the credit sub-budget (0 = no spend allowed) for the
     # `suggestions` capability in ai_cost_control.py. A budget stop falls back to template cards.
@@ -1811,6 +1970,12 @@ class Settings(BaseSettings):
     # require an explicit choice before losing alignment. Keep the existing
     # KRI-456 rollout default; request-binding writers are gated separately.
     narrated_clip_alignment_enabled: bool = True
+    # KRI-1466 kill switch. A phone Voiceover clip starts on the moment the creator named for
+    # it (located in the clip's analysed moments), and a clip too short for its step plays at
+    # normal speed with other footage filling the rest, instead of being slowed over it
+    # (`narrated_footage_fit`). Edits that follow a filming guide are left as they were.
+    # false = every clip from its first frame, slowed to fill its step, byte-identical.
+    narrated_footage_fit_enabled: bool = True
 
     # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
     # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.
@@ -2337,6 +2502,13 @@ class Settings(BaseSettings):
     # (`fly secrets set MATTE_RVM_ENABLED=false --app nova-video` then
     # restart workers); read lazily per matte compute, no deploy needed.
     matte_rvm_enabled: bool = True
+
+    # KRI-1514: a sideways montage clip cropped to fill a vertical video, with no face in it,
+    # follows the person or body part the RVM person matte finds (a hand on a wall) instead of
+    # keeping the middle (`app.pipeline.phone_person_window`). Kill switch: `fly secrets set
+    # MONTAGE_PERSON_FILL_ENABLED=false --app nova-video` + worker restart; new renders then
+    # keep the middle as before (nothing is sampled).
+    montage_person_fill_enabled: bool = True
 
     # Depth-based scene-occluder backbone (non-person subjects — landmarks,
     # objects, scenery with no person in frame). When True, the subject-matte
@@ -2988,6 +3160,16 @@ class Settings(BaseSettings):
     # full-frame face boxes, byte-identical (`phone_text_styling._faces_where_drawn`).
     speaker_frame_caption_faces_enabled: bool = True
 
+    # KRI-1525: phone Talking chooses its caption look before the plan is compiled (KRI-632 face
+    # band, KRI-827 protected text), so the faces and background frames it measures against were
+    # sampled with no clip transform: a sideways take drawn with black bars was read as filling the
+    # screen. Captions then shrank into the top strip (34-38 px) and took black ink from the
+    # footage while drawn on the black bar. On: the take's letterbox scale is known before the first
+    # sample, and a centred, scaled-down take is sampled as drawn (picture over black). Default TRUE
+    # (bug fix); false + worker restart = today's sampling, byte-identical
+    # (`phone_text_styling._ensure_generation_environment`).
+    talking_fit_caption_geometry_enabled: bool = True
+
     # Qendresa item 21: a pin may sit in the middle and carry TikTok's native text look.
     # Default off; with it off a stray middle_center pin is drawn as top_center, no look.
     clip_text_tiktok_look_enabled: bool = False
@@ -3048,6 +3230,13 @@ class Settings(BaseSettings):
     # promise instead of "No pop-in for X"; the finished render reports which clip played
     # under those words (`narrated_alignment` steps). false = "No pop-in", byte-identical.
     narrated_footage_cue_promise_enabled: bool = True
+    # KRI-1465: on a phone Voiceover DRAFT a captions ask the draft cannot judge yet (a named
+    # language, word by word on a style left to the item) is a render promise ("A voiceover
+    # edit always shows captions of what you say ..."), not "I can't confirm this draft does
+    # it yet"; and the finished video's review reads a word-by-word ask off the captions the
+    # phone drew, not off the Voiceover record's language alone. false = the hold and the
+    # language-only review, byte-identical.
+    narrated_caption_render_promise_enabled: bool = True
     # KRI-1354 (de1): "Make it without these" looped. A "simpler version" tap on a strategy
     # refusal still counts on later turns that are only choice taps (e.g. the readiness hold's
     # card), with no draft since, for the same dropped fields. false = per-turn consent only,
@@ -3238,6 +3427,12 @@ class Settings(BaseSettings):
     # Keep response compatibility during the backend-first rollout. Set true
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False
+    # KRI-1469: the 5-min reaper re-sends a `queued` Visuals analysis nobody has claimed
+    # (a later Visual of the same item was claimed 2 min after it was sent, or 10 min
+    # passed). Same attempt token and deadline, so a second copy is a no-op. False: an
+    # unclaimed row waits for its deadline (~1 h for a photo), exactly as before.
+    # Apply: fly secret POOL_UNCLAIMED_RESEND_ENABLED=false + restart the light process.
+    pool_unclaimed_resend_enabled: bool = True
 
     poster_ondemand_repair_enabled: bool = Field(
         default=False,

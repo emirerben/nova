@@ -349,31 +349,31 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
     /// Every stroke point in the post; the server caps it (KRI-589).
     var drawingPointCount: Int { slides.reduce(0) { $0 + ($1.edits?.drawing?.pointCount ?? 0) } }
     var validationMessage: String? {
-        guard ["tiktok_photo", "instagram_carousel"].contains(platformProfile) else { return "Choose a supported post format." }
+        guard ["tiktok_photo", "instagram_carousel"].contains(platformProfile) else { return String(localized: "Choose a supported post format.") }
         let minCount = platformProfile == "instagram_carousel" ? 2 : 1
         let maxCount = platformProfile == "instagram_carousel" ? 20 : 35
-        guard (minCount...maxCount).contains(slides.count) else { return "Choose \(minCount)–\(maxCount) slides for this format." }
+        guard (minCount...maxCount).contains(slides.count) else { return String(localized: "Choose \(minCount)–\(maxCount) slides for this format.") }
         guard slides.indices.contains(coverIndex), Set(slides.map(\.id)).count == slides.count,
-              Set(slides.map(\.assetID)).count == slides.count else { return "Review the slide order and cover before saving." }
-        guard caption.count <= 2200 else { return "Keep the caption under 2,200 characters." }
-        guard !slides.contains(where: { !["image", "video"].contains($0.kind) }) else { return "This post contains an unsupported media type." }
-        if platformProfile == "tiktok_photo" && slides.contains(where: { $0.kind == "video" }) { return "Choose Instagram carousel to include videos." }
+              Set(slides.map(\.assetID)).count == slides.count else { return String(localized: "Review the slide order and cover before saving.") }
+        guard caption.count <= 2200 else { return String(localized: "Keep the caption under 2,200 characters.") }
+        guard !slides.contains(where: { !["image", "video"].contains($0.kind) }) else { return String(localized: "This post contains an unsupported media type.") }
+        if platformProfile == "tiktok_photo" && slides.contains(where: { $0.kind == "video" }) { return String(localized: "Choose Instagram carousel to include videos.") }
         for slide in slides {
             if let texts = slide.edits?.texts {
                 if texts.count > SlidePostEdits.maxTexts || Set(texts.map(\.id)).count != texts.count || texts.contains(where: \.isInvalid) {
-                    return "Slide text needs 1–120 characters, and a slide holds up to 4 texts."
+                    return String(localized: "Slide text needs 1–120 characters, and a slide holds up to 4 texts.")
                 }
             } else if let text = slide.edits?.text, text.content.isEmpty || text.content.count > 120 || !["top", "center", "bottom"].contains(text.position) {
-                return "Slide text needs 1–120 characters and a top, center, or bottom position."
+                return String(localized: "Slide text needs 1–120 characters and a top, center, or bottom position.")
             }
-            if let look = slide.edits?.lookPreset, !Self.lookPresets.contains(look) { return "Choose a supported look." }
-            if let drawing = slide.edits?.drawing, !drawing.isValid { return "A drawing on one slide is too detailed. Clear it or draw less." }
+            if let look = slide.edits?.lookPreset, !Self.lookPresets.contains(look) { return String(localized: "Choose a supported look.") }
+            if let drawing = slide.edits?.drawing, !drawing.isValid { return String(localized: "A drawing on one slide is too detailed. Clear it or draw less.") }
             if let stickers = slide.edits?.stickers, stickers.count > SlidePostEdits.maxStickers || Set(stickers.map(\.id)).count != stickers.count
                 || stickers.contains(where: { !$0.isValid }) {
-                return "A slide holds up to \(SlidePostEdits.maxStickers) pictures, each one on the slide and no smaller than 5% of its width."
+                return String(localized: "A slide holds up to \(SlidePostEdits.maxStickers) pictures, each one on the slide and no smaller than 5% of its width.")
             }
         }
-        if drawingPointCount > SlidePostDrawing.maxPointsPerPost { return "Your drawings are too detailed to save. Clear some of them." }
+        if drawingPointCount > SlidePostDrawing.maxPointsPerPost { return String(localized: "Your drawings are too detailed to save. Clear some of them.") }
         return nil
     }
     static let lookPresets = ["none", "stadium_diffusion", "olive_film", "smoky_split_tone", "golden_hour", "faded_analog"]
@@ -777,7 +777,8 @@ struct SlidePostRenderAcknowledgement {
     @Published private(set) var proposalRequestText: String? { didSet { persist() } }
     @Published var error: String?
     @Published private(set) var operationMessage: String?
-    var isProposing: Bool { isBusy && operationMessage == "Kria is arranging your post…" }
+    private static let arrangingMessage = String(localized: "Kria is arranging your post…")
+    var isProposing: Bool { isBusy && operationMessage == Self.arrangingMessage }
     /// Text being edited on the canvas (not persisted; the text panel owns it). Selecting a text deselects a sticker.
     @Published var selectedTextID: String? { didSet { if selectedTextID != nil { selectedStickerID = nil } } }
     /// KRI-460: the pasted picture being moved / resized on the canvas (not persisted). Mutually exclusive with `selectedTextID`.
@@ -802,11 +803,11 @@ struct SlidePostRenderAcknowledgement {
     private var saveAfterConflict = false
     var conflictExplanation: String {
         baselineDraft == nil
-            ? "The previous saved version is unavailable. Choose which complete version to keep."
-            : "Independent changes are kept. Choose which overlapping changes to use."
+            ? String(localized: "The previous saved version is unavailable. Choose which complete version to keep.")
+            : String(localized: "Independent changes are kept. Choose which overlapping changes to use.")
     }
-    var conflictLocalActionTitle: String { baselineDraft == nil ? "Keep my complete version" : "Use my changes for conflicts" }
-    var conflictRemoteActionTitle: String { baselineDraft == nil ? "Use the other complete version" : "Use other changes for conflicts" }
+    var conflictLocalActionTitle: String { baselineDraft == nil ? String(localized: "Keep my complete version") : String(localized: "Use my changes for conflicts") }
+    var conflictRemoteActionTitle: String { baselineDraft == nil ? String(localized: "Use the other complete version") : String(localized: "Use other changes for conflicts") }
     private var baseVersion = 0
     private var undoStack: [SlidePostDraft] = []
     private var redoStack: [SlidePostDraft] = []
@@ -825,12 +826,12 @@ struct SlidePostRenderAcknowledgement {
     private var refreshError: String?
     private(set) var terminalStateReadError: String?
     private var renderAcknowledgement: SlidePostRenderAcknowledgement?
-    private static let renderChecking = "Kria is checking whether this render started. Your draft is still here; another render hasn’t been requested."
+    private static let renderChecking = String(localized: "Kria is checking whether this render started. Your draft is still here; another render hasn’t been requested.")
     private var hasRenderStatusError: Bool {
         error == Self.renderChecking || error == Self.renderWaitExhausted || error == Self.renderFailed
     }
-    private static let renderWaitExhausted = "Kria hasn’t confirmed this render yet. Your edits are saved. Kria will keep checking; another render hasn’t been requested."
-    private static let renderFailed = "Rendering failed. Your saved edits are still here."
+    private static let renderWaitExhausted = String(localized: "Kria hasn’t confirmed this render yet. Your edits are saved. Kria will keep checking; another render hasn’t been requested.")
+    private static let renderFailed = String(localized: "Rendering failed. Your saved edits are still here.")
     private struct ReadCooldown {
         let notBefore: ContinuousClock.Instant
         let error: Error
@@ -906,7 +907,7 @@ struct SlidePostRenderAcknowledgement {
         return submission.receipt?.isCurrentTarget == true && state?.jobID == submission.receipt?.jobID &&
             state?.draft?.version == submission.expectedVersion
     }
-    var originalAIActionTitle: String { "Check original result" }
+    var originalAIActionTitle: String { String(localized: "Check original result") }
     var canCheckAIResult: Bool { aiRecoveryMessage != nil && !aiResultTerminal && !isBusy && !isChatting }
     /// Undo of the last SAVED change (the server's previous version).
     var canUndo: Bool { undoDraft != nil && !isBusy }
@@ -1131,7 +1132,7 @@ struct SlidePostRenderAcknowledgement {
     }
     private func prepareAI<T: Encodable>(api: any KriaAPIClient, itemID: String, kind: SlidePostAIKind, body: T, baseline: SlidePostDraft?, operationID: UUID) throws -> SlidePostAIRecord {
         guard validateMutationTarget(itemID), let projectID = state?.aiProjectID else {
-            throw AIWaiting(message: "Recoverable AI editing is not available for this project yet. Your draft is safe.")
+            throw AIWaiting(message: String(localized: "Recoverable AI editing is not available for this project yet. Your draft is safe."))
         }
         let scope = try submissionScope(api, itemID)
         let input = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(body))
@@ -1142,7 +1143,7 @@ struct SlidePostRenderAcknowledgement {
             return old
         }
         guard state?.aiRequestRecoveryVersion == 1, state?.aiRequestDeliveryVersion == 1 else {
-            throw AIWaiting(message: "Recoverable AI editing is not available for new requests yet. Your draft is safe.")
+            throw AIWaiting(message: String(localized: "Recoverable AI editing is not available for new requests yet. Your draft is safe."))
         }
         let record = SlidePostAIRecord(scope: scope, projectID: projectID, kind: kind, input: input, baseline: baseline, operationID: operationID, deliveryVersion: 1)
         try Task.checkCancellation()
@@ -1169,7 +1170,7 @@ struct SlidePostRenderAcknowledgement {
         try aiJournal.update(record)
         guard publish else { return }
         aiResultTerminal = false
-        aiRecoveryMessage = "Checking the original AI request. Your draft is safe; this check will not start another AI call."
+        aiRecoveryMessage = String(localized: "Checking the original AI request. Your draft is safe; this check will not start another AI call.")
     }
     private func postAI(api: any KriaAPIClient, itemID: String, record: inout SlidePostAIRecord, explicit: Bool = false, ownReadDeadline: Date? = nil) async throws {
         let epoch = observationEpoch
@@ -1200,13 +1201,13 @@ struct SlidePostRenderAcknowledgement {
         }
         if record.receipt?.status == .rejected {
             aiResultTerminal = true
-            aiRecoveryMessage = "Kria could not use this request. Update your instruction and send a new request."
+            aiRecoveryMessage = String(localized: "Kria could not use this request. Update your instruction and send a new request.")
             throw AIWaiting(message: aiRecoveryMessage!)
         }
         guard let receipt = record.receipt, receipt.status == .completed, let result = receipt.result else {
             let message = record.receipt?.status == .unknown
-                ? "Kria could not verify the original AI result. Check again to recover it; no AI call will be repeated."
-                : "Kria is finishing the original request. Your result will appear here automatically."
+                ? String(localized: "Kria could not verify the original AI result. Check again to recover it; no AI call will be repeated.")
+                : String(localized: "Kria is finishing the original request. Your result will appear here automatically.")
             aiRecoveryMessage = message
             throw AIWaiting(message: message)
         }
@@ -1232,7 +1233,7 @@ struct SlidePostRenderAcknowledgement {
         proposalBaselineDraft = record.baseline
         proposalUsesCurrentBaseline = true
         proposal = .init(draft: proposed, baseVersion: value.baseVersion, fallbackUsed: false,
-                         summary: "Recovered AI edit. Review it alongside your newer changes.")
+                         summary: String(localized: "Recovered AI edit. Review it alongside your newer changes."))
         return false
     }
     private func validateAIResult(_ result: JSONValue, record: SlidePostAIRecord) throws {
@@ -1327,13 +1328,13 @@ struct SlidePostRenderAcknowledgement {
             if let self, self.aiRecoveryToken == token { self.aiRecoveryTask = nil }
         }
     }
-    private var aiWaitingCopy: String { "The original AI result is not available yet. Kria will keep checking without starting another AI call." }
+    private var aiWaitingCopy: String { String(localized: "The original AI result is not available yet. Kria will keep checking without starting another AI call.") }
     private func aiWaitingCopy(for record: SlidePostAIRecord) -> String {
         if record.receipt?.status == .pending, record.receipt?.deliveryVersion == 1 {
-            return "Your original request is waiting to start. Kria will deliver it automatically and keep checking its result."
+            return String(localized: "Your original request is waiting to start. Kria will deliver it automatically and keep checking its result.")
         }
         if record.receipt == nil {
-            return "Kria cannot confirm whether the original request started. It will keep checking the original ID without sending another AI request."
+            return String(localized: "Kria cannot confirm whether the original request started. It will keep checking the original ID without sending another AI request.")
         }
         return aiWaitingCopy
     }
@@ -1371,7 +1372,7 @@ struct SlidePostRenderAcknowledgement {
                 guard record.receipt?.status == .completed, let result = record.receipt?.result else {
                     aiResultTerminal = record.receipt?.status == .rejected
                     aiRecoveryMessage = record.receipt?.status == .rejected
-                        ? "Kria could not use this request. Update your instruction and send a new request."
+                        ? String(localized: "Kria could not use this request. Update your instruction and send a new request.")
                         : aiWaitingCopy(for: record)
                     error = aiRecoveryMessage; continue
                 }
@@ -1632,7 +1633,7 @@ struct SlidePostRenderAcknowledgement {
             let shouldSave = saveAfterConflict; saveAfterConflict = false
             persist()
             if shouldSave { await save(api: api, itemID: itemID) }
-        } catch { self.error = "These changes cannot be combined safely. Your local edits are still here. Review the post before saving." }
+        } catch { self.error = String(localized: "These changes cannot be combined safely. Your local edits are still here. Review the post before saving.") }
     }
 
     func discardLocalChanges() {
@@ -1651,10 +1652,10 @@ struct SlidePostRenderAcknowledgement {
             clearPrivatePresentation(); error = APIError.sessionExpired.localizedDescription; return
         }
         // A never-saved draft is only the editor's starting point, so it does not block a proposal.
-        guard !hasUnsavedChanges || state?.draft == nil else { error = "Save your slide edits before asking Kria for another direction."; return }
+        guard !hasUnsavedChanges || state?.draft == nil else { error = String(localized: "Save your slide edits before asking Kria for another direction."); return }
         let prompt = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, prompt.count <= 2000 else { error = "Tell Kria your direction in 2,000 characters or fewer."; return }
-        guard !readyAssets.isEmpty else { error = "Add photos or videos and wait for them to finish preparing."; return }
+        guard !prompt.isEmpty, prompt.count <= 2000 else { error = String(localized: "Tell Kria your direction in 2,000 characters or fewer."); return }
+        guard !readyAssets.isEmpty else { error = String(localized: "Add photos or videos and wait for them to finish preparing."); return }
         let context = contextGeneration
         mutationGeneration += 1
         let proposalGeneration = mutationGeneration
@@ -1662,7 +1663,7 @@ struct SlidePostRenderAcknowledgement {
         let proposalScope = scopedAPI.flatMap { try? submissionScope($0, itemID) }
         let previousProposalRequestText = proposalRequestText
         let proposalBase = baselineDraft
-        self.instruction = instruction; proposalRequestText = prompt; isBusy = true; error = nil; liveThoughtSummaries = []; operationMessage = "Kria is arranging your post…"
+        self.instruction = instruction; proposalRequestText = prompt; isBusy = true; error = nil; liveThoughtSummaries = []; operationMessage = Self.arrangingMessage
         defer { if contextGeneration == context { isBusy = false; operationMessage = nil; if let api = api as? any KriaAPIClient { startAIRecovery(api: api, itemID: itemID) } } }
         do {
             let profile = platformProfile ?? draft?.platformProfile ?? proposal?.draft.platformProfile ?? (readyAssets.contains(where: { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo")
@@ -1713,7 +1714,7 @@ struct SlidePostRenderAcknowledgement {
             if proposalUsesCurrentBaseline {
                 guard let original = proposalBaselineDraft, let current = draft,
                       let merged = try? SlidePostMerge.merge(base: original, local: proposal.draft, remote: current, preference: .local) else {
-                    error = "The original edit context is unavailable. Your current draft is unchanged."
+                    error = String(localized: "The original edit context is unavailable. Your current draft is unchanged.")
                     return
                 }
                 // Accepting this proposal selects AI changes where they overlap; the actual
@@ -1746,7 +1747,7 @@ struct SlidePostRenderAcknowledgement {
         let expectedScope = try? submissionScope(api, itemID)
         guard expectedScope != nil, loadedSubmissionScope == expectedScope else { clearPrivatePresentation(); error = APIError.sessionExpired.localizedDescription; return }
         mutationGeneration += 1
-        isBusy = true; error = nil; refreshError = nil; operationMessage = "Saving your post…"
+        isBusy = true; error = nil; refreshError = nil; operationMessage = String(localized: "Saving your post…")
         defer { if contextGeneration == context { isBusy = false; operationMessage = nil } }
         do {
             var previous = state?.draft
@@ -1864,7 +1865,7 @@ struct SlidePostRenderAcknowledgement {
         }
         guard aiCurrent(completedRecord, api: api, itemID: itemID), !Task.isCancelled else { return false }
         restoring = true
-        defer { do { try markAIDelivered(completedRecord) } catch { self.error = "The AI result is visible but could not be stored. Keep this post open." } }
+        defer { do { try markAIDelivered(completedRecord) } catch { self.error = String(localized: "The AI result is visible but could not be stored. Keep this post open.") } }
         guard result.outcome == .edited, let proposed = result.draft else {
             chat.append(.init(role: "assistant", text: result.reply, changes: result.changes, thoughts: completedThoughts())); return false
         }
@@ -1882,14 +1883,14 @@ struct SlidePostRenderAcknowledgement {
     /// refusal never does (it was reached) and never leaks raw validation text.
     nonisolated static func chatFailureMessage(_ error: Error) -> String {
         if let api = error as? APIError {
-            if let reason = api.conflictDetail { return "Kria couldn't apply that: \(reason)" }
+            if let reason = api.conflictDetail { return String(localized: "Kria couldn't apply that: \(reason)") }
             if case let .requestFailed(status, _) = api {
-                if (500...599).contains(status) { return "Kria hit a problem on its side. Your slides are safe. Try again in a moment." }
-                return "Kria couldn't use that edit request. Your slides are safe. Try again, or rephrase."
+                if (500...599).contains(status) { return String(localized: "Kria hit a problem on its side. Your slides are safe. Try again in a moment.") }
+                return String(localized: "Kria couldn't use that edit request. Your slides are safe. Try again, or rephrase.")
             }
-            if case .offline = api { return "I couldn't reach Kria. Check your connection and try again." }
+            if case .offline = api { return String(localized: "I couldn't reach Kria. Check your connection and try again.") }
         }
-        return "Something went wrong sending that. Your message is kept; try again."
+        return String(localized: "Something went wrong sending that. Your message is kept; try again.")
     }
     private static func logChatFailure(_ error: Error) {
         if case let APIError.requestFailed(status, detail) = error {
@@ -1904,7 +1905,7 @@ struct SlidePostRenderAcknowledgement {
         guard !isBusy, !isChatting, draft != nil else { return false }
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.count <= SlidePostChatTurn.maxContent else {
-            if !text.isEmpty { error = "Tell Kria what to change in 2,000 characters or fewer." }
+            if !text.isEmpty { error = String(localized: "Tell Kria what to change in 2,000 characters or fewer.") }
             return false
         }
         return true
@@ -1946,7 +1947,7 @@ struct SlidePostRenderAcknowledgement {
 
     private func validateMutationTarget(_ itemID: String) -> Bool {
         guard self.itemID == itemID, requestedItemID == itemID else {
-            error = "This post changed while it was loading. Reopen the post before saving or creating it. Your edits are still here."
+            error = String(localized: "This post changed while it was loading. Reopen the post before saving or creating it. Your edits are still here.")
             return false
         }
         return true
@@ -1973,7 +1974,7 @@ struct SlidePostRenderAcknowledgement {
             guard contextGeneration == context, requestedItemID == itemID else { return }
             guard error == nil, let draft, draft.validationMessage == nil else { return }
             mutationGeneration += 1
-            isBusy = true; operationMessage = "Creating your post…"
+            isBusy = true; operationMessage = String(localized: "Creating your post…")
             defer { if contextGeneration == context { isBusy = false; operationMessage = nil } }
             // A fresh projection is required both for capability negotiation and explicit failed-job retry.
             let latest = try await readState(api: api, itemID: itemID)
@@ -1994,7 +1995,7 @@ struct SlidePostRenderAcknowledgement {
                 guard let latestDraft = latest.draft, latestDraft.version == self.draft?.version, !hasUnsavedChanges else { throw APIError.conflict }
                 if latest.canExport || ["pending", "queued", "generating", "rendering", "processing"].contains(latest.renderStatus) { return }
                 guard latest.generationIdempotencyVersion == 1 else {
-                    error = "Post creation is temporarily unavailable. Your saved draft is safe. Try again later."
+                    error = String(localized: "Post creation is temporarily unavailable. Your saved draft is safe. Try again later.")
                     return
                 }
                 try Task.checkCancellation()
@@ -2311,28 +2312,28 @@ struct SlidePostRenderAcknowledgement {
         case .text(let text):
             let fitted = SlidePostTextElement.clipped(text)
             if addText(slideID: slideID, text: fitted) == nil {
-                pasteNotice = "A slide can have up to \(SlidePostEdits.maxTexts) texts. Remove one to paste another."
+                pasteNotice = String(localized: "A slide can have up to \(SlidePostEdits.maxTexts) texts. Remove one to paste another.")
             } else if fitted != text {
-                pasteNotice = "Pasted text was cut to \(SlidePostTextElement.maxLength) characters."
+                pasteNotice = String(localized: "Pasted text was cut to \(SlidePostTextElement.maxLength) characters.")
             }
         case .image(let url):
             await pasteImage(fileURL: url, slideID: slideID, context: context)
         case nil:
-            pasteNotice = "Kria can’t use what’s on your clipboard. Copy text or a picture and try again."
+            pasteNotice = String(localized: "Kria can’t use what’s on your clipboard. Copy text or a picture and try again.")
         }
     }
 
     /// Why a picture can't go onto `slideID` right now, or nil. Checked BEFORE anything is uploaded.
     func stickerPasteRefusal(slideID: String, context: SlidePostStickerPaste?) -> String? {
-        guard let context, context.isEnabled else { return "Pasting a picture onto a slide isn’t available yet." }
-        guard let slide = draft?.slides.first(where: { $0.id == slideID }) else { return "Open a slide first, then paste." }
-        guard slide.kind == "image" || slide.kind == "video" else { return "Pictures can’t go on this slide." }
+        guard let context, context.isEnabled else { return String(localized: "Pasting a picture onto a slide isn’t available yet.") }
+        guard let slide = draft?.slides.first(where: { $0.id == slideID }) else { return String(localized: "Open a slide first, then paste.") }
+        guard slide.kind == "image" || slide.kind == "video" else { return String(localized: "Pictures can’t go on this slide.") }
         if slide.edits?.effectiveStickers.count ?? 0 >= SlidePostEdits.maxStickers {
-            return "A slide can have up to \(SlidePostEdits.maxStickers) pictures. Remove one to paste another."
+            return String(localized: "A slide can have up to \(SlidePostEdits.maxStickers) pictures. Remove one to paste another.")
         }
-        if isPastingSticker { return "Still adding your last picture. Try again in a moment." }
-        if isBusy || isChatting { return "Wait for the current change to finish, then paste again." }
-        if state == nil { return "Your post is still loading. Try again in a moment." }
+        if isPastingSticker { return String(localized: "Still adding your last picture. Try again in a moment.") }
+        if isBusy || isChatting { return String(localized: "Wait for the current change to finish, then paste again.") }
+        if state == nil { return String(localized: "Your post is still loading. Try again in a moment.") }
         return nil
     }
 
@@ -2354,7 +2355,7 @@ struct SlidePostRenderAcknowledgement {
         persist()
         // Not deleted on refusal: a busy server leaves a Retry in the uploader's failures that re-reads this file.
         guard await context.uploads.uploadSticker(fileURL: fileURL, projectID: context.projectID, itemID: context.itemID) else {
-            pasteNotice = "That picture couldn’t be added. Your slide is unchanged."
+            pasteNotice = String(localized: "That picture couldn’t be added. Your slide is unchanged.")
             return
         }
         for _ in 0..<Self.stickerPollAttempts {
@@ -2369,19 +2370,19 @@ struct SlidePostRenderAcknowledgement {
                 if asset.status == "ready", asset.mediaStatus != "missing" {
                     if addSticker(slideID: slideID, assetID: asset.id) == nil {
                         pasteNotice = draft?.slides.contains(where: { $0.id == slideID }) == true
-                            ? "A slide can have up to \(SlidePostEdits.maxStickers) pictures. Remove one to paste another."
-                            : "That slide is gone, so the picture wasn’t added."
+                            ? String(localized: "A slide can have up to \(SlidePostEdits.maxStickers) pictures. Remove one to paste another.")
+                            : String(localized: "That slide is gone, so the picture wasn’t added.")
                     }
                     return
                 }
                 if asset.status == "failed" || asset.mediaStatus == "missing" {
-                    pasteNotice = "That picture couldn’t be prepared. Your slide is unchanged."
+                    pasteNotice = String(localized: "That picture couldn’t be prepared. Your slide is unchanged.")
                     return
                 }
             }
             try? await Task.sleep(for: Self.stickerPollInterval)
         }
-        pasteNotice = "Adding the picture is taking longer than expected. Paste it again in a moment."
+        pasteNotice = String(localized: "Adding the picture is taking longer than expected. Paste it again in a moment.")
     }
     static var stickerPollAttempts = 120
     static var stickerPollInterval = Duration.seconds(1)
@@ -2595,9 +2596,9 @@ struct SlidePostRenderAcknowledgement {
     func drawingCapMessage(slideID: String, extraPoints: Int = 0, extraStrokes: Int = 0) -> String? {
         guard let value = draft else { return nil }
         let current = value.slides.first { $0.id == slideID }?.edits?.drawing
-        if (current?.strokes.count ?? 0) + extraStrokes > SlidePostDrawing.maxStrokes { return "That’s as many strokes as one slide holds." }
-        if (current?.pointCount ?? 0) + extraPoints > SlidePostDrawing.maxPointsPerSlide { return "This slide is as detailed as it can get." }
-        if value.drawingPointCount + extraPoints > SlidePostDrawing.maxPointsPerPost { return "This post has as many drawings as it can hold." }
+        if (current?.strokes.count ?? 0) + extraStrokes > SlidePostDrawing.maxStrokes { return String(localized: "That’s as many strokes as one slide holds.") }
+        if (current?.pointCount ?? 0) + extraPoints > SlidePostDrawing.maxPointsPerSlide { return String(localized: "This slide is as detailed as it can get.") }
+        if value.drawingPointCount + extraPoints > SlidePostDrawing.maxPointsPerPost { return String(localized: "This post has as many drawings as it can hold.") }
         return nil
     }
     /// Sets the slide's drawing outright (no strokes = clears it). One undo step. False when it was refused: no such
@@ -2655,7 +2656,7 @@ struct SlidePostRenderAcknowledgement {
 
     private func handle(_ error: Error) {
         if let apiError = error as? APIError, case .conflict = apiError {
-            self.error = "This post kept changing while we saved. Your edits are still here. Try again."
+            self.error = String(localized: "This post kept changing while we saved. Your edits are still here. Try again.")
         } else { self.error = error.localizedDescription }
     }
     private func clearPrivatePresentation(invalidate: Bool = true) {
@@ -2697,7 +2698,7 @@ struct SlidePostRenderAcknowledgement {
     private func persist() {
         guard !restoring else { return }
         do { try persistDurably() }
-        catch { self.error = "Your local changes could not be stored. Keep this post open and try again." }
+        catch { self.error = String(localized: "Your local changes could not be stored. Keep this post open and try again.") }
     }
     private func persistDurably() throws {
         guard let identity = localIdentity else { return }
@@ -2716,7 +2717,7 @@ struct SlidePostRenderAcknowledgement {
               let data = try? aiJournal.readLocal(scope: identity.scope, projectID: identity.projectID),
               let local = try? JSONDecoder().decode(LocalState.self, from: data), local.identity == identity else {
             if let itemID, defaults.data(forKey: "kria.slide-post.\(itemID)") != nil {
-                error = "Older local changes are kept on this device, but their account could not be verified. The saved post is shown."
+                error = String(localized: "Older local changes are kept on this device, but their account could not be verified. The saved post is shown.")
             }
             stickerUploadNames = []
             draft = nil; proposal = nil; proposalThoughtSummaries = []; proposalRequestText = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; seenAssetIDs = nil; return

@@ -7,7 +7,473 @@
     {
       "turn_id": "t0",
       "user_message": "Make a Sunday food-day video and call it exactly \"Kadıköy'de Pazar\".",
-      "engine": "recorded"
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Make a Sunday food-day video and call it exactly \"Kadıköy'de Pazar\".",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title"
+            ],
+            "base_generation": "gen-1",
+            "has_narrated_captions": false,
+            "max_duration_s": 240,
+            "remaining_duration_s": 217.0,
+            "slots": [
+              {
+                "key": "slot-1",
+                "slot_id": "slot-1",
+                "parent_segment_id": null,
+                "clip_index": 0,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 0.0,
+                "output_end_s": 3.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F4",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T13:15:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kadıköy, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "lahmacun coming out of the oven",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-2",
+                "slot_id": "slot-2",
+                "parent_segment_id": null,
+                "clip_index": 1,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 3.0,
+                "output_end_s": 6.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F1",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T09:05:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kadıköy, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "simit and tea breakfast",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-3",
+                "slot_id": "slot-3",
+                "parent_segment_id": null,
+                "clip_index": 2,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 6.0,
+                "output_end_s": 9.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F7",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T20:10:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Moda, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "dinner table full of meze",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-4",
+                "slot_id": "slot-4",
+                "parent_segment_id": null,
+                "clip_index": 3,
+                "in_s": 0.0,
+                "duration_s": 2.5,
+                "duration_beats": null,
+                "source_duration_s": 2.5,
+                "output_start_s": 9.5,
+                "output_end_s": 12.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F2",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T10:40:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kadıköy, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "Turkish coffee being poured",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-5",
+                "slot_id": "slot-5",
+                "parent_segment_id": null,
+                "clip_index": 4,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 12.0,
+                "output_end_s": 15.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F8",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T21:30:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Moda, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "dondurma street vendor",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-6",
+                "slot_id": "slot-6",
+                "parent_segment_id": null,
+                "clip_index": 5,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 15.0,
+                "output_end_s": 18.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F3",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T11:30:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kadıköy, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "market stall with spices",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-7",
+                "slot_id": "slot-7",
+                "parent_segment_id": null,
+                "clip_index": 6,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 18.5,
+                "output_end_s": 20.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F6",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T17:00:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kadıköy, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "snack on the Kadıköy ferry",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-8",
+                "slot_id": "slot-8",
+                "parent_segment_id": null,
+                "clip_index": 7,
+                "in_s": 0.0,
+                "duration_s": 2.5,
+                "duration_beats": null,
+                "source_duration_s": 2.5,
+                "output_start_s": 20.5,
+                "output_end_s": 23.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "F5",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-20T15:20:00+03:00",
+                    "provenance": "exif"
+                  },
+                  {
+                    "kind": "place",
+                    "value": "Kadıköy, İstanbul",
+                    "provenance": "geocode"
+                  }
+                ],
+                "seen": {
+                  "text": "baklava being plated",
+                  "provenance": "vision"
+                }
+              }
+            ],
+            "text_bars": [],
+            "total_duration_s": 23.0,
+            "label_facts": true,
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "timeline_patch_capabilities": {
+              "duration_s": true,
+              "in_s": true,
+              "removed": true,
+              "transition_after": true,
+              "transition_duration_s": true,
+              "look_preset": false,
+              "playback_rate": false,
+              "source_crop": false
+            },
+            "source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "F4",
+                "kind": "video",
+                "generation": "46ccf6818f41",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "F1",
+                "kind": "video",
+                "generation": "73ceadc2a5ea",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "F7",
+                "kind": "video",
+                "generation": "d2943370e3d1",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "F2",
+                "kind": "video",
+                "generation": "5025e68c746e",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "F8",
+                "kind": "video",
+                "generation": "2b27747ea9b3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "F3",
+                "kind": "video",
+                "generation": "bb98b78c5e3c",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "F6",
+                "kind": "video",
+                "generation": "6347983834be",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "F5",
+                "kind": "video",
+                "generation": "a7b3125b6537",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "replacement_source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "F4",
+                "kind": "video",
+                "generation": "46ccf6818f41",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "F1",
+                "kind": "video",
+                "generation": "73ceadc2a5ea",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "F7",
+                "kind": "video",
+                "generation": "d2943370e3d1",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "F2",
+                "kind": "video",
+                "generation": "5025e68c746e",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "F8",
+                "kind": "video",
+                "generation": "2b27747ea9b3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "F3",
+                "kind": "video",
+                "generation": "bb98b78c5e3c",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "F6",
+                "kind": "video",
+                "generation": "6347983834be",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "F5",
+                "kind": "video",
+                "generation": "a7b3125b6537",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "editor_ops_version": 2
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"reorder_clips_by\",\n      \"criterion\": \"capture_time\",\n      \"direction\": \"asc\"\n    },\n    {\n      \"op\": \"add_text\",\n      \"text\": \"Kadıköy'de Pazar\",\n      \"start_s\": 0.0,\n      \"end_s\": 3.0,\n      \"style_from\": \"title\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've arranged the clips in chronological order from morning to night to tell the story of your food day, and added the title 'Kadıköy'de Pazar' at the start.\",\n  \"suggestions\": [\n    \"Add the hour to each clip\",\n    \"Make the video faster\",\n    \"Add a custom transition\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"reorder_clips_by\",\n    \"add_text\"\n  ]\n}",
+        "prompt_version": "2026-11-11-v122",
+        "model_actual": "gemini-3.1-pro-preview",
+        "recorded_at": "2026-11-13T08:08:39Z",
+        "latency_s": 11.1,
+        "model_calls": 1,
+        "tokens_in": 27167,
+        "tokens_out": 276,
+        "tokens_thoughts": 885,
+        "test_run_id": "rf-baseline-20261113-smoke"
+      }
     }
   ],
   "requirements": [
@@ -81,5 +547,56 @@
       "total_duration_s": 23.0
     },
     "reply": "Titled it \"Kadıköy'de Pazar\" and cut the day in the order you ate it."
+  },
+  "initial_plan": {
+    "clips": [
+      {
+        "clip_id": "F4",
+        "start_s": 0.0,
+        "end_s": 3.0
+      },
+      {
+        "clip_id": "F1",
+        "start_s": 3.0,
+        "end_s": 6.0
+      },
+      {
+        "clip_id": "F7",
+        "start_s": 6.0,
+        "end_s": 9.5
+      },
+      {
+        "clip_id": "F2",
+        "start_s": 9.5,
+        "end_s": 12.0
+      },
+      {
+        "clip_id": "F8",
+        "start_s": 12.0,
+        "end_s": 15.0
+      },
+      {
+        "clip_id": "F3",
+        "start_s": 15.0,
+        "end_s": 18.5
+      },
+      {
+        "clip_id": "F6",
+        "start_s": 18.5,
+        "end_s": 20.5
+      },
+      {
+        "clip_id": "F5",
+        "start_s": 20.5,
+        "end_s": 23.0
+      }
+    ],
+    "texts": [],
+    "speech": [],
+    "total_duration_s": 23.0,
+    "timing_verified": true
+  },
+  "baseline": {
+    "title": "met"
   }
 }

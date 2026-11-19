@@ -664,3 +664,203 @@ def test_whole_take_multi_clip_talking_flag_on_uses_every_clip(
     _multi_clip_talking(monkeypatch, flag=True)
     facts = PlanFacts(edit_format="subtitled", video_clip_count=videos)
     assert check_requirement(_WHOLE_TAKE, facts).status == status
+
+
+# --- KRI-1486: a visual asked for words the take never says (Q2 run 3, job 77c63496) -------
+#
+# "Show the trending page when I talk about what's hot this week" (she never says it, on
+# purpose) was answered "No pop-in for what's hot this week." and the draft was HELD for a
+# choice, although nothing could be chosen: the words are not in her take. Ways the fix can go
+# wrong, written before the code:
+#  U1 the unsaid cue is still "No pop-in";             U2 the Turkish turn is;
+#  U3 words she DOES say (other case, punctuation, a plural) are called unsaid;
+#  U4 no transcript, a draft off the phone Talking writer, or the switch off change;
+#  U5 one of two named cues said, or a cue that has its pop-in, is called unsaid;
+#  U6 a second take that says the words is not read;   U7 the finished video says otherwise.
+
+import dataclasses  # noqa: E402
+
+from app.config import settings  # noqa: E402
+
+TAKE_SAYS = (
+    "Five projects the AI builder community can't stop talking about. Number one, SpecKit. "
+    "You write the spec first. Number four, the agents marketplace."
+)
+_TRENDING = _req(
+    "style",
+    id="r4",
+    description="Show the trending page when I talk about what’s hot this week.",
+    facts={"triggers": ["what’s hot this week"]},
+)
+UNSAID_EN = "You don't say “what’s hot this week” in your take, so nothing is shown for it"
+UNSAID_TR = "Çekiminde “what’s hot this week” demiyorsun, o yüzden bunun için bir şey gösterilmiyor"
+NO_POP_IN = "No pop-in for what’s hot this week."
+_LOGO_BEAT = [_beat("logo", "GitHub logo", "Pasta")]
+
+
+def _take(*transcripts: str | None) -> dict:
+    return {
+        "clip_assignments": [
+            {
+                "kind": "video",
+                "media_id": f"phone-{i}",
+                "analysis": {} if text is None else {"transcript": text},
+            }
+            for i, text in enumerate(transcripts)
+        ]
+    }
+
+
+def _trending_draft(*transcripts, req=_TRENDING, beats=_LOGO_BEAT, phone_talking=True):
+    facts = dataclasses.replace(
+        plan_facts_from_strategy(_strategy(beats), manifest=_manifest()),
+        phone_talking=phone_talking,
+        media_snapshot=_take(*transcripts) if transcripts else None,
+    )
+    [receipt] = build_receipts([req], facts, include_unchecked=True)
+    return receipt
+
+
+def test_u1_u2_words_the_take_never_says_are_reported_not_a_missing_pop_in():
+    receipt = _trending_draft(TAKE_SAYS)
+    assert (receipt.status, receipt.verification, receipt.reason) == (
+        "partial",
+        "checked",
+        UNSAID_EN,
+    )
+    with reply_language_for("tr"):
+        assert _trending_draft(TAKE_SAYS).reason == UNSAID_TR
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "So what's hot this week? Let me show you.",
+        "WHAT’S HOT, THIS WEEK: five repos.",
+        "Here is whats hot this week.",
+    ],
+)
+def test_u3_words_she_says_keep_todays_answer(said):
+    assert _trending_draft(f"{TAKE_SAYS} {said}").reason == NO_POP_IN
+
+
+def test_u3_a_plural_or_split_spelling_counts_as_said():
+    req = _TRENDING.model_copy(update={"facts": {"triggers": ["agent marketplaces"]}})
+    receipt = _trending_draft(TAKE_SAYS, req=req)
+    assert receipt.reason == "No pop-in for agent marketplaces."
+    req = _TRENDING.model_copy(update={"facts": {"triggers": ["Spec Kit"]}})
+    assert _trending_draft(TAKE_SAYS, req=req).reason == "No pop-in for Spec Kit."
+
+
+def test_u4_without_a_transcript_or_off_the_phone_talking_writer_nothing_changes(monkeypatch):
+    assert _trending_draft().reason == NO_POP_IN
+    assert _trending_draft(None).reason == NO_POP_IN
+    assert _trending_draft(TAKE_SAYS, phone_talking=False).reason == NO_POP_IN
+    monkeypatch.setattr(settings, "unsaid_cue_report_enabled", False)
+    assert _trending_draft(TAKE_SAYS).reason == NO_POP_IN
+
+
+def test_u5_a_cue_that_is_said_or_has_its_pop_in_is_judged_as_before(monkeypatch):
+    two = _TRENDING.model_copy(
+        update={"facts": {"triggers": ["what’s hot this week", "agents marketplace"]}}
+    )
+    assert "No pop-in for" in _trending_draft(TAKE_SAYS, req=two).reason
+    shown = [*_LOGO_BEAT, _beat("hot", "what’s hot this week", "Pizza")]
+    said = f"{TAKE_SAYS} And what's hot this week."
+    assert _trending_draft(said, beats=shown).status == "met"
+    # KRI-1510: a pop-in planned on words the take never says is not "met" on the draft; the
+    # finished video would say "I never heard ...". Its switch off: "met", as KRI-1486 left it.
+    assert _trending_draft(TAKE_SAYS, beats=shown).reason == UNSAID_EN
+    monkeypatch.setattr(settings, "unsaid_planned_cue_report_enabled", False)
+    assert _trending_draft(TAKE_SAYS, beats=shown).status == "met"
+
+
+def test_u6_every_take_is_read_and_an_unknown_one_leaves_todays_answer(monkeypatch):
+    """Two talking takes have their own answer today; it stays, whatever the takes say. A take
+    with no transcript is unknown, never "unsaid"."""
+    said_later = _trending_draft(TAKE_SAYS, "And here is what's hot this week.")
+    unknown = _trending_draft(TAKE_SAYS, None)
+    assert UNSAID_EN not in (said_later.reason, unknown.reason)
+    monkeypatch.setattr(settings, "unsaid_cue_report_enabled", False)
+    assert _trending_draft(TAKE_SAYS, "And here is what's hot this week.") == said_later
+    assert _trending_draft(TAKE_SAYS, None) == unknown
+
+
+def _trending_variant(words: str) -> dict:
+    return {
+        "variant_id": "subtitled",
+        "resolved_archetype": "subtitled",
+        "edit_format": "subtitled",
+        "render_destination": "device",
+        "phone_beat_receipt": {
+            "version": 1,
+            "matcher": "phrase",
+            "placed": [{"beat_id": "logo", "trigger": "GitHub logo", "at_s": 3.0, "end_s": 6.0}],
+            "unplaced": [],
+            "closing": {"status": "none", "badge": "none"},
+        },
+        "overlay_transcript": [
+            {"text": word, "start_s": i * 0.3, "end_s": i * 0.3 + 0.25}
+            for i, word in enumerate(words.split())
+        ],
+    }
+
+
+def test_u7_the_finished_video_says_the_same_sentence():
+    [receipt] = build_receipts(
+        [_TRENDING],
+        plan_facts_from_phone_variant(_trending_variant(TAKE_SAYS)),
+        include_unchecked=True,
+    )
+    assert (receipt.status, receipt.reason) == ("partial", UNSAID_EN)
+    [said] = build_receipts(
+        [_TRENDING],
+        plan_facts_from_phone_variant(_trending_variant(TAKE_SAYS + " What's hot this week.")),
+        include_unchecked=True,
+    )
+    assert said.reason == NO_POP_IN
+
+
+# --- KRI-1486 review: the unsaid sentence replaces only the cue part of a row --------------
+#
+# The "You don't say ..." answer returned early, before the row's other checks, so an unsaid
+# cue in the same ask as a missing closing photo, a display the pop-ins do not have, or a
+# full-screen ask the even-slot layout spreads, came back as that one approvable sentence and
+# hid the rest. Ways it can go wrong: R1 another problem of the row is dropped; R2 the row
+# with another problem is approvable; R3 the plain unsaid row stops being exactly the sentence.
+
+
+def _with(req_facts: dict, **facts_changes):
+    req = _TRENDING.model_copy(
+        update={"facts": {"triggers": ["what’s hot this week"], **req_facts}}
+    )
+    facts = dataclasses.replace(
+        plan_facts_from_strategy(_strategy(_LOGO_BEAT), manifest=_manifest()),
+        phone_talking=True,
+        media_snapshot=_take(TAKE_SAYS),
+        **facts_changes,
+    )
+    [receipt] = build_receipts([req], facts, include_unchecked=True)
+    return receipt
+
+
+@pytest.mark.parametrize(
+    ("req_facts", "facts_changes", "also"),
+    [
+        ({"closing": "GitHub logo"}, {}, "doesn't end"),
+        ({"display_mode": "fullscreen"}, {}, "not full screen"),
+        ({"display_mode": "fullscreen"}, {"fullscreen_sequence": True}, "spread evenly"),
+    ],
+    ids=["closing-photo", "asked-display", "sequence"],
+)
+def test_r1_r2_every_other_problem_of_the_row_is_still_said(req_facts, facts_changes, also):
+    receipt = _with(req_facts, **facts_changes)
+    assert UNSAID_EN in receipt.reason and also in receipt.reason, receipt.reason
+    # Readiness approves only the exact sentence (`approval_readiness._promised_at_render`):
+    # with another problem said beside it, the row holds as it did before KRI-1486.
+    assert receipt.reason != UNSAID_EN and receipt.status != "met"
+
+
+def test_r3_the_plain_unsaid_row_is_still_exactly_the_sentence():
+    receipt = _with({})
+    assert (receipt.status, receipt.reason) == ("partial", UNSAID_EN)

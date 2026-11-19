@@ -788,5 +788,6 @@
     "source": "Synthetic reproduction of a narrated guided story whose voiceover lines came back as chapter text bindings; media, copy, and word timings are generated test data.",
     "case": "A surplus empty chapter on an invented m000 alias is dropped while every real alias stays covered.",
     "expected_title": "One light on the coast"
-  }
+  },
+  "prompt_sha": "595ee976d331f6fa"
 }

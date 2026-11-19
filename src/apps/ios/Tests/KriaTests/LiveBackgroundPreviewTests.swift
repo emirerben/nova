@@ -277,34 +277,105 @@ final class LiveBackgroundPreviewTests: XCTestCase {
 
     /// Failure modes of reading the looper's frames, written before the fix: the looper preloads the next copy, and that
     /// copy's output reports its frame 0 as new while the current pass is still playing, so (1) the first frame is drawn
-    /// early, about 3 frames before the end of the pass, (2) the real wrap then has no fresh frame for ~75 ms, (3) it happens
-    /// only once per rotation through the copies, so a single wrap does not show it. The ramp in the clip makes any frame
-    /// that is not the next one visible.
-    func testTheLoopedBackgroundWrapsOnlyAtTheEndOfAPass() async throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
-        defer { try? FileManager.default.removeItem(at: url) }
-        try await writeVideo(seconds: 2, to: url)
-        let video = try await LoopingVideoBackground(url: url)
-        defer { video.stop() }
-        let context = CIContext()
-        func red(_ image: CIImage) -> Int {
-            var pixel = [UInt8](repeating: 0, count: 4)
-            let centre = CGRect(x: image.extent.midX, y: image.extent.midY, width: 1, height: 1)
-            context.render(image, toBitmap: &pixel, rowBytes: 4, bounds: centre, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
-            return Int(pixel[0])
+    /// early, about 3 frames before the end of the pass, (2) the real wrap then has no fresh frame for ~75 ms, (3) the pass
+    /// resumes after the early frame, (4) it may happen at only one wrap per rotation through the copies, so a single
+    /// wrap does not show it.
+    ///
+    /// This test used to sample a live player every 30 ms for 11 real seconds. A busy runner that held the sampler back for
+    /// a second skipped the end of a pass, and the skip read as a wrap from the middle of it (KRI-1379). It now drives the
+    /// same picking code through every copy on a scripted clock, twice a frame, with each copy's output behaving as
+    /// measured above, so every frame of every pass is checked and nothing depends on how fast the runner is. The live
+    /// looper (outputs on every copy, wrapping) stays covered by the two tests above.
+    func testTheLoopedBackgroundWrapsOnlyAtTheEndOfAPass() throws {
+        let frames = 60
+        let looper = ScriptedLooper(copies: 3, framesPerPass: frames, preloadFrames: 3,
+                                    buffers: (0..<frames).map { pixelBuffer(width: 4, height: 4, (UInt8($0 * 4), 0, 255)) })
+        var picker = LoopedFramePicker(orientation: .up)
+        let context = LiveBackgroundCompositor.makeContext()
+        func frameIndex(_ image: CIImage) -> Int {
+            var rgba = [UInt8](repeating: 0, count: 4)
+            context.render(image, toBitmap: &rgba, rowBytes: 4, bounds: CGRect(x: image.extent.midX, y: image.extent.midY, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            return Int((Double(rgba[0]) / 4).rounded())
         }
-        var reds: [Int] = []
-        let start = Date()
-        while Date().timeIntervalSince(start) < 11 {
-            if let image = video.frame() { reds.append(red(image)) }
-            try await Task.sleep(for: .milliseconds(30))
+        var drawn: [Int] = []
+        for tick in 0..<(2 * looper.copies * looper.ticksPerPass) {   // two rotations through every copy
+            looper.now = tick
+            let image = try XCTUnwrap(picker.frame(onScreen: looper.item(onScreenAt: tick), outputs: looper.outputs, hostTime: ScriptedLooper.seconds(tick)))
+            drawn.append(frameIndex(image))
         }
-        let wraps = zip(reds, reds.dropFirst()).enumerated().filter { $0.element.1 < $0.element.0 - 30 }
-        XCTAssertGreaterThanOrEqual(wraps.count, 4, "11 s of a 2 s clip passes every copy the looper rotates through, wrap by wrap: \(reds)")
-        XCTAssertTrue(wraps.allSatisfy { $0.element.0 > 190 }, "every wrap leaves from the last frames of a pass, none from its middle: \(reds)")
-        for wrap in wraps {
-            XCTAssertTrue(reds[(wrap.offset + 1)..<min(reds.count, wrap.offset + 6)].allSatisfy { $0 < 100 },
-                          "after a wrap the next frames are the start of the pass, not a first frame shown early and the pass resumed: \(reds)")
+        // Every pass draws its frames in order, each when it is due: none early, none held past its time, no pass resumed.
+        let due = drawn.indices.map { ($0 % looper.ticksPerPass) / 2 }
+        let wrong = drawn.indices.first { drawn[$0] != due[$0] }
+        XCTAssertNil(wrong, "at tick \(wrong ?? 0) (pass \((wrong ?? 0) / looper.ticksPerPass)) frame \(wrong.map { drawn[$0] } ?? 0) was drawn where frame \(wrong.map { due[$0] } ?? 0) was due: \(drawn)")
+        XCTAssertEqual(zip(drawn, drawn.dropFirst()).filter { $1 < $0 }.count, 2 * looper.copies - 1, "one wrap per pass, each from the last frame to the first")
+    }
+
+    /// `AVPlayerLooper`'s copies on a scripted clock, each output behaving as `AVPlayerItemVideoOutput` was measured to on
+    /// the simulator (KRI-1183): the copy on screen has each frame of its pass from the moment it is due; the next copy, from
+    /// `preloadFrames` frames before the end of the current pass, already reports its frame 0 as new (its time is held at
+    /// zero until it starts); any other copy has nothing new. Time counts in ticks of half a frame at 30 fps.
+    private final class ScriptedLooper {
+        static let ticksPerSecond: CMTimeScale = 60
+        static func seconds(_ tick: Int) -> CFTimeInterval { CFTimeInterval(tick) / CFTimeInterval(ticksPerSecond) }
+        static func tick(_ seconds: CFTimeInterval) -> Int { Int((seconds * CFTimeInterval(ticksPerSecond)).rounded()) }
+
+        let copies: Int, framesPerPass: Int, preloadFrames: Int
+        var ticksPerPass: Int { framesPerPass * 2 }
+        let buffers: [CVPixelBuffer]
+        private let items: [NSObject]
+        private(set) var outputs: [(item: AnyObject, output: any LoopedVideoOutput)] = []
+        /// The host clock, set by the test before each read.
+        var now = 0
+
+        init(copies: Int, framesPerPass: Int, preloadFrames: Int, buffers: [CVPixelBuffer]) {
+            self.copies = copies; self.framesPerPass = framesPerPass; self.preloadFrames = preloadFrames; self.buffers = buffers
+            items = (0..<copies).map { _ in NSObject() }
+            outputs = items.indices.map { (items[$0], Copy(looper: self, index: $0)) }
+        }
+
+        /// The pass on screen at `tick`, and the item playing it (what `AVQueuePlayer.currentItem` answers).
+        func pass(at tick: Int) -> Int { tick / ticksPerPass }
+        func item(onScreenAt tick: Int) -> AnyObject { items[pass(at: tick) % copies] }
+
+        /// The pass copy `index` is playing or preloading at `tick`, if any.
+        func pass(ofCopy index: Int, at tick: Int) -> Int? {
+            let current = pass(at: tick)
+            if current % copies == index { return current }
+            let next = current + 1
+            if next % copies == index, tick >= next * ticksPerPass - preloadFrames * 2 { return next }
+            return nil
+        }
+
+        final class Copy: LoopedVideoOutput {
+            unowned let looper: ScriptedLooper
+            let index: Int
+            private var handedOut: (pass: Int, frame: Int)?
+            init(looper: ScriptedLooper, index: Int) { self.looper = looper; self.index = index }
+
+            func itemTime(forHostTime hostTimeInSeconds: CFTimeInterval) -> CMTime {
+                let tick = ScriptedLooper.tick(hostTimeInSeconds)
+                guard let pass = looper.pass(ofCopy: index, at: tick), pass == looper.pass(at: tick) else { return .zero }
+                return CMTime(value: CMTimeValue(tick - pass * looper.ticksPerPass), timescale: ScriptedLooper.ticksPerSecond)
+            }
+
+            func hasNewPixelBuffer(forItemTime itemTime: CMTime) -> Bool { newFrame(at: itemTime) != nil }
+
+            func copyPixelBuffer(forItemTime itemTime: CMTime, itemTimeForDisplay outItemTimeForDisplay: UnsafeMutablePointer<CMTime>?) -> CVPixelBuffer? {
+                guard let new = newFrame(at: itemTime) else { return nil }
+                handedOut = new
+                return looper.buffers[new.frame]
+            }
+
+            /// The frame at `itemTime`, if this copy has it decoded now and has not handed it out in this pass yet.
+            private func newFrame(at itemTime: CMTime) -> (pass: Int, frame: Int)? {
+                guard let pass = looper.pass(ofCopy: index, at: looper.now) else { return nil }
+                let frame = Int(CMTimeConvertScale(itemTime, timescale: ScriptedLooper.ticksPerSecond, method: .roundTowardZero).value) / 2
+                let decoded = pass == looper.pass(at: looper.now) ? (looper.now - pass * looper.ticksPerPass) / 2 : 0
+                guard frame <= decoded, frame < looper.framesPerPass else { return nil }
+                if let handedOut, handedOut.pass == pass, handedOut.frame >= frame { return nil }
+                return (pass, frame)
+            }
         }
     }
 

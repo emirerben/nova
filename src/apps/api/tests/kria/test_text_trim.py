@@ -6,6 +6,8 @@ import pytest
 
 from app.kria.text_trim import trim_at_word
 
+pytestmark = pytest.mark.journey("kri-552-duplicate-resend")
+
 
 def test_the_prod_label_keeps_whole_words() -> None:
     label = "the part where I restart the kilometer thirty sentence"

@@ -1,0 +1,241 @@
+{
+  "fixtures": 33,
+  "ran": 33,
+  "passed": 32,
+  "failure_categories": {
+    "other": 1
+  },
+  "settled_usd": 2.8799,
+  "ledger": [
+    {
+      "test_run_id": "kri1384sp-gem-regress-b1",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "11",
+      "settled_usd": "0.8351",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-regress-b2",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "12",
+      "settled_usd": "1.0961",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-regress-b3",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "11",
+      "settled_usd": "0.9487",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_start_over_from_scratch_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_display_one_at_a_time",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "remove_uploaded_visuals",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_quoted_restart_cue_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_bastan_basla_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": false,
+      "failure": "assert ('duration_s' not in {'start_line': \"Hi, I'm Karolina, I'm from Ecuador\", 'end_line': \"I'm gonna be here all week\", 'duration_s': 35}) + where {'start_line': \"Hi, I'm Karolina, I'm from Ecuador\", 'end_line': \"I'm gonna be here all we",
+      "category": "other"
+    },
+    {
+      "fixture": "kri506_metadata_parse_unresolved",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1292_text_hold_correction_no_two_seconds",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri815_script_request",
+      "passed": true,
+      "failure": null,
+      "category": null
+    }
+  ]
+}

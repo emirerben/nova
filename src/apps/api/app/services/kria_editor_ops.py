@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
+from types import SimpleNamespace
 from typing import Any, Literal, NamedTuple
 
 import structlog
@@ -29,6 +30,8 @@ from app.agents._schemas.text_element import (
 )
 from app.config import settings
 from app.kria.clip_tilt import ClipTilt
+from app.kria.editor_head import payload_current
+from app.kria.split_screen import is_blank_row
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
@@ -37,6 +40,7 @@ from app.routes.generative_jobs import (
     EditorCommitMix,
     EditorCommitRequest,
     EditorCommitSpeakerBackground,
+    EditorCommitUserSong,
     TimelineSlotEdit,
     _editor_capabilities,
     _guided_source_context,
@@ -52,7 +56,7 @@ from app.routes.generative_jobs import (
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
 from app.services.clip_facts import assignment_facts, facts_for_prompt
-from app.services.editor_limits import MAX_EDITOR_OPS
+from app.services.editor_limits import MAX_EDITOR_OPS, MOTION_FPS
 from app.services.kria_editor_ops_diff import (
     EditorDiff,
     diff_compiled_state,
@@ -68,15 +72,19 @@ _PORTABLE_FAMILIES = {
     "background_focus",
     "background_windows",
     "caption",
+    "caption_lines",
     "clip",
     "color_moments",
     "effect",
+    "history",
     "music",
     "overlay",
     "sfx",
     "text",
     "title",
     "transition",
+    "user_song",
+    "video_shape",
     "visual_media",
 }
 
@@ -97,6 +105,19 @@ def split_collapse_available(job: Any, variant: dict[str, Any]) -> bool:
     from app.services.phone_rollout import split_collapse_planned_for
 
     return split_screen_available(job, variant) and split_collapse_planned_for(
+        current_client_protocol()
+    )
+
+
+def split_blank_available(job: Any, variant: dict[str, Any]) -> bool:
+    """May an edit put a blank block in a split panel? Reads the sending build, as the request does.
+
+    Offered when Save would take the block: protocol 51 and `splitBlankPanel` verified.
+    """
+    from app.services.client_protocol import current_client_protocol
+    from app.services.phone_rollout import split_blank_planned_for
+
+    return split_screen_available(job, variant) and split_blank_planned_for(
         current_client_protocol()
     )
 
@@ -177,6 +198,10 @@ _TEXT_STYLE_FIELDS = {
 # only some app builds keep (`edit_copilot._CAPTION_META_FIELD_GATES`) is offered
 # exactly where the editor would offer it.
 COPILOT_EDITOR_CAPABILITIES = ("caption_animation",)
+
+
+# caption_meta keys stored on the variant under another name than `caption_<key>`.
+_CAPTION_META_VARIANT_KEYS = {"appearance": "caption_editor_style"}
 
 
 def caption_default_phases(variant: dict[str, Any]) -> dict[str, Any] | None:
@@ -411,6 +436,8 @@ def _safe_slot(
     ):
         if key in row:
             slot[key] = copy.deepcopy(row[key])
+    if is_blank_row(row) and isinstance(row.get("color"), str):
+        slot["color"] = row["color"]
     media_id = row.get("media_id")
     if isinstance(media_id, str) and media_id:
         slot["media_id"] = media_id
@@ -728,10 +755,13 @@ def _visual_media_rows(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]
 
 
 def _removable_visual_media(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]:
+    # A cloud edit re-burns over its clean base video. A device Save recompiles picture blocks
+    # into the phone recipe instead (KRI-1142), and the clamped capability opens visual_blocks
+    # only where it does, so a phone edit needs no base video (KRI-1388).
     if (
         _editor_capabilities(job, variant).get("visual_blocks") is not True
         or variant.get("text_mode") == "lyrics"
-        or not variant.get("base_video_path")
+        or not (variant.get("base_video_path") or variant.get("render_destination") == "device")
     ):
         return []
     rows = _visual_media_rows(job, variant)
@@ -994,6 +1024,32 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
             families.append("background_focus")
     if color_moments_open(job, variant) or color_moments_removal_only(job, variant):
         families.append("color_moments")
+    if (
+        on_device
+        and "caption" in families
+        and caps.get("caption_style_scope") is True
+        and caps.get("caption_editor_style") is True
+    ):
+        from app.agents.editor_ops_v2.caption_lines import addressable_cue_ids  # noqa: PLC0415
+
+        # KRI-1394: one caption line's size and place, addressed by cue id.
+        if addressable_cue_ids(variant):
+            families.append("caption_lines")
+    from app.agents.editor_ops_v2.video_shape import video_shape_snapshot  # noqa: PLC0415
+
+    if video_shape_snapshot(variant, caps) is not None:
+        # KRI-1394: the finished video's shape, where the editor opens an axis on a phone edit.
+        families.append("video_shape")
+    if on_device and isinstance(caps.get("user_song"), dict):
+        from app.agents.editor_ops_v2.user_song import song_state  # noqa: PLC0415
+
+        # KRI-1394: the creator's own song, where the editor's Sounds tab offers it.
+        if song_state(job, variant) is not None:
+            families.append("user_song")
+    from app.services.kria_editor_undo import available as undo_available  # noqa: PLC0415
+
+    if undo_available(variant):
+        families.append("history")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -1213,6 +1269,20 @@ def background_focus_open(job: Any, variant: dict[str, Any]) -> bool:
     return background_focus_supported(require_client=True)
 
 
+def background_full_opening_open(job: Any, variant: dict[str, Any]) -> bool:
+    """May chat take away the speaker's full-screen opening (Qendresa item 16, KRI-1394)?
+
+    The windows lane is open AND the full-opening gate holds (flag, ``speakerFrameWindows``
+    verified, app build: `speaker_full_opening_unavailable_reason`, the Save's own gate for a
+    changed ``full_screen_windows``), with the same worker-side client rule as the windows.
+    """
+    if not background_windows_open(job, variant):
+        return False
+    from app.services.phone_rollout import speaker_full_opening_unavailable_reason  # noqa: PLC0415
+
+    return speaker_full_opening_unavailable_reason() is None
+
+
 def background_color_reason(job: Any, variant: dict[str, Any]) -> str | None:
     """Why chat may not put a plain colour behind the speaker although the lane is open, in
     words for the creator; None when the colour gate holds (KRI-1173).
@@ -1343,6 +1413,11 @@ def _background_snapshot(
             for span in spans
             if isinstance(span, dict)
         ]
+        from app.agents.editor_ops_v2.background import is_opening  # noqa: PLC0415
+
+        if any(is_opening(span) for span in spans) and background_full_opening_open(job, variant):
+            # KRI-1394: present only while chat may take the opening away.
+            section["opening_removable"] = True
     return section
 
 
@@ -1396,26 +1471,33 @@ def derived_phone_background(job: Any, variant: dict[str, Any]) -> dict[str, Any
     return dict(document) if isinstance(document, dict) else None
 
 
-def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
+def _audio_notes(job: Any, variant: dict[str, Any], families: list[str]) -> list[str]:
     """Plain-language audio limits so the copilot answers honestly instead of
     redirecting to a control that does not exist for this edit."""
     notes: list[str] = []
     from app.services.user_song_projection import user_song_for_variant  # noqa: PLC0415
 
     if user_song_for_variant(job, variant, song_filename=None) is not None:
-        # The creator's own song (KRI-374) is part of the render. The editor's Sounds tab
-        # changes its volume, start point (not lip-sync) or removes it (KRI-428); this
-        # copilot has no operation for it, so point there instead of denying it exists.
-        notes.append(
-            "This edit plays the creator's own song. They can change its volume, start "
-            "point (not for lip-sync) or remove it in the editor's Sounds tab; you cannot "
-            "change it from chat."
-        )
+        # The creator's own song (KRI-374) is part of the render. Where chat offers
+        # set_user_song (KRI-1394) the YOUR SONG section says what it may change; elsewhere
+        # point to the editor's Sounds tab instead of denying the song exists.
+        if "user_song" not in families:
+            notes.append(
+                "This edit plays the creator's own song. They can change its volume, start "
+                "point (not for lip-sync) or remove it in the editor's Sounds tab; you cannot "
+                "change it from chat."
+            )
     elif variant.get("music_playback_mode") == "reference_only":
         notes.append(
             "The matched song is added when the creator posts. It is not part of this "
             "render, so there is no music to make quieter, swap or remove here; the "
             "footage keeps its own sound."
+        )
+    elif variant.get("render_destination") == "device" and variant.get("music_track_id"):
+        # KRI-1388: the phone recipe re-plays only the song it was rendered with.
+        notes.append(
+            "This iPhone edit keeps the song it was made with; you cannot change it to a "
+            "different song from chat."
         )
     if variant.get("render_destination") == "device" and _is_guided_native(job, variant):
         notes.append("This edit has no control for the footage's own sound level.")
@@ -1521,6 +1603,93 @@ def _approved_research_context(job: Any, variant: dict[str, Any]) -> dict[str, d
     return context
 
 
+# Same cap the web producer (snapshot.ts) and the prompt formatter apply.
+_BEAT_MARKS_MAX = 60
+
+
+def timeline_signature(job: Any, variant: dict[str, Any]) -> list[tuple[Any, ...]]:
+    """What a speech or beat mark depends on: every slot's source window and length.
+
+    Speech words and song beats are stamped against the saved render's timeline. A draft that
+    re-cut it (trim, split, reorder, remove, retime) no longer matches them.
+    """
+    rows = _variant_slots(variant, job)
+    if not rows:
+        from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+            phone_subtitled_research_slots,
+        )
+
+        rows = phone_subtitled_research_slots(job, variant)
+    return [
+        (
+            row.get("slot_id") or row.get("media_id") or row.get("clip_index"),
+            round(float(row.get("in_s") or 0.0), 3),
+            round(float(row.get("duration_s") or 0.0), 3),
+            round(float(row.get("playback_rate") or 1.0), 3),
+            bool(row.get("removed")),
+        )
+        for row in rows
+    ]
+
+
+def _stride_cap(marks: list[float], cap: int) -> list[float]:
+    """Even sampling that keeps the first and last mark, like snapshot.ts."""
+    if len(marks) <= cap:
+        return marks
+    last = len(marks) - 1
+    sampled: list[float] = []
+    for i in range(cap):
+        value = marks[round(i * last / (cap - 1))]
+        if not sampled or value != sampled[-1]:
+            sampled.append(value)
+    return sampled
+
+
+def _beat_marks(variant: dict[str, Any], duration_s: float, beats: Any) -> list[float]:
+    """The song's beats in assembled-timeline seconds, or ``[]`` when they cannot be placed.
+
+    The music bed plays from ``music_start_s`` at output 0 (the render's
+    ``audio_start_offset_s``), so a beat at song time ``b`` lands at ``b - start``. Without a
+    recorded start the offset is unknown and no mark is invented.
+    """
+    if not isinstance(beats, list) or not variant.get("music_track_id"):
+        return []
+    window = variant.get("music_window")
+    start = window.get("start_s") if isinstance(window, dict) else None
+    if start is None:
+        start = variant.get("music_start_s")
+    if isinstance(start, bool) or not isinstance(start, (int, float)) or not math.isfinite(start):
+        return []
+    marks: list[float] = []
+    for raw in sorted(b for b in beats if isinstance(b, (int, float)) and not isinstance(b, bool)):
+        if not math.isfinite(raw):
+            continue
+        at = round(float(raw) - float(start), 3)
+        if 0.0 <= at <= duration_s and (not marks or at > marks[-1]):
+            marks.append(at)
+    return _stride_cap(marks, _BEAT_MARKS_MAX)
+
+
+def _speech_snapshot(variant: dict[str, Any], duration_s: float) -> dict[str, Any] | None:
+    """Spoken words and the silences between them, in the shape snapshot.ts sends."""
+    from app.services.speech_map import build_speech_map  # noqa: PLC0415
+    from app.services.transcript_source import speech_words_for_variant  # noqa: PLC0415
+
+    source = speech_words_for_variant(variant)
+    if source is None:
+        return None
+    mapped = build_speech_map(source[0], duration_s if duration_s > 0 else None, source[1])
+    if mapped is None:
+        return None
+    return {
+        "source": mapped["source"],
+        "words": [{"text": w["w"], "start_s": w["s"], "end_s": w["e"]} for w in mapped["words"]],
+        "pauses": [
+            {"start_s": p["s"], "end_s": p["e"], "after": p["after"]} for p in mapped["pauses"]
+        ],
+    }
+
+
 def build_editor_snapshot(
     job: Any,
     variant: dict[str, Any],
@@ -1530,8 +1699,9 @@ def build_editor_snapshot(
     """Return the bounded, URL/path-free snapshot accepted by EditCopilot.
 
     ``clip_context`` (built by the async planner, which owns the DB read) carries
-    ``facts`` (``clip_facts_by_media_id``) and ``brief`` (the rendered Creative
-    Brief). Both are optional: with neither, the snapshot is what it always was
+    ``facts`` (``clip_facts_by_media_id``), ``brief`` (the rendered Creative
+    Brief), ``music_beats`` (``{"track_id", "beats"}``) and ``timeline_dirty``. All are
+    optional: with neither, the snapshot is what it always was
     plus the guided-slot fallback and the label-lane links. Pinned approved-media
     descriptions/OCR also support older callers without plan-item context.
     """
@@ -1661,6 +1831,9 @@ def build_editor_snapshot(
         "text_bars": text_bars,
         "total_duration_s": duration,
     }
+    if "history" in families:
+        # KRI-1384: only an undo the compile can do exactly; repeat stays the web's op log.
+        snapshot["history_state"] = {"can_undo_last_turn": True}
     if variant.get("resolved_archetype") in {"subtitled", "talking_head"}:
         # KRI-816: the recorded speech is the edit's primary track, so research
         # places sourced text only in its pauses (narrated/voiceover cues do not).
@@ -1681,6 +1854,17 @@ def build_editor_snapshot(
         snapshot["split_screen_sections"] = sections
     if split_screen_available(job, variant):
         snapshot["split_screen_available"] = True
+        if split_blank_available(job, variant):
+            snapshot["split_blank_available"] = True
+    if sections and "clip" in families:
+        from app.agents.editor_ops_v2.split_full_screen import (  # noqa: PLC0415
+            split_full_screen_snapshot,
+        )
+
+        # KRI-1394: present only where chat may make part of a split full screen.
+        offered = split_full_screen_snapshot(job, variant, slot_rows, sections)
+        if offered:
+            snapshot["split_full_screen"] = offered
     timeline_max_slots = caps.get("timeline_max_slots")
     if isinstance(timeline_max_slots, int) and timeline_max_slots > 0:
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
@@ -1751,6 +1935,10 @@ def build_editor_snapshot(
                 meta["style"] = saved.get("style", meta["style"])
             if meta["y_frac"] is None:
                 meta["y_frac"] = saved.get("y_frac")
+        if "caption_lines" in families:
+            from app.agents.editor_ops_v2.caption_lines import placement_snapshot  # noqa: PLC0415
+
+            snapshot["captions"]["line_placement"] = placement_snapshot(variant)
         advertised = {key: True for key in COPILOT_EDITOR_CAPABILITIES if caps.get(key) is True}
         if advertised:
             # Present only when ON, so every other snapshot stays byte-identical.
@@ -1801,7 +1989,7 @@ def build_editor_snapshot(
         bed = _background_bed(caps, variant, guided_native=_is_guided_native(job, variant))
         if bed is not None:
             snapshot["mix"]["background_music"] = bed
-    audio_notes = _audio_notes(job, variant)
+    audio_notes = _audio_notes(job, variant, families)
     if audio_notes:
         snapshot["audio_notes"] = audio_notes
     if "sfx" in snapshot["allowed_op_families"]:
@@ -1837,6 +2025,29 @@ def build_editor_snapshot(
             tilt=caps.get("media_overlay_tilt") is True,
             pool=clip_context.get("generated_overlay_pool"),
         )
+    if "video_shape" in families:
+        from app.agents.editor_ops_v2.video_shape import video_shape_snapshot  # noqa: PLC0415
+
+        snapshot["video_shape"] = video_shape_snapshot(variant, caps)
+    if "user_song" in snapshot["allowed_op_families"]:
+        from app.agents.editor_ops_v2.user_song import user_song_snapshot  # noqa: PLC0415
+
+        song = user_song_snapshot(job, variant, caps)
+        if song is not None:
+            snapshot["user_song"] = song
+    if "overlay" in families or "visual_media" in families:
+        from app.agents.editor_ops_v2.layer_order import layer_order_snapshot  # noqa: PLC0415
+
+        removable = _removable_visual_media(job, variant) if "visual_media" in families else []
+        layers = layer_order_snapshot(
+            [row for row in variant.get("media_overlays") or [] if isinstance(row, dict)]
+            if "overlay" in families
+            else None,
+            _visual_media_rows(job, variant) if removable else None,
+            {row["id"] for row in removable},
+        )
+        if layers is not None:
+            snapshot["layer_order"] = layers
     if "color_moments" in snapshot["allowed_op_families"]:
         snapshot["color_moments"] = _color_moments_snapshot(
             variant, removal_only=color_moments_removal_only(job, variant)
@@ -1887,6 +2098,19 @@ def build_editor_snapshot(
             for row in variant.get("speech_cut_candidates") or []
             if isinstance(row, dict) and row.get("status") == "pending"
         ]
+    if clip_context.get("timeline_dirty") is not True:
+        # KRI-1391: spoken words, pauses and song beats on the saved render's timeline. A
+        # re-cut draft drops them (the planner sets `timeline_dirty`), like snapshot.ts.
+        speech = _speech_snapshot(variant, duration)
+        if speech is not None:
+            snapshot["speech"] = speech
+        music_beats = clip_context.get("music_beats")
+        if isinstance(music_beats, dict) and str(music_beats.get("track_id")) == str(
+            variant.get("music_track_id")
+        ):
+            marks = _beat_marks(variant, duration, music_beats.get("beats"))
+            if marks:
+                snapshot["beat_marks"] = marks
     # KRI-219: server-built snapshots ONLY (the web drawer builds its own in
     # snapshot.ts and never carries this). Unlocks v2 ops + their prompt
     # fragments in EditCopilot; see app/agents/editor_ops_v2.
@@ -1918,7 +2142,7 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
                 **{
                     key: value for key, value in row.items() if key in TimelineSlotEdit.model_fields
                 },
-                "clip_index": int(row["clip_index"]),
+                "clip_index": None if is_blank_row(row) else int(row["clip_index"]),
                 "in_s": float(row.get("in_s") or 0),
                 "transition_after": row.get("transition_after") or "cut",
                 "look_preset": row.get("look_preset") or "none",
@@ -1976,12 +2200,8 @@ def fresh_editor_head_payload(
     payload = snapshot.get("editor_payload")
     if not isinstance(payload, dict) or not payload:
         return {}
-    base = str(payload.get("base_generation") or "")
-    if base != variant_render_baseline(variant):
-        from app.services.device_render import published_source_generation  # noqa: PLC0415
-
-        if job is None or not base or base != published_source_generation(job, variant):
-            return {}
+    if not payload_current(job, variant, head):
+        return {}
     return payload
 
 
@@ -2163,6 +2383,13 @@ def project_editor_draft(
         derived = derived_phone_overlays(job, projected)
         if derived is not None:
             projected["media_overlays"] = derived
+    for key in ("orientation", "landscape_fit"):
+        if isinstance(payload.get(key), str):
+            projected[key] = payload[key]
+    if isinstance(payload.get("user_song"), dict):
+        from app.agents.editor_ops_v2.user_song import DRAFT_KEY  # noqa: PLC0415
+
+        projected[DRAFT_KEY] = copy.deepcopy(payload["user_song"])
     # KRI-1117: a Talking edit's background. An explicit key (even `None`: cleared) is the
     # draft's own; otherwise a never-Saved edit derives it from its pinned recipe.
     if "speaker_background" in payload:
@@ -2184,7 +2411,13 @@ def project_editor_draft(
     if payload.get("remove_music"):
         projected["music_track_id"] = None
     for key, value in (payload.get("caption_meta") or {}).items():
-        if key != "font_set":
+        if key == "appearance" and isinstance(value, dict):
+            # The Save merges the appearance key by key over the stored style.
+            projected["caption_editor_style"] = {
+                **(projected.get("caption_editor_style") or {}),
+                **value,
+            }
+        elif key != "font_set":
             projected["captions_enabled" if key == "enabled" else f"caption_{key}"] = value
         if key == "y_frac" and isinstance(value, (int, float)) and not isinstance(value, bool):
             from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
@@ -2378,6 +2611,17 @@ def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dic
     for key in ("caption_meta", "mix"):
         if previous.get(key) and current.get(key):
             merged[key] = {**previous[key], **current[key]}
+    song = current.get("user_song")
+    if isinstance(previous.get("user_song"), dict) and isinstance(song, dict):
+        # The Save's `removed` defaults to false: only a removal is an edit, never an un-removal.
+        merged["user_song"] = {
+            **previous["user_song"],
+            **{
+                key: value
+                for key, value in song.items()
+                if not (key == "removed" and value is False)
+            },
+        }
     if current.get("remove_music"):
         merged.pop("music_track_id", None)
     elif current.get("music_track_id"):
@@ -2652,6 +2896,12 @@ class _DraftState:
     # KRI-1350: the colour-moments lane `set_color_moments` built ({"moments", "end_fade"}).
     # Reaches the payload only when "color_moments" is in `changed`.
     color_moments: dict[str, Any] | None = None
+    # KRI-1394: the creator song's Save section (`EditorCommitUserSong` fields) this bundle set.
+    user_song: dict[str, Any] | None = None
+    # KRI-1394: the `orientation` / `landscape_fit` Save sections this bundle set.
+    video_shape: dict[str, Any] | None = None
+    # KRI-1394: `make_split_full_screen` ran: the timeline it planned and the time it lost.
+    split_full_screen: dict[str, Any] | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -2926,7 +3176,7 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
         elif name == "set_clip_in":
             row.update(set_source_start(row, float(op["in_s"])))
         else:
-            amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+            amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - EDITOR_MIN_CLIP_S))
             row.update(slice_source_window(row, amount, _slot_duration(row)))
             if row.get("split_section_id"):
                 row["split_offset_s"] += amount
@@ -2950,7 +3200,7 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
             row["source_end_s"] = row["in_s"] + span
         row["source_start_locked"] = True
     elif name == "trim_clip_start":
-        amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
+        amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - EDITOR_MIN_CLIP_S))
         row["in_s"] = float(row.get("in_s") or 0.0) + amount * _slot_rate(row)
         row["source_start_locked"] = True
         if row.get("split_section_id"):
@@ -2976,7 +3226,7 @@ def _op_trim_output_start(state: _DraftState, op: dict[str, Any]) -> None:
         if row.get("removed"):
             continue
         duration = _slot_duration(row)
-        if remaining >= duration - 0.1:
+        if remaining >= duration - EDITOR_MIN_CLIP_S:
             row["removed"] = True
             remaining -= duration
             continue
@@ -3022,7 +3272,7 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
         local = split_at - output_start
     else:
         local = split_at - output_start if split_at > duration else split_at
-    if local < 0.1 or local > duration - 0.1:
+    if local < EDITOR_MIN_CLIP_S or local > duration - EDITOR_MIN_CLIP_S:
         raise KriaEditorOpError("The split point is outside the clip")
     from uuid import uuid4
 
@@ -3061,7 +3311,11 @@ def _op_add_unused_sources(state: _DraftState, op: dict[str, Any]) -> None:
     selector = op.get("selector") or {}
     wanted = str(selector.get("media_kind") or "all")
     paths = list((state.job.all_candidates or {}).get("clip_paths") or [])
-    used = {int(row.get("clip_index")) for row in state.slots if not row.get("removed")}
+    used = {
+        int(row["clip_index"])
+        for row in state.slots
+        if not row.get("removed") and row.get("clip_index") is not None
+    }
     durations = {
         int(row["clip_index"]): float(row["duration_s"])
         for row in _source_pool_rows(state.job, state.variant)
@@ -3110,25 +3364,80 @@ def _op_set_media_duration(state: _DraftState, op: dict[str, Any]) -> None:
     state.changed.add("timeline")
 
 
+# The fields of the editor's translated caption track (`EditorCaptionTranslation`).
+_CAPTION_TRANSLATION_KEYS = frozenset(
+    {
+        "enabled",
+        "language",
+        "source_language",
+        "size_px",
+        "color",
+        "font",
+        "stroke_width",
+        "position_x_frac",
+        "position_y_frac",
+        "line_overrides",
+        "outcome",
+        "dropped_cue_ids",
+    }
+)
+
+
+def _drop_stale_translations(state: _DraftState, rows: list[dict[str, Any]]) -> int:
+    """KRI-1501: a caption line whose words were rewritten loses its translated line (it would
+    show the old sentence in the second language). Its id joins the track's ``dropped_cue_ids``
+    and the track's outcome becomes "partial", so the receipt never calls it translated.
+    Returns how many translated lines were removed."""
+    dropped = [
+        row["id"] if isinstance(row.get("id"), str) else ""
+        for row in rows
+        if str(row.pop("translation", None) or "").strip()
+    ]
+    if not dropped:
+        return 0
+    stored = state.caption_patch.get("translation") or state.variant.get("caption_translation")
+    if isinstance(stored, dict) and stored.get("language"):
+        track = {k: copy.deepcopy(v) for k, v in stored.items() if k in _CAPTION_TRANSLATION_KEYS}
+        ids = [*(track.get("dropped_cue_ids") or []), *(cue_id for cue_id in dropped if cue_id)]
+        track["dropped_cue_ids"] = list(dict.fromkeys(ids))
+        track["outcome"] = "partial"
+        state.caption_patch["translation"] = track
+        state.changed.add("caption_meta")
+    return len(dropped)
+
+
+def _stale_translation_summary(op: dict[str, Any], count: int) -> str | None:
+    if not count:
+        return None
+    lines = "its translated line" if count == 1 else f"{count} translated lines"
+    return f"{_summary(op)}; removed {lines} (they no longer matched the words)"
+
+
 def _op_edit_caption(state: _DraftState, op: dict[str, Any]) -> None:
     index = _require_index(state.captions, op.get("cue_index"), "Caption")
-    state.captions[index]["text"] = str(op["text"])
+    row = state.captions[index]
+    text = str(op["text"])
+    stale = _drop_stale_translations(state, [row]) if text != str(row.get("text") or "") else 0
+    row["text"] = text
     state.changed.add("captions")
+    state.summary = _stale_translation_summary(op, stale) or state.summary
 
 
 def _op_replace_caption_text(state: _DraftState, op: dict[str, Any]) -> None:
     find = str(op["find"])
     replace = str(op["replace"])
-    replaced = 0
+    rewritten: list[dict[str, Any]] = []
     for row in state.captions:
         current = str(row.get("text") or "")
         updated = current.replace(find, replace)
         if updated != current:
             row["text"] = updated
-            replaced += 1
-    if not replaced:
+            rewritten.append(row)
+    if not rewritten:
         raise KriaEditorOpError(f'No captions contain "{find}"')
     state.changed.add("captions")
+    stale = _drop_stale_translations(state, rewritten)
+    state.summary = _stale_translation_summary(op, stale) or state.summary
 
 
 def _op_set_caption_timing(state: _DraftState, op: dict[str, Any]) -> None:
@@ -3305,6 +3614,10 @@ def compile_editor_ops(
     """
 
     _load_lane_handlers()
+    from app.services.kria_editor_undo import compile_undo, is_undo_bundle  # noqa: PLC0415
+
+    if is_undo_bundle(ops):
+        return compile_undo(job, variant, ops)
     preserve_text = preserve_text or any(op.get("preserve_text") is True for op in ops)
     if preserve_text:
         from app.agents.editor_ops_v2 import lane_specs
@@ -3445,6 +3758,11 @@ def compile_editor_ops(
             if isinstance(exc, KriaEditorOpError):
                 raise
             raise KriaEditorOpError(str(exc)) from exc
+        if state.split_full_screen is not None and state.slots != state.split_full_screen["slots"]:
+            # Its lanes follow the time it lost, not a later clip edit's serial rebase.
+            raise KriaEditorOpError(
+                "Make part of the split full screen on its own, then ask for the next change"
+            )
         if state.split_screen_sections and name in {
             "patch_slots",
             "set_clip_duration",
@@ -3494,7 +3812,7 @@ def compile_editor_ops(
             state.summary = None
         targets = [float(op["target_s"]) for op in ops if op.get("op") == "set_total_duration"]
         if targets and any(op.get("fit_to_video") for op in sequence_ops):
-            rounded_target = round(targets[-1] * 30) / 30
+            rounded_target = round(targets[-1] * MOTION_FPS) / MOTION_FPS
             if abs(total - rounded_target) > 0.001:
                 raise TextTimingConflict(
                     targets[-1],
@@ -3537,7 +3855,11 @@ def compile_editor_ops(
     rebase_before = {
         key: copy.deepcopy(getattr(state, lane)) for key, lane in rebase_fields.items()
     }
-    if "timeline" in changed and (
+    if state.split_full_screen is not None:
+        from app.agents.editor_ops_v2.split_full_screen import follow_lost_time  # noqa: PLC0415
+
+        follow_lost_time(state)
+    elif "timeline" in changed and (
         state.split_screen_sections or state.initial_split_screen_sections
     ):
         from app.services.kria_editor_timeline import rebase_guided_text
@@ -3703,6 +4025,8 @@ def compile_editor_ops(
         camera_effects=state.camera_effects if "camera_effects" in changed else None,
         sound_effects=state.sound_effects if "sound_effects" in changed else None,
         media_overlays=state.media_overlays if "media_overlays" in changed else None,
+        user_song=EditorCommitUserSong(**state.user_song) if "user_song" in changed else None,
+        **(state.video_shape if "video_shape" in changed and state.video_shape else {}),
         **background_section,
     )
     text_diff: list[dict[str, Any]] = []
@@ -3773,7 +4097,7 @@ def _before_lanes(
                 else True,
             )
             if key == "enabled"
-            else variant.get(f"caption_{key}")
+            else variant.get(_CAPTION_META_VARIANT_KEYS.get(key, f"caption_{key}"))
             for key in state.caption_patch
             if key != "font_set"
         }
@@ -3799,6 +4123,23 @@ def _before_lanes(
         before["speaker_background"] = copy.deepcopy(background_current(state.job, variant))
     if "color_moments" in changed:
         before["color_moments"] = copy.deepcopy(variant.get("color_moments"))
+    if "video_shape" in changed:
+        from app.agents.editor_ops_v2.video_shape import current_shape  # noqa: PLC0415
+
+        before.update(
+            {
+                key: value
+                for key, value in current_shape(state.job, variant).items()
+                if key in (state.video_shape or {})
+            }
+        )
+    if "user_song" in changed:
+        from app.agents.editor_ops_v2.user_song import DRAFT_KEY  # noqa: PLC0415
+
+        # The creator's own unsaved section, not the song as it plays: a restore writes it back
+        # as the Save section, and an empty one is the saved song (KRI-1384).
+        draft_song = variant.get(DRAFT_KEY)
+        before["user_song"] = copy.deepcopy(draft_song) if isinstance(draft_song, dict) else {}
     if "mix" in changed:
         mix: dict[str, Any] = {}
         if state.mix_level is not None and variant.get("mix") is not None:
@@ -3819,6 +4160,73 @@ def _before_lanes(
     if state.visual_blocks is not None:
         before["visual_blocks"] = copy.deepcopy(variant.get("visual_blocks") or [])
     return before
+
+
+def validate_ops_per_op(
+    job: Any,
+    variant: dict[str, Any],
+    ops: list[dict],
+    *,
+    pool_assets: Mapping[str, str] | None = None,
+) -> tuple[list[dict], list[tuple[dict, str]]]:
+    """Split a bundle into the ops the editor compiles and the ones it refuses, with why.
+
+    ``compile_editor_ops`` is all-or-nothing, so one refused op used to sink every sibling
+    after the copilot turn had ended (KRI-1387). The whole bundle is tried first. When it
+    fails, ops are added in order and each is kept only while the bundle so far compiles.
+    Indices resolve against the original snapshot, so dropping an op never moves what a later
+    op targets. A text-timing conflict asks the creator, so it passes through to the runtime,
+    and so does an over-long bundle, which the planner refuses as a whole.
+    """
+
+    def refusal(bundle: list[dict]) -> str | None:
+        try:
+            compile_editor_ops(
+                job, copy.deepcopy(variant), copy.deepcopy(bundle), pool_assets=pool_assets
+            )
+        except TextTimingConflict:
+            return None
+        except KriaEditorOpError as exc:
+            return str(exc).strip() or "the editor refused it"
+        return None
+
+    if not ops or len(coalesce_text_style_ops(ops)) > MAX_EDITOR_OPS or refusal(ops) is None:
+        return list(ops), []
+    kept: list[dict] = []
+    refused: list[tuple[dict, str]] = []
+    for op in ops:
+        error = refusal([*kept, op])
+        if error is None:
+            kept.append(op)
+        else:
+            refused.append((op, error))
+    return kept, refused
+
+
+def editor_compile_check(
+    job: Any,
+    variant: dict[str, Any],
+    *,
+    pool_assets: Mapping[str, str] | None = None,
+) -> Callable[[list[dict]], tuple[list[dict], list[tuple[dict, str]]]]:
+    """``validate_ops_per_op`` bound to a detached copy of the draft's job and variant.
+
+    The copilot parses in a worker thread after the caller's session rolled back, so the
+    check must never touch the ORM row.
+    """
+    from sqlalchemy import inspect as sa_inspect  # noqa: PLC0415
+    from sqlalchemy.exc import NoInspectionAvailable  # noqa: PLC0415
+
+    try:
+        columns = sa_inspect(job).mapper.column_attrs
+    except NoInspectionAvailable:
+        detached = copy.deepcopy(job)
+    else:
+        detached = SimpleNamespace(
+            **{column.key: copy.deepcopy(getattr(job, column.key)) for column in columns}
+        )
+    frozen, pool = copy.deepcopy(variant), dict(pool_assets or {})
+    return lambda ops: validate_ops_per_op(detached, frozen, ops, pool_assets=pool)
 
 
 def apply_text_lane_ops(
@@ -3888,5 +4296,7 @@ __all__ = [
     "clip_seen_by_media_id",
     "coalesce_text_style_ops",
     "compile_editor_ops",
+    "editor_compile_check",
     "register_handler",
+    "validate_ops_per_op",
 ]

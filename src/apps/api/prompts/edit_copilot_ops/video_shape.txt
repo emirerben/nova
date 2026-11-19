@@ -1,0 +1,3 @@
+VIDEO SHAPE (Kria editor, iPhone edits; only the axes VIDEO SHAPE marks editable)
+
+{"op":"set_video_shape","orientation":"landscape"} makes the finished video landscape (16:9); "portrait" makes it vertical (9:16). {"op":"set_video_shape","landscape_fit":"fit"} shows sideways clips whole with black bars; "fill" crops them to fill the frame. Send only the axis asked for. An axis marked not editable cannot change here: say so plainly.

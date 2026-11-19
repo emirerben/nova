@@ -7,9 +7,9 @@ function of the phone editor session (``NativeEditorSession.swift`` and the file
 it: ``NativeEditorRetiming.swift``, ``NativeTextEditing.swift``) belongs to exactly one group,
 and a group is one of
 
-* ``agent_ops``: the edit reaches the agent through these ops (names checked against the copilot's
-  op set) and, when ``fields`` is set, through those fields of them (checked against what the
-  copilot's parser accepts), or
+* ``agent_ops``: the edit reaches the agent through these ops on an iPhone-rendered edit (names
+  checked against the copilot's op set) and, when ``fields`` is set, through those fields of
+  them (checked against what the copilot's parser accepts), or
 * ``agent_unsupported``: a person can, the agent cannot yet, with the reason written down, or
 * ``not_an_edit``: playback, selection, loading, saving and read-only queries.
 
@@ -19,6 +19,12 @@ op the copilot does not have or a field none of its ops accepts. Adding an edito
 therefore forces the question "can the agent do this?" in the same change. Name ``fields``
 whenever the op is broader than the action: an op name alone once claimed caption animation
 while ``set_caption_meta`` refused ``animation_phases``.
+
+Names are not enough either (KRI-1388): seven groups once passed every check above and still
+could not run from iPhone chat. The same test builds a device snapshot for every op of every
+``agent_ops`` group, runs the real parser and compiler on it, and fails when one is refused. An
+``agent_unsupported`` group with a phone probe must be refused there, so the table cannot
+understate either.
 """
 
 from __future__ import annotations
@@ -72,13 +78,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "setCaptionEnabled toggleCaptions setCaptionStyle setCaptionFont setCaptionColor "
         "setCaptionHighlightColor setCaptionSize setCaptionPositionY setCaptionShadowEnabled "
         "setCaptionStrokeWidth setCaptionAppearance",
+        # Not patch_text_appearance: the chat snapshot models text bars only, never caption
+        # targets (`_text_appearance_inventory`), so caption looks go through set_caption_meta.
         (
             "edit_caption",
             "replace_caption_text",
             "set_caption_meta",
             "set_caption_timing",
             "set_caption_emphasis",
-            "patch_text_appearance",
         ),
     ),
     # All captions only: one line's animation (`CaptionAnimationScope.line`) has no agent op.
@@ -88,12 +95,38 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("set_caption_meta",),
         fields=("animation_phases",),
     ),
+    # KRI-1394: one line (`line_overrides[<cue id>]`) or every line, as writeCaptionStyle writes
+    # it. A line is addressed by cue id, so captions kept as text rows (no cue list) are not
+    # offered the family. finishCaptionGesture's "apply to all" is the same op with all: true.
     "caption_style_scope": _g(
-        "agent_unsupported",
+        "agent_ops",
         "setCaptionGesturePosition setCaptionGestureSize finishCaptionGesture "
         "setCaptionStyleSize placeCaptions",
-        reason="Scope-aware caption size and placement are native-only; agent caption ops "
-        "do not select or clear per-line placement overrides.",
+        ("patch_caption_line",),
+        fields=("cue_id", "all", "size_px", "position_x_frac", "position_y_frac"),
+    ),
+    # KRI-1501: the translated caption line (its own track under the spoken line). Chat turns it
+    # on only when the video is made (`caption_translation_request`, docs/pipelines/
+    # dual-captions.md); on an existing edit it is the editor's switch and track alone.
+    "caption_translation": _g(
+        "agent_unsupported",
+        "translateCaptions applyCaptionTranslation setCaptionTranslationEnabled "
+        "setCaptionTranslationText setCaptionTranslationColor setCaptionTranslationFont "
+        "setCaptionTranslationStroke setCaptionTranslationSize placeCaptionTranslation "
+        "setCaptionTranslationGesturePosition setCaptionTranslationGestureSize "
+        "writeTranslationStyle retranslateCaption",
+        reason="KRI-1501 ships the translated caption line through the creator's first ask (the "
+        "worker plans it) and the editor's translation switch (POST caption-translation, then "
+        "the Save's caption_meta.translation). No copilot op adds, restyles or rewrites it on "
+        "an existing edit yet.",
+    ),
+    "caption_translation_queries": _g(
+        "not_an_edit",
+        "captionTranslationSize captionTranslationIsAttached captionTranslationPosition "
+        "translationStill translationLayerID rememberCaptionGesture captionTranslationIsStale "
+        "captionTranslationParkTime savedCaptionCue",
+        reason="Read-only lookups the translated-line panel and gestures use, and the gesture "
+        "bookkeeping that the move or size step it records then writes.",
     ),
     # --------------------------------------------------------------- timeline
     "clip_trim_and_move": _g(
@@ -119,11 +152,17 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "addLibraryVisual placeEditorSource removeVisualSelection splitSelectedClip",
         ("remove_clip", "add_unused_sources", "split_clip", "remove_visual_media"),
     ),
-    "clip_look_and_transition": _g(
-        "agent_ops",
-        "setClipLookPreset updateClipLook setClipLookAdjustments setClipTransition "
-        "setTransitionAcrossVideo",
-        ("set_look_preset", "set_transition", "apply_custom_effect"),
+    "clip_transition": _g(
+        "agent_ops", "setClipTransition setTransitionAcrossVideo", ("set_transition",)
+    ),
+    "clip_look": _g(
+        "agent_unsupported",
+        "setClipLookPreset updateClipLook setClipLookAdjustments",
+        reason="A phone-rendered edit cannot carry a clip look: its capability map closes "
+        "clips.looks (golden_hour compiles only on exact-canvas, unrotated sources) and the "
+        "editor refuses one on device (NativeEditorSession.canSetClipLook). Chat's FFmpeg "
+        "custom effects (apply_custom_effect) are cloud-only: the phone recipe has no field "
+        "for them (phone_authored_timeline refuses custom_effects).",
     ),
     "clip_speed": _g(
         "agent_ops",
@@ -134,7 +173,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "motion_speed": _g(
         "agent_unsupported",
         "setMotionSpeed",
-        reason="Generated motion-scene speed has no agent op; footage playback rate is separate.",
+        reason="It sets motion_scenes[].motion.speed, and a phone edit has no motion scenes: "
+        "validate_phone_pilot_recipe refuses them and the authored phone compile refuses "
+        "motion_scenes (see visual_blocks_and_motion). Footage speed is clip_speed.",
     ),
     "clip_crop": _g(
         "agent_ops",
@@ -191,25 +232,97 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "split_screen_clip_offset": _g(
         "agent_ops",
-        "setSelectedSplitScreenOffset addSplitPanelClip",
+        "setSelectedSplitScreenOffset",
         ("assign_split_panel",),
         fields=("offset_s",),
     ),
-    "split_screen_remove": _g("agent_ops", "removeSelectedSplitScreen", ("remove_split_screen",)),
+    # KRI-1420: Add to panel places a source after the panel's last clip. Unlike the phone, chat
+    # grows the section to hold it (grow_section false keeps the length and cuts the clip).
+    "split_screen_panel_add": _g(
+        "agent_ops",
+        "addSplitPanelClip",
+        ("add_split_panel_clip",),
+        fields=("clip_index", "offset_s", "duration_s", "grow_section"),
+    ),
+    "split_screen_remove": _g(
+        "agent_ops", "removeSplitScreen", ("remove_split_screen",), fields=("keep_panel",)
+    ),
+    # Absorbing the ordinary clips is the section growing to the whole video and each clip joining
+    # the top panel at its place.
+    "split_screen_whole_video": _g(
+        "agent_ops",
+        "extendSplitToWholeVideo",
+        ("update_split_screen", "assign_split_panel"),
+        fields=("duration_s", "slot_index", "offset_s"),
+    ),
+    # Each copy is one assign_split_panel duplicate placed after the panel's last clip.
+    "split_screen_loop_fill": _g(
+        "agent_ops",
+        "loopFillSplitPanel",
+        ("assign_split_panel",),
+        fields=("duplicate", "offset_s"),
+    ),
+    # KRI-1394: the server port of splitFullScreenResult (app/kria/split_full_screen.py), equal to
+    # the phone's on tests/fixtures/split_full_screen.json; at_s is the playhead and panel the
+    # selected clip's panel. Refused on Talking source and narrated edits and where text the phone
+    # re-times lies over the section.
+    "split_screen_full_screen": _g(
+        "agent_ops",
+        "makeSplitFullScreen",
+        ("make_split_full_screen",),
+        fields=("section_id", "at_s", "side", "panel"),
+    ),
+    # KRI-1457: Fill with blank puts a colour block after the panel's last member (the phone fills
+    # the free time under the playhead; chat has no playhead, so it uses the time after the last
+    # member). Block colour recolours the selected block by its slot index.
+    "split_screen_blank": _g(
+        "agent_ops",
+        "fillSplitPanelWithBlank setSelectedBlankColor",
+        ("add_split_blank", "set_split_blank_color"),
+        fields=("offset_s", "duration_s", "color", "grow_section"),
+    ),
+    "split_screen_queries": _g(
+        "not_an_edit",
+        "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved "
+        "canFillSplitPanelWithBlank",
+        reason="Read-only checks the Split panel uses to decide what to offer.",
+    ),
     # ---------------------------------------------------------------- audio
     "music": _g(
         "agent_ops",
-        "setMusic removeMusic setMusicWindow setMusicLevel setMusicVolume setBackgroundMusic "
-        "setBackgroundMusicLevel",
-        ("swap_music", "remove_music", "set_mix"),
+        "removeMusic setMusicLevel setMusicVolume setBackgroundMusicLevel",
+        ("remove_music", "set_mix"),
     ),
-    "creator_song": _g(
+    "music_swap": _g(
         "agent_unsupported",
-        "setUserSongVolume setUserSongStart setUserSongEnd beginSongStartDrag moveSongStart "
-        "endSongStartDrag beginSongEndDrag moveSongEnd endSongEndDrag previewLipsyncSongTrim "
-        "applyLipsyncSongTrim removeUserSong",
-        reason="The creator's own song window and volume are set on the phone; the agent has "
-        "only the licensed-music ops (swap_music, set_mix).",
+        "setMusic setMusicWindow setBackgroundMusic",
+        reason="A phone-rendered edit keeps the song it was rendered with: the authored phone "
+        "compile only re-plays the pinned music asset, a guided phone plan refuses a music lane "
+        "(phone_guided_plan, musicBed) and the Talking and Voiceover Saves have no music "
+        "section. Chat can change the music level or remove it (set_mix, remove_music).",
+    ),
+    # KRI-1394: the Sounds tab's Save section (`user_song`). A drag's move step writes the same
+    # start or end as setUserSongStart / setUserSongEnd.
+    "creator_song": _g(
+        "agent_ops",
+        "setUserSongVolume setUserSongStart setUserSongEnd moveSongStart moveSongEnd "
+        "removeUserSong",
+        ("set_user_song",),
+        fields=("volume", "window_start_s", "window_end_s", "remove"),
+    ),
+    "creator_song_audition": _g(
+        "not_an_edit",
+        "beginSongStartDrag endSongStartDrag beginSongEndDrag endSongEndDrag "
+        "previewLipsyncSongTrim",
+        reason="Drag brackets (one undo step, the song audition) and the lip-sync trim preview "
+        "change nothing until the move or apply they bracket.",
+    ),
+    "creator_song_lipsync_trim": _g(
+        "agent_unsupported",
+        "applyLipsyncSongTrim",
+        reason="A lip-sync song's range is trimmed by cutting the video at the song-matched "
+        "points the phone plans (NativeLipsyncSongTrim.plan); the Save locks a lip-sync window "
+        "(user_song_lipsync_locked), so set_user_song refuses it and no op plans those cuts.",
     ),
     "sound_effects": _g(
         "agent_ops",
@@ -224,33 +337,46 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "setMediaOverlayScale setMediaOverlayTiming pasteImage",
         ("add_overlay", "patch_overlay", "remove_overlay", "set_overlay_display"),
     ),
+    # KRI-1394: z orders peers of one renderer pass (setLayerZ writes a dense `z`): the picture
+    # cards on top of a Talking speaker and the uploaded picture blocks. Text is its own pass
+    # above both on the phone, so moving a text layer changes nothing there.
     "layer_order": _g(
-        "agent_unsupported",
+        "agent_ops",
         "moveLayer reorderLayer moveVisualLayer setMediaOverlayZIndex",
-        reason="Stacking order of overlapping layers has no agent op.",
+        ("set_layer_order",),
+        fields=("layer", "z", "direction"),
     ),
     "visual_blocks_and_motion": _g(
-        "agent_ops",
+        "agent_unsupported",
         "addMotionComposition removeVisualBlock setVisualBlockDisplayMode "
         "setVisualBlockOverlayLayout setVisualBlockPreset setVisualBlockTiming "
         "setVisualBlockTransform setVisualEditorStyle setVisualTiming setMotionSceneTiming",
-        ("add_motion_block", "patch_motion_block", "remove_motion_block"),
+        reason="Motion scenes have no phone render lane: validate_phone_pilot_recipe refuses "
+        "them pending device parity and the authored phone compile refuses motion_scenes, so "
+        "the motion block ops are not in the phone's op families. Picture blocks are placed, "
+        "timed and styled by hand; chat only removes one (remove_visual_media, clip_add_remove).",
     ),
     "camera_effects": _g(
-        "agent_ops",
+        "agent_unsupported",
         "addCameraPulse setCameraEffectEasing setCameraEffectIntensity setCameraEffectTiming",
-        ("add_camera_effect", "patch_camera_effect", "remove_camera_effect"),
+        reason="The phone renderer refuses camera pulses pending device parity "
+        "(validate_phone_pilot_recipe, phone_authored_timeline) and a device edit closes "
+        "camera_effects. A cloud-rendered edit still takes add/patch/remove_camera_effect.",
     ),
     "drawing": _g(
         "agent_unsupported",
         "addDrawing appendDrawingStrokes recolorDrawing setDrawingDrawDuration setDrawingEntrance "
         "setDrawingExit setDrawingTiming setDrawingTransform previewDrawingInPlace",
-        reason="Freehand strokes are drawn by hand; the agent has no stroke authoring op.",
+        reason="New strokes are finger paths a chat request cannot describe. Recolouring, "
+        "timing, the entrance and exit and moving an existing drawing have no op yet: the "
+        "snapshot shows drawings read-only (count and windows).",
     ),
     "carousel": _g(
-        "agent_ops",
+        "agent_unsupported",
         "setCarouselPosition setCarouselMomentPosition removeCarouselMoment",
-        ("set_carousel_moment",),
+        reason="The phone cannot render a carousel moment: NativeEditorRenderCompiler throws "
+        "unsupportedLane(carousel), and the authored and Voiceover phone compiles refuse "
+        "carousel_moment. set_carousel_moment has no portable compile handler.",
     ),
     # The Talk-to-camera background (KRI-1117). The scanner counts only `func` declarations, so the
     # session's read helpers (`canEditSpeakerBackground`, `speakerBackground`,
@@ -273,13 +399,10 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # Qendresa item 16: the speaker full screen in their own take before the background / corner.
     # The planner writes it from the creator's first ask (`background_media.full_screen_opening`);
-    # the copilot ops keep it through every background change and `remove_background` clears it,
-    # but no chat op removes the opening alone yet.
+    # the copilot ops keep it through every background change. KRI-1394: chat takes the opening
+    # alone away (the full-screen window starting at 0, as removeFullScreenOpening does).
     "speaker_full_opening": _g(
-        "agent_unsupported",
-        "removeFullScreenOpening",
-        reason="Removing only the full-screen opening is editor-only; chat keeps it through every "
-        "background op and clears it with remove_background.",
+        "agent_ops", "removeFullScreenOpening", ("remove_full_screen_opening",)
     ),
     # Qendresa item 18: aim a screen-recording background at its text (left / centre / right and a
     # zoom). Chat reaches it with `set_background_focus`; the getter is a read-only query.
@@ -292,14 +415,25 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Selected occurrences accept custom frame geometry and the inherit preset. "
         "The legacy canvas-global overload still accepts named presets only in chat.",
     ),
+    # KRI-1394: the Save's `orientation` / `landscape_fit`, each axis where the editor opens it.
     "video_shape": _g(
-        "agent_unsupported",
+        "agent_ops",
         "setVideoShape",
-        reason="Portrait/landscape of a finished video is chosen on the phone; set_post_aspect "
-        "covers slide posts only.",
+        ("set_video_shape",),
+        fields=("orientation", "landscape_fit"),
     ),
     # --------------------------------------------------------------- history
-    "history": _g("agent_ops", "undo redo", ("undo_last_edit", "repeat_last_edit")),
+    # KRI-1384: every chat edit turn stores its pre-edit lanes; undo_last_edit puts them back
+    # while the editor still holds what the turn wrote (app.services.kria_editor_undo), offered
+    # to app builds at chat_undo_min_client_protocol.
+    "history": _g("agent_ops", "undo", ("undo_last_edit",)),
+    "redo": _g(
+        "agent_unsupported",
+        "redo",
+        reason="Redo after a chat undo is the editor's own redo stack; an undo turn stores no "
+        "restore record, so chat cannot redo or undo twice. repeat_last_edit replays the web "
+        "client's local op log, which iPhone chat does not have.",
+    ),
     # The creator's approval of a generated image stays native (the preview review). Chat places
     # one the creator already accepted: `overlays.asset_pool` lists only those, and a Save pins the
     # image before it accepts the card (`generated_overlay_pool`).
@@ -315,12 +449,6 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "overlayDocumentFingerprint",
         reason="Read-only proposal planning, identity checks and editor clock conversion.",
     ),
-    "concurrent_edit_conflict_choice": _g(
-        "agent_unsupported",
-        "resolveMergeConflicts",
-        reason="Choosing local or remote conflicting authored values requires the creator's "
-        "explicit choice; chat cannot silently discard either version.",
-    ),
     # ----------------------------------------------------------- not an edit
     "lifecycle_and_sync": _g(
         "not_an_edit",
@@ -333,7 +461,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "synchronizePromptRevision resumeRefreshSync refreshDeviceRender retryRender "
         "retryDeviceRender retryPreview retryPreviewRefresh rebaseCleanDraft "
         "applyPreviewVariant exportEditorState exportEditorStateSyncingDraft "
-        "exportDisplayedSourcePreview videoDownloadRoute showDeviceOutput useDeviceRendering "
+        "exportDisplayedSourcePreview exportSavedRecipe prepareVideoDownloadRoute handingOff "
+        "videoDownloadRoute showDeviceOutput useDeviceRendering "
         "useMediaUploads deviceRenderPresentationChanged installFinishedRenderPlayer "
         "handleMediaServicesReset handlePlayerItemFailure prepareSourcePreview "
         "prepareFixtureSourcePreview prepareGamedayFixture addGamedayFixtureClip "
@@ -342,7 +471,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "dismissPendingEditorImport retryPendingEditorImport refreshVisualLibrary "
         "pollVisualLibrary retryLibraryVisual loadSoundEffectCatalog end set "
         "auditPreviewWindow configureClipAudioForTesting configureReplacementSourcesForTesting "
-        "discardPlaybackForNewJobForTesting",
+        "discardPlaybackForNewJobForTesting finishScrubFramesForTesting "
+        "setResolvedSourcesForTesting setPendingAddAdmissionForTesting previewSourceURLForTesting",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
     ),
     "background_tool_navigation": _g(
@@ -371,8 +501,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
-        "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
-        "tiltBackdropIsMissing "
+        "textElement textAnchor captionPosition captionStyleSize captionStill clipTilt "
+        "tiltBlockedReason tiltBackdropIsMissing "
         "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame "
         "speakerEditingFrame speakerFrame speakerFrameRect speakerSelection speakerViewport "
         "usesScopedSpeakerFrame ownsTimingGesture",

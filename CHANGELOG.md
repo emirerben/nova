@@ -2,6 +2,581 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.22.0] - 2026-11-19
+
+### Changed
+- fix(kria): keep shot directions out of montage text (#2385) <!-- release-pr: 2385 -->
+
+## [0.89.21.0] - 2026-11-19
+
+### Changed
+- Use the same audio policy for song upload and attachment (#2384) <!-- release-pr: 2384 -->
+
+## [0.89.20.0] - 2026-11-19
+
+### Changed
+- fix(ios): let the chat text field handle caret drags (KRI-1279) (#2392) <!-- release-pr: 2392 -->
+
+## [0.89.19.0] - 2026-11-19
+
+### Changed
+- feat(ios): report phone render phase timings (KRI-1516) (#2391) <!-- release-pr: 2391 -->
+
+## [0.89.18.0] - 2026-11-19
+
+### Changed
+- chore(web): remove the web editor; keep landing, legal pages and admin (KRI-1398) (#2305) <!-- release-pr: 2305 -->
+
+## [0.89.17.0] - 2026-11-19
+
+### Changed
+- test(captions): ignore fontconfig cache noise in Arabic sweep test (KRI-1401) (#2301) <!-- release-pr: 2301 -->
+
+## [0.89.16.0] - 2026-11-19
+
+### Changed
+- fix(ci): back to two API shards; four pushed a 53-second test into its 60-second timeout (KRI-1539) (#2395) <!-- release-pr: 2395 -->
+
+## [0.89.15.0] - 2026-11-19
+
+### Changed
+- fix(ci): the CI_MAC_SELECTION rollback also undoes manifest and .env.example narrowing (KRI-1541) (#2394) <!-- release-pr: 2394 -->
+
+## [0.89.14.0] - 2026-11-19
+
+### Changed
+- fix(kria): Talking captions measure a letterboxed take where the phone draws it (KRI-1525) (#2379) <!-- release-pr: 2379 -->
+
+## [0.89.13.0] - 2026-11-19
+
+### Changed
+- fix(kria): crop follows the person in no-face sideways clips; say a split sentence once (KRI-1514, KRI-1515) (#2377) <!-- release-pr: 2377 -->
+
+## [0.89.12.0] - 2026-11-19
+
+### Changed
+- fix(kria): Cusco T3 stickers: draft names an unsaid trigger before approval; pause cuts keep sticker holds (KRI-1510, KRI-1511) (#2375) <!-- release-pr: 2375 -->
+
+## [0.89.11.0] - 2026-11-19
+
+### Fixed
+- fix(cleanup): cut a restarted sentence only when it is said again in what stays (KRI-1518) (#2378) <!-- release-pr: 2378 -->
+
+## [0.89.10.0] - 2026-11-19
+
+### Changed
+- feat(ci): a journey-manifest edit selects the rows it changed, not everything (KRI-1541) (#2393) <!-- release-pr: 2393 -->
+
+## [0.89.9.0] - 2026-11-19
+
+### Changed
+- feat(ci): a pull request starts a Mac only when it changes an iPhone input (KRI-1540) (#2390) <!-- release-pr: 2390 -->
+
+## [0.89.8.0] - 2026-11-19
+
+### Changed
+- chore(ci): run the API tests as four shards instead of two (KRI-1539) (#2389) <!-- release-pr: 2389 -->
+
+## [0.89.7.0] - 2026-11-19
+
+### Changed
+- feat(ci): shadow the Mac-only-when-an-iPhone-input-changed rule (KRI-1536) (#2388) <!-- release-pr: 2388 -->
+
+## [0.89.6.0] - 2026-11-19
+
+### Changed
+- chore(ci): PRs skip the 172-second slide-post trim proof unless slide-post or render code changed (KRI-1537) (#2387) <!-- release-pr: 2387 -->
+
+## [0.89.5.0] - 2026-11-19
+
+### Changed
+- chore(ci): repeatable CI baseline for Mac-minutes and required-check wait (KRI-1535) (#2386) <!-- release-pr: 2386 -->
+
+## [0.89.4.0] - 2026-11-18
+
+### Changed
+- feat(ios): account-only watermark exemptions (KRI-1533) (#2383) <!-- release-pr: 2383 -->
+
+## [0.89.3.0] - 2026-11-18
+
+### Fixed
+- fix(ios): removed media stays in chat; swipe a chat media row to delete it (KRI-1454) (#2351) <!-- release-pr: 2351 -->
+
+## [0.89.2.0] - 2026-11-17
+
+### Changed
+- fix(kria): Qendresa Q1 run 4: ending no longer held, readable title above her face, centred card strip, done-list names unshown Visuals (KRI-1234) (#2381) <!-- release-pr: 2381 -->
+
+## [0.89.1.0] - 2026-11-17
+
+### Fixed
+- fix: a stuck Visual is re-sent and no longer blocks the chat (KRI-1469, KRI-1470) (#2380) <!-- release-pr: 2380 -->
+
+## [0.89.0.0] - 2026-11-16
+
+### Added
+- feat(kria): two-language captions — spoken line plus a smaller translated line on its own editor track (KRI-1501) (#2373) <!-- release-pr: 2373 -->
+
+## [0.88.262.0] - 2026-11-16
+
+### Changed
+- feat(agents): record behavioural fallbacks on agent_run and in the fleet report (KRI-1429) (#2372) <!-- release-pr: 2372 -->
+
+## [0.88.261.0] - 2026-11-16
+
+### Changed
+- fix(editor): save a new placement's look as none so a saved edit reopens (KRI-1500) (#2370) <!-- release-pr: 2370 -->
+
+## [0.88.260.0] - 2026-11-16
+
+### Changed
+- feat(dev-platform): replay a production creation job from its id (KRI-1375) (#2310) <!-- release-pr: 2310 -->
+
+## [0.88.259.0] - 2026-11-16
+
+### Changed
+- test(kria): fail when a planner field is dropped by a route without a card line (KRI-1429) (#2371) <!-- release-pr: 2371 -->
+
+## [0.88.258.0] - 2026-11-16
+
+### Changed
+- fix(kria): the model that reads the message decides the chat's reply language (KRI-1445) (#2368) <!-- release-pr: 2368 -->
+
+## [0.88.257.0] - 2026-11-16
+
+### Changed
+- fix(kria): adopt a pre-approval re-check's normalization, ask when it touches an ask (KRI-1445) (#2369) <!-- release-pr: 2369 -->
+
+## [0.88.256.0] - 2026-11-16
+
+### Changed
+- feat(kria): record refusal codes on turns and add a creation-health report (KRI-1382) (#2309) <!-- release-pr: 2309 -->
+
+## [0.88.255.0] - 2026-11-16
+
+### Changed
+- fix(kria): the thinking row names each step of a chat turn and keeps earlier rounds (KRI-1384) (#2326) <!-- release-pr: 2326 -->
+
+## [0.88.254.0] - 2026-11-16
+
+### Changed
+- fix(kria): degrade late text gates instead of failing the approved video (KRI-1376) (#2314) <!-- release-pr: 2314 -->
+
+## [0.88.253.0] - 2026-11-16
+
+### Added
+- feat(ios): iPhone screens in German and Turkish (KRI-1452) (#2347) <!-- release-pr: 2347 -->
+
+## [0.88.252.0] - 2026-11-16
+
+### Changed
+- fix(phone): degrade one bad row instead of refusing the video (KRI-1376) (#2312) <!-- release-pr: 2312 -->
+
+## [0.88.251.0] - 2026-11-16
+
+### Fixed
+- fix(kria): Çiğdem S2 "Cigdem 2" — keep the pace the creator names, cut a pause stamped onto the next sentence, tag a media-services reset (KRI-1494, KRI-1492, KRI-1497) (#2365) <!-- release-pr: 2365 -->
+
+## [0.88.250.0] - 2026-11-16
+
+### Changed
+- fix(kria): Çiğdem S1: no false holds on "use my video" or described pop-ins; captions and label off post text (KRI-1487) (#2364) <!-- release-pr: 2364 -->
+
+## [0.88.249.0] - 2026-11-16
+
+### Fixed
+- fix(ios): move captions and picture cards on the preview as smoothly as text (KRI-1441) (#2334) <!-- release-pr: 2334 -->
+
+## [0.88.248.0] - 2026-11-15
+
+### Fixed
+- fix(kria): German chat replies say whole German sentences (KRI-1408) (#2352) <!-- release-pr: 2352 -->
+
+## [0.88.247.0] - 2026-11-15
+
+### Changed
+- test(evals): re-record creative_direction just_fine fixture live (KRI-1428) (#2367) <!-- release-pr: 2367 -->
+
+## [0.88.246.0] - 2026-11-15
+
+### Fixed
+- fix(kria): Qendresa Q2 run 3: labels at their own item, no false holds, nothing on her corner face, full replies (KRI-1479) (#2363) <!-- release-pr: 2363 -->
+
+## [0.88.245.0] - 2026-11-15
+
+### Changed
+- test(evals): overlay_generation eval and an every-agent-has-an-eval guard (KRI-1428) (#2362) <!-- release-pr: 2362 -->
+
+## [0.88.244.0] - 2026-11-15
+
+### Fixed
+- fix(kria): withdrawn clips stay withdrawn, no needless Voiceover holds, named moments on the word (KRI-1464, KRI-1465, KRI-1466) (#2359) <!-- release-pr: 2359 -->
+
+## [0.88.243.0] - 2026-11-15
+
+### Changed
+- fix(kria): German Talking promises never hold the draft (KRI-1405) (#2348) <!-- release-pr: 2348 -->
+
+## [0.88.242.0] - 2026-11-15
+
+### Fixed
+- fix(ios): the editor no longer aborts when the live preview takes over the finished video (KRI-1404) (#2333) <!-- release-pr: 2333 -->
+
+## [0.88.241.0] - 2026-11-15
+
+### Changed
+- test(ios): editor-ready UI test waits for the background warm instead of 4 s (KRI-1467) (#2358) <!-- release-pr: 2358 -->
+
+## [0.88.240.0] - 2026-11-15
+
+### Changed
+- feat(api): chat places and recolours a split panel blank (KRI-1457) (#2355) <!-- release-pr: 2355 -->
+
+## [0.88.239.0] - 2026-11-15
+
+### Changed
+- fix(ios): write no source offset for a cut or left-trimmed photo (KRI-1440) (#2356) <!-- release-pr: 2356 -->
+
+## [0.88.238.0] - 2026-11-15
+
+### Fixed
+- fix(kria): Qendresa Q1 run 3: no false holds; captions, title, ending, labels and cards as asked (KRI-1468) (#2360) <!-- release-pr: 2360 -->
+
+## [0.88.237.0] - 2026-11-15
+
+### Changed
+- test(kria): German twins of the Turkish understanding tests + closed-list fixes (KRI-1453) (#2354) <!-- release-pr: 2354 -->
+
+## [0.88.236.0] - 2026-11-15
+
+### Changed
+- feat(notifications): push copy in the chat's language — EN/TR/DE (KRI-1144) (#2349) <!-- release-pr: 2349 -->
+
+## [0.88.235.0] - 2026-11-15
+
+### Changed
+- fix(kria): approval card fits one screen and arrives with its draft (KRI-1403) (#2346) <!-- release-pr: 2346 -->
+
+## [0.88.234.0] - 2026-11-15
+
+### Fixed
+- fix(api): room hum no longer holds a take join open (KRI-1409) (#2345) <!-- release-pr: 2345 -->
+
+## [0.88.233.0] - 2026-11-15
+
+### Changed
+- test(ios): two split-panel editor UI tests allow for #2315's scroll and handle changes (KRI-1379) (#2361) <!-- release-pr: 2361 -->
+
+## [0.88.232.0] - 2026-11-15
+
+### Changed
+- chore(ci): derive journey and UI test registries from the tests (KRI-1380) (#2308) <!-- release-pr: 2308 -->
+
+## [0.88.231.0] - 2026-11-14
+
+### Changed
+- refactor(editor): one source for clip, rate, fps and text-piece limits (KRI-1377) (#2313) <!-- release-pr: 2313 -->
+
+## [0.88.230.0] - 2026-11-14
+
+### Fixed
+- fix(kria): a text question reaches the creator and failures show their reason (KRI-1456) (#2357) <!-- release-pr: 2357 -->
+
+## [0.88.229.0] - 2026-11-14
+
+### Fixed
+- fix(ios): keep the timeline glide out of editor UI tests so main is green again (KRI-1450) (#2344) <!-- release-pr: 2344 -->
+
+## [0.88.228.0] - 2026-11-14
+
+### Changed
+- feat(dev): one script assigns the client protocol number, tests stop hard-coding it (KRI-1381) (#2307) <!-- release-pr: 2307 -->
+
+## [0.88.227.0] - 2026-11-14
+
+### Changed
+- fix(kria): one requested text makes one on-screen text (KRI-1424) (#2341) <!-- release-pr: 2341 -->
+
+## [0.88.226.0] - 2026-11-14
+
+### Changed
+- test(evals): pin agent fixtures to the prompt they were recorded for (KRI-1428) (#2350) <!-- release-pr: 2350 -->
+
+## [0.88.225.0] - 2026-11-14
+
+### Changed
+- fix(kria): readiness's "simpler version?" hold carries its card and yes drafts it (KRI-1447) (#2342) <!-- release-pr: 2342 -->
+
+## [0.88.224.0] - 2026-11-14
+
+### Changed
+- fix(kria): pasted lyrics no longer move the chat language (KRI-1448) (#2343) <!-- release-pr: 2343 -->
+
+## [0.88.223.0] - 2026-11-14
+
+### Changed
+- ci: block the third fix PR on a ticket without a failure-mode list (KRI-1383) (#2302) <!-- release-pr: 2302 -->
+
+## [0.88.222.0] - 2026-11-14
+
+### Changed
+- feat(ios): a picked clip appears at once and uploads behind it (KRI-1419) (#2336) <!-- release-pr: 2336 -->
+
+## [0.88.221.0] - 2026-11-14
+
+### Changed
+- chore(agents): delete four dead agents with no production caller (KRI-1428) (#2335) <!-- release-pr: 2335 -->
+
+## [0.88.220.0] - 2026-11-14
+
+### Changed
+- fix(kria): a length the creator never stated never blocks the video (KRI-1446) (#2339) <!-- release-pr: 2339 -->
+
+## [0.88.219.0] - 2026-11-14
+
+### Changed
+- feat(ios): fill a split panel with a blank block (KRI-1421) (#2338) <!-- release-pr: 2338 -->
+
+## [0.88.218.0] - 2026-11-14
+
+### Changed
+- fix(kria): a "yes" reply keeps the caption quoted from earlier messages (KRI-1445) (#2340) <!-- release-pr: 2340 -->
+
+## [0.88.217.0] - 2026-11-14
+
+### Changed
+- fix(api): admit a picked photo once its bytes are verified (KRI-1419) (#2332) <!-- release-pr: 2332 -->
+
+## [0.88.216.0] - 2026-11-14
+
+### Changed
+- fix(api): the AI can put several clips in one split-screen panel (KRI-1420) (#2327) <!-- release-pr: 2327 -->
+
+## [0.88.215.0] - 2026-11-14
+
+### Changed
+- fix(ios): split picker tabs, tile progress and preview ghosts (KRI-1417) (#2331) <!-- release-pr: 2331 -->
+
+## [0.88.214.0] - 2026-11-14
+
+### Changed
+- fix(api): one table proves every editor capability saves (KRI-1423) (#2329) <!-- release-pr: 2329 -->
+
+## [0.88.213.0] - 2026-11-14
+
+### Changed
+- fix(ios): split divider moves the video panels while the finger is down (KRI-1418) (#2330) <!-- release-pr: 2330 -->
+
+## [0.88.212.0] - 2026-11-14
+
+### Changed
+- fix(api): a photo the creator cut or trimmed saves on the phone (KRI-1423) (#2328) <!-- release-pr: 2328 -->
+
+## [0.88.211.0] - 2026-11-14
+
+### Changed
+- fix(kria): undo a chat song change and stage a chat landscape_fit on iPhone (#2325) <!-- release-pr: 2325 -->
+
+## [0.88.210.0] - 2026-11-14
+
+### Changed
+- fix(ios): the editor keeps a chat song change (KRI-1394) (#2320) <!-- release-pr: 2320 -->
+
+## [0.88.209.0] - 2026-11-14
+
+### Changed
+- fix(kria): the model, not word lists, picks edit or rebuild (KRI-1392) (#2324) <!-- release-pr: 2324 -->
+
+## [0.88.208.0] - 2026-11-14
+
+### Changed
+- fix(kria): chat "undo that" for caption lines, picture blocks and video shape (KRI-1384) (#2322) <!-- release-pr: 2322 -->
+
+## [0.88.207.0] - 2026-11-14
+
+### Changed
+- KRI-1381: derive persona, plan and six more prompt versions from their source files (#2306) <!-- release-pr: 2306 -->
+
+## [0.88.206.0] - 2026-11-14
+
+### Changed
+- feat(kria): chat makes part of a split screen full screen on iPhone (KRI-1394) (#2323) <!-- release-pr: 2323 -->
+
+## [0.88.205.0] - 2026-11-14
+
+### Changed
+- fix(kria): EDIT_COPILOT_MODEL moves only the chat turn (KRI-1384) (#2321) <!-- release-pr: 2321 -->
+
+## [0.88.204.0] - 2026-11-14
+
+### Changed
+- docs(KRI-1383): fix stale rule references and list text-only rules (#2303) <!-- release-pr: 2303 -->
+
+## [0.88.203.0] - 2026-11-14
+
+### Changed
+- feat(kria): chat "undo that" on the iPhone (KRI-1384) (#2316) <!-- release-pr: 2316 -->
+
+## [0.88.202.0] - 2026-11-14
+
+### Changed
+- ci(evidence): pin PR evidence to the patch, not the head commit (KRI-1380) (#2304) <!-- release-pr: 2304 -->
+
+## [0.88.201.0] - 2026-11-14
+
+### Changed
+- fix(ios): open the camera with the script and stop two UI test races (KRI-1379) (#2318) <!-- release-pr: 2318 -->
+
+## [0.88.200.0] - 2026-11-14
+
+### Changed
+- feat(kria): the chat copilot on typed tool calls, and Gemini vs Sol vs Sonnet on them (KRI-1393, KRI-797) (#2319) <!-- release-pr: 2319 -->
+
+## [0.88.199.0] - 2026-11-14
+
+### Fixed
+- fix(ios): split-screen editor UX, scroll hints, disabled reasons, delete confirm (KRI-1399) (#2315) <!-- release-pr: 2315 -->
+
+## [0.88.198.0] - 2026-11-14
+
+### Changed
+- fix(ios): drag gestures reset on system cancel and finish with release-velocity physics (KRI-1410) (#2317) <!-- release-pr: 2317 -->
+
+## [0.88.197.0] - 2026-11-13
+
+### Changed
+- feat(kria): chat edits the creator's song, one caption line, layer order, the full-screen opening and the video shape on iPhone (KRI-1394) (#2311) <!-- release-pr: 2311 -->
+
+## [0.88.196.0] - 2026-11-13
+
+### Fixed
+- fix(ios): split-screen editor photo extension, full screen, photo cut, preview error (KRI-1399) (#2299) <!-- release-pr: 2299 -->
+
+## [0.88.195.0] - 2026-11-13
+
+### Changed
+- test(kria): prove editor parity on a phone snapshot (KRI-1388) (#2300) <!-- release-pr: 2300 -->
+
+## [0.88.194.0] - 2026-11-13
+
+### Changed
+- feat(dev): ci-triage skill that runs itself when CI goes red (#2296) <!-- release-pr: 2296 -->
+
+## [0.88.193.0] - 2026-11-13
+
+### Changed
+- feat(agents): fleet report, owner-less agent runs, metered OpenAI calls (KRI-1395) (#2298) <!-- release-pr: 2298 -->
+
+## [0.88.192.0] - 2026-11-13
+
+### Changed
+- fix(agents): Main Creator prompt that gpt-6.1-sol reads as Gemini does (KRI-1384) (#2297) <!-- release-pr: 2297 -->
+
+## [0.88.191.0] - 2026-11-13
+
+### Changed
+- perf(ios): prepare a recorded take while it is reviewed so Use take is quicker (KRI-1184) (#2220) <!-- release-pr: 2220 -->
+
+## [0.88.190.0] - 2026-11-13
+
+### Changed
+- fix(ci): close merge-guard hook bypasses and fail closed (KRI-1396) (#2293) <!-- release-pr: 2293 -->
+
+## [0.88.189.0] - 2026-11-13
+
+### Changed
+- ci: select the API suite for the creation-fixture script and catch Path joins (KRI-1397) (#2294) <!-- release-pr: 2294 -->
+
+## [0.88.188.0] - 2026-11-13
+
+### Changed
+- test(kria): request-following baseline recorded on the live copilot (KRI-1389) (#2289) <!-- release-pr: 2289 -->
+
+## [0.88.187.0] - 2026-11-13
+
+### Changed
+- feat(kria): apply a chat edit's valid ops and repair the rejected ones (KRI-1386, KRI-1387) (#2291) <!-- release-pr: 2291 -->
+
+## [0.88.186.0] - 2026-11-13
+
+### Changed
+- chore(agents): keep agents out of the frozen web app (KRI-1398) (#2295) <!-- release-pr: 2295 -->
+
+## [0.88.185.0] - 2026-11-13
+
+### Changed
+- feat(agents): one model registry and a safe non-Gemini Main Creator (KRI-1385) (#2290) <!-- release-pr: 2290 -->
+
+## [0.88.184.0] - 2026-11-13
+
+### Changed
+- fix(ci): cap PR UI shards at three, rerun only the abandoned job (KRI-1379) (#2292) <!-- release-pr: 2292 -->
+
+## [0.88.183.0] - 2026-11-13
+
+### Changed
+- feat(kria): show the copilot spoken words, pauses and song beats (KRI-1391) (#2288) <!-- release-pr: 2288 -->
+
+## [0.88.182.0] - 2026-11-13
+
+### Changed
+- fix(kria): the edit copilot never refuses a stated length over word-by-word text (KRI-1373) (#2283) <!-- release-pr: 2283 -->
+
+## [0.88.181.0] - 2026-11-13
+
+### Changed
+- test(ios): fix three flaky iPhone unit tests at the cause (KRI-1379) (#2287) <!-- release-pr: 2287 -->
+
+## [0.88.180.0] - 2026-11-13
+
+### Changed
+- ci(ios): nightly shard timeouts, hashFiles limit, abandoned-runner gate (KRI-1379) (#2284) <!-- release-pr: 2284 -->
+
+## [0.88.179.0] - 2026-11-13
+
+### Changed
+- test(ios): drag the transcript, not the keyboard bar, in the first-prompt chips scroll test (KRI-1379) (#2285) <!-- release-pr: 2285 -->
+
+## [0.88.178.0] - 2026-11-13
+
+### Changed
+- ci: run the API tests on iPhone changes (KRI-1371) (#2281) <!-- release-pr: 2281 -->
+
+## [0.88.177.0] - 2026-11-13
+
+### Changed
+- feat(agents): block agent merges unless every check is green (KRI-1372) (#2282) <!-- release-pr: 2282 -->
+
+## [0.88.176.0] - 2026-11-13
+
+### Changed
+- feat(split-screen): close the gaps between the prototype and the app (KRI-1335) (#2280) <!-- release-pr: 2280 -->
+
+## [0.88.175.0] - 2026-11-12
+
+### Changed
+- fix(kria): let word-by-word text shrink to one frame per word (KRI-1370) (#2279) <!-- release-pr: 2279 -->
+
+## [0.88.174.0] - 2026-11-12
+
+### Fixed
+- test(ios): the Cinematic availability test compiles for a real device (#2275) <!-- release-pr: 2275 -->
+
+## [0.88.173.0] - 2026-11-12
+
+### Changed
+- fix(kria): server reports whether a draft is current, codes Save refusals, repairs stranded saved drafts (KRI-1367) (#2278) <!-- release-pr: 2278 -->
+
+## [0.88.172.0] - 2026-11-12
+
+### Fixed
+- perf(ios): overlap frames in the on-device Talking export, about 1.9x faster (KRI-1185) (#2277) <!-- release-pr: 2277 -->
+
+## [0.88.171.0] - 2026-11-12
+
+### Changed
+- fix(ios): editor always shows the latest version; remove the conflict-choice state (KRI-1367) (#2276) <!-- release-pr: 2276 -->
+
 ## [0.88.170.0] - 2026-11-11
 
 ### Changed

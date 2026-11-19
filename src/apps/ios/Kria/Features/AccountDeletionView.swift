@@ -107,7 +107,7 @@ struct AccountDeletionView: View {
                 idToken: verified.token, nonce: appleNonce, authorizationCode: code
             ))
         } catch {
-            deletion.reportAuthorizationError("Apple authorization wasn’t completed. Your account has not been deleted. Try again when you’re ready.")
+            deletion.reportAuthorizationError(String(localized: "Apple authorization wasn’t completed. Your account has not been deleted. Try again when you’re ready."))
         }
     }
 }

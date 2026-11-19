@@ -48,11 +48,11 @@ struct CameraRollContentPlan: Codable, Sendable {
     }
     var formLabel: String? {
         switch form ?? "" {
-        case "guide": "Guide"
-        case "factual_story": "Fact story"
-        case "atmosphere": "Atmosphere"
-        case "review": "Review"
-        case "performance": "Performance"
+        case "guide": String(localized: "Guide", comment: "Kind of story: how-to guide")
+        case "factual_story": String(localized: "Fact story")
+        case "atmosphere": String(localized: "Atmosphere")
+        case "review": String(localized: "Review", comment: "Kind of story: product or place review")
+        case "performance": String(localized: "Performance", comment: "Kind of story: a performance, e.g. music or sport")
         default: nil
         }
     }

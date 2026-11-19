@@ -5,6 +5,7 @@ A fixture is a JSON file with the shape:
     {
       "agent": "nova.compose.template_recipe",
       "prompt_version": "2026-05-09",
+      "prompt_sha": "<sha of the prompt the model was sent>",
       "input": {...},                       # ClipMetadataInput / TemplateRecipeInput / ...
       "raw_text": "<recorded model response>",
       "output": {...},                      # parsed Output (sanity, also used by judge)
@@ -18,6 +19,7 @@ judge, and returns an EvalResult.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Callable, Iterator
@@ -37,7 +39,17 @@ from app.agents._runtime import (
 from .llm_judge import JudgeResult, LLMJudge
 from .structural import run_structural
 
+
+def prompt_sha(prompt: str) -> str:
+    """Fingerprint of the exact prompt text a model call was sent (16 hex chars)."""
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+
+
 EVAL_FIXTURES_ROOT = Path(__file__).parent.parent.parent / "fixtures" / "agent_evals"
+# A fixture marked "unpinned" replays a historical answer through the parser and compiler and
+# is not checked against the prompt. Each one is listed in unpinned.json; that list only shrinks.
+UNPINNED = "unpinned"
+UNPINNED_LIST = EVAL_FIXTURES_ROOT / "unpinned.json"
 RUBRIC_ROOT = Path(__file__).parent.parent / "rubrics"
 
 
@@ -53,6 +65,7 @@ class Fixture:
     raw_text: str
     output: dict[str, Any]
     meta: dict[str, Any]
+    prompt_sha: str = ""
 
     @property
     def fixture_id(self) -> str:
@@ -74,6 +87,7 @@ def load_fixture(path: Path) -> Fixture:
         raw_text=data["raw_text"],
         output=data.get("output", {}),
         meta=data.get("meta", {}),
+        prompt_sha=data.get("prompt_sha", ""),
     )
 
 
@@ -124,15 +138,12 @@ class CassetteModelClient(ModelClient):
     to replay the recorded response.
     """
 
-    # A cassette holds exactly one recorded response, so an agent must not
-    # spend a targeted clarification retry against it (see EditCopilotAgent).
-    supports_clarification_retry = False
-
     def __init__(self, raw_text: str, *, tokens_in: int = 0, tokens_out: int = 0) -> None:
         self.raw_text = raw_text
         self.tokens_in = tokens_in
         self.tokens_out = tokens_out
         self.invocations = 0
+        self.prompt_sha: str | None = None
 
     def invoke(
         self,
@@ -148,6 +159,8 @@ class CassetteModelClient(ModelClient):
         timeout_s: float = 30.0,
     ) -> ModelInvocation:
         self.invocations += 1
+        if self.invocations == 1:
+            self.prompt_sha = prompt_sha(prompt)
         if self.invocations > 1:
             raise TerminalError("CassetteModelClient: agent retried more than once during replay")
         return ModelInvocation(
@@ -164,10 +177,12 @@ class RecordingModelClient(ModelClient):
     def __init__(self, delegate: ModelClient) -> None:
         self.delegate = delegate
         self.invocations: list[ModelInvocation] = []
+        self.prompt_shas: list[str] = []
 
     def invoke(self, **kwargs: Any) -> ModelInvocation:
         invocation = self.delegate.invoke(**kwargs)
         self.invocations.append(invocation)
+        self.prompt_shas.append(prompt_sha(kwargs["prompt"]))
         return invocation
 
 
@@ -283,18 +298,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.clip_router import ClipRouterAgent
 
         return ClipRouterAgent
-    if agent_name == "nova.video.shot_ranker":
-        from app.agents.shot_ranker import ShotRankerAgent
-
-        return ShotRankerAgent
     if agent_name == "nova.layout.text_designer":
         from app.agents.text_designer import TextDesignerAgent
 
         return TextDesignerAgent
-    if agent_name == "nova.layout.transition_picker":
-        from app.agents.transition_picker import TransitionPickerAgent
-
-        return TransitionPickerAgent
     if agent_name == "nova.compose.overlay_format_matcher":
         from app.agents.overlay_format_matcher import OverlayFormatMatcherAgent
 
@@ -451,6 +458,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.landmark_guess import LandmarkGuessAgent
 
         return LandmarkGuessAgent
+    if agent_name == "nova.editor.overlay_generation":
+        from app.agents.overlay_generation import OverlayGenerationAgent
+
+        return OverlayGenerationAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 
@@ -486,6 +497,39 @@ def _shadow_prompts(shadow_dir: Path) -> Iterator[None]:
         prompt_loader._get_raw = original_get_raw  # type: ignore[assignment]
         prompt_loader._cache.clear()
         prompt_loader._cache.update(original_cache)
+
+
+def _stale_prompt_error(fixture: Fixture, client: ModelClient) -> str | None:
+    """Replay only: the cassette answered a prompt other than the one it was recorded for."""
+    if not isinstance(client, CassetteModelClient) or client.prompt_sha is None:
+        return None
+    if fixture.prompt_sha == UNPINNED or not fixture.path.is_relative_to(EVAL_FIXTURES_ROOT):
+        return None  # only the agent_evals tree is pinned; other harnesses own their fixtures
+    if client.prompt_sha == fixture.prompt_sha:
+        return None
+    recorded = fixture.prompt_sha or "none"
+    return (
+        f"stale fixture {fixture.fixture_id}: recorded for prompt {recorded}, the agent now "
+        f"sends {client.prompt_sha}. Re-record it with a live run (NOVA_EVAL_CAPTURE_DIR, see "
+        "tests/evals/README.md). If the prompt change cannot change this answer, re-stamp it "
+        f"with `python scripts/stamp_eval_fixtures.py --agent "
+        f"{fixture.path.relative_to(EVAL_FIXTURES_ROOT).parts[0]}`."
+    )
+
+
+def current_prompt_sha(fixture: Fixture) -> str | None:
+    """The prompt fingerprint the agent sends today for this fixture's input.
+
+    Runs the agent against the recorded answer, so it sees exactly what `run_eval`
+    compares. None when the agent never reached the model (invalid input).
+    """
+    client = CassetteModelClient(fixture.raw_text)
+    agent = _build_agent_class_for(fixture.agent)(client)
+    try:
+        agent.run(fixture.input, ctx=build_eval_run_context(fixture.fixture_id, is_live=False))
+    except Exception:  # noqa: BLE001 — a parse failure still sent the prompt
+        pass
+    return client.prompt_sha
 
 
 def run_eval(
@@ -542,6 +586,14 @@ def run_eval(
     try:
         output = agent.run(effective_input, ctx=eval_ctx)
     except Exception as exc:
+        stale = _stale_prompt_error(fixture, client)
+        if stale is not None:
+            return EvalResult(
+                fixture_id=fixture.fixture_id,
+                agent=fixture.agent,
+                prompt_version=fixture.prompt_version,
+                error=stale,
+            )
         capture_root = os.environ.get("NOVA_EVAL_CAPTURE_DIR")
         if recording_client is not None and capture_root and recording_client.invocations:
             capture_stem = fixture.path.stem
@@ -577,6 +629,15 @@ def run_eval(
             agent=fixture.agent,
             prompt_version=fixture.prompt_version,
             error=f"agent.run failed: {exc}",
+        )
+
+    stale = _stale_prompt_error(fixture, client)
+    if stale is not None:
+        return EvalResult(
+            fixture_id=fixture.fixture_id,
+            agent=fixture.agent,
+            prompt_version=fixture.prompt_version,
+            error=stale,
         )
 
     validated_input = agent.Input.model_validate(effective_input)
@@ -620,6 +681,7 @@ def run_eval(
         capture = {
             "agent": fixture.agent,
             "prompt_version": agent.spec.prompt_version,
+            "prompt_sha": recording_client.prompt_shas[-1],
             "input": fixture.input,
             "raw_text": recording_client.invocations[-1].raw_text,
             "output": result.output,

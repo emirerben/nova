@@ -1,0 +1,319 @@
+{
+  "fixtures": 47,
+  "ran": 47,
+  "passed": 3,
+  "failure_categories": {
+    "asked instead of proposing": 14,
+    "requirement not extracted (brief_updates)": 15,
+    "text update missing": 3,
+    "reply wording (muted)": 4,
+    "other": 8
+  },
+  "settled_usd": 2.0316,
+  "ledger": [
+    {
+      "test_run_id": "kri1384sp-sol-diag-b1",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "26",
+      "settled_usd": "1.0557",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-sol-diag-b2",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "24",
+      "settled_usd": "0.9759",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "passed": false,
+      "failure": "AssertionError: [\"expected one text update 'PROVOLETA 🧀', found 0\"] assert not [\"expected one text update 'PROVOLETA 🧀', found 0\"]",
+      "category": "text update missing"
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: True'] + where ['no update records speech_cleanup: True'] = <function restart_brief_failures at 0x1162200f0>((None or []), {'cut_restarts': False, 'speech_cleanup': True}) + whe",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1038_en_title_replace_legacy",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_en",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_brief",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'I’ll propose full-screen talk clips at their mentions, with their audio replacing your voice while your take keeps ad...g voice. Unmatched clips will be spread across the talk. This is supported here; the",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_show_when_mentioned",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'I’ll place the talks full screen at matching mentions with their audio, muting your advancing take underneath—not pau... Clips without matching mentions will be spread through the talk silently. Clean sub",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "passed": false,
+      "failure": "AssertionError: [\"expected one text update 'PROVOLETA 🧀', found 0\"] assert not [\"expected one text update 'PROVOLETA 🧀', found 0\"]",
+      "category": "text update missing"
+    },
+    {
+      "fixture": "kri190_route_facts_and_order",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri506_approved_continuation",
+      "passed": false,
+      "failure": "AssertionError: creative copy metadata must survive MainCreator parsing assert None is not None",
+      "category": "other"
+    },
+    {
+      "fixture": "kri506_revision_candidate",
+      "passed": false,
+      "failure": "AssertionError: assert 'What do you notice first?' == 'What happened after sunset?' - What happened after sunset? + What do you notice first?",
+      "category": "other"
+    },
+    {
+      "fixture": "kri586_generate_after_choice",
+      "passed": false,
+      "failure": "AssertionError: assert 'Take five seconds.' == 'Sunrise miles' - Sunrise miles + Take five seconds.",
+      "category": "other"
+    },
+    {
+      "fixture": "kri806_don_julio_kept_lines",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri841_talking_ending_clip",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "n2_voiceover_fullscreen_photo_sequence",
+      "passed": false,
+      "failure": "StopIteration",
+      "category": "other"
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_recorded_voiceover_words",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_en_subtitles_quote_as_i_say",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "passed": false,
+      "failure": "AssertionError: [\"expected one text update 'PROVOLETA 🧀', found 0\"] assert not [\"expected one text update 'PROVOLETA 🧀', found 0\"]",
+      "category": "text update missing"
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_tr",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'İlgili konuşma kliplerini bahsettiğin yerlerde tam ekran, kendi sesleriyle göstermeyi önereceğim; bu sırada senin ses...m ekrandayken senin sesin devam edecek. Ana çekim altta durmadan ilerleyecek; konuşm",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'Bu düzeni önereceğim: Konuşma klipleri ilgili sözlerin ardından tam ekran ve kendi sesleriyle oynayacak; o sırada sen...n klipler konuşma içine dağıtılacak; eşleşmeyen konuşma klipleri sessiz kalacak. Ana",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: False'] + where ['no update records speech_cleanup: False'] = <function restart_brief_failures at 0x1179fc3b0>((None or []), {'cut_restarts': False, 'speech_cleanup': False}) + ",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri188_east_run_brief_updates",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri506_initial_generation",
+      "passed": false,
+      "failure": "AssertionError: assert 'unresolved' == 'candidate' - candidate + unresolved",
+      "category": "other"
+    },
+    {
+      "fixture": "kri586_delegated_hook_first_turn",
+      "passed": false,
+      "failure": "AssertionError: assert 'Marathon morning in motion' == 'Sunrise miles' - Sunrise miles + Marathon morning in motion",
+      "category": "other"
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": false,
+      "failure": "AssertionError: [] assert 0 == 1 + where 0 = len([])",
+      "category": "other"
+    },
+    {
+      "fixture": "kri840_fullscreen_reaction_beat",
+      "passed": false,
+      "failure": "KeyError: 'grill'",
+      "category": "other"
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: True'] + where ['no update records speech_cleanup: True'] = <function restart_brief_failures at 0x1179fc3b0>((None or []), {'cut_restarts': False, 'speech_cleanup': True}) + whe",
+      "category": "requirement not extracted (brief_updates)"
+    }
+  ]
+}

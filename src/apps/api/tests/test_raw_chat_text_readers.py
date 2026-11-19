@@ -51,8 +51,9 @@ RAW_TEXT_NAMES = frozenset(
         "_description_says",
     }
 )
-# ``Requirement.text()`` is the brief's prose one-liner (zero-arg method call).
-BRIEF_PROSE_CALL = "text"
+# ``Requirement.text()`` is the brief's prose one-liner (zero-arg method call); ``listed()`` is
+# the same prose without its closing full stop (KRI-1465), so it is read the same way.
+BRIEF_PROSE_CALLS = frozenset({"text", "listed"})
 
 CATEGORIES = frozenset({"agent_prompt", "plan_time", "carry", "content_only", "legacy_unstamped"})
 
@@ -428,7 +429,7 @@ def _readers() -> set[tuple[str, str]]:
                 func = node.func
                 if (
                     isinstance(func, ast.Attribute)
-                    and func.attr == BRIEF_PROSE_CALL
+                    and func.attr in BRIEF_PROSE_CALLS
                     and not node.args
                     and not node.keywords
                 ):

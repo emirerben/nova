@@ -116,6 +116,62 @@ def main_creator_schema():
 
 
 def copilot_schema():
+    ops, pending, selector, _ = _copilot_operations()
+    string = {"type": "string"}
+    number = {"type": "number"}
+    boolean = {"type": "boolean"}
+
+    def enum(*values):
+        return {"type": "string", "enum": list(values)}
+
+    result = obj(
+        {
+            "intent": enum("edit", "clarify", "describe", "reject", "unknown"),
+            "ops": arr({"anyOf": ops}),
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "reply": string,
+            "suggestions": arr(string),
+            "needs_clarification": boolean,
+            "unmet_requests": arr(
+                obj({"request": string, "reason": string}, ("request", "reason"))
+            ),
+            "claimed_ops": arr(string),
+            "length_options": arr(obj({"label": string, "seconds": number}, ("label", "seconds"))),
+            "clarification_context": obj(
+                {**selector["properties"], "selector": copy.deepcopy(selector), "referent": string}
+            ),
+            "pending_actions": arr({"anyOf": pending}),
+        },
+        ("intent", "reply"),
+    )
+    # ResearchRequest is a typed product contract, independent of output-only fields.
+    from app.services.researched_text import ResearchRequest
+
+    research = ResearchRequest.model_json_schema()
+    result["$defs"] = {**_json_defs(), **research.pop("$defs", {})}
+    result["properties"]["research_request"] = research
+    for name in ("research_request", "claimed_ops", "clarification_context"):
+        result["properties"][name] = {"anyOf": [result["properties"][name], {"type": "null"}]}
+    return result
+
+
+def copilot_operation_schemas() -> dict[str, dict]:
+    """One closed object schema per Copilot operation, keyed by op name (``op`` is a const).
+
+    The same registry `copilot_schema` unions into ``ops``; typed tool calling (KRI-1393)
+    turns each entry into one tool.
+    """
+    ops, _, _, _ = _copilot_operations()
+    return {branch["properties"]["op"]["const"]: branch for branch in ops}
+
+
+def copilot_field_schemas(names) -> dict[str, dict]:
+    """The wire type of each named Copilot field (raises on an unregistered name)."""
+    _, _, _, field = _copilot_operations()
+    return {name: field(name) for name in names}
+
+
+def _copilot_operations():
     from typing import get_args
 
     from app.agents.edit_copilot import _OP_FIELDS, _OP_REQUIRED, _STYLE_PATCH_FIELDS, _op_fields
@@ -153,6 +209,7 @@ def copilot_schema():
             "target_ids": arr(string),
             "clip_ids": arr(string),
             "clip_indexes": arr(integer),
+            "bar_indexes": arr(integer),
             "slot_indexes": arr(integer),
             "expected_count": integer,
             "indexes": arr(integer),
@@ -172,6 +229,8 @@ def copilot_schema():
         "fit_to_video",
         "preserve_text",
         "muted",
+        "remove",
+        "removed",
     }
     numbers = {
         "at_s",
@@ -211,6 +270,11 @@ def copilot_schema():
         "amount",
         "cadence_s",
         "end_fade_s",
+        "volume",
+        "window_start_s",
+        "window_end_s",
+        "position_x_frac",
+        "position_y_frac",
     }
     list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
@@ -221,6 +285,7 @@ def copilot_schema():
         "animation_phases",
         "target_identities",
         "focus",
+        "source_crop",
     }
 
     def field(name):
@@ -251,6 +316,9 @@ def copilot_schema():
                     ("start_s", "end_s", "tone"),
                 )
             )
+        if name == "side":
+            # KRI-1394: `make_split_full_screen` plays full screen from or until `at_s`.
+            return enum("from", "until")
         if name == "preset":
             # KRI-1162: the speaker's corner, a name and never numbers (S37).
             return enum(
@@ -264,6 +332,8 @@ def copilot_schema():
             "revision_number",
             "hold_frames",
             "text_appearance_version",
+            "z",
+            "panel",
         }:
             return integer
         if name in numbers:
@@ -308,6 +378,7 @@ def copilot_schema():
             "caption",
             "clip_id",
             "criterion",
+            "cue_id",
             "direction",
             "display_mode",
             "easing",
@@ -318,6 +389,8 @@ def copilot_schema():
             "fit",
             "kind",
             "label_from",
+            "landscape_fit",
+            "layer",
             "layout",
             "look_preset",
             "media_kind",
@@ -328,6 +401,7 @@ def copilot_schema():
             "preset_id",
             "quantifier",
             "scope",
+            "section_id",
             "source",
             "strategy",
             "style_from",
@@ -342,6 +416,7 @@ def copilot_schema():
             "transition_in",
             "transition_out",
             "font_family",
+            "font",
             "color",
             "highlight_color",
             "alignment",
@@ -445,35 +520,7 @@ def copilot_schema():
     pending = copy.deepcopy(ops)
     for operation in pending:
         operation["required"] = ["op"]
-    result = obj(
-        {
-            "intent": enum("edit", "clarify", "describe", "reject", "unknown"),
-            "ops": arr({"anyOf": ops}),
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "reply": string,
-            "suggestions": arr(string),
-            "needs_clarification": boolean,
-            "unmet_requests": arr(
-                obj({"request": string, "reason": string}, ("request", "reason"))
-            ),
-            "claimed_ops": arr(string),
-            "length_options": arr(obj({"label": string, "seconds": number}, ("label", "seconds"))),
-            "clarification_context": obj(
-                {**selector["properties"], "selector": copy.deepcopy(selector), "referent": string}
-            ),
-            "pending_actions": arr({"anyOf": pending}),
-        },
-        ("intent", "reply"),
-    )
-    # ResearchRequest is a typed product contract, independent of output-only fields.
-    from app.services.researched_text import ResearchRequest
-
-    research = ResearchRequest.model_json_schema()
-    result["$defs"] = {**_json_defs(), **research.pop("$defs", {})}
-    result["properties"]["research_request"] = research
-    for name in ("research_request", "claimed_ops", "clarification_context"):
-        result["properties"][name] = {"anyOf": [result["properties"][name], {"type": "null"}]}
-    return result
+    return ops, pending, selector, field
 
 
 class WireContract:

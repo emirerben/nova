@@ -712,3 +712,42 @@ def test_unused_source_description_rejects_changed_approved_generation(guided):
     }
     unused = build_editor_snapshot(job, variant)["source_pool"][3]
     assert not unused.get("seen")
+
+
+def _image_revision():
+    job_id = str(uuid.uuid4())
+    revision = guided_revision(job_id, count=1)
+    photo = {**revision["sources"][0], "kind": "image", "duration_s": None}
+    return {**revision, "sources": [photo]}
+
+
+def test_save_accepts_two_independent_slots_of_one_photo() -> None:
+    from app.routes import generative_jobs as gj
+    from app.services.guided_timeline import build_guided_segments
+
+    slots = [
+        gj.TimelineSlotEdit(slot_id="photo-left", clip_index=0, in_s=0, duration_s=1.5),
+        gj.TimelineSlotEdit(slot_id="photo-right", clip_index=0, in_s=0, duration_s=1.5),
+    ]
+    segments = build_guided_segments(
+        _image_revision(), slots, transitions_enabled=True, max_slots=120, max_total_s=120.0
+    )
+    assert [segment["segment_id"] for segment in segments] == ["photo-left", "photo-right"]
+    assert {segment["media_id"] for segment in segments} == {"m0"}
+
+
+def test_save_still_refuses_a_photo_cut_that_claims_a_parent() -> None:
+    from app.routes import generative_jobs as gj
+    from app.services.guided_timeline import GuidedTimelineError, build_guided_segments
+
+    slots = [
+        gj.TimelineSlotEdit(slot_id="s1", clip_index=0, in_s=0, duration_s=1.5),
+        gj.TimelineSlotEdit(
+            slot_id="child", parent_segment_id="s1", clip_index=0, in_s=0, duration_s=1.5
+        ),
+    ]
+    with pytest.raises(GuidedTimelineError) as error:
+        build_guided_segments(
+            _image_revision(), slots, transitions_enabled=True, max_slots=120, max_total_s=120.0
+        )
+    assert "TIMELINE_IMAGE_SPLIT_UNSUPPORTED" in str(error.value.args)

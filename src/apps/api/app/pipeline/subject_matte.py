@@ -807,6 +807,38 @@ def _create_backbone(prefer_rvm: bool = True) -> _RvmBackbone | _MediapipeBackbo
     return _MediapipeBackbone(mp, mp_vision.ImageSegmenter.create_from_options(options))
 
 
+class PersonMatter:
+    """RVM person masks for a short run of frames, for a caller outside the matte video.
+
+    KRI-1514: a sideways montage clip with no face is cropped onto the person or body part in
+    it (`phone_person_window`). RVM only, never the selfie-segmenter fallback: its masks flap
+    on skin-like textures (see the module docstring), and a crop must not move on a flap.
+    """
+
+    def __init__(self, backbone: _RvmBackbone) -> None:
+        self._backbone = backbone
+
+    @classmethod
+    def open(cls) -> PersonMatter | None:
+        """None when onnxruntime or the RVM model is unavailable (never raises)."""
+        path = _resolve_asset_path(MATTE_RVM_MODEL_PATH)
+        try:
+            if not os.path.isfile(path):
+                raise FileNotFoundError(path)
+            return cls(_RvmBackbone(_create_ort_session(path)))
+        except Exception as exc:  # noqa: BLE001 - the caller keeps its plain crop
+            log.warning("person_matter_unavailable", error=str(exc)[:200], model_path=path)
+            return None
+
+    def masks(self, frames: list[np.ndarray]) -> list[np.ndarray]:
+        """One boolean person mask per RGB frame, in order, from a fresh recurrent state."""
+        self._backbone.reset()
+        return [self._backbone.infer(frame) >= MASK_CONFIDENCE_CUT for frame in frames]
+
+    def close(self) -> None:
+        self._backbone.close()
+
+
 def _create_depth_backbone() -> _DepthBackbone:
     """Mirrors _create_backbone's missing-file/import-failure handling for
     the depth model: raises (any exception) when the backbone can't be

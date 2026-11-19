@@ -1,0 +1,100 @@
+{
+  "agent": "nova.editor.overlay_generation",
+  "prompt_version": "2026-11-02.4",
+  "prompt_sha": "c0e7d7838f79a850",
+  "input": {
+    "language": "en",
+    "mode": "prompt",
+    "prompt": "Show the Nike logo when I say just do it",
+    "taste_notes": "",
+    "duration_s": 20.0,
+    "evidence": [
+      {
+        "kind": "speech",
+        "reference_id": "speech-0",
+        "quote": "my motto is just do it every morning",
+        "start_s": 4.0,
+        "end_s": 7.15,
+        "words": [
+          {
+            "quote": "my",
+            "start_s": 4.0,
+            "end_s": 4.35
+          },
+          {
+            "quote": "motto",
+            "start_s": 4.4,
+            "end_s": 4.75
+          },
+          {
+            "quote": "is",
+            "start_s": 4.8,
+            "end_s": 5.15
+          },
+          {
+            "quote": "just",
+            "start_s": 5.2,
+            "end_s": 5.55
+          },
+          {
+            "quote": "do",
+            "start_s": 5.6,
+            "end_s": 5.95
+          },
+          {
+            "quote": "it",
+            "start_s": 6.0,
+            "end_s": 6.35
+          },
+          {
+            "quote": "every",
+            "start_s": 6.4,
+            "end_s": 6.75
+          },
+          {
+            "quote": "morning",
+            "start_s": 6.8,
+            "end_s": 7.15
+          }
+        ]
+      }
+    ],
+    "assets": [],
+    "existing_overlays": [],
+    "insertion_base": null
+  },
+  "raw_text": "{\n  \"overlays\": [\n    {\n      \"kind\": \"image\",\n      \"title\": \"Nike logo\",\n      \"prompt\": \"Nike logo\",\n      \"start_s\": 5.2,\n      \"end_s\": 8.35,\n      \"reason\": \"User requested to show the Nike logo when 'just do it' is spoken.\",\n      \"evidence\": [\n        {\n          \"kind\": \"speech\",\n          \"reference_id\": \"speech-0\",\n          \"quote\": \"just do it\"\n        }\n      ],\n      \"depicts\": \"brand_or_logo\"\n    }\n  ],\n  \"message\": \"\"\n}",
+  "output": {
+    "overlays": [
+      {
+        "kind": "image",
+        "title": "Nike logo",
+        "prompt": "Nike logo",
+        "text": "",
+        "asset_id": null,
+        "start_s": 5.2,
+        "end_s": 8.35,
+        "x_frac": 0.5,
+        "y_frac": 0.3,
+        "scale": 0.35,
+        "reason": "User requested to show the Nike logo when 'just do it' is spoken.",
+        "evidence": [
+          {
+            "kind": "speech",
+            "reference_id": "speech-0",
+            "quote": "just do it"
+          }
+        ],
+        "depicts": "brand_or_logo"
+      }
+    ],
+    "message": ""
+  },
+  "meta": {
+    "source": "provider_smoke_capture",
+    "expect_overlays": "some",
+    "kri": "KRI-1428",
+    "expect_depicts": "brand_or_logo",
+    "test_run_id": "kri1428-overlay-generation-20261115e"
+  }
+}

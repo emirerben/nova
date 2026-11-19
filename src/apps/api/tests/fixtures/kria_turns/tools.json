@@ -541,6 +541,18 @@
     },
     "DraftSnapshotOut": {
       "properties": {
+        "base_generation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Generation"
+        },
         "base_generation_id": {
           "anyOf": [
             {
@@ -586,6 +598,11 @@
         "etag": {
           "title": "Etag",
           "type": "string"
+        },
+        "head_current": {
+          "default": true,
+          "title": "Head Current",
+          "type": "boolean"
         },
         "item_id": {
           "title": "Item Id",
@@ -1513,6 +1530,225 @@
           "title": "EditorCaptionLinePlacement",
           "type": "object"
         },
+        "EditorCaptionTranslation": {
+          "additionalProperties": false,
+          "description": "The translated caption track (KRI-1501, docs/pipelines/dual-captions.md).\n\nPersisted as ``variant[\"caption_translation\"]``; each cue's line is its\n``caption_cues[*].translation``. ``outcome`` / ``dropped_cue_ids`` are server-owned: the\neditor sends them back unchanged or omits them.",
+          "properties": {
+            "color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Color"
+            },
+            "dropped_cue_ids": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxLength": 160,
+                    "type": "string"
+                  },
+                  "maxItems": 500,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Dropped Cue Ids"
+            },
+            "enabled": {
+              "default": true,
+              "title": "Enabled",
+              "type": "boolean"
+            },
+            "font": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Font"
+            },
+            "language": {
+              "enum": [
+                "en",
+                "de",
+                "tr",
+                "pt"
+              ],
+              "title": "Language",
+              "type": "string"
+            },
+            "line_overrides": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/EditorCaptionTranslationLine"
+                  },
+                  "maxProperties": 500,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Line Overrides"
+            },
+            "outcome": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "translated",
+                    "partial",
+                    "unmet"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Outcome"
+            },
+            "position_x_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.95,
+                  "minimum": 0.05,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position X Frac"
+            },
+            "position_y_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.9,
+                  "minimum": 0.1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position Y Frac"
+            },
+            "size_px": {
+              "anyOf": [
+                {
+                  "maximum": 120,
+                  "minimum": 24,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size Px"
+            },
+            "source_language": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Language"
+            },
+            "stroke_width": {
+              "anyOf": [
+                {
+                  "maximum": 12,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stroke Width"
+            }
+          },
+          "required": [
+            "language"
+          ],
+          "title": "EditorCaptionTranslation",
+          "type": "object"
+        },
+        "EditorCaptionTranslationLine": {
+          "additionalProperties": false,
+          "description": "One translated line's own place and size (KRI-1501), keyed by cue id.",
+          "properties": {
+            "position_x_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.95,
+                  "minimum": 0.05,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position X Frac"
+            },
+            "position_y_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.9,
+                  "minimum": 0.1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position Y Frac"
+            },
+            "size_px": {
+              "anyOf": [
+                {
+                  "maximum": 120,
+                  "minimum": 24,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size Px"
+            }
+          },
+          "title": "EditorCaptionTranslationLine",
+          "type": "object"
+        },
         "EditorCommitBackgroundFocus": {
           "additionalProperties": false,
           "description": "Where a background picture is aimed (Qendresa item 18): the document's complete\n``{x, y, zoom}`` (0 = left/top edge, 1 = right/bottom edge; zoom a multiple of the cover\nscale). The same bounds as the recipe's `SpeakerBackgroundFocus`.",
@@ -1745,6 +1981,17 @@
               ],
               "default": null,
               "title": "Style"
+            },
+            "translation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCaptionTranslation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "y_frac": {
               "anyOf": [
@@ -2684,8 +2931,28 @@
               "title": "Audio Fade Out"
             },
             "clip_index": {
-              "title": "Clip Index",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Clip Index"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Color"
             },
             "duration_beats": {
               "anyOf": [
@@ -3057,7 +3324,6 @@
             }
           },
           "required": [
-            "clip_index",
             "in_s"
           ],
           "title": "EditorStateTimelineSlot",
@@ -5957,9 +6223,23 @@
             "title": "MontageCadenceConstraint",
             "type": "object"
           },
-          "SplitPanelSource": {
+          "SplitPanelClip": {
             "additionalProperties": false,
             "properties": {
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "maximum": 1800,
+                    "minimum": 0.1,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Duration S"
+              },
               "media_id": {
                 "maxLength": 160,
                 "minLength": 1,
@@ -5984,6 +6264,59 @@
             "required": [
               "media_id"
             ],
+            "title": "SplitPanelClip",
+            "type": "object"
+          },
+          "SplitPanelSource": {
+            "additionalProperties": false,
+            "description": "One panel: a single `media_id`, or `clips` that play one after another.",
+            "properties": {
+              "clips": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/SplitPanelClip"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Clips"
+              },
+              "media_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 160,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Media Id"
+              },
+              "source_start_s": {
+                "anyOf": [
+                  {
+                    "maximum": 36000,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Source Start S"
+              }
+            },
             "title": "SplitPanelSource",
             "type": "object"
           }

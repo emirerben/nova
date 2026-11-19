@@ -32,6 +32,9 @@ class CardLayoutContext:
 
     caption_band: tuple[float, float] | None = None
     text_windows: tuple[tuple[float, float], ...] = ()
+    # KRI-1478: also offer each wide card as a full-width strip cut to its text column
+    # (`strip_for`). Off (the default) lays cards out exactly as before.
+    strip: bool = False
 
 
 # --- geometry (pure: no I/O, no settings) -------------------------------------------------
@@ -179,6 +182,114 @@ def place_card(
     if not inside or any(boxes_intersect(box, b) for b in everything):
         return None
     return chosen
+
+
+# --- KRI-1478: the strip ---------------------------------------------------------------------
+# Her Q1 cards are 0.9-1.0 of the frame wide and show a zoomed part of the page, never the
+# whole page. A 16:9 page kept whole in the 0.16-0.19 of headroom above her face is only
+# 0.5-0.6 wide with 5 px text (run 3, job 3ef3cbe5). The strip keeps the card's own band (same
+# top, same height, so nothing new is covered above or below) and makes it full width where
+# that is free; the compile then cuts the picture to its measured text column so it fills that
+# shape. A card already as wide as its spot allows (beside the watermark in the bottom band)
+# keeps its box and is only cut to the column.
+STRIP_WIDTH = 0.94
+_STRIP_PAD = 0.02  # of the picture's width, kept either side of the text column
+_STRIP_MAX_ZOOM = 2.5  # `background_text_focus.MAX_AUTO_ZOOM`: never blow a narrow column up more
+_STRIP_MIN_LINES = 3.0  # a crop showing fewer text lines than this is not worth the cut
+
+
+def strip_for(
+    placement: CardPlacement,
+    aspect: float | None,
+    blockers: Sequence[NormalizedBox],
+    *,
+    side_blockers: Sequence[NormalizedBox] = (),
+) -> CardPlacement | None:
+    """The box a landscape card's text column is drawn in, or ``None`` (a portrait or square
+    picture keeps its whole-picture card).
+
+    ``placement``'s band made `STRIP_WIDTH` wide when `place_card` centred the card, it is
+    narrower than that and the wider box is clear of every blocker and mark (the band spans x
+    by construction; checked anyway). A card moved beside the watermark becomes a centred strip
+    past the mark (`_strip_clear_of_marks`). Otherwise ``placement`` itself: a card already
+    wider keeps its box and only its picture is cut.
+    """
+    if not aspect or float(aspect) <= 1.0:
+        return None
+    if placement.scale >= STRIP_WIDTH - _EPS:
+        return placement
+    if abs(placement.x_frac - 0.5) <= _EPS:
+        strip = CardPlacement(0.5, placement.y_frac, STRIP_WIDTH, placement.zone, placement.height)
+        if not any(boxes_intersect(strip.box, b) for b in (*blockers, *side_blockers)):
+            return strip
+    return _strip_clear_of_marks(placement, blockers, side_blockers) or placement
+
+
+def _strip_clear_of_marks(
+    placement: CardPlacement,
+    blockers: Sequence[NormalizedBox],
+    side_blockers: Sequence[NormalizedBox],
+) -> CardPlacement | None:
+    """A CENTRED `STRIP_WIDTH` strip in ``placement``'s zone, past the marks (the Kria wordmark)
+    a full-width strip would cover, or ``None`` (the caller keeps ``placement``).
+
+    `place_card` moves a card beside the mark, which leaves it right-shifted. A strip is cut to
+    its text anyway, so it stays centred and starts below the mark (bottom zone) or ends above
+    it (top zone): the same edge inset, the card's own height at most, never a box shorter than
+    `MIN_ZONE_HEIGHT`. ``None`` too when no mark is in the way, or the box would touch anything.
+    """
+    left = (1.0 - STRIP_WIDTH) / 2
+    bottom_zone = placement.zone == "bottom"
+    lo, hi = (
+        (placement.box.top, 1.0 - EDGE_INSET) if bottom_zone else (EDGE_INSET, placement.box.bottom)
+    )
+    probe = NormalizedBox(left, lo, 1.0 - left, hi)
+    hit = [m for m in side_blockers if boxes_intersect(probe, m)]
+    if not hit:
+        return None
+    if bottom_zone:
+        top = max(lo, max(m.bottom for m in hit) + GAP)
+        bottom = hi
+    else:
+        top = lo
+        bottom = min(hi, min(m.top for m in hit) - GAP)
+    height = min(bottom - top, placement.height)
+    if height < MIN_ZONE_HEIGHT:
+        return None
+    strip = CardPlacement(0.5, top + height / 2, STRIP_WIDTH, placement.zone, height)
+    if any(boxes_intersect(strip.box, b) for b in (*blockers, *side_blockers)):
+        return None
+    return strip
+
+
+def strip_crop(
+    scale: float, height: float, column: Any
+) -> tuple[float, float, float, float] | None:
+    """The ``(x, y, width, height)`` source crop (fractions of the upright picture, origin top
+    left) that fills a strip ``scale`` of the canvas wide and ``height`` of it tall, or ``None``.
+
+    ``column`` is the picture's measured `background_text_focus.TextColumn`. ``None`` (keep the
+    whole-picture card) without one, without a line pitch (not text), for a portrait picture,
+    when the band is taller than the picture can fill, or when under `_STRIP_MIN_LINES` text
+    lines would show. The crop starts at the top of the picture: the measure knows where the
+    column sits across the page, not down it.
+    """
+    pitch = getattr(column, "line_pitch", None)
+    source_w = getattr(column, "source_width", None)
+    source_h = getattr(column, "source_height", None)
+    if not pitch or not source_w or not source_h or source_w <= source_h:
+        return None
+    if scale <= 0 or height <= 0:
+        return None
+    left = max(0.0, column.left - _STRIP_PAD)
+    right = min(1.0, column.right + _STRIP_PAD)
+    width = min(1.0, max(right - left, 1.0 / _STRIP_MAX_ZOOM))
+    x = min(max((left + right) / 2 - width / 2, 0.0), 1.0 - width)
+    # The strip's own shape in pixels (width over height) is the crop's shape in the picture.
+    crop_h = width * source_w * height / (scale * CANVAS_RATIO) / source_h
+    if crop_h > 1.0 or crop_h < _STRIP_MIN_LINES * pitch:
+        return None
+    return round(x, 6), 0.0, round(width, 6), round(crop_h, 6)
 
 
 _MIN_COVERAGE = 0.9

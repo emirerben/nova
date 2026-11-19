@@ -19,8 +19,11 @@ moment's own source window, on the analysis proxy:
   a montage has no caption block, so the Talking caption-band limit does not apply.
 * ``letterbox`` -- a recurring face moves further than one crop can hold: that
   clip alone keeps black bars, so the crop never cuts a face (``face_moves_too_much``).
-* ``centre_fill`` -- no recurring face (B-roll), or the faces could not be
-  confirmed: the engine's centre crop, as every "fill" render does today.
+* ``person_fill`` -- no face, but a person or a body part (a hand on a wall) clearly off
+  the middle (`phone_person_window`, KRI-1514): the clip slides by the same ``position_x``
+  onto the window that holds the most of them.
+* ``centre_fill`` -- no face and no clear person (scenery, objects), or the faces could not
+  be confirmed: the engine's centre crop, as every "fill" render did before KRI-1514.
 
 The second person at the edge of a two-shot (smaller than the recurring face, or
 in too few frames) is not a recurring face; a 9:16 crop of a 16:9 clip shows under
@@ -46,13 +49,21 @@ from typing import Any, Literal
 
 import structlog
 
+from app.config import settings
 from app.pipeline.guided_story import GuidedStoryExecutionPlan, _story_canvas
+from app.pipeline.phone_person_window import (
+    PersonSampler,
+    PersonWindow,
+    RvmPersonSampler,
+    person_window,
+)
 from app.pipeline.phone_recipe_shared import display_dims
 from app.pipeline.phone_speaker_framing import (
     REASON_CREATOR_CHOSE_BARS,
     REASON_FACE_IN_WINDOW,
     REASON_FACE_MOVES,
     REASON_FACE_UNDER_CAPTIONS,
+    REASON_NO_FACE,
     FaceWindow,
     decide_speaker_framing,
     face_core_box,
@@ -65,12 +76,13 @@ log = structlog.get_logger(__name__)
 LANDSCAPE_FRAMING_FIELD = "landscape_framing"
 _RECEIPT_VERSION = 1
 
-ClipMode = Literal["face_fill", "centre_fill", "letterbox"]
-CLIP_MODES: frozenset[str] = frozenset({"face_fill", "centre_fill", "letterbox"})
+ClipMode = Literal["face_fill", "person_fill", "centre_fill", "letterbox"]
+CLIP_MODES: frozenset[str] = frozenset({"face_fill", "person_fill", "centre_fill", "letterbox"})
 
 # Why a sideways clip is framed the way it is, beyond the Talking reasons.
 REASON_FACE_CORE_IN_WINDOW = "face_core_in_window"
 REASON_ASKED_BARS = "asked_bars"
+REASON_PERSON_IN_WINDOW = "person_in_window"
 
 FaceSampler = Callable[..., tuple[list[ProtectedRegion], dict[str, Any]]]
 ProxyDownloader = Callable[[str, str], Any]
@@ -84,12 +96,14 @@ class ClipFraming:
     media_id: str
     mode: ClipMode
     reason: str
-    window: FaceWindow | None = None
+    window: FaceWindow | PersonWindow | None = None
     faces: Mapping[str, Any] = field(default_factory=dict)
+    # KRI-1514: what the person matte saw when there was no face (empty when not sampled).
+    person: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def position_x(self) -> float | None:
-        if self.mode != "face_fill" or self.window is None:
+        if self.mode not in ("face_fill", "person_fill") or self.window is None:
             return None
         return self.window.position_x
 
@@ -104,6 +118,8 @@ class ClipFraming:
             out["window"] = self.window.as_dict()
         if self.faces:
             out["faces"] = dict(self.faces)
+        if self.person:
+            out["person"] = dict(self.person)
         return out
 
 
@@ -160,8 +176,13 @@ def frame_sideways_clip(
     display_height: float,
     canvas: Any,
     sample: FaceSampler | None = None,
+    sample_person: PersonSampler | None = None,
 ) -> ClipFraming:
-    """Frame one sideways moment on a vertical "fill" render. Never raises."""
+    """Frame one sideways moment on a vertical "fill" render. Never raises.
+
+    ``sample_person`` (None = no person pass) runs only when the face pass looked and found no
+    face: a face it could not confirm keeps the middle, so the crop never moves off an unseen
+    face."""
     seen: list[ProtectedRegion] = []
 
     def recording(*args: Any, **kwargs: Any) -> tuple[list[ProtectedRegion], dict[str, Any]]:
@@ -191,8 +212,50 @@ def frame_sideways_clip(
                 mode="face_fill", reason=REASON_FACE_CORE_IN_WINDOW, window=window, **base
             )
         return ClipFraming(mode="letterbox", reason=REASON_FACE_MOVES, window=window, **base)
-    # no_face / face_unconfirmed: the engine's centre crop, as every "fill" render.
+    if speaker.reason == REASON_NO_FACE and clip_path is not None and sample_person is not None:
+        return _frame_on_person(
+            clip_path,
+            sample_person,
+            source_start_s=source_start_s,
+            source_end_s=source_end_s,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=canvas,
+            base=base,
+        )
+    # face_unconfirmed, or no person pass: the engine's centre crop, as every "fill" render.
     return ClipFraming(mode="centre_fill", reason=speaker.reason, **base)
+
+
+def _frame_on_person(
+    clip_path: str,
+    sample_person: PersonSampler,
+    *,
+    source_start_s: float,
+    source_end_s: float,
+    display_width: float,
+    display_height: float,
+    canvas: Any,
+    base: dict[str, Any],
+) -> ClipFraming:
+    """KRI-1514: a clip with no face follows its person or body part, else keeps the middle."""
+    try:
+        found = sample_person(clip_path, float(source_start_s), float(source_end_s))
+    except Exception as exc:  # noqa: BLE001 - that clip keeps the middle
+        log.warning("phone_montage_framing.person_failed", error=str(exc)[:200])
+        person: dict[str, Any] = {"sampling": "failed", "error": str(exc)[:120]}
+        return ClipFraming(mode="centre_fill", reason=REASON_NO_FACE, person=person, **base)
+    if found is None:
+        person = {"sampling": "unavailable"}
+        return ClipFraming(mode="centre_fill", reason=REASON_NO_FACE, person=person, **base)
+    window, person = person_window(
+        found, display_width=display_width, display_height=display_height, canvas=canvas
+    )
+    if window is None:
+        return ClipFraming(mode="centre_fill", reason=REASON_NO_FACE, person=person, **base)
+    return ClipFraming(
+        mode="person_fill", reason=REASON_PERSON_IN_WINDOW, window=window, person=person, **base
+    )
 
 
 def frame_montage(
@@ -205,13 +268,15 @@ def frame_montage(
     workdir: str,
     download: ProxyDownloader,
     sample: FaceSampler | None = None,
+    sample_person: PersonSampler | None = None,
 ) -> MontageFraming:
     """Frame every sideways footage moment of ``plan`` for the creator's ``ask``.
 
     Only bound footage videos on a vertical canvas count: photos, Visuals-pool
     videos, a creator's own re-frame (``source_crop``) and a golden-hour look keep
     whatever the compiler already does with them. A proxy that cannot be fetched
-    leaves that clip centre-cropped (``face_unconfirmed``)."""
+    leaves that clip centre-cropped (``face_unconfirmed``). ``sample_person`` defaults to
+    the RVM person matte; ``MONTAGE_PERSON_FILL_ENABLED=false`` turns the person pass off."""
     canvas = _story_canvas(plan.output_orientation)
     framing = MontageFraming(
         ask=ask,
@@ -239,37 +304,47 @@ def frame_montage(
                 proxies[binding.media_id] = None
         return proxies[binding.media_id]
 
+    owned = None
+    if landscape_fit == "fill" and settings.montage_person_fill_enabled and sample_person is None:
+        owned = sample_person = RvmPersonSampler()
+    elif not settings.montage_person_fill_enabled:
+        sample_person = None
     clips: list[ClipFraming] = []
-    for moment in plan.story_timeline:
-        binding = by_media.get(moment.media_id)
-        if (
-            binding is None
-            or moment.lane != "clip"
-            or moment.kind != "video"
-            or moment.source_crop is not None
-            or moment.look_preset == "golden_hour"
-        ):
-            continue
-        width, height = display_dims(binding.original)
-        if width <= height:
-            continue
-        if landscape_fit != "fill":
-            reason = REASON_ASKED_BARS if ask == "fit" else REASON_CREATOR_CHOSE_BARS
-            clips.append(ClipFraming(moment.moment_id, moment.media_id, "letterbox", reason))
-            continue
-        clips.append(
-            frame_sideways_clip(
-                proxy_for(binding),
-                moment_id=moment.moment_id,
-                media_id=moment.media_id,
-                source_start_s=moment.source_start_s,
-                source_end_s=moment.source_end_s,
-                display_width=width,
-                display_height=height,
-                canvas=canvas,
-                sample=sample,
+    try:
+        for moment in plan.story_timeline:
+            binding = by_media.get(moment.media_id)
+            if (
+                binding is None
+                or moment.lane != "clip"
+                or moment.kind != "video"
+                or moment.source_crop is not None
+                or moment.look_preset == "golden_hour"
+            ):
+                continue
+            width, height = display_dims(binding.original)
+            if width <= height:
+                continue
+            if landscape_fit != "fill":
+                reason = REASON_ASKED_BARS if ask == "fit" else REASON_CREATOR_CHOSE_BARS
+                clips.append(ClipFraming(moment.moment_id, moment.media_id, "letterbox", reason))
+                continue
+            clips.append(
+                frame_sideways_clip(
+                    proxy_for(binding),
+                    moment_id=moment.moment_id,
+                    media_id=moment.media_id,
+                    source_start_s=moment.source_start_s,
+                    source_end_s=moment.source_end_s,
+                    display_width=width,
+                    display_height=height,
+                    canvas=canvas,
+                    sample=sample,
+                    sample_person=sample_person,
+                )
             )
-        )
+    finally:
+        if owned is not None:
+            owned.close()
     return MontageFraming(
         ask=framing.ask,
         asked_by=framing.asked_by,
@@ -297,6 +372,7 @@ __all__ = [
     "LANDSCAPE_FRAMING_FIELD",
     "REASON_ASKED_BARS",
     "REASON_FACE_CORE_IN_WINDOW",
+    "REASON_PERSON_IN_WINDOW",
     "ClipFraming",
     "MontageFraming",
     "apply_montage_framing",

@@ -7,7 +7,433 @@
     {
       "turn_id": "t0",
       "user_message": "Skip the laundry, but the gym has to be in.",
-      "engine": "recorded"
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Skip the laundry, but the gym has to be in.",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title"
+            ],
+            "base_generation": "gen-1",
+            "has_narrated_captions": false,
+            "max_duration_s": 240,
+            "remaining_duration_s": 217.5,
+            "slots": [
+              {
+                "key": "slot-1",
+                "slot_id": "slot-1",
+                "parent_segment_id": null,
+                "clip_index": 0,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 0.0,
+                "output_end_s": 3.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V6",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T19:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "cooking pasta",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-2",
+                "slot_id": "slot-2",
+                "parent_segment_id": null,
+                "clip_index": 1,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 3.5,
+                "output_end_s": 5.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V1",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T08:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "waking up",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-3",
+                "slot_id": "slot-3",
+                "parent_segment_id": null,
+                "clip_index": 2,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 5.5,
+                "output_end_s": 8.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V8",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T22:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "night walk",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-4",
+                "slot_id": "slot-4",
+                "parent_segment_id": null,
+                "clip_index": 3,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 8.5,
+                "output_end_s": 10.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V3",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T10:15:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "laundry",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-5",
+                "slot_id": "slot-5",
+                "parent_segment_id": null,
+                "clip_index": 4,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 10.5,
+                "output_end_s": 13.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V5",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T16:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "gym session",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-6",
+                "slot_id": "slot-6",
+                "parent_segment_id": null,
+                "clip_index": 5,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 13.5,
+                "output_end_s": 16.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V2",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T09:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "cleaning the flat",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-7",
+                "slot_id": "slot-7",
+                "parent_segment_id": null,
+                "clip_index": 6,
+                "in_s": 0.0,
+                "duration_s": 2.5,
+                "duration_beats": null,
+                "source_duration_s": 2.5,
+                "output_start_s": 16.5,
+                "output_end_s": 19.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V7",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T21:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "journaling",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-8",
+                "slot_id": "slot-8",
+                "parent_segment_id": null,
+                "clip_index": 7,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 19.0,
+                "output_end_s": 22.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V4",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T12:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "grocery run",
+                  "provenance": "vision"
+                }
+              }
+            ],
+            "text_bars": [],
+            "total_duration_s": 22.5,
+            "label_facts": true,
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "timeline_patch_capabilities": {
+              "duration_s": true,
+              "in_s": true,
+              "removed": true,
+              "transition_after": true,
+              "transition_duration_s": true,
+              "look_preset": false,
+              "playback_rate": false,
+              "source_crop": false
+            },
+            "source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "V6",
+                "kind": "video",
+                "generation": "00301cf5c515",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "V1",
+                "kind": "video",
+                "generation": "b89dc05c7352",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "V8",
+                "kind": "video",
+                "generation": "bb4f799d9519",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "V3",
+                "kind": "video",
+                "generation": "23ba8237810e",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "V5",
+                "kind": "video",
+                "generation": "7efdfd245fa3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "V2",
+                "kind": "video",
+                "generation": "7f5087601920",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "V7",
+                "kind": "video",
+                "generation": "c1d197ee3edd",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "V4",
+                "kind": "video",
+                "generation": "131ce915bd84",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "replacement_source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "V6",
+                "kind": "video",
+                "generation": "00301cf5c515",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "V1",
+                "kind": "video",
+                "generation": "b89dc05c7352",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "V8",
+                "kind": "video",
+                "generation": "bb4f799d9519",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "V3",
+                "kind": "video",
+                "generation": "23ba8237810e",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "V5",
+                "kind": "video",
+                "generation": "7efdfd245fa3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "V2",
+                "kind": "video",
+                "generation": "7f5087601920",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "V7",
+                "kind": "video",
+                "generation": "c1d197ee3edd",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "V4",
+                "kind": "video",
+                "generation": "131ce915bd84",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "editor_ops_version": 2
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"remove_clip\",\n      \"slot_index\": 3\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I took out the laundry clip, and the gym session is safely kept in the video.\",\n  \"suggestions\": [\n    \"Order by time filmed\",\n    \"Make the clips shorter\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"remove_clip\"\n  ]\n}",
+        "prompt_version": "2026-11-11-v122",
+        "model_actual": "gemini-3.1-pro-preview",
+        "recorded_at": "2026-11-13T08:31:06Z",
+        "latency_s": 14.01,
+        "model_calls": 1,
+        "tokens_in": 27050,
+        "tokens_out": 160,
+        "tokens_thoughts": 923,
+        "test_run_id": "rf-baseline-20261113-d"
+      }
     }
   ],
   "requirements": [
@@ -92,5 +518,57 @@
       "total_duration_s": 20.5
     },
     "reply": "Left out the laundry and kept the gym."
+  },
+  "initial_plan": {
+    "clips": [
+      {
+        "clip_id": "V6",
+        "start_s": 0.0,
+        "end_s": 3.5
+      },
+      {
+        "clip_id": "V1",
+        "start_s": 3.5,
+        "end_s": 5.5
+      },
+      {
+        "clip_id": "V8",
+        "start_s": 5.5,
+        "end_s": 8.5
+      },
+      {
+        "clip_id": "V3",
+        "start_s": 8.5,
+        "end_s": 10.5
+      },
+      {
+        "clip_id": "V5",
+        "start_s": 10.5,
+        "end_s": 13.5
+      },
+      {
+        "clip_id": "V2",
+        "start_s": 13.5,
+        "end_s": 16.5
+      },
+      {
+        "clip_id": "V7",
+        "start_s": 16.5,
+        "end_s": 19.0
+      },
+      {
+        "clip_id": "V4",
+        "start_s": 19.0,
+        "end_s": 22.5
+      }
+    ],
+    "texts": [],
+    "speech": [],
+    "total_duration_s": 22.5,
+    "timing_verified": true
+  },
+  "baseline": {
+    "skip-laundry": "met",
+    "keep-gym": "met"
   }
 }

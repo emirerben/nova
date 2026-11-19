@@ -59,7 +59,7 @@ struct NativeEditorYourSongRow: View {
             }
             HStack(spacing: 10) {
                 Text("0%").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                NativePaperSlider(session: session, value: volumeBinding, bounds: 0...1, step: 0.01, label: "Song volume")
+                NativePaperSlider(session: session, value: volumeBinding, bounds: 0...1, step: 0.01, label: String(localized: "Song volume"))
                     .frame(height: 44)
                 Text("100%").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }

@@ -52,10 +52,21 @@ All captions replaces existing overrides for the changed property. Unrelated
 per-line properties remain. Text-lane lines apply a line choice to each word row
 in their existing group.
 
-Caption drag and resize ask for scope once after release. Choosing all captions
-updates the project default and clears that property from every line override.
-Other per-line properties remain. The gesture and choice form one undo
-transaction. These changes never write account text preferences.
+Caption drag, pinch and corner resize work like authored text: the preview
+moves a frozen still of the caption (`textInteractionLayers` on
+`caption-<id>`) on every finger sample and writes the document once, on
+release, to that caption only. No sheet blocks the next gesture; an optional
+"Apply to all captions" button sits over the preview until the next edit or
+about six seconds. Choosing it updates the project default and clears that
+property from every line override. Other per-line properties remain. The
+gesture and that choice form one undo step. These changes never write account
+text preferences.
+
+Picture cards (pip overlays and media visual blocks) follow the same rule: the
+live still and the selection box follow the finger, the document is written
+once on release, and the moved still stays up until the rebuilt preview draws
+the card in its new place. Every corner handle resizes; it also rotates where
+the edit allows rotation.
 
 Position buttons measure caption blocks against `NativePreviewDangerZones`.
 If a caption is too large for the safe area, the inspector asks for a smaller

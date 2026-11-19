@@ -326,6 +326,8 @@ final class CachingPersonSegmenter: NativePersonSegmenting {
         self.base = base; self.pack = pack; self.environment = environment
     }
 
+    var supportsConcurrentRequests: Bool { base.supportsConcurrentRequests }
+
     func confidence(for frame: CIImage, canvas: CGRect) throws -> SubjectConfidenceMap? {
         try base.confidence(for: frame, canvas: canvas)
     }

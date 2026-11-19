@@ -77,6 +77,7 @@ from app.agents.overlay_format_matcher import (
     _SKIA_EFFECTS,
     OverlayFormatMatcherOutput,
 )
+from app.agents.overlay_generation import OverlayPlanInput, OverlayPlanOutput
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.retake_detector import (
     RetakeDetectorInput,
@@ -91,7 +92,6 @@ from app.agents.sfx_placement import (
     SfxPlacementInput,
     SfxPlacementOutput,
 )
-from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.slide_post_composer import (
     _MAX_ALT_LEN,
     _MAX_CAPTION_LEN,
@@ -130,13 +130,6 @@ from app.agents.text_designer import (
     TextDesignerOutput,
 )
 from app.agents.transcript import TranscriptOutput
-from app.agents.transition_picker import (
-    _VALID_TRANSITIONS as _PICKER_VALID_TRANSITIONS,
-)
-from app.agents.transition_picker import (
-    TransitionPickerInput,
-    TransitionPickerOutput,
-)
 from app.agents.voiceover_interviewer import (
     _MAX_TURNS as VOICEOVER_MAX_TURNS,
 )
@@ -744,72 +737,6 @@ def check_clip_router(output: ClipRouterOutput, input: ClipRouterInput) -> list[
     return failures
 
 
-# ── shot_ranker ──────────────────────────────────────────────────────────────
-
-
-def check_shot_ranker(output: ShotRankerOutput, input: ShotRankerInput) -> list[str]:  # noqa: A002
-    """Structural floor for top-K moment ranking.
-
-    `parse()` re-numbers ranks 1..N and drops hallucinated IDs. We add:
-
-      - **No duplicate ranks** — parse re-numbers post-hoc, but the model
-        emitting duplicates is a signal the prompt isn't anchoring rank
-        semantics. Catch the raw output's intent before it gets normalized.
-        (parse() sorts and renumbers — by the time we see `output.ranked`
-        ranks ARE 1..N, but we can still check for missing IDs and short
-        rationales.)
-      - **No duplicate IDs.** Same moment ranked twice — silently passable
-        through parse, but breaks the "top-K distinct moments" contract.
-      - **Ranks dense from 1.** No gaps. After parse() this should always
-        hold; the assertion canaries any future parse() change.
-      - **Boilerplate rationales** — same logic as clip_router.
-      - **target_count adherence** — the agent SHOULD return exactly
-        target_count entries (or fewer if it judged the candidate pool weak).
-        Returning MORE than target_count is a contract violation.
-    """
-    failures: list[str] = []
-
-    valid_ids = {c.id for c in input.candidates}
-
-    if len(output.ranked) > input.target_count:
-        failures.append(
-            f"ranked has {len(output.ranked)} entries > target_count={input.target_count}"
-        )
-
-    seen_ids: list[str] = []
-    for m in output.ranked:
-        if m.id not in valid_ids:
-            failures.append(f"rank {m.rank}: id {m.id!r} not in candidate set")
-            continue
-        seen_ids.append(m.id)
-
-    duplicates = {mid for mid in seen_ids if seen_ids.count(mid) > 1}
-    if duplicates:
-        failures.append(f"id(s) {sorted(duplicates)} ranked more than once")
-
-    ranks = [m.rank for m in output.ranked]
-    if ranks and sorted(ranks) != list(range(1, len(ranks) + 1)):
-        failures.append(f"ranks not dense from 1: got {sorted(ranks)}")
-
-    for m in output.ranked:
-        r = (m.rationale or "").strip().lower()
-        if not r:
-            failures.append(f"rank {m.rank}: rationale is empty")
-            continue
-        if len(r) < _RATIONALE_MIN_CHARS:
-            failures.append(
-                f"rank {m.rank}: rationale {r!r} is too short "
-                f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
-            )
-            continue
-        if r in _BOILERPLATE_RATIONALES:
-            failures.append(
-                f"rank {m.rank}: rationale {r!r} is boilerplate (needs concrete reason)"
-            )
-
-    return failures
-
-
 # ── text_designer ────────────────────────────────────────────────────────────
 
 
@@ -908,91 +835,6 @@ def check_text_designer(
         failures.append(
             f"start_s={output.start_s} > 15.0 — likely confused with absolute "
             "clip time; start_s is relative to slot start"
-        )
-
-    return failures
-
-
-# ── transition_picker ────────────────────────────────────────────────────────
-
-# Canonical duration ranges per transition. These mirror the duration_envelope
-# table in the agent's prompt. Used to flag picks whose duration is clearly
-# outside the band for the chosen transition (a hard-cut with duration=0.8 is
-# a contract violation; a dissolve at 0.1s reads as a glitch).
-_TRANSITION_DURATION_RANGES: dict[str, tuple[float, float]] = {
-    "hard-cut": (0.0, 0.0),
-    "match-cut": (0.0, 0.0),  # renders identically to hard-cut; instant cut
-    "speed-ramp": (0.0, 0.0),  # cut is instant; mechanic is on dest slot's speed_factor
-    "none": (0.0, 0.0),
-    "whip-pan": (0.20, 0.40),
-    "zoom-in": (0.30, 0.50),
-    "dissolve": (0.40, 0.80),
-    "curtain-close": (0.60, 1.00),
-}
-# Tolerance band around the canonical envelope — slight drift (e.g. dissolve at
-# 0.35s or whip-pan at 0.45s) is fine; the structural check only fires on clear
-# violations (hard-cut at 0.5s, dissolve at 0.1s).
-_DURATION_TOLERANCE_S = 0.15
-
-
-def check_transition_picker(
-    output: TransitionPickerOutput,
-    input: TransitionPickerInput,  # noqa: A002, ARG001
-) -> list[str]:
-    """Structural floor for the per-pair transition pick.
-
-    `parse()` rejects unknown transition values with a SchemaError (good), but
-    clamps duration_s to [0.0, 2.0] silently. The interesting failure modes are
-    semantic, not parse-time:
-
-      - **Duration outside the canonical envelope** for the picked transition.
-        A hard-cut with duration=0.8 means the agent missed the "instant"
-        contract; a dissolve at 0.1s reads as a glitch. Both pass parse but
-        signal drift.
-      - **Empty / too-short rationale.** Like clip_router / shot_ranker, the
-        rubric's `default_fidelity` and `pacing_style_modulation` dimensions
-        need an auditable reason to score against.
-      - **Sanity bound on whip-pan with static cameras.** The agent's own
-        prompt explicitly forbids whip-pan between two static shots ("reads
-        as a glitch, not a transition"). If both clips report
-        camera_movement='static' and the pick is whip-pan, flag it.
-    """
-    failures: list[str] = []
-
-    if output.transition not in _PICKER_VALID_TRANSITIONS:
-        failures.append(
-            f"transition={output.transition!r} not in {list(_PICKER_VALID_TRANSITIONS)}"
-        )
-        return failures  # downstream range check is meaningless without a valid type
-
-    lo, hi = _TRANSITION_DURATION_RANGES[output.transition]
-    if not (lo - _DURATION_TOLERANCE_S <= output.duration_s <= hi + _DURATION_TOLERANCE_S):
-        failures.append(
-            f"duration_s={output.duration_s} outside canonical envelope "
-            f"[{lo}, {hi}] (±{_DURATION_TOLERANCE_S} tolerance) for transition "
-            f"{output.transition!r}"
-        )
-
-    rationale = (output.rationale or "").strip().lower()
-    if not rationale:
-        failures.append("rationale is empty")
-    elif len(rationale) < _RATIONALE_MIN_CHARS:
-        failures.append(
-            f"rationale {rationale!r} is too short "
-            f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
-        )
-    elif rationale in _BOILERPLATE_RATIONALES:
-        failures.append(f"rationale {rationale!r} is boilerplate (needs concrete reason)")
-
-    # Camera-state sanity: whip-pan between two static shots is forbidden by
-    # the prompt itself.
-    if (
-        output.transition == "whip-pan"
-        and input.outgoing.camera_movement == "static"
-        and input.incoming.camera_movement == "static"
-    ):
-        failures.append(
-            "whip-pan picked for static→static pair (prompt forbids — reads as a glitch)"
         )
 
     return failures
@@ -1348,6 +1190,54 @@ def check_landmark_guess(
         failures.append("named landmark has no evidence")
     if output.confidence < 0.0 or output.confidence > 1.0:
         failures.append(f"confidence={output.confidence} outside [0, 1]")
+    return failures
+
+
+def check_overlay_generation(
+    output: OverlayPlanOutput,
+    input: OverlayPlanInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.editor.overlay_generation.
+
+    Failure modes this guards (the agent plans overlays from evidence it must not invent):
+    cites evidence that was not supplied; quotes speech that is not a contiguous phrase of the
+    cited words; places an overlay outside the video; names an asset that was not offered;
+    leaves an image row without a `depicts` declaration; answers a prompt that has no evidence
+    with overlays instead of a clarification.
+
+    Not checked here: crossing the Carousel insertion, overlapping existing or other proposed
+    overlays, and holding a picture under two seconds. The live model breaks these in about 1 of
+    3 captured cases, and `materialize_overlays` in app/services/overlay_generation.py trims,
+    drops or extends those rows before the creator sees them, so they are repaired, not
+    creator-visible defects.
+    """
+    failures: list[str] = []
+    evidence = {row["reference_id"]: row for row in input.evidence}
+    asset_ids = {row.get("asset_id") for row in input.assets}
+    if input.mode == "prompt" and not input.evidence and output.overlays:
+        failures.append("prompt mode with no evidence proposed overlays instead of asking")
+    if not output.overlays and not output.message:
+        failures.append("no overlays and no message explaining why")
+
+    for index, row in enumerate(output.overlays):
+        label = f"overlays[{index}] {row.title!r}"
+        if row.end_s <= row.start_s or row.end_s > input.duration_s + 1e-6:
+            failures.append(f"{label}: {row.start_s}-{row.end_s}s is outside 0-{input.duration_s}s")
+        if row.kind == "library_asset" and row.asset_id not in asset_ids:
+            failures.append(f"{label}: asset_id {row.asset_id!r} was not offered")
+        if row.kind == "image" and row.depicts is None:
+            failures.append(f"{label}: image row has no depicts declaration")
+        for cite in row.evidence:
+            source = evidence.get(cite.reference_id)
+            if source is None:
+                failures.append(f"{label}: cites unknown evidence {cite.reference_id!r}")
+                continue
+            if source["kind"] != cite.kind:
+                failures.append(f"{label}: cites {cite.reference_id!r} as {cite.kind}")
+            if cite.kind == "speech" and cite.quote:
+                spoken = " ".join(str(source.get("quote", "")).casefold().split())
+                if " ".join(cite.quote.casefold().split()) not in spoken:
+                    failures.append(f"{label}: quote {cite.quote!r} is not in {cite.reference_id}")
     return failures
 
 
@@ -3277,16 +3167,14 @@ def run_structural(
         return check_clip_question(output, input)
     if agent_name == "nova.video.landmark_guess":
         return check_landmark_guess(output, input)
+    if agent_name == "nova.editor.overlay_generation":
+        return check_overlay_generation(output, input)
     if agent_name == "nova.plan.speech_excerpt_planner":
         return check_speech_excerpt_planner(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
-    if agent_name == "nova.video.shot_ranker":
-        return check_shot_ranker(output, input)
     if agent_name == "nova.layout.text_designer":
         return check_text_designer(output, input)
-    if agent_name == "nova.layout.transition_picker":
-        return check_transition_picker(output, input)
     if agent_name == "nova.plan.persona_generator":
         return check_persona_generator(output)
     if agent_name == "nova.plan.content_plan_generator":

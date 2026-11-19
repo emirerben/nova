@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.agents._runtime import RunContext
+from app.agents.model_registry import SOL
 from app.kria.review_canon import FrozenModel
 from app.services.bounded_review import ReviewProvenance, invoke_bounded_review
 
@@ -104,7 +105,7 @@ def review_editor_repair(
     context: EditorRepairReviewContext,
     *,
     run_context: RunContext,
-    model: str = "gpt-6.1-sol",
+    model: str = SOL,
     client=None,
 ) -> EditorRepairReviewResult:
     """Choose an exact candidate; the normal compiler, approval and Undo remain authoritative."""

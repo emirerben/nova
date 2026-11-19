@@ -366,5 +366,6 @@
     "dated": true,
     "contract": "Before-picture (v44): timing(20) + select, 6 selected clips.",
     "note": "Kept alongside the v45 re-record: this is what prompt 2026-10-06-v44 emitted for the same input (superseded; pinned by the chain test as the before-picture)."
-  }
+  },
+  "prompt_sha": "unpinned"
 }

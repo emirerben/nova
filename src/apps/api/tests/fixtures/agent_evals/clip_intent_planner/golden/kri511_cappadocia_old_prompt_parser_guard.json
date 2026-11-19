@@ -72,5 +72,6 @@
     ],
     "expect_any": true,
     "expect_question": false
-  }
+  },
+  "prompt_sha": "unpinned"
 }

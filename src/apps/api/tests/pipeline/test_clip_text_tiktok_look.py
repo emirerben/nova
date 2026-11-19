@@ -69,7 +69,9 @@ PROMPT = (
 FIXTURE = Path(__file__).parent / "fixtures" / "clip_text_look_flag_off_rows.json"
 # sha256 of the flag-off Main Creator prompt for ``_prompt_input()``, recorded on the code before
 # the feature. The version string is not part of the rendered prompt, so the bump is invisible.
-PROMPT_GOLDEN_SHA256 = "cde47331ebba583fb7aa02554877834d1e2ce02647a35aec0ff2080b1f066ee1"
+# Re-pinned for KRI-1384 (the base prompt says a limit is not a reason to ask); before:
+# cde47331ebba583f….
+PROMPT_GOLDEN_SHA256 = "83088bd004cd2bd6d7969db00a2b3647187af735354966e215760273fa02b331"
 FACE_V2 = (0.12, 0.29, 0.79, 0.67)
 
 

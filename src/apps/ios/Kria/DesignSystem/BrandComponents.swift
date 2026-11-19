@@ -126,7 +126,7 @@ struct ProjectActionsMenu: View {
     var body: some View {
         Menu {
             Button("Rename project") { presenter?.request = .rename(project.id) }
-            Button(deletionBlocked ? "Delete after rendering or uploading" : "Delete project", role: .destructive) { presenter?.request = .delete(project.id) }
+            Button(deletionBlocked ? String(localized: "Delete after rendering or uploading") : String(localized: "Delete project"), role: .destructive) { presenter?.request = .delete(project.id) }
                 .disabled(deletionBlocked)
         } label: {
             if floating {
@@ -182,10 +182,10 @@ struct ProjectActionAlerts: ViewModifier {
                     .accessibilityIdentifier("rename-project-title")
                 Button("Cancel", role: .cancel) { renameError = nil }
                     .disabled(busy)
-                Button(busy ? "Saving…" : "OK") { rename() }
+                Button(busy ? String(localized: "Saving…") : String(localized: "OK")) { rename() }
                     .disabled(busy || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.count > 120)
             } message: {
-                Text(renameError ?? "Enter a name up to 120 characters.")
+                Text(renameError ?? String(localized: "Enter a name up to 120 characters."))
             }
             .alert("Delete this project?", isPresented: $deleting) {
                 Button("Cancel", role: .cancel) {}
@@ -194,7 +194,7 @@ struct ProjectActionAlerts: ViewModifier {
                     setBusy(true)
                     Task {
                         do { try await model.deleteProject(project) }
-                        catch { self.deleteError = "The project couldn’t be deleted. It may have changed or still be rendering. Try again after refreshing." }
+                        catch { self.deleteError = String(localized: "The project couldn’t be deleted. It may have changed or still be rendering. Try again after refreshing.") }
                         setBusy(false)
                     }
                 }
@@ -222,8 +222,8 @@ struct ProjectActionAlerts: ViewModifier {
             } catch {
                 if error as? APIError == .conflict {
                     renameIdentity = UUID().uuidString
-                    self.renameError = "This project changed elsewhere. The latest version is loaded; review your name and save again."
-                } else { self.renameError = "The name couldn’t be saved. Your text is still here; try again." }
+                    self.renameError = String(localized: "This project changed elsewhere. The latest version is loaded; review your name and save again.")
+                } else { self.renameError = String(localized: "The name couldn’t be saved. Your text is still here; try again.") }
                 renaming = true
             }
             setBusy(false)

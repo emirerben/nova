@@ -20,11 +20,11 @@ enum SlidePostAutoAppend {
 
         var notice: String? {
             var parts: [String] = []
-            let switched = switchedToInstagram ? "Switched to Instagram carousel so the video fits." : nil
-            if !skippedForLimit.isEmpty { parts.append("\(skippedForLimit.count) over the slide limit") }
-            if !skippedForVideo.isEmpty { parts.append("\(skippedForVideo.count) video\(skippedForVideo.count == 1 ? "" : "s") can't go in a TikTok photo post") }
+            let switched = switchedToInstagram ? String(localized: "Switched to Instagram carousel so the video fits.") : nil
+            if !skippedForLimit.isEmpty { parts.append(String(localized: "\(skippedForLimit.count) over the slide limit")) }
+            if !skippedForVideo.isEmpty { parts.append(String(localized: "\(skippedForVideo.count) videos can't go in a TikTok photo post")) }
             guard !parts.isEmpty else { return switched }
-            return [switched, "Not added: " + parts.joined(separator: ", ") + "."].compactMap { $0 }.joined(separator: " ")
+            return [switched, String(localized: "Not added: \(parts.joined(separator: ", ")).")].compactMap { $0 }.joined(separator: " ")
         }
     }
 
@@ -93,7 +93,7 @@ enum SlidePostPendingMedia {
         let assetIDs = Set(assets.map(\.id))
         for asset in assets where !draftAssetIDs.contains(asset.id) {
             if asset.status == "failed" || ["missing", "expired"].contains(asset.mediaStatus ?? "") {
-                tiles.append(.init(id: "asset-\(asset.id)", phase: .failed(message: "This file couldn't be prepared.", recordID: nil)))
+                tiles.append(.init(id: "asset-\(asset.id)", phase: .failed(message: String(localized: "This file couldn't be prepared."), recordID: nil)))
             } else if serverPending.contains(asset.status) {
                 tiles.append(.init(id: "asset-\(asset.id)", phase: .processing))
             }
@@ -103,7 +103,7 @@ enum SlidePostPendingMedia {
             // The server already lists this file; its own tile above covers it.
             if let mediaID = record.mediaID, assetIDs.contains(mediaID) { continue }
             if record.uploadFailed == true || failedRecordIDs.contains(record.id) {
-                let message = failures.first { $0.id == record.id }?.message ?? "The upload didn't finish."
+                let message = failures.first { $0.id == record.id }?.message ?? String(localized: "The upload didn't finish.")
                 tiles.append(.init(id: "record-\(record.id.uuidString)", phase: .failed(message: message, recordID: record.id)))
             } else {
                 tiles.append(.init(id: "record-\(record.id.uuidString)", phase: .uploading(progress: progress[record.id])))

@@ -90,6 +90,7 @@ from app.kria.recipes import (
     MediaAsset,
     MediaSize,
     MediaTransform,
+    NormalizedSourceCrop,
     TimelineClip,
     TimelineTrack,
 )
@@ -1642,6 +1643,11 @@ def _compile_overlay_track(
             fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
         )
         width_frac, x_frac, y_frac = _card_placement(card, visual, canvas)
+        crop = _strip_source_crop(card, visual, canvas)
+        if crop is not None:
+            width_frac, x_frac = card.strip.scale, card.strip.x_frac
+            if card.strip.y_frac is not None:
+                y_frac = card.strip.y_frac
         clips.append(
             TimelineClip(
                 id=f"subtitled-overlay-{card.id}",
@@ -1659,13 +1665,44 @@ def _compile_overlay_track(
                     y_fraction=y_frac,
                     window_start=window_start,
                     window_end=window_end,
-                    fade_in=card.fade,
-                    fade_out=card.fade,
+                    # KRI-1478: a strip cuts in and out, like her own cards.
+                    fade_in=card.fade and crop is None,
+                    fade_out=card.fade and crop is None,
                     editor_style=card.placement_style(),
                 ),
+                source_crop=crop,
             )
         )
     return TimelineTrack(id="subtitled-overlays", kind="overlay", clips=clips), has_video
+
+
+def _strip_source_crop(
+    card: SubtitledOverlayCard, visual: PhoneVisualBinding, canvas: Canvas
+) -> NormalizedSourceCrop | None:
+    """KRI-1478: the source crop that turns ``card`` into its strip (`card.strip`: full width
+    where the layout found room, else the card's own box), or ``None`` to draw today's
+    whole-picture card.
+
+    Only a plain card the layout cleared of the captions (its strip sits in the same band),
+    on the portrait canvas the layout measured, and only when the picture's text column was
+    measured at bind (`PhoneVisualBinding.text_column`): a photo with no readable column, a
+    portrait screenshot and a tilted, zoomed or animated card keep their whole picture.
+    """
+    if (
+        card.strip is None
+        or not card.caption_clear
+        or canvas.width > canvas.height
+        or card.rotation_deg != 0
+        or card.placement_style() is not None
+    ):
+        return None
+    from app.services.phone_card_layout import strip_crop  # noqa: PLC0415
+
+    crop = strip_crop(card.strip.scale, card.strip.height, visual.text_column)
+    if crop is None:
+        return None
+    x, y, width, height = crop
+    return NormalizedSourceCrop(x=x, y=y, width=width, height=height)
 
 
 _FULLSCREEN_TRACK_ID = "subtitled-fullscreen"
@@ -1822,6 +1859,11 @@ def _compile_video_overlay_clip(
         orientation_degrees=visual.orientation_degrees,
     )
     width_frac, x_frac, y_frac = _card_placement(card, visual, canvas)
+    crop = _strip_source_crop(card, visual, canvas)
+    if crop is not None:
+        width_frac, x_frac = card.strip.scale, card.strip.x_frac
+        if card.strip.y_frac is not None:
+            y_frac = card.strip.y_frac
     return TimelineClip(
         id=f"subtitled-overlay-{card.id}",
         source_asset_id=asset.id,
@@ -1838,10 +1880,12 @@ def _compile_video_overlay_clip(
             y_fraction=y_frac,
             window_start=window_start,
             window_end=window_end,
-            fade_in=card.fade,
-            fade_out=card.fade,
+            # KRI-1478: a strip cuts in and out, like her own cards.
+            fade_in=card.fade and crop is None,
+            fade_out=card.fade and crop is None,
             editor_style=card.placement_style(),
         ),
+        source_crop=crop,
     )
 
 

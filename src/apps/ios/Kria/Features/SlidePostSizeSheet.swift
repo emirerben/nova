@@ -53,7 +53,7 @@ struct SlidePostSizeSheet: View {
 
     private var platformSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Post to")
+            sectionTitle(String(localized: "Post to"))
             HStack(spacing: 8) {
                 platformButton("TikTok", profile: "tiktok_photo", enabled: !hasVideo, id: "slidepost-size-platform-tiktok")
                 platformButton("Instagram", profile: "instagram_carousel", enabled: true, id: "slidepost-size-platform-instagram")
@@ -69,7 +69,7 @@ struct SlidePostSizeSheet: View {
         return Button {
             guard !on else { return }
             let reset = session.setPlatform(value)
-            notice = reset > 0 ? "Size changed to fit \(title). Crops were reset on \(reset) slide\(reset == 1 ? "" : "s")." : nil
+            notice = reset > 0 ? String(localized: "Size changed to fit \(title). Crops were reset on \(reset) slides.") : nil
         } label: {
             Text(title).font(KriaFont.body(14).weight(on ? .semibold : .regular)).foregroundStyle(KriaColor.ink)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -85,7 +85,7 @@ struct SlidePostSizeSheet: View {
     private var sizeSection: some View {
         let current = draft?.size ?? SlidePostSize.defaultSize(profile: profile)
         return VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Shape")
+            sectionTitle(String(localized: "Shape"))
             HStack(alignment: .top, spacing: 10) {
                 ForEach(SlidePostSize.allowed(profile: profile), id: \.self) { size in chip(size, selected: size == current) }
             }
@@ -96,21 +96,21 @@ struct SlidePostSizeSheet: View {
     }
 
     private func sizeHint(_ size: SlidePostSize) -> String {
-        if SlidePostSize.isInstagram(profile) { return "Instagram uses one shape for the whole carousel, so every slide gets this size." }
-        return size == .fullScreen ? "Full screen on TikTok. Pick 4:5 or 1:1 to post the same slides on Instagram too."
-            : "TikTok shows this with bars around it. It also posts cleanly to Instagram."
+        if SlidePostSize.isInstagram(profile) { return String(localized: "Instagram uses one shape for the whole carousel, so every slide gets this size.") }
+        return size == .fullScreen ? String(localized: "Full screen on TikTok. Pick 4:5 or 1:1 to post the same slides on Instagram too.")
+            : String(localized: "TikTok shows this with bars around it. It also posts cleanly to Instagram.")
     }
 
     private func chip(_ size: SlidePostSize, selected: Bool) -> some View {
         Button {
             let reset = session.setAspect(SlidePostSize.storedAspect(size.rawValue, profile: profile))
-            notice = reset > 0 ? "Crops were reset on \(reset) slide\(reset == 1 ? "" : "s") for the new shape." : nil
+            notice = reset > 0 ? String(localized: "Crops were reset on \(reset) slides for the new shape.") : nil
         } label: {
             VStack(spacing: 6) {
                 shapeThumbnail(size, selected: selected).frame(height: 44)
                 Text(size.rawValue).font(KriaFont.body(13).weight(.semibold))
                 Text(size.name).font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc).lineLimit(1).minimumScaleFactor(0.7)
-                Text(size.worksOnBoth ? "Both apps" : " ").font(KriaFont.body(10)).foregroundStyle(KriaColor.zinc).lineLimit(1)
+                Text(size.worksOnBoth ? String(localized: "Both apps") : " ").font(KriaFont.body(10)).foregroundStyle(KriaColor.zinc).lineLimit(1)
             }
             .foregroundStyle(KriaColor.ink)
             .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 8)
@@ -118,7 +118,7 @@ struct SlidePostSizeSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(size.label)\(size.worksOnBoth ? ", works on Instagram and TikTok" : "")")
+        .accessibilityLabel(size.worksOnBoth ? String(localized: "\(size.label), works on Instagram and TikTok") : size.label)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("slidepost-size-chip-\(size.rawValue.replacingOccurrences(of: ":", with: "x").replacingOccurrences(of: ".", with: "_"))")
     }
@@ -137,10 +137,10 @@ struct SlidePostSizeSheet: View {
 
     private var photosSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Photos")
+            sectionTitle(String(localized: "Photos"))
             HStack(spacing: 8) {
-                fitModeButton("Fill", on: summaryIs(nil), id: "slidepost-size-fit-fill") { session.setFitForAllPhotos(nil) }
-                fitModeButton("Fit", on: summaryIsFit, id: "slidepost-size-fit-fit") { session.setFitForAllPhotos(bars) }
+                fitModeButton(String(localized: "Fill", comment: "Photo option: fill the whole frame, edges may be cropped"), on: summaryIs(nil), id: "slidepost-size-fit-fill") { session.setFitForAllPhotos(nil) }
+                fitModeButton(String(localized: "Fit", comment: "Photo option: show the whole photo with bars around it"), on: summaryIsFit, id: "slidepost-size-fit-fit") { session.setFitForAllPhotos(bars) }
             }
             if session.fitSummary == .mixed {
                 Text("Photos differ. Pick one to set them all.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
@@ -163,7 +163,7 @@ struct SlidePostSizeSheet: View {
                     }
                 }
             }
-            Text(summaryIsFit ? "Each photo shows whole, with bars around it." : "Each photo fills the frame; its edges may be trimmed.")
+            Text(summaryIsFit ? String(localized: "Each photo shows whole, with bars around it.") : String(localized: "Each photo fills the frame; its edges may be trimmed."))
                 .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             if hasVideo {
                 Text("Videos always fill the frame.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)

@@ -185,15 +185,16 @@ def test_kria_bulk_followup_replays_honest_impossible_all() -> None:
 
 
 def test_sfx_hallucinated_catalog_id_replays_zero_ops() -> None:
-    """Unknown sound IDs must remain a clarification, never an executable edit."""
+    """Unknown sound IDs are never an executable edit: the op fails and goes back for repair."""
     fixture = _fixture("sfx_hallucinated_effect_id")
     result = run_eval(fixture)
 
     assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
     assert result.output is not None
     assert result.output["ops"] == []
-    assert result.output["needs_clarification"] is True
+    assert result.output["outcome"] == "failed"
     assert result.output["intent"] == "edit"
+    assert [item["op"] for item in result.output["repair"]["rejected"]] == ["add_sfx"]
 
 
 @pytest.mark.skipif(
@@ -409,3 +410,24 @@ def test_synthetic_label_links_preserve_creator_edited_provenance() -> None:
         "inferred": False,
         "edited": True,
     }
+
+
+def test_a_stated_length_over_word_sequences_is_never_refused_for_reading_speed() -> None:
+    """KRI-1370: prod thread 147eb928 answered "make it 8 seconds" with "they would flash by too
+    fast to read", repeating a stale server "10.5s" message from history. Reading speed is not the
+    model's call: the length is applied and both sequences share the new window."""
+    fixture = _fixture("word_sequence_exact_length_ignores_stale_reading_time")
+    result = run_eval(fixture)
+    assert result.passed, f"{result.fixture_id}: {result.summary()} {result.error}"
+    assert result.output is not None
+    output = result.output
+    assert output["needs_clarification"] is False
+    assert [op["op"] for op in output["ops"]] == [
+        "set_total_duration",
+        "retime_text_sequence",
+        "retime_text_sequence",
+    ]
+    assert output["ops"][0]["target_s"] == 8
+    assert all(op["fit_to_video"] and op["end_s"] == 8 for op in output["ops"][1:])
+    reply = output["reply"].lower()
+    assert not any(term in reply for term in ("flash", "too fast", "reading time", "10.5"))

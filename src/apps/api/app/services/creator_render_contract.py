@@ -727,13 +727,18 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "split_screen.panels[]",
         "split_screen.panels[].media_id",
         "split_screen.panels[].source_start_s",
+        "split_screen.panels[].clips[]",
+        "split_screen.panels[].clips[].media_id",
+        "split_screen.panels[].clips[].source_start_s",
+        "split_screen.panels[].clips[].duration_s",
         "split_screen.start_s",
         "split_screen.duration_s",
         "split_screen.panel_weights[]",
         "split_screen.gutter",
         "split_screen.background_color",
         note=(
-            "Capability policy validates availability and approved media; the initial phone "
+            "Capability policy validates availability and approved media for every clip of every "
+            "panel; the initial phone "
             "compiler lowers source clocks and layout through the editable section command "
             "before pinning the device request. This contract does not independently pin or "
             "verify panel placement."
@@ -1228,10 +1233,16 @@ def _digest(data: Mapping[str, Any]) -> str:
 
 def _talking_list_label(requirement: Any, raw: Mapping[str, Any]) -> bool:
     """Item 19: flag on and the Talking worker would read this whole-video text as a list label."""
-    from app.pipeline.phone_list_labels import is_list_label_candidate  # noqa: PLC0415
+    from app.pipeline.phone_list_labels import (  # noqa: PLC0415
+        example_label,
+        is_list_label_candidate,
+    )
     from app.services.phone_rollout import phone_list_labels_supported  # noqa: PLC0415
 
-    if requirement.scope != "global" or not phone_list_labels_supported():
+    # KRI-1471: the numbered example filed as a per-clip literal is the worker's label too, so
+    # it is not looked up on a clip ("I couldn't tell which clip ...").
+    whole_video = requirement.scope == "global" or example_label(requirement) is not None
+    if not whole_video or not phone_list_labels_supported():
         return False
     from app.config import settings  # noqa: PLC0415
 
@@ -1319,53 +1330,85 @@ def text_clip_not_found(literal: str) -> str:
     )
 
 
-# KRI-1069: the fixed words after the named media in ``capture_time_missing``, in both
-# languages, so a refusal over it still names the order choice (``unresolved_field_path``).
-_NO_CAPTURE_TAILS = {
-    "en": (
-        "has no filming time, so I can't put it in the order you filmed.",
-        "have no filming time, so I can't put them in the order you filmed.",
-    ),
-    "tr": (
-        "için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum.",
-        "için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum.",
-    ),
-}
+# KRI-1069: ``capture_time_missing``'s sentences. Whole sentences per count, so German never
+# gets an English tail after its own names (KRI-1362). ``unresolved_field_path`` matches the
+# words after the named media, so a refusal over it still names the order choice.
+_NO_CAPTURE_ONE = "{names} has no filming time, so I can't put it in the order you filmed."
+_NO_CAPTURE_ONE_TR = "{names_tr} için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum."
+_NO_CAPTURE_MANY = "{names} have no filming time, so I can't put them in the order you filmed."
+_NO_CAPTURE_MANY_TR = (
+    "{names_tr} için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum."
+)
+_NO_CAPTURE_WHOLE_EDIT = (
+    "Your clips and photos have no filming time, so I can't put them in the order you filmed."
+)
+_NO_CAPTURE_WHOLE_EDIT_TR = (
+    "Kliplerinin ve fotoğraflarının hiçbiri için çekim saati yok, o yüzden onları çektiğin "
+    "sıraya koyamıyorum."
+)
+
+
+def _no_capture_endings() -> tuple[str, ...]:
+    """Every language's words after the named media (and its whole-edit sentence)."""
+    from app.kria.copy_catalog import translate  # noqa: PLC0415
+    from app.kria.reply_language import CATALOG_REPLY_LANGUAGES  # noqa: PLC0415
+
+    templates = [
+        _NO_CAPTURE_ONE,
+        _NO_CAPTURE_ONE_TR,
+        _NO_CAPTURE_MANY,
+        _NO_CAPTURE_MANY_TR,
+        *(
+            translate(language, template)
+            for language in sorted(CATALOG_REPLY_LANGUAGES)
+            for template in (_NO_CAPTURE_ONE, _NO_CAPTURE_MANY)
+        ),
+    ]
+    endings = [template.rsplit("}", 1)[1] for template in templates if template and "}" in template]
+    endings += [
+        translate(language, _NO_CAPTURE_WHOLE_EDIT) or ""
+        for language in sorted(CATALOG_REPLY_LANGUAGES)
+    ]
+    # A translation that ends on the names leaves no words to match by.
+    return tuple(ending for ending in endings if len(ending.strip()) > 20)
 
 
 def capture_time_missing(names: Sequence[tuple[str, str]], *, whole_edit: bool = False) -> str:
     """Media of a filming-order edit with no capture time, named, in the chat's language.
 
-    ``names`` are ``(en, tr)`` pairs (a file name is the same in both). ``whole_edit``: no
-    clip or photo of the edit has a time, so naming each is noise and the line says so.
-    KRI-1069: the contract once said "every selected clip" when one selected photo was not
-    a clip at all.
+    ``names`` are ``(reply language, Turkish)`` pairs (``_media_name``; a file name is the
+    same in both). ``whole_edit``: no clip or photo of the edit has a time, so naming each is
+    noise and the line says so. KRI-1069: the contract once said "every selected clip" when
+    one selected photo was not a clip at all.
     """
+    if whole_edit:
+        return say(en=_NO_CAPTURE_WHOLE_EDIT, tr=_NO_CAPTURE_WHOLE_EDIT_TR)
     shown = list(names[:3])
     more = len(names) - len(shown)
-    one = len(names) == 1 and not whole_edit
-    en = ", ".join(name for name, _tr in shown) + (f" and {more} more" if more else "")
+    local = ", ".join(name for name, _tr in shown) + (
+        say(en=" and {more} more", tr=" ve {more} tane daha", more=more) if more else ""
+    )
     tr = ", ".join(name for _en, name in shown) + (f" ve {more} tane daha" if more else "")
-    if whole_edit:
-        en, tr = "Your clips and photos", "Kliplerinin ve fotoğraflarının hiçbiri"
     return say(
-        en="{v1} {v2}",
-        tr="{v3} {v4}",
-        v1=en,
-        v2=_NO_CAPTURE_TAILS["en"][0 if one else 1],
-        v3=tr,
-        v4=_NO_CAPTURE_TAILS["tr"][0 if one else 1],
+        en=_NO_CAPTURE_ONE if len(names) == 1 else _NO_CAPTURE_MANY,
+        tr=_NO_CAPTURE_ONE_TR if len(names) == 1 else _NO_CAPTURE_MANY_TR,
+        names=local,
+        names_tr=tr,
     )
 
 
 def _media_name(row: Mapping[str, Any], kind: str, ordinal: int) -> tuple[str, str]:
-    """How the creator knows one medium: its file name as the app shows it, else its place."""
+    """How the creator knows one medium: its file name as the app shows it, else its place
+    (in the reply language, and in Turkish)."""
     name = clip_display_name(row.get("source_filename"))
     if name:
         return f'"{name}"', f'"{name}"'
     if kind == "photo":
-        return f"photo {ordinal}", f"{ordinal}. fotoğraf"
-    return f"clip {ordinal}", f"{ordinal}. klip"
+        return (
+            say(en="photo {number}", tr="{number}. fotoğraf", number=ordinal),
+            f"{ordinal}. fotoğraf",
+        )
+    return say(en="clip {number}", tr="{number}. klip", number=ordinal), f"{ordinal}. klip"
 
 
 def _edit_visuals(
@@ -2314,9 +2357,7 @@ ORDER_BASIS_UNRESOLVED = frozenset(
 def unresolved_field_path(message: str) -> str | None:
     """The strategy field an unresolved line's refusal names, or ``None``."""
 
-    if message in ORDER_BASIS_UNRESOLVED or message.endswith(
-        (*_NO_CAPTURE_TAILS["en"], *_NO_CAPTURE_TAILS["tr"])
-    ):
+    if message in ORDER_BASIS_UNRESOLVED or message.endswith(_no_capture_endings()):
         return REQUIREMENT_FIELD_PATHS["order_required"]
     return None
 

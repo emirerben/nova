@@ -108,5 +108,6 @@
     "source": "hand_authored_golden",
     "case": "bulk transition",
     "lane": "kria-219-timeline"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

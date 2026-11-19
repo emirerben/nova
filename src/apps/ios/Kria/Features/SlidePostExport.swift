@@ -48,8 +48,8 @@ import UIKit
     var message: String? {
         switch status {
         case .idle, .saving, .rendering: nil
-        case .preparing(let done, let total): "Preparing \(done)/\(total)"
-        case .savedToPhotos(let count): "Saved \(count) slides to Photos."
+        case .preparing(let done, let total): String(localized: "Preparing \(done)/\(total)")
+        case .savedToPhotos(let count): String(localized: "Saved \(count) slides to Photos.")
         case .photosDenied: SlidePostExportError.photosDenied.errorDescription
         case .notice(let text), .failed(let text): text
         }
@@ -179,7 +179,7 @@ import UIKit
             await session.refresh(api: api, itemID: itemID, readOnlyObservation: true)
             guard !Task.isCancelled, isCurrent() else { set(.idle); return }
             if let error = session.terminalStateReadError { set(.failed(error)); return }
-            if session.hasConfirmedRenderFailure { set(.failed("Rendering failed. Try again.")); return }
+            if session.hasConfirmedRenderFailure { set(.failed(String(localized: "Rendering failed. Try again."))); return }
         }
         if expectedJob == nil { expectedJob = session.exportObservationJobID }
         guard !Task.isCancelled, isCurrent(), let current = session.draft,
@@ -278,7 +278,7 @@ import UIKit
             // Do not commit a now-obsolete render after a refresh/edit landed
             // while its ordered media was downloading.
             guard session.canExport, session.state?.draft?.version == snapshot.version else {
-                set(.notice("A newer post version is ready. Download it before saving."))
+                set(.notice(String(localized: "A newer post version is ready. Download it before saving.")))
                 return
             }
             let dates = Self.creationDates(count: files.ordered.count, now: now())
@@ -302,7 +302,7 @@ import UIKit
             }
             try await revalidate()
             guard session.canExport, session.state?.draft?.version == snapshot.version else {
-                set(.notice("A newer post version is ready. Download it before sharing."))
+                set(.notice(String(localized: "A newer post version is ready. Download it before sharing.")))
                 return
             }
             let caption = files.directory.appending(path: "caption.txt")
@@ -326,14 +326,14 @@ import UIKit
 
     private func snapshot(from session: SlidePostSession) -> Snapshot? {
         guard session.canExport, let state = session.state, let draft = state.draft else {
-            set(.notice("Prepare the current saved version before exporting."))
+            set(.notice(String(localized: "Prepare the current saved version before exporting.")))
             return nil
         }
         let ordered = zip(draft.slides, state.slides).compactMap { draftSlide, rendered -> Item? in
             guard draftSlide.id == rendered.id, let url = rendered.url, url.scheme == "https" else { return nil }
             return Item(url: url, kind: rendered.kind, index: 0)
         }
-        guard ordered.count == draft.slides.count else { set(.notice("This render is incomplete. Retry preparation before exporting.")); return nil }
+        guard ordered.count == draft.slides.count else { set(.notice(String(localized: "This render is incomplete. Retry preparation before exporting."))); return nil }
         return Snapshot(itemID: state.itemID, version: draft.version, caption: draft.caption, items: ordered.enumerated().map { Item(url: $0.element.url, kind: $0.element.kind, index: $0.offset) })
     }
 
@@ -367,9 +367,9 @@ import UIKit
 private enum SlidePostExportError: LocalizedError, Equatable { case photosDenied, downloadFailed, draftChanged
     var errorDescription: String? {
         switch self {
-        case .photosDenied: "Allow Photos access to save these slides, or use Share to save them in Files."
-        case .downloadFailed: "Kria couldn’t download every slide for export."
-        case .draftChanged: "Your post changed during export. Export again to save the latest edits."
+        case .photosDenied: String(localized: "Allow Photos access to save these slides, or use Share to save them in Files.")
+        case .downloadFailed: String(localized: "Kria couldn’t download every slide for export.")
+        case .draftChanged: String(localized: "Your post changed during export. Export again to save the latest edits.")
         }
     }
 }
@@ -383,17 +383,17 @@ struct SlidePostExportBanner: View {
         case .idle:
             EmptyView()
         case .saving, .rendering:
-            row("Preparing your slides…", "Saving and rendering your post.", "arrow.down.circle", KriaColor.ink)
+            row(String(localized: "Preparing your slides…"), String(localized: "Saving and rendering your post."), "arrow.down.circle", KriaColor.ink)
         case .preparing(let done, let total):
-            row("Preparing your slides…", total > 0 ? "\(min(done + 1, total))/\(total)" : "Getting your slides ready.", "arrow.down.circle", KriaColor.ink)
+            row(String(localized: "Preparing your slides…"), total > 0 ? "\(min(done + 1, total))/\(total)" : String(localized: "Getting your slides ready."), "arrow.down.circle", KriaColor.ink)
         case .savedToPhotos(let count):
-            row("Saved to Photos", "Saved \(count) slides to Photos.", "checkmark.circle", KriaColor.ink)
+            row(String(localized: "Saved to Photos"), String(localized: "Saved \(count) slides to Photos."), "checkmark.circle", KriaColor.ink)
         case .photosDenied:
-            dismissable("Photos access is off", exporter.message ?? "", KriaColor.ink)
+            dismissable(String(localized: "Photos access is off"), exporter.message ?? "", KriaColor.ink)
         case .notice(let text):
-            dismissable("Couldn’t save yet", text, KriaColor.ink)
+            dismissable(String(localized: "Couldn’t save yet"), text, KriaColor.ink)
         case .failed(let text):
-            dismissable("Couldn’t export this post", text, KriaColor.ink)
+            dismissable(String(localized: "Couldn’t export this post"), text, KriaColor.ink)
         }
     }
 

@@ -105,7 +105,10 @@ def _extractor_replacements() -> list[tuple[str, str]]:
     node = chain
     while isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         assert node.func.attr == "replace"
-        old, new = (ast.literal_eval(arg) for arg in node.args)
+        old, new = (
+            getattr(brief_extractor, arg.id) if isinstance(arg, ast.Name) else ast.literal_eval(arg)
+            for arg in node.args
+        )
         pairs.append((old, new))
         node = node.func.value
     assert isinstance(node, ast.Name) and node.id == "_BRIEF_PROMPT_SECTION"

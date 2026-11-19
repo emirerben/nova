@@ -60,6 +60,8 @@ from tests.kria.turkish_chat_guard import (  # noqa: F401 - the fixture is used 
     turkish_chat_net_fixture,
 )
 
+pytestmark = pytest.mark.journey("kri-667-turkish-chat")
+
 API = Path(__file__).resolve().parents[2]
 APP = API / "app"
 
@@ -237,7 +239,9 @@ async def test_undo_says_what_it_restored_in_turkish(
         return head
 
     async def _insert(*_a: Any, **_k: Any) -> Any:
-        return SimpleNamespace(id=uuid.uuid4(), draft_revision=4)
+        return SimpleNamespace(
+            id=uuid.uuid4(), draft_revision=4, base_job_id=None, base_generation_id=None
+        )
 
     async def _owned(*_a: Any, **_k: Any) -> Any:
         return thread
@@ -249,7 +253,7 @@ async def test_undo_says_what_it_restored_in_turkish(
     monkeypatch.setattr(drafts, "_head", _head)
     monkeypatch.setattr(drafts, "_insert_revision", _insert)
     monkeypatch.setattr(drafts, "_owned_thread", _owned)
-    monkeypatch.setattr(drafts, "_out", lambda row, can_undo: row)
+    monkeypatch.setattr(drafts, "_out", lambda row, can_undo, **_kw: row)
     monkeypatch.setattr(drafts, "_promote_queued_successor", _successor)
     # pending approvals (none), the parent draft, the approvals to cancel (none).
     db = _AsyncDb(None, parent, None)
@@ -964,6 +968,9 @@ _CROSS_MODULE_SOURCES: dict[str, tuple[str, ...]] = {
     ),
     "app.tasks.kria_runtime._JOB_FAILURE_MESSAGES_TR": (
         "app.tasks.content_plan_build.JOB_FAILURE_MESSAGES",
+    ),
+    "app.tasks.kria_runtime._JOB_FAILURE_REASONS_TR": (
+        "app.tasks.content_plan_build.JOB_FAILURE_REASONS",
     ),
     "app.tasks.kria_runtime._DISPATCH_REFUSALS_TR": (
         "app.tasks.kria_runtime._SPEECH_CLEANUP_DISPATCH_REFUSALS",

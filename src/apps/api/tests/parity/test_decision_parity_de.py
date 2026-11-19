@@ -30,11 +30,6 @@ GERMAN: dict[str, str] = {
     "DC1-6": "Wie läuft's?",
     "D03": "Was kannst du?",
     "D04": "Du willst den Titel größer und golden.",
-    "D05": "Mach es nochmal von vorne",
-    "D06": "Versuch es nochmal anhand meiner Anfrage",
-    "D07": "Ändere den Titel",
-    "D08": "Mach eine andere Version",
-    "D09": "Mach den Titel größer und ändere die Schriftart",
     "D10": "Du entscheidest",
     "D11": "Das überlasse ich dir",
     "D12": "Nimm alle Videos",
@@ -111,6 +106,8 @@ GERMAN: dict[str, str] = {
     "D51": "Verwende nie Gelb",
     "D52": "Verwende diese Schrift nicht mehr",
     "D53": "Mach es nur dieses Mal gelb",
+    "D54": "Lösch den dritten Clip",
+    "D55": "Lass den Titel zwei Sekunden stehen",
     "O37": "Sonnenlicht, so schön! Grüße",
     "O38": "Sonnenlicht, so schön! Grüße",
     "O39": "Sonnenlicht, so schön! Grüße",
@@ -132,13 +129,6 @@ GAPS: dict[str, str] = {
     "DC1-6": "is_status_question: no German wording for status question (contraction)",
     "D03": "is_help_question: no German wording for help question",
     "D04": "is_paraphrase_only: no German wording for reject paraphrase-only reply",
-    "D05": "wants_full_replan: no German wording for redo from scratch",
-    "D06": "wants_full_replan: no German wording for redo from my prompt",
-    "D07": "_is_text_edit_ask: no German wording for text edit ask",
-    "D08": "_fast_path_eligible: no German wording for re-plan cue blocks fast path",
-    "D09": "_is_single_ask: no German wording for compound ask detection",
-    "D10": "delegated_choice: no German wording for delegate choice (you choose)",
-    "D11": "delegated_choice: no German wording for delegate choice (up to you)",
     "D12": "German 'all the videos' is not read as all media (falls back to selected)",
     "D13": "_requests_preserved_clip_order: no German wording for keep clip order",
     "D14": "_explicit_sfx_name: no German wording for named sound effect",
@@ -173,10 +163,7 @@ GAPS: dict[str, str] = {
     "D32": "classify_memory_candidate: no German wording for durable memory (all my videos)",
     "D34": "explicitly_temporary: no German wording for temporary style change",
     "D35": "_named_cues: no German wording for font change cue",
-    "D36": "parse_caption_language_request: no German wording for English captions",
-    "D37": "parse_caption_language_request: no German wording for Turkish captions",
     "D37b": "parse_caption_language_request: no German wording for Spanish captions",
-    "D38": "is_filler_token: no German wording for filler vocalization cut",
     "D40": "_adjust_hook_score: no German wording for hook filler penalty",
     "C2-02": (
         "ai_draft_thought_has_unsupported_claim: no German wording for ungrounded caption claim"
@@ -197,6 +184,7 @@ GAPS: dict[str, str] = {
     "D51": "classify_memory_candidate: no German wording for durable memory (natural wordings)",
     "D52": "requires_stateful_extraction: no German wording for stateful memory change",
     "D53": "explicitly_temporary: no German wording for temporary style change (one-off wordings)",
+    "D54": "_asks_remove: no German wording for remove one named clip",
 }
 
 # Normalization folds Turkish spellings; German folding has its own test below.

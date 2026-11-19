@@ -57,7 +57,7 @@ struct ClipSelectionCard: View {
     @ViewBuilder private var content: some View {
         switch mode {
         case .answered(let summary):
-            KriaAnsweredReceipt(text: summary ?? "Clips chosen")
+            KriaAnsweredReceipt(text: summary ?? String(localized: "Clips chosen"))
                 .accessibilityIdentifier("clip-card-answered")
         case .superseded:
             KriaSupersededLine().accessibilityIdentifier("clip-card-superseded")
@@ -67,7 +67,7 @@ struct ClipSelectionCard: View {
     }
 
     private var title: String {
-        question.categories.count == 1 ? "Which clips show \(question.categories[0].label)?" : "Which clips are which?"
+        question.categories.count == 1 ? String(localized: "Which clips show \(question.categories[0].label)?") : String(localized: "Which clips are which?")
     }
 
     /// The chosen clips, up to four, so the choice is visible on the card; "+N" counts the rest.
@@ -129,7 +129,7 @@ struct ClipSelectionCard: View {
                     .accessibilityIdentifier("clip-batch-note")
             }
             VStack(spacing: 4) {
-                Button(state.canSend ? "Review clips" : "Choose clips") { showsPicker = true }
+                Button(state.canSend ? String(localized: "Review clips") : String(localized: "Choose clips")) { showsPicker = true }
                     .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, onFill: true))
                     .disabled(isSending)
                     .accessibilityIdentifier("clip-choose")
@@ -149,8 +149,8 @@ struct ClipSelectionCard: View {
     private func progressLine(_ category: ClipQuestion.Category) -> String {
         let total = category.candidateMediaIDs.count
         let prefix = question.categories.count == 1 ? "" : "\(category.label) · "
-        if state.isNone(category.key) { return prefix + "None of these" }
-        return prefix + "\(state.count(in: category.key)) of \(total) selected"
+        if state.isNone(category.key) { return prefix + String(localized: "None of these") }
+        return prefix + String(localized: "\(state.count(in: category.key)) of \(total) selected")
     }
 }
 
@@ -249,7 +249,7 @@ struct ClipPickerSheet: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(question.categories.count == 1 ? "Which clips show \(category.label)?" : "Which clips are \(category.label)?")
+                Text(question.categories.count == 1 ? String(localized: "Which clips show \(category.label)?") : String(localized: "Which clips are \(category.label)?"))
                     .font(KriaFont.headline(22)).foregroundStyle(KriaColor.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
@@ -268,7 +268,7 @@ struct ClipPickerSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 let allSelected = state.count(in: category.key) == category.candidateMediaIDs.count
-                Button(allSelected ? "Clear" : "Select all") {
+                Button(allSelected ? String(localized: "Clear", comment: "Deselect every clip") : String(localized: "Select all")) {
                     if allSelected { state.clear(in: category.key) } else { state.selectAll(in: category.key) }
                 }
                 .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
@@ -292,7 +292,7 @@ struct ClipPickerSheet: View {
 
     private func attached(_ mediaID: String) -> CreationAttachedMedia {
         media.first { $0.id == mediaID }
-            ?? CreationAttachedMedia(id: mediaID, filename: "Clip \(positions[mediaID] ?? 0)",
+            ?? CreationAttachedMedia(id: mediaID, filename: String(localized: "Clip \(positions[mediaID] ?? 0)"),
                                      kind: question.isPhoto(mediaID) ? "image" : "video", previewURL: nil)
     }
 
@@ -337,11 +337,11 @@ struct ClipPickerSheet: View {
             }
             .buttonStyle(.plain)
             .disabled(isSending)
-            .accessibilityLabel(info.name + (suggested ? ", suggested" : ""))
-            .accessibilityValue(isOn ? "Selected" : "Not selected")
+            .accessibilityLabel(suggested ? String(localized: "\(info.name), suggested") : info.name)
+            .accessibilityValue(isOn ? String(localized: "Selected") : String(localized: "Not selected"))
             .accessibilityAddTraits(isOn ? .isSelected : [])
-            .accessibilityHint(info.isPhoto ? "Opens the photo" : "Opens the clip")
-            .accessibilityAction(named: isOn ? "Deselect" : "Select") { state.toggle(mediaID, in: category.key) }
+            .accessibilityHint(info.isPhoto ? String(localized: "Opens the photo") : String(localized: "Opens the clip"))
+            .accessibilityAction(named: isOn ? String(localized: "Deselect") : String(localized: "Select")) { state.toggle(mediaID, in: category.key) }
             .accessibilityIdentifier("clip-thumb-\(category.key)-\(mediaID)")
             Button { state.toggle(mediaID, in: category.key) } label: {
                 Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
@@ -355,7 +355,7 @@ struct ClipPickerSheet: View {
             .buttonStyle(.plain)
             .disabled(isSending)
             .accessibilityLabel("Select \(info.name)")
-            .accessibilityValue(isOn ? "Selected" : "Not selected")
+            .accessibilityValue(isOn ? String(localized: "Selected") : String(localized: "Not selected"))
             .accessibilityAddTraits(isOn ? .isSelected : [])
             .accessibilityIdentifier("clip-select-\(category.key)-\(mediaID)")
         }
@@ -410,11 +410,11 @@ struct ClipPickerSheet: View {
                 submit(submission, submission.message(question: question, positions: positions, language: language))
                 dismiss()
             } label: {
-                Text(!answered ? "Pick a clip or None of these" : next == nil ? "Done" : "Next").frame(maxWidth: .infinity)
+                Text(!answered ? String(localized: "Pick a clip or None of these") : next == nil ? String(localized: "Done") : String(localized: "Next")).frame(maxWidth: .infinity)
             }
             .buttonStyle(KriaPrimaryButtonStyle(minHeight: 48))
             .disabled(!answered || isSending)
-            .accessibilityHint(next.map { "Shows \($0.label)" } ?? "")
+            .accessibilityHint(next.map { String(localized: "Shows \($0.label)") } ?? "")
             .accessibilityIdentifier("clip-done")
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
@@ -466,7 +466,7 @@ struct ClipThumbnailView: View {
     private var placeholder: some View {
         VStack(spacing: 4) {
             Image(systemName: media.kind == "image" ? "photo" : "film").font(.system(size: 20)).foregroundStyle(KriaColor.zinc)
-            Text(name ?? "Clip \(position)").font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
+            Text(name ?? String(localized: "Clip \(position)")).font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk)
         }
         .accessibilityIdentifier("clip-placeholder-\(media.id)")
     }
@@ -519,7 +519,7 @@ struct ClipPreviewPager: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack {
-                Text(currentInfo.isPhoto ? currentInfo.name : "Clip \(position) of \(max(positions.count, ids.count))")
+                Text(currentInfo.isPhoto ? currentInfo.name : String(localized: "Clip \(position) of \(max(positions.count, ids.count))"))
                     .font(KriaFont.headline(20)).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("clip-preview-title")
@@ -548,14 +548,14 @@ struct ClipPreviewPager: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isOn ? "checkmark.circle.fill" : "plus.circle")
-                    Text(isOn ? "Selected" : "Use this clip")
+                    Text(isOn ? String(localized: "Selected") : String(localized: "Use this clip"))
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(KriaPrimaryButtonStyle(fill: isOn ? KriaColor.ink : KriaColor.butter, usesLightText: isOn, minHeight: 48))
-            .accessibilityLabel(isOn ? "Selected" : "Use this clip")
-            .accessibilityValue(isOn ? "Selected" : "Not selected")
-            .accessibilityHint(isOn ? "Removes this clip" : "Picks this clip and goes back to the grid")
+            .accessibilityLabel(isOn ? String(localized: "Selected") : String(localized: "Use this clip"))
+            .accessibilityValue(isOn ? String(localized: "Selected") : String(localized: "Not selected"))
+            .accessibilityHint(isOn ? String(localized: "Removes this clip") : String(localized: "Picks this clip and goes back to the grid"))
             .accessibilityIdentifier("clip-preview-toggle")
         }
         .padding(16)
@@ -581,8 +581,8 @@ struct ClipPreviewPage: View {
     @State private var hasLocalVideo: Bool?
 
     private var previewLabel: String {
-        let photoName = name ?? "Photo"
-        return media.kind == "image" ? "\(photoName) preview" : "Clip \(position) preview"
+        let photoName = name ?? String(localized: "Photo")
+        return media.kind == "image" ? String(localized: "\(photoName) preview") : String(localized: "Clip \(position) preview")
     }
 
     var body: some View {
@@ -603,7 +603,7 @@ struct ClipPreviewPage: View {
                                 .frame(width: 34, height: 34).background(KriaColor.ink.opacity(0.7), in: Circle())
                                 .frame(width: 44, height: 44).contentShape(Rectangle())
                         }
-                        .accessibilityLabel(muted ? "Unmute" : "Mute")
+                        .accessibilityLabel(muted ? String(localized: "Unmute") : String(localized: "Mute"))
                         .accessibilityIdentifier("clip-preview-mute")
                     }
                     .overlay(alignment: .center) {

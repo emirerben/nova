@@ -1,0 +1,318 @@
+{
+  "fixtures": 47,
+  "ran": 39,
+  "passed": 21,
+  "failure_categories": {
+    "other": 13,
+    "asked instead of proposing": 3,
+    "reply wording (muted)": 2,
+    "not run (ledger cap reached)": 8
+  },
+  "settled_usd": 3.2292,
+  "ledger": [
+    {
+      "test_run_id": "kri1384-gemini-control-aa-20261113",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "18",
+      "settled_usd": "1.6105",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384-gemini-control-ab-20261113",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "22",
+      "settled_usd": "1.6187",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_recorded_voiceover_words",
+      "passed": false,
+      "failure": "assert 0 == 1 + where 0 = len([])",
+      "category": "other"
+    },
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_subtitles_quote_as_i_say",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1038_en_title_replace_legacy",
+      "passed": false,
+      "failure": "AssertionError: assert {'unit': 'wor...e': 'replace'} == {'unit': 'wor...agent_choice'} Omitting 1 identical items, use -vv to show Differing items: {'mode': 'replace'} != {'mode': 'agent_choice'} Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "passed": false,
+      "failure": "AssertionError: [FAIL] structural=1 failures: ['audio-led strategy is not native'] assert False + where False = EvalResult(fixture_id='main_creator/kri1038_t1_29ekim_tr_quote_legacy', agent='nova.creator.main', prompt_version='202...rd', 'm",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_en",
+      "passed": false,
+      "failure": "AssertionError: assert [] == ['analysis-pr...1AE14577.mp4'] Right contains 3 more items, first extra item: 'analysis-proxy-ios-AF8BF2A5-B06D-4089-A8CA-C55BF924F243.mp4' Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_tr",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_brief",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'İstediğiniz gibi güncelledim. Konuşma klipleri bahsettiğiniz yerlerde tam ekran olarak kendi sesiyle oynatılacak (bu anlarda sizin sesiniz kısılacak). Stadyum klibi ise yine tam ekran görünecek ancak sizi",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_show_when_mentioned",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_tr",
+      "passed": false,
+      "failure": "AssertionError: assert ('muted' in 'Klipleri tam olarak anlattığın yerlere yerleştiriyorum. Konuşma klipleri ekrana geldiğinde kendi sesleriyle çalacak v...esin kısılacak. Stadyum klibi ise tam ekran görünecek ancak sessiz olacak, böylece s",
+      "category": "reply wording (muted)"
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/kri1189_green3_restart_en', agent='nova.creator.main', prompt_version='2026-11-03-..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/kri1189_keep_retakes_en', agent='nova.creator.main', prompt_version='2026-11-03-v1..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/kri1189_s1_dead_air_restart_en', agent='nova.creator.main', prompt_version='2026-1..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/kri1189_t1_yanlis_basladigim_tr', agent='nova.creator.main', prompt_version='2026-..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/kri1189_t2_tekrar_aldigim_tr', agent='nova.creator.main', prompt_version='2026-11-..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/kri1189_t3_okays_and_restarts_en', agent='nova.creator.main', prompt_version='2026..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri188_east_run_brief_updates",
+      "passed": false,
+      "failure": "AssertionError: assert [['text', 'pe...xt', 'title']] == [['text', 'ti...r', 'global']] At index 0 diff: ['text', 'per_clip'] != ['text', 'title'] Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri190_route_facts_and_order",
+      "passed": false,
+      "failure": "AssertionError: assert [['order', 'g..., 'per_clip']] == [['text', 'pe...g', 'global']] At index 0 diff: ['order', 'global'] != ['text', 'per_clip'] Right contains one more item: ['timing', 'global'] Use -v to get more diff",
+      "category": "other"
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_approved_continuation",
+      "passed": false,
+      "failure": "AssertionError: creative copy metadata must survive MainCreator parsing assert None is not None",
+      "category": "other"
+    },
+    {
+      "fixture": "kri506_initial_generation",
+      "passed": false,
+      "failure": "AssertionError: assert 'A perfect moment.' == 'One day, one city' - One day, one city + A perfect moment.",
+      "category": "other"
+    },
+    {
+      "fixture": "kri506_revision_candidate",
+      "passed": false,
+      "failure": "AssertionError: assert 'A hidden side of the city' == 'What happened after sunset?' - What happened after sunset? + A hidden side of the city",
+      "category": "other"
+    },
+    {
+      "fixture": "kri586_delegated_hook_first_turn",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri586_generate_after_choice",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri806_don_julio_kept_lines",
+      "passed": false,
+      "failure": "AssertionError: assert ['analysis-pr...F73E247F.mp4'] == ['analysis-pr...47F.mp4', ...] At index 1 diff: 'analysis-proxy-ios-2306BCCD-ED46-4925-B766-1229D6A961EA.mp4' != 'analysis-proxy-ios-7D28DB8F-1FE2-47CE-ADAF-6F3180D43B8A.mp4' Right co",
+      "category": "other"
+    },
+    {
+      "fixture": "kri840_fullscreen_reaction_beat",
+      "passed": false,
+      "failure": "KeyError: 'grill'",
+      "category": "other"
+    },
+    {
+      "fixture": "kri841_talking_ending_clip",
+      "passed": false,
+      "failure": "AssertionError: assert None == {'media_id': 'asset-41be0c88-27d0-4f1a-b6c3-0e9d8a7b6c11', 'keep_audio': True} + where None = <built-in method get of dict object at 0x11920dc40>('ending_clip') + where <built-in method get of dict object at 0",
+      "category": "other"
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "n2_voiceover_fullscreen_photo_sequence",
+      "passed": false,
+      "failure": "StopIteration",
+      "category": "other"
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/qendresa_q2_caption_box_all_pauses', agent='nova.creator.main', prompt_version='20..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "passed": false,
+      "failure": "AssertionError: ERROR: agent.run failed: ai_budget_exhausted: [] assert False + where False = EvalResult(fixture_id='main_creator/qendresa_title_hold_with_video_length', agent='nova.creator.main', prompt_version=..._budget_exhausted', outpu",
+      "category": "not run (ledger cap reached)"
+    }
+  ]
+}

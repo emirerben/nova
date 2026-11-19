@@ -403,6 +403,7 @@ extension NativeSplitScreenTests {
             XCTAssertNil(copy.parentSegmentID)
             XCTAssertEqual(copy.raw["speaker_subject"], .bool(testCase.expected))
             session.select(.init(kind: .clip, id: try XCTUnwrap(copy.id)), seekToStart: false)
+            session.currentTime = 5
             session.createSplitScreen(panelCount: 2, scope: .selectedClip)
             let members = session.document.clips.filter { $0.splitSectionID != nil }
             XCTAssertEqual(members.count, 1)
@@ -1058,7 +1059,7 @@ extension NativeSplitScreenTests {
         session.duplicateSelectedClip()
         XCTAssertEqual(session.document.clips.filter { $0.splitPanelIndex == 0 }.count, 3)
         XCTAssertTrue(session.document.clips.filter { $0.splitPanelIndex == 0 }.allSatisfy { $0.raw["speaker_frame_override"] == stored })
-        session.removeSelectedSplitScreen()
+        session.removeSplitScreen(sectionID: "s", keepPanel: 0)
         XCTAssertTrue(session.document.splitScreenSections.isEmpty)
         XCTAssertTrue(session.document.clips.allSatisfy { $0.raw["speaker_frame_override"] == stored })
         let scoped = EditorSelection(kind: .speaker, id: tail)
@@ -1200,8 +1201,7 @@ extension NativeSplitScreenTests {
         XCTAssertEqual(fake.commitCount, 1)
         XCTAssertFalse(session.hasUnsavedChanges)
         if unstack {
-            session.select(.init(kind: .clip, id: top.id), seekToStart: false)
-            session.removeSelectedSplitScreen()
+            session.removeSplitScreen(sectionID: sectionID, keepPanel: 0)
             XCTAssertTrue(session.document.splitScreenSections.isEmpty)
             await session.save()
             XCTAssertEqual(fake.commitCount, 2)

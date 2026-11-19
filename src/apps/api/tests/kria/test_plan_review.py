@@ -516,7 +516,7 @@ async def test_a_bundle_that_only_touches_unflagged_sections_changes_nothing(mon
 def _copilot_double(monkeypatch, ops, reply="Shortened."):  # noqa: ANN001, ANN202
     calls: list[dict] = []
 
-    async def _run(body, *, job_id):  # noqa: ANN001, ANN202, ARG001
+    async def _run(body, *, job_id, compile_check=None):  # noqa: ANN001, ANN202, ARG001
         calls.append(body.snapshot)
         return SimpleNamespace(ops=copy.deepcopy(ops), reply=reply, outcome="proposed")
 

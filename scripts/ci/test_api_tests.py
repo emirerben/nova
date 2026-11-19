@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -32,42 +33,66 @@ class ApiTestShardTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("# fixture\n")
 
-    def test_shards_are_complete_disjoint_and_deterministic(self):
-        first = api_tests.shard_files(self.api_root, 0)
-        second = api_tests.shard_files(self.api_root, 1)
+    def shards(self, api_root=None):
+        return [
+            api_tests.shard_files(api_root or self.api_root, shard)
+            for shard in range(api_tests.SHARD_COUNT)
+        ]
 
-        self.assertEqual(first, api_tests.shard_files(self.api_root, 0))
-        self.assertIn(Path("tests/nested/suffix_test.py"), first + second)
-        self.assertIn(Path("tests/nested/quality/test_still_included.py"), first + second)
-        self.assertFalse(set(first) & set(second))
-        self.assertEqual(
-            set(first) | set(second), set(api_tests.test_files(self.api_root))
-        )
-        self.assertEqual(len(first) + len(second), len(set(first) | set(second)))
+    def test_shards_are_complete_disjoint_and_deterministic(self):
+        shards = self.shards()
+        everything = [path for shard in shards for path in shard]
+
+        self.assertEqual(shards, self.shards())
+        self.assertIn(Path("tests/nested/suffix_test.py"), everything)
+        self.assertIn(Path("tests/nested/quality/test_still_included.py"), everything)
+        self.assertEqual(len(everything), len(set(everything)))
+        self.assertEqual(set(everything), set(api_tests.test_files(self.api_root)))
 
     def test_new_test_file_is_included_without_a_manifest_update(self):
         new_file = self.api_root / "tests/new_area/test_new_coverage.py"
         new_file.parent.mkdir(parents=True)
         new_file.write_text("# newly added\n")
 
-        selected = set(api_tests.shard_files(self.api_root, 0)) | set(
-            api_tests.shard_files(self.api_root, 1)
-        )
+        selected = {path for shard in self.shards() for path in shard}
         self.assertIn(new_file.relative_to(self.api_root), selected)
         self.assertNotIn(Path("tests/quality/test_expensive.py"), selected)
 
     def test_invalid_or_empty_shards_fail_closed(self):
-        for shard in (-1, 2):
+        for shard in (-1, api_tests.SHARD_COUNT):
             with self.subTest(shard=shard), self.assertRaises(ValueError):
                 api_tests.shard_files(self.api_root, shard)
         with self.assertRaises(ValueError):
-            api_tests.shard_files(self.api_root, 0, shard_count=3)
+            api_tests.shard_files(
+                self.api_root, 0, shard_count=api_tests.SHARD_COUNT + 1
+            )
 
         empty = Path(self.tmp.name) / "empty"
         (empty / "tests/quality").mkdir(parents=True)
         (empty / "tests/quality/test_only_quality.py").write_text("# excluded\n")
         with self.assertRaisesRegex(ValueError, "selected no test files"):
             api_tests.shard_files(empty, 0)
+
+    def test_the_workflow_runs_exactly_the_shards_the_runner_partitions_into(self):
+        """A matrix with fewer legs than SHARD_COUNT silently never runs a
+        quarter of the suite; one with more fails a leg on "selected no files"."""
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
+        job = workflow[workflow.index("\n  test-api-suite:") :]
+        job = job[: job.index("\n    steps:")]
+        matrix = re.search(r"^\s+shard: \[([0-9, ]+)\]$", job, re.M)
+        self.assertIsNotNone(matrix, "test-api-suite must list its shards")
+        self.assertEqual(
+            [int(value) for value in matrix.group(1).split(",")],
+            list(range(api_tests.SHARD_COUNT)),
+        )
+        self.assertIn("fail-fast: false", job)
+
+    def test_real_suite_shards_are_even_enough_to_be_worth_their_setup(self):
+        """Round-robin over sorted files: no shard may be starved or bloated."""
+        api_root = SCRIPT.parents[2] / "src/apps/api"
+        sizes = [len(shard) for shard in self.shards(api_root)]
+        self.assertEqual(sum(sizes), len(api_tests.test_files(api_root)))
+        self.assertLessEqual(max(sizes) - min(sizes), 1)
 
     def test_pytest_command_executes_each_selected_file_once(self):
         selected = api_tests.shard_files(self.api_root, 0)

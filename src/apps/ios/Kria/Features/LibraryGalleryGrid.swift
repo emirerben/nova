@@ -52,7 +52,7 @@ struct LibraryGalleryGrid: View {
                 }
                 .accessibilityIdentifier("gallery-grid")
             } else if assets != nil {
-                ContentUnavailableView("No \(kindsNoun) in Photos", systemImage: "photo.on.rectangle")
+                ContentUnavailableView(emptyTitle, systemImage: "photo.on.rectangle")
                     .frame(maxHeight: .infinity)
             } else {
                 ProgressView().frame(maxHeight: .infinity)
@@ -67,8 +67,8 @@ struct LibraryGalleryGrid: View {
         .task { load() }
     }
 
-    private var kindsNoun: String {
-        kinds == .videos ? "videos" : kinds == .images ? "photos" : "photos or videos"
+    private var emptyTitle: String {
+        kinds == .videos ? String(localized: "No videos in Photos") : kinds == .images ? String(localized: "No photos in Photos") : String(localized: "No photos or videos in Photos")
     }
 
     private func recordCell(_ record: @escaping () -> Void) -> some View {
@@ -102,7 +102,7 @@ struct LibraryGalleryGrid: View {
     private func tap(_ id: String) {
         var next = current
         if next.toggle(id) == .refusedAtLimit {
-            limitMessage = "You can choose up to \(limit) here."
+            limitMessage = String(localized: "You can choose up to \(limit) here.")
             tapToken += 1
             return
         }
@@ -120,8 +120,8 @@ struct LibraryGalleryGrid: View {
                 .modifier(GalleryTileChrome(number: number, duration: asset.mediaType == .video ? asset.duration : nil))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(asset.mediaType == .video ? "Video, \(Self.duration(asset.duration))" : "Photo")
-        .accessibilityValue(number.map { "Selected, \($0)" } ?? "Not selected")
+        .accessibilityLabel(asset.mediaType == .video ? String(localized: "Video, \(Self.duration(asset.duration))") : String(localized: "Photo"))
+        .accessibilityValue(number.map { String(localized: "Selected, \($0)") } ?? String(localized: "Not selected"))
         .accessibilityAddTraits(number != nil ? .isSelected : [])
         .accessibilityIdentifier("gallery-tile-\(index)")
     }

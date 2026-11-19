@@ -405,5 +405,6 @@
       "duration_s": 35
     },
     "contract": "on a one-video edit, quoted start / end LINES are a timing trim with facts.start_line / facts.end_line, never an order requirement; the stated length stays its own timing requirement"
-  }
+  },
+  "prompt_sha": "unpinned"
 }

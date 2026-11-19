@@ -290,7 +290,7 @@ def test_a_named_word_pop_in_keeps_its_own_verdict() -> None:
 def test_finished_q1_names_each_screenshot_and_when_it_shows() -> None:
     """Failure modes 5, 6 and 8 on the real receipt."""
     receipt = _receipt(CARDS, plan_facts_from_phone_variant(VARIANT))
-    assert receipt.status == "met", receipt
+    assert receipt.status == "partial", receipt  # five recordings left out: never a plain "Done"
     assert receipt.verification == "checked"
     reason = receipt.reason
     for name, at in SHOWN_AT.items():
@@ -304,7 +304,7 @@ def test_finished_q1_names_each_screenshot_and_when_it_shows() -> None:
 def test_finished_q1_in_turkish() -> None:
     with reply_language_for("tr"):
         receipt = _receipt(CARDS, plan_facts_from_phone_variant(VARIANT))
-    assert receipt.status == "met"
+    assert receipt.status == "partial"
     assert "Screenshot 1 spec-kit" in receipt.reason
     assert "0:05" in receipt.reason
     assert "Shown" not in receipt.reason and "Not shown" not in receipt.reason
@@ -344,6 +344,37 @@ def test_a_card_the_cleanup_cut_is_named_as_cut_not_shown() -> None:
     assert "0:05 Screenshot 1 spec-kit" not in reason
     assert "Screenshot 1 spec-kit (its moment was cut out)" in reason, reason
     assert "0:11 Screenshot 2 impeccable" in reason
+
+
+def test_a_recording_with_no_half_to_share_is_named_as_not_shown() -> None:
+    """KRI-1478 (Q1 run 3 with the card strip on): four recordings share their mention with a
+    screenshot; the fifth mention is 2.72 s, too short for two parts, so that recording stays
+    out (worker reason ``overlap``). Ways the creator's row goes wrong: it says every Visual was
+    shown; it drops the recording without naming it; it invents a cause for it."""
+    rows = {
+        row["label"].split("-")[-1]: row for row in VARIANT["phone_overlay_receipt"]["unplaced"]
+    }
+    starts = {  # the second halves, on the take's clock (`test_phone_card_layout.py`)
+        "Screen Recording 1 spec": (10.71, 13.04),
+        "Screen Recording 2 impe": (17.05, 18.88),
+        "Screen Recording 3 trad": (24.61, 26.5),
+        "Screen Recording 4 agen": (33.57, 36.18),
+    }
+    placed = [
+        {**rows[name], "reason": "shown with its screenshot", "start_s": start, "end_s": end}
+        for name, (start, end) in starts.items()
+    ]
+    left_out = {**rows["Screen Recording 5 game"], "reason": "overlap"}
+    receipt = _receipt(
+        CARDS, plan_facts_from_phone_variant(_variant(placed=placed, unplaced=[left_out]))
+    )
+    assert receipt.status == "partial" and receipt.verification == "checked", receipt
+    shown, missed = receipt.reason.split("; not shown: ")
+    assert all(name in shown for name in starts), shown
+    assert "Screen Recording 5 game" not in shown
+    assert missed == "Screen Recording 5 game (another card was already on screen then).", (
+        receipt.reason
+    )
 
 
 def test_no_times_when_the_cut_record_is_missing() -> None:
@@ -404,7 +435,8 @@ def test_a_sound_on_my_words_is_not_a_card() -> None:
 
 
 def test_the_planner_beats_still_answer_on_the_finished_video() -> None:
-    """Failure mode 3: where word-triggered pop-ins were placed, their verdict stands."""
+    """Failure mode 3: where word-triggered pop-ins were placed, the card line is not repeated
+    ("Shown:"), but a Visual the render left out is still named (Q1 run 4)."""
     variant = copy.deepcopy(VARIANT)
     variant["phone_beat_receipt"] = {
         "version": 1,
@@ -412,8 +444,10 @@ def test_the_planner_beats_still_answer_on_the_finished_video() -> None:
         "placed": [{"trigger": "Spec Kit", "visual_label": "Screenshot 1 spec-kit"}],
         "unplaced": [],
     }
-    reason = _receipt(CARDS, plan_facts_from_phone_variant(variant)).reason or ""
-    assert "Screen Recording" not in reason and "Shown:" not in reason, reason
+    receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
+    reason = receipt.reason or ""
+    assert receipt.status == "partial" and reason.startswith("Not shown: "), reason
+    assert "Shown:" not in reason, reason
 
 
 def test_long_names_never_overflow_the_receipt() -> None:
@@ -425,7 +459,7 @@ def test_long_names_never_overflow_the_receipt() -> None:
     ]
     variant = _variant(placed=rows)
     receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
-    assert receipt.status == "met"
+    assert receipt.status == "partial"  # the fixture's five recordings are left out
     assert len(receipt.reason) <= 300
     assert receipt.reason.endswith(".") and "more" in receipt.reason, receipt.reason
 
@@ -486,7 +520,7 @@ def test_the_left_out_visuals_are_always_told(language: str, placed, unplaced) -
     with reply_language_for(language):
         receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
     reason = receipt.reason or ""
-    assert receipt.status == "met"
+    assert receipt.status == "partial"
     assert len(reason) <= 300 and reason.endswith("."), reason
     assert receipt.full_reason == reason  # nothing cut by the 300-character cap
     assert _MISS_MARK[language] in reason, reason
@@ -680,7 +714,7 @@ def test_removing_one_card_names_it_as_removed(monkeypatch: pytest.MonkeyPatch) 
         media_overlays=[_card_payload("pip-0", "users/owner/plan/item/pool/shot-a.png", 1.0, 3.0)],
     )
     receipt = _final(job)
-    assert receipt.status == "met"
+    assert receipt.status == "met"  # she removed it herself: said, but not a miss
     assert "0:01 Screenshot A" in receipt.reason
     shown, missed = receipt.reason.split("; not shown: ")
     assert "Screenshot B" in missed and "removed" in missed and "Screenshot B" not in shown
@@ -803,3 +837,183 @@ def test_a_second_past_the_end_of_the_video_is_never_quoted() -> None:
     assert "0:05 Screenshot 1 spec-kit" in reason, reason
     assert "0:11" not in reason and "0:33" not in reason, reason
     assert "Screenshot 5 gamestudio" in reason, reason
+
+
+# --------------------- 7. Q1 run 4 (2026-11-17): five screenshots as phrase beats, two recordings
+# left out, and the done-list said "Done" with no mention of them
+#
+# Ways the fix could fail (written before the fix):
+# 1. The beats checker answers alone when `reaction_beats` is non-empty, so r4 reads "met" with an
+#    empty reason while `phone_overlay_receipt.unplaced` names two Visuals (the bug).
+# 2. A Visual the creator never asked to show is reported (only the receipt's own unplaced rows
+#    count, and a Visual that a beat DID show never appears as "not shown").
+# 3. Double reporting: the not-shown line appears at draft time next to the draft promise, or
+#    "Shown:" is repeated for recordings while the screenshots (beats) are left out of it.
+# 4. Cut-out / removed-in-editor Visuals lose their own wording behind a generic one.
+# 5. A receipt about something else (montage `sequence`, hand-authored `manual`, `failed`) now
+#    claims Visuals were left out: those stay byte-identical.
+# 6. A word-named pop-in ask ("when I say Spec Kit ...") is judged by the new line.
+# 7. Every Visual shown must still read `met` with no "Not shown" (negative control).
+# 8. The line is English-only in a Turkish or German chat, or claims she never said the word.
+# 9. A partial on the finished video re-opens or holds an approved draft: it must only change the
+#    done-list line (readiness is computed from the brief + strategy, never from the render's
+#    receipts: `test_a_render_receipt_never_reaches_approval_readiness`).
+
+
+def _run4_variant(*, unplaced: list[dict] | None = None, overlay_matcher: str = "agent") -> dict:
+    """Run 4's shape: 5 screenshots placed as phrase beats; recordings 2, 3, 4 placed as cards;
+    recording 5 (`overlap`) and recording 1 (`no_spoken_match`) left out. Made-up ids."""
+    variant = copy.deepcopy(VARIANT)
+    names = ["spec-kit", "impeccable", "tradingage", "agents", "gamestudio"]
+    variant["phone_beat_receipt"] = {
+        "version": 1,
+        "matcher": "phrase",
+        "face_sampling": "ok",
+        "closing": {"badge": "none", "status": "none"},
+        "unplaced": [],
+        "placed": [
+            {
+                "beat_id": f"b{i}",
+                "trigger": name,
+                "timing": "phrase",
+                "visual_label": f"AAAAAAAA-0000-4000-8000-00000000000{i}-Screenshot {i} {name}.png",
+            }
+            for i, name in enumerate(names, 1)
+        ],
+    }
+
+    def rec(i: int) -> dict:
+        return {
+            "kind": "video",
+            "media_id": f"rec-{i}",
+            "label": f"BBBBBBBB-0000-4000-8000-00000000000{i}-Screen Recording {i}",
+        }
+
+    variant["phone_overlay_receipt"] = {
+        "version": 1,
+        "matcher": overlay_matcher,
+        "face_sampling": "ok",
+        "wishlist": [],
+        "placed": [
+            {**rec(i), "reason": "x", "start_s": 15.3 + 3 * i, "end_s": 17.0 + 3 * i}
+            for i in (2, 3, 4)
+        ],
+        "unplaced": (
+            unplaced
+            if unplaced is not None
+            else [
+                {**rec(5), "reason": "overlap"},
+                {**rec(1), "reason": "no_spoken_match"},
+            ]
+        ),
+    }
+    return variant
+
+
+def test_run4_unshown_recordings_are_named_and_the_row_is_partial() -> None:
+    receipt = _receipt(CARDS, plan_facts_from_phone_variant(_run4_variant()))
+    assert receipt.status == "partial", receipt
+    assert receipt.reason == (
+        "Not shown: Screen Recording 5 (another card was already on screen then); "
+        "Screen Recording 1 (I didn't find a moment for it)."
+    ), receipt.reason
+    assert "Shown:" not in receipt.reason and "never" not in receipt.reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("language", "needles"),
+    [
+        ("tr", ("Çıkmadı: Screen Recording 5", "ekranda başka bir kart vardı")),
+        ("de", ("Nicht angezeigt: Screen Recording 5", "schon eine andere Karte")),
+    ],
+)
+def test_run4_line_speaks_the_chat_language(
+    language: str, needles: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True, raising=False)
+    with reply_language_for(language):
+        reason = _receipt(CARDS, plan_facts_from_phone_variant(_run4_variant())).reason or ""
+    assert all(needle in reason for needle in needles), reason
+    assert "Not shown" not in reason and "another card" not in reason
+
+
+def test_every_visual_shown_is_still_met_with_no_not_shown_line() -> None:
+    receipt = _receipt(CARDS, plan_facts_from_phone_variant(_run4_variant(unplaced=[])))
+    assert receipt.status == "met", receipt
+    assert "Not shown" not in (receipt.reason or "")
+
+
+def test_a_cut_out_recording_keeps_its_own_wording_next_to_beats() -> None:
+    cut = {
+        "kind": "video",
+        "media_id": "rec-9",
+        "label": "Screen Recording 9",
+        "reason": "speech_cleanup_cut",
+    }
+    receipt = _receipt(CARDS, plan_facts_from_phone_variant(_run4_variant(unplaced=[cut])))
+    assert receipt.status == "partial"
+    assert receipt.reason == "Not shown: Screen Recording 9 (its moment was cut out)."
+
+
+@pytest.mark.parametrize("matcher", ["sequence", "manual", "failed", "disabled"])
+def test_a_receipt_about_something_else_adds_no_not_shown_line(matcher: str) -> None:
+    receipt = _receipt(CARDS, plan_facts_from_phone_variant(_run4_variant(overlay_matcher=matcher)))
+    assert "Not shown" not in (receipt.reason or "")
+    assert receipt.status == "met"
+
+
+def test_without_an_overlay_receipt_nothing_is_claimed() -> None:
+    variant = _run4_variant()
+    del variant["phone_overlay_receipt"]
+    receipt = _receipt(CARDS, plan_facts_from_phone_variant(variant))
+    assert receipt.status == "met" and "Not shown" not in (receipt.reason or "")
+
+
+def test_a_word_named_pop_in_ask_is_not_judged_by_the_cards_line() -> None:
+    named = CARDS.model_copy(
+        update={"description": 'When I say "Spec Kit", show its screenshot', "facts": {}}
+    )
+    receipt = _receipt(named, plan_facts_from_phone_variant(_run4_variant()))
+    assert "Not shown" not in (receipt.reason or "")
+
+
+def test_the_draft_keeps_its_promise_and_never_the_not_shown_line() -> None:
+    receipt = _receipt(CARDS, _draft_facts())
+    assert receipt.reason == PROMISE_EN and "Not shown" not in receipt.reason
+
+
+def test_a_render_receipt_never_reaches_approval_readiness() -> None:
+    """Readiness is computed from the brief and the strategy only: it has no parameter for a
+    variant or a receipt, so the finished video's partial cannot hold or re-open a draft."""
+    import inspect  # noqa: PLC0415
+
+    params = set(inspect.signature(assess_readiness).parameters)
+    assert not {"variant", "receipts", "requirement_receipts", "facts"} & params
+    before = _readiness()["r4"]
+    _receipt(CARDS, plan_facts_from_phone_variant(_run4_variant()))  # a partial finished receipt
+    assert _readiness()["r4"] == before
+    assert before["disposition"] in APPROVABLE
+
+
+def test_a_card_she_removed_in_the_editor_is_said_but_is_not_a_miss() -> None:
+    """Self-review of the run-4 fix: "Partly" is for what Kria left out. A card the creator
+    deleted in the editor is her own choice, with or without pop-ins next to it."""
+    import dataclasses
+
+    from app.kria.brief_checks import GroundedCardFact
+
+    facts = plan_facts_from_phone_variant(_run4_variant(unplaced=[]))
+    removed = GroundedCardFact(
+        label="Screen Recording 9", status="unplaced", reason="removed_in_editor"
+    )
+    with_beats = dataclasses.replace(facts, grounded_cards=(*facts.grounded_cards, removed))
+    assert _receipt(CARDS, with_beats).status == "met"
+
+    cards_only = dataclasses.replace(with_beats, reaction_beats=())
+    receipt = _receipt(CARDS, cards_only)
+    assert receipt.status == "met", receipt
+    assert "removed in the editor" in (receipt.reason or "")
+    # ...and one Kria left out next to it is still a miss.
+    dropped = GroundedCardFact(label="Screen Recording 5", status="unplaced", reason="overlap")
+    both = dataclasses.replace(cards_only, grounded_cards=(*cards_only.grounded_cards, dropped))
+    assert _receipt(CARDS, both).status == "partial"

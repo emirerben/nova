@@ -18,8 +18,8 @@ struct OverlayProblemNoun {
     let plural: String
     var hasPrompt = true
 
-    static let overlay = OverlayProblemNoun(singular: "overlay", plural: "overlays")
-    static let voice = OverlayProblemNoun(singular: "voice", plural: "voices", hasPrompt: false)
+    static let overlay = OverlayProblemNoun(singular: String(localized: "overlay"), plural: String(localized: "overlays"))
+    static let voice = OverlayProblemNoun(singular: String(localized: "voice"), plural: String(localized: "voices"), hasPrompt: false)
 }
 
 /// One `KriaNoticeCard` per outcome, in one first-person voice (Paper S1.09). Red cards carry an ink button;
@@ -46,53 +46,55 @@ struct OverlayProblemCard: View {
     private var title: String {
         switch problem {
         case .couldNotMake(let failed, let total):
-            if total <= 1 { return "I couldn’t make this \(noun.singular)" }
-            return failed == total ? "I couldn’t make your \(noun.plural)" : "I couldn’t make \(failed) of your \(total) \(noun.plural)"
-        case .unsure: return "I’m not sure it finished"
+            if total <= 1 { return String(localized: "I couldn’t make this \(noun.singular)") }
+            return failed == total ? String(localized: "I couldn’t make your \(noun.plural)") : String(localized: "I couldn’t make \(failed) of your \(total) \(noun.plural)")
+        case .unsure: return String(localized: "I’m not sure it finished")
         case .didNotSave(let count):
-            return count > 1 ? "\(count) \(noun.plural) are made, but didn’t save" : "Your \(noun.singular) is made, but it didn’t save"
-        case .changedAfterStart: return "This \(noun.singular) changed after you started"
-        case .sourceGone: return "This \(noun.singular) is no longer in your video"
-        case .sessionEnded: return "Your session ended"
-        case .updateRequired: return "Update Kria to make \(noun.plural)"
-        case .offline: return "You’re offline"
-        case .couldNotAdd: return "I couldn’t add your \(noun.plural)"
+            return count > 1 ? String(localized: "\(count) \(noun.plural) are made, but didn’t save") : String(localized: "Your \(noun.singular) is made, but it didn’t save")
+        case .changedAfterStart: return String(localized: "This \(noun.singular) changed after you started")
+        case .sourceGone: return String(localized: "This \(noun.singular) is no longer in your video")
+        case .sessionEnded: return String(localized: "Your session ended")
+        case .updateRequired: return String(localized: "Update Kria to make \(noun.plural)")
+        case .offline: return String(localized: "You’re offline")
+        case .couldNotAdd: return String(localized: "I couldn’t add your \(noun.plural)")
         }
     }
 
     private var message: String {
         switch problem {
         case .couldNotMake(let failed, let total):
-            if !noun.hasPrompt { return "Your script is still here. Try again." }
-            if total <= 1 || failed == total { return total <= 1 ? "Your prompt is still here. Try again or change it." : "Your prompts are still here. Try again or change a prompt." }
+            if !noun.hasPrompt { return String(localized: "Your script is still here. Try again.") }
+            if total <= 1 || failed == total { return total <= 1 ? String(localized: "Your prompt is still here. Try again or change it.") : String(localized: "Your prompts are still here. Try again or change a prompt.") }
             let ready = total - failed
-            return "The other \(ready) \(ready == 1 ? "is" : "are") ready. Each prompt is still here. Try \(failed == 1 ? "the missing one" : "the missing ones") again or change \(failed == 1 ? "its" : "their") prompt."
-        case .unsure: return "I won’t start another one on my own. Check again in a minute."
-        case .didNotSave: return "Saving again won’t make a new \(noun.singular)."
-        case .changedAfterStart: return "Discard this version and start again from the newest one."
-        case .sourceGone: return "Close this and choose another image."
-        case .sessionEnded: return "Sign in again and I’ll pick up where we left off."
-        case .updateRequired: return "This version can’t make new images."
-        case .offline: return "Check again when you’re connected."
-        case .couldNotAdd: return "Your \(noun.plural) are saved. Try again in a moment."
+            let readyPart = ready == 1 ? String(localized: "The other one is ready.") : String(localized: "The other \(ready) are ready.")
+            let retryPart = failed == 1 ? String(localized: "Each prompt is still here. Try the missing one again or change its prompt.") : String(localized: "Each prompt is still here. Try the missing ones again or change their prompt.")
+            return readyPart + " " + retryPart
+        case .unsure: return String(localized: "I won’t start another one on my own. Check again in a minute.")
+        case .didNotSave: return String(localized: "Saving again won’t make a new \(noun.singular).")
+        case .changedAfterStart: return String(localized: "Discard this version and start again from the newest one.")
+        case .sourceGone: return String(localized: "Close this and choose another image.")
+        case .sessionEnded: return String(localized: "Sign in again and I’ll pick up where we left off.")
+        case .updateRequired: return String(localized: "This version can’t make new images.")
+        case .offline: return String(localized: "Check again when you’re connected.")
+        case .couldNotAdd: return String(localized: "Your \(noun.plural) are saved. Try again in a moment.")
         }
     }
 
     private var action: KriaNoticeAction? {
         switch problem {
-        case .couldNotMake: handlers.tryAgain.map { KriaNoticeAction(title: "Try again", handler: $0) }
-        case .unsure, .offline: handlers.checkAgain.map { KriaNoticeAction(title: "Check again", handler: $0) }
-        case .didNotSave: handlers.saveAgain.map { KriaNoticeAction(title: "Save again", handler: $0) }
-        case .changedAfterStart: handlers.startAgain.map { KriaNoticeAction(title: "Start again", handler: $0) }
-        case .sourceGone: handlers.close.map { KriaNoticeAction(title: "Close", handler: $0) }
-        case .sessionEnded: KriaNoticeAction(title: "Sign in") { NotificationCenter.default.post(name: .kriaSessionExpired, object: nil) }
-        case .updateRequired: KriaNoticeAction(title: "Update Kria") { openURL(KriaUpdateLink.destination) }
-        case .couldNotAdd: handlers.tryAgain.map { KriaNoticeAction(title: "Try again", handler: $0) }
+        case .couldNotMake: handlers.tryAgain.map { KriaNoticeAction(title: String(localized: "Try again"), handler: $0) }
+        case .unsure, .offline: handlers.checkAgain.map { KriaNoticeAction(title: String(localized: "Check again"), handler: $0) }
+        case .didNotSave: handlers.saveAgain.map { KriaNoticeAction(title: String(localized: "Save again"), handler: $0) }
+        case .changedAfterStart: handlers.startAgain.map { KriaNoticeAction(title: String(localized: "Start again"), handler: $0) }
+        case .sourceGone: handlers.close.map { KriaNoticeAction(title: String(localized: "Close"), handler: $0) }
+        case .sessionEnded: KriaNoticeAction(title: String(localized: "Sign in")) { NotificationCenter.default.post(name: .kriaSessionExpired, object: nil) }
+        case .updateRequired: KriaNoticeAction(title: String(localized: "Update Kria")) { openURL(KriaUpdateLink.destination) }
+        case .couldNotAdd: handlers.tryAgain.map { KriaNoticeAction(title: String(localized: "Try again"), handler: $0) }
         }
     }
 
     private var link: KriaNoticeAction? {
         guard case .couldNotMake = problem, noun.hasPrompt else { return nil }
-        return handlers.editPrompt.map { KriaNoticeAction(title: "Edit prompt", handler: $0) }
+        return handlers.editPrompt.map { KriaNoticeAction(title: String(localized: "Edit prompt"), handler: $0) }
     }
 }

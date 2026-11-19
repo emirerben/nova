@@ -118,7 +118,7 @@ These are the "why" behind invariants stated tersely in CLAUDE.md's pipeline sec
 
 ### [2026-05] Renderer-parity invariant (#296/#297 class — "looks right locally, clips in prod")
 **Incident:** the admin overlay-preview + classic templates render via Pillow, while agentic + music jobs render via Skia. #296 carried `text_anchor` through the burn dict and fixed Pillow + preview, but Skia's `_draw_centered_text`/`_draw_karaoke_line` kept centering every line on `position_x_frac`; prod job `ff0d2e1c` still rendered `text_anchor="left"` overlays clipped ("It's not just luck" → "s not just luck"). #297 fixed `_draw_centered_text`/`_draw_pop_in_with_suffix`; the karaoke path was fixed later.
-**Rule:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor_left`. Agentic/music overlay changes are NOT verified by the admin preview — verify the burned Skia video (`make verify-overlays`).
+**Rule:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor`. Agentic/music overlay changes are NOT verified by the admin preview — verify the burned Skia video (`make verify-overlays`).
 
 ### [2026-05-13] Gemini metadata never becomes on-screen overlay text
 **Incident:** job `a1091488` (Rule of Thirds) rendered "pilot in cockpit" — Gemini's `detected_subject` from a cockpit clip — in place of "The"/"Thirds".
@@ -2937,7 +2937,7 @@ reached and the neighbours still open. `scripts/reliability-gates.py` selects th
 gates for a diff, runs them (environment skips reported apart from failures) and runs
 the red control (the fix's parent must fail the gate). The CI journey
 `kri-577-reliability-gates` runs the whole union whenever one of those paths changes;
-`preship-check.sh` step 6 runs the mapped subset before a PR; the PR template asks for
+`preship-check.sh` step 5 (reliability gates) runs the mapped subset before a PR; the PR template asks for
 the five acceptance lines. `scripts/dev/test-db.sh` gives each worktree a migrated
 scratch database so the first test run is not thrown away. Rejected: a per-incident
 CI step (the kri-548 pattern) for each of 25 incidents -- the manifest union is one
@@ -3567,7 +3567,7 @@ watermark as hard obstacles, then raised.
   covered here.
 - Guard: `tests/pipeline/test_phone_text_fit_never_fails.py` (roles x saved positions x obstacle
   sets, text groups, replay of job 07efa44c conditions). No burn-dict field changed, so the
-  renderer-parity guard `test_both_renderers_honor_text_anchor_left` is untouched.
+  renderer-parity guard `test_both_renderers_honor_text_anchor` is untouched.
 
 ## [2026-11-01] Prompt fidelity wave 2: catalog
 
@@ -3647,6 +3647,7 @@ watermark as hard obstacles, then raised.
 **Decision:** `KRIA_REPLY_LANGUAGE_HISTORY_ENABLED` (default true): for a chat with no language yet and a message that does not say (tap, media, "ok"), `submit_turn` and the thread-creation greeting read `reply_language.creator_typed_language`: the language of the creator's latest message typed in another of their own chats (stock sentences never count, 20 latest). Order: this message > the chat's language > typed elsewhere > device. Fail-open: a lookup error leaves the device language. Off: byte-identical (KRI-784).
 **Kept:** a message typed in this chat always decides (a Turkish message after English chats answers Turkish); a creator who only ever tapped keeps the device language; other creators' chats never count.
 **Guards:** `tests/kria/test_green45_reply_language_postgres.py`, `tests/kria/test_kri520_reply_language_postgres.py`.
+**Superseded for runtime v2 (2026-11-16):** see "Kria's chat language is decided by the model that reads the message". The fallback now reads the latest other chat's STORED language (`creator_stored_language`), never its messages.
 
 ## [2026-11-04] Captions over a speaker background are chosen against that background, with an outline when no colour is readable (Green 5)
 
@@ -3880,3 +3881,74 @@ montage with no card line (true for English cadences already), and `image_hold` 
 **Deadline budget (Emir's review of #2183):** with the dedicated group gone, the unified worker (`--concurrency=1`) is the only `visuals-analysis` consumer, but `pool_analysis_deadline` still budgeted two slots, no other work on the lane and a 60-min cap: 14 healthy photos (239 s each) behind each other exceed the 14th photo's deadline, and the reaper turns an expired `queued` row into a retryable failure without asking the broker. The budget now matches the lane that is always there: `_QUEUE_CONCURRENCY = 1` (pinned to the worker's `--concurrency`; a dedicated group may be draining or gone), one lane occupant of 2400 s (the longest hard limit the worker can be running, `batch_import_from_drive`; pinned), backlog weighted per kind ahead (`queue_backlog_stmt` returns lane seconds: 420 s per photo, 780 s per video = run window + the 60 s soft-to-hard gap), cap 4 h. Cost: a truly lost broker message on a quiet lane now shows "Analyzing..." for up to 50 min (photo) / 70 min (video) plus one run window instead of 10/30, and `creator_preparation.POOL_WAIT_LIMIT` grows with the cap (4 h 22 min). Not covered: more non-analysis tasks interleaved into a burst (Celery cycles the worker's queues); the cap and the retryable timeout are the backstop. Guards: `tests/integration/test_pool_asset_stall_bound_postgres.py::test_slow_burst_behind_a_busy_shared_lane_never_times_out` (+ red control `test_pre_revert_budget_fails_the_same_burst`, recovery `test_lost_message_on_a_quiet_lane_still_ends_and_retry_recovers`), `tests/test_pool_asset_fly_contract.py::test_visuals_deadline_budgets_only_the_always_present_worker_lane` / `::test_lane_occupant_covers_the_longest_task_the_worker_can_be_running`.
 
 **Cutover: two deploys, and quiesce before removal** (Emir's re-review of #2183). (1) Attempts carry durable deadlines and broker `expires`, and nothing extends them, so attempts stamped under the old two-slot budget would time out if capacity shrank under them: the lane-sized deadline ships FIRST in its own PR, and the group is removed only after the old-budget cohort (in flight, dispatched before that deploy completed) is empty. (2) The pinned flyctl (v0.4.94) destroys a group removed from `fly.toml` with `Kill: true` before updating the retained groups, so the machines are stopped gracefully first (`--signal SIGTERM --timeout 300 --wait-timeout 6m`; `REMAP_SIGTERM=SIGQUIT` makes it Celery's soft shutdown, up to 240 s, then restore) with every attempt they could have touched captured by id and token (in flight at `T_start`, plus everything dispatched since `T_start` whatever its state: a later in-flight snapshot misses an attempt dispatched, claimed, killed and timed out inside the stop window) and reconciled 20 min later (`needs_retry` = creator Retry). No deploy may be queued or running during it. Procedure and queries: `docs/runbooks/visuals-group-removal.md`; its queries run verbatim in `tests/integration/test_visuals_cutover_postgres.py` (old-budget red, drain-then-remove control, reconcile outcomes).
+
+## [2026-11-15] Rule 0 may also carve a pause stamped onto the next sentence's first word (KRI-1492, job ef12ddfd)
+
+Context. Çiğdem S2 "Cigdem 2" kept a 0.6 s pause at 22.8 s (output) after Clean up speech. whisper
+stamped "So" 28.58 → 29.32 s, starting exactly where "story." ends; the silence (ambient-adaptive
+spans) is 28.516 → 29.139 s and the voice starts there. The stamped gap is 0.00 s, so rule 3 never
+looked, and rule 0's only edge trim (KRI-236) is for a sentence-final token's TAIL. The same shape
+left S1's 0.8 s pause ("billboards." → "So," stamped 27.24 → 28.06 s, silence 27.14 → 27.88 s).
+
+Decision (2026-11-15). Allow the mirror of KRI-236, V2 only (`_sentence_initial_head_carve` in
+`app/pipeline/silence_cut.py`, diagnostic kind `trim_sentence_head`). All of these must hold: the
+token BEFORE ends in `. ? !` and not in an ellipsis; exactly ONE long (>= `TOKEN_SILENCE_MIN_S`)
+span overlaps the token by >= `TOKEN_SILENCE_MIN_OVERLAP_S`; it covers the token's whole stamped
+head and leaves >= `SENTENCE_HEAD_MIN_VOICED_S` (0.15 s) of the token after it; it starts within
+`SENTENCE_TAIL_REACH_S` of the previous token's end and >= `SENTENCE_TAIL_MIN_VOICED_S` after its
+start. The token starts at the span end; the previous token's stamped end inside the span (under
+the overlap minimum, else the tail rule owns it) moves back to the span start. Rule 3 then tightens
+the pause like any other, keeping `KEPT_GAP_S/2` on each side. `DETECTOR_VERSION` →
+`mixed-gap-v9-sentence-head`.
+
+Why it is safe enough. The same argument as the tail trim: the pause sits at a sentence boundary,
+silence detection hears >= 0.6 s of nothing there, the reach check refuses sound between the two
+words, several quiet patches are refused, and the kept 125 ms before the voice covers a quiet first
+consonant. 0.15 s (not 0.3 s) of voiced remainder because the first word of a sentence is often one
+syllable ("So", "And"); its stamped end, not its start, is the unreliable edge here.
+
+Evidence. On the Cigdem 2 words and spans the V2 plan now tightens 28.516 → 29.139 s to <= 0.4 s
+kept; nothing before 28.516 s or after 29.139 s is cut. On S1 (job 4bb9842c) it removes
+27.265 → 27.757 s. Guards: `TestSentenceInitialHeadTrim` (`tests/pipeline/
+test_silence_cut_asr_timestamp_golden.py`) with negative controls (not sentence-final, ellipsis,
+too little voice left, sound before the silence, two quiet patches, first word of the take, the
+tail trim still owning a pause stamped onto the sentence end). Not covered: S1's other 0.6 s pause
+is two quiet patches split by a 36 ms click (neither >= 0.6 s), which only the tight-pause pass
+("cut every pause") removes.
+
+Reversal condition. If "cleanup clipped the start of my sentence" traces to a
+`trim_sentence_head` adjustment, return `None` from `_sentence_initial_head_carve` and bump
+`DETECTOR_VERSION`. Immediate stop: `SILENCE_CUT_ENABLED=false`.
+
+## [2026-11-16] Kria's chat language is decided by the model that reads the message, not by counting words
+
+**Context:** prod thread 59f3707e: the first message of a new chat was "Add the following lyrics as text, line by line: Vazgeçmem dünyaları ..." and Kria answered in Turkish, because `resolve_reply_language` scored ~17 Turkish lyric words against 9 English ones. Thread aa36d140 (Tadic, pasted lyrics mid-chat) had been patched by #2343 (KRI-1448) with more heuristics: a switch-back record, `short_reply_in`, `speaks_in`, `_confirms_reply_language`, `_switched_by_video_text`, `asks_for_video_words`. The owner rejected thresholds and word limits outright.
+**Decision:** on runtime-v2 chats, the Main Creator returns `conversation_language` (`MainCreatorOutput`, `en`/`tr`, `de` behind its switch): the language the creator writes to Kria in, excluding text meant for the video. On a rendered follow-up the brief extractor returns the same field. The stored language is passed only as context (`conversation_language_line`), never as an order. The planner rebinds the turn's language after each Main Creator / brief extractor answer it plans from (`_adopt_read_language`); `PlannedKriaTurn.conversation_language` carries it out of the planning `asyncio.run`; `run_kria_turn` rebinds before research, gates, receipts and failure copy; `_complete_response_turn` / `_complete_draft_turn` store it after the lease and revision fences, in the commit that completes the turn. The deferred brief extraction stores its reading too. None, an unsupported code, or a failed call keep the stored language. `submit_turn` scores nothing: instant replies (status, help, duplicate) use the stored language; a chat with none starts from the latest other chat's stored language, then `Accept-Language`, stored as the model's context.
+**Deleted:** #2343's switch-back machinery and the `asks_video_text` plan tag; `creator_typed_language` (re-scoring other chats' messages).
+**Kept, with reason:** `resolve_reply_language` / `detect_chat_language` for runtime-v1 (web) routes (`message_thread` requires v1; v2 `create_thread` refuses a message, so its `detect_chat_language` is a no-op there), `_in_chat_language` (v1 editor actions, binds only), overlay generation (no chat), and checks that judge server- or model-written text (`_worker_copy`, `_mixes_languages`, clip labels). None of these write a v2 chat's language.
+**Gap:** server copy written before any model reads a message (a Steer-now stop line, an instant status reply) is in the stored language. A copilot-only turn (no Main Creator, no brief extractor first) replies in the stored language; the deferred extraction then stores the language it read for the next turn.
+**Kill switch:** `KRIA_REPLY_LANGUAGE_ENABLED=false`: no line in the prompt, the field is ignored, nothing is stored.
+**Guards:** `tests/kria/test_model_owned_reply_language.py`, `tests/kria/test_model_owned_reply_language_postgres.py`.
+
+
+## [2026-11-19] A pull request starts a Mac only when it changes an iPhone input (KRI-1534)
+
+**Context:** a Mac ran on 256 of 277 merged PRs (92%) in 2026-11-05..19, and the Mac was the last required check to finish on most of them (median 51.5 min to the last required check with a Mac, 26.5 without). 135 of 153 PRs that touched no iOS file still got one, because an API path selected `ios` (contract prefixes, `app/kria/`) or a journey flagged `needs_native`. On a PR only the `unit` leg runs, and no step of it hands the offline fixture bundle to a test (only the nightly-only `creation` and `screens` legs set `TEST_RUNNER_KRIA_E2E_DIR`), so for those PRs the Mac repeated what `main` had already built and tested. The account has five concurrent Macs.
+**Decision:** on `pull_request`, `native_validation` is true only when the diff changes a declared iPhone input (`IOS_NATIVE_INPUTS`), a CI policy path, or a path the selector cannot classify (`ios_native`). `ios` keeps its meaning, so the Linux `ios-contracts` job and the `build-and-test` gate still cover API contract changes. Nightly, manual and push-to-`main` runs are unchanged.
+**Evidence:** `scripts/ci/native-inputs-backtest.py` over 897 PR runs: the rule starts no Mac on 216 (24%); a Mac ran to an end on 151 of those and 26 failed, none caused by its PR (24 were one test-build break inherited from `main`, 1 a unit test `main` failed the same evening, 1 a Linux journey failure reported by the Mac's wait step). Detail: `docs/runbooks/change-based-ci.md`.
+**Also changed:** API fonts and the fixtures Swift tests open by path now select the iPhone unit suite. Before, a PR that changed only such a file did not run the Swift tests that read it.
+**Gap:** the input list is checked by a static scan of the iPhone tree (`test_every_repo_path_the_iphone_tree_names_is_a_declared_native_input`). A path assembled at run time from pieces is invisible to it. A PR that slips through is caught by `main`'s own iOS run after merge, not before.
+**Reversal condition:** a red `main` iOS run traced to a PR the rule gave no Mac. Add the path to `IOS_NATIVE_INPUTS`; if the cause is not a single path, turn the rule off.
+**Kill switch:** repository variable `CI_MAC_SELECTION=full`. No code change, takes effect on the next run. It also undoes the journey-manifest and `.env.example` narrowing of KRI-1541 (`selection_rollback` in `scripts/ci/select-tests.py`).
+**Guards:** `scripts/ci/test_select_tests.py` (`test_required_gates_accept_the_skipped_mac_and_reject_a_lost_one`, `test_the_rollback_variable_restores_a_mac_for_every_selected_pr`), `scripts/ci/test_ci_throughput.py` (`test_no_pr_mac_step_hands_python_output_to_the_iphone_tests`, `test_a_pr_gets_a_mac_only_when_an_iphone_input_changed`, `test_journey_gate_accepts_a_skipped_mac_only_when_no_iphone_input_changed`).
+
+## [2026-11-19] A journey-manifest edit selects the rows it changed, not everything (KRI-1541)
+
+**Context:** `scripts/ci/journey-manifest.json` is CI policy, so any edit of it selected every suite, a Mac and all 179 journeys ("a change to either must execute the gate it could otherwise weaken"). It is edited in 37% of PR runs (330 of 897 in 2026-11-05..19), mostly to add or extend one row.
+**Decision:** the selector compares the manifest at the merge base and at the PR head row by row. Added or changed rows select those journeys and the API suite; a changed row that is native on either side also selects the iPhone unit suite and a Mac. `.env.example` selects the API suite. The policy property is kept: every row whose definition changed executes, and unchanged rows are identical on both sides.
+**Kept fail-closed:** a removed row, a change outside `journeys`, duplicate or missing ids, a manifest that does not parse on either side, or a changed id the registry does not know selects everything, as before.
+**Evidence:** replay over the same 897 PR runs: 189 manifest edits touch only Linux rows, 139 a native row, 2 select everything. No Mac on 305 runs (34%) against 216 without this change; 33 Mac failures on those runs, all read, none caused by its PR. Detail: `docs/runbooks/change-based-ci.md`.
+**Gap:** a row edit can move a path from another journey to itself (longest-prefix match). The other journey's row is unchanged, so it is not selected by the edit; running it would not detect the lost path either.
+**Reversal condition:** a regression traced to a manifest edit whose changed rows did not select the journey that would have caught it.
+**Kill switch:** repository variable `CI_MAC_SELECTION=full` (shared with the Mac rule): every manifest edit and `.env.example` select everything again.
+**Guards:** `scripts/ci/test_select_tests.py` (`ManifestRowTests`, `test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac`, `test_a_native_journey_row_edit_keeps_its_mac_and_its_unit_tests`, `test_removing_a_journey_row_still_selects_everything`, `test_an_unreadable_manifest_still_selects_everything`).

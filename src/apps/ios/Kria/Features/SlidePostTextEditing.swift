@@ -162,7 +162,7 @@ extension SlidePostTextElement {
         NativeEditorTimelineProjection(baseClipWindows: [], clipWindows: [], carouselItem: nil, baseInsertionTime: nil, downstreamShift: 0, totalDuration: 0)
     }
     func textDeletion(id: String) -> NativeEditorSession.TextDeletion {
-        texts.contains { $0.id == id } ? .allowed : .blocked("This text no longer exists.")
+        texts.contains { $0.id == id } ? .allowed : .blocked(String(localized: "This text no longer exists."))
     }
     @discardableResult func deleteText(id: String) -> Bool {
         guard texts.contains(where: { $0.id == id }), canEdit(.text) else { return false }

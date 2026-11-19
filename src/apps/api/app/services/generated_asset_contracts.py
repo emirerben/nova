@@ -12,8 +12,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-IMAGE_MODEL = "gpt-image-2.5-sunburst"
-NARRATION_MODEL = "gpt-realtime-2.1-mini"
+from app.agents.model_registry import IMAGE_MODEL, NARRATION_MODEL
+
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_AUDIO_BYTES = 60 * 24000 * 2
 

@@ -7,18 +7,26 @@ import UIKit
 /// control — the confusion this fixes (KRI-91).
 enum NativeEditorSaveControl: Equatable {
     case saved, unsaved, saving
+    /// Save was tapped while adds still upload (KRI-1419); it runs on its own once they land.
+    case finishing(uploads: Int)
 
-    init(isSaving: Bool, hasUnsavedChanges: Bool) {
-        self = isSaving ? .saving : hasUnsavedChanges ? .unsaved : .saved
+    init(isSaving: Bool, hasUnsavedChanges: Bool, finishingUploads: Int = 0) {
+        self = finishingUploads > 0 ? .finishing(uploads: finishingUploads) : isSaving ? .saving : hasUnsavedChanges ? .unsaved : .saved
     }
 
     var isEnabled: Bool { self == .unsaved }
 
+    var title: String? {
+        guard case .finishing(let uploads) = self else { return nil }
+        return String(localized: "Finishing \(uploads) uploads…")
+    }
+
     var accessibilityLabel: String {
         switch self {
-        case .saved: "Saved"
-        case .unsaved: "Save changes"
-        case .saving: "Saving"
+        case .saved: String(localized: "Saved")
+        case .unsaved: String(localized: "Save changes")
+        case .saving: String(localized: "Saving")
+        case .finishing: title ?? String(localized: "Saving")
         }
     }
 }
@@ -49,8 +57,19 @@ private struct ResolvedExportFile {
 /// route once, hands the result to Photos or the share sheet, and always
 /// removes any temporary copy it made.
 @MainActor protocol NativeEditorExportSource: AnyObject {
+    func prepareVideoDownloadRoute(deviceLocalFile: URL?) async throws -> NativeEditorVideoDownloadRoute
+    func exportSavedRecipe(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute
     func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo
+}
+
+extension NativeEditorExportSource {
+    func prepareVideoDownloadRoute(deviceLocalFile: URL?) async throws -> NativeEditorVideoDownloadRoute {
+        try videoDownloadRoute(deviceLocalFile: deviceLocalFile)
+    }
+    func exportSavedRecipe(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
+        throw NativeEditorVideoDownloadError.unavailable
+    }
 }
 
 @MainActor final class NativeEditorExporter: ObservableObject {
@@ -113,14 +132,20 @@ private struct ResolvedExportFile {
         dismissTask?.cancel()
         phase = .preparing
         do {
-            switch try session.videoDownloadRoute(deviceLocalFile: deviceLocalFile) {
-            case .sourcePreview:
+            let route = try await session.prepareVideoDownloadRoute(deviceLocalFile: deviceLocalFile)
+            switch route {
+            case .sourcePreview, .savedRecipe:
                 let runner = ContinuedProcessingExport(scheduler: scheduler, isForeground: isForeground)
-                let exported = try await runner.run(origin: origin, title: "Preparing your video", subtitle: "Exporting the current preview", operation: { progress in
-                    try await session.exportDisplayedSourcePreview(progress: { fraction in
+                let exported = try await runner.run(origin: origin, title: String(localized: "Preparing your video"), subtitle: String(localized: "Exporting the current preview"), operation: { progress in
+                    let report: @Sendable (Double) -> Void = { fraction in
                         guard fraction.isFinite, (0...1).contains(fraction) else { return }
                         Task { @MainActor in progress(Int64(fraction * 1000), 1000) }
-                    })
+                    }
+                    return if route == .savedRecipe {
+                        try await session.exportSavedRecipe(progress: report)
+                    } else {
+                        try await session.exportDisplayedSourcePreview(progress: report)
+                    }
                 }, discard: { exported in
                     try? FileManager.default.removeItem(at: exported.cleanupURL)
                 })
@@ -157,16 +182,16 @@ struct NativeEditorExportBanner: View {
             EmptyView()
         case .preparing:
             NativeEditorBannerRow(
-                title: "Preparing your video",
-                detail: "Exporting the video shown in the preview.",
+                title: String(localized: "Preparing your video"),
+                detail: String(localized: "Exporting the video shown in the preview."),
                 systemImage: "arrow.down.circle",
                 tint: KriaColor.ink,
                 identifier: "native-editor-export-state"
             )
         case .savedToPhotos:
             NativeEditorBannerRow(
-                title: "Saved to Photos",
-                detail: "Your video is in your photo library.",
+                title: String(localized: "Saved to Photos"),
+                detail: String(localized: "Your video is in your photo library."),
                 systemImage: "checkmark.circle",
                 tint: KriaColor.ink,
                 identifier: "native-editor-export-state"
@@ -174,7 +199,7 @@ struct NativeEditorExportBanner: View {
         case .failed(let message):
             Button(action: exporter.dismissStatus) {
                 NativeEditorBannerRow(
-                    title: "Couldn’t export this video",
+                    title: String(localized: "Couldn’t export this video"),
                     detail: message,
                     systemImage: "exclamationmark.triangle",
                     tint: .red,

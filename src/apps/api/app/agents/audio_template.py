@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 import structlog
 from pydantic import BaseModel, Field, ValidationError
 
+from app.agents._prompt_fingerprint import prompt_fingerprint
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.template_recipe import (
     _VALID_COLOR_HINTS,
@@ -23,6 +24,13 @@ from app.agents.template_recipe import (
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
+
+AUDIO_TEMPLATE_PROMPT_SOURCES: tuple[str, ...] = (
+    "app/agents/audio_template.py",
+    "prompts/analyze_audio_template.txt",
+    "prompts/analyze_template_schema.txt",
+)
+AUDIO_TEMPLATE_PROMPT_VERSION = prompt_fingerprint("at", AUDIO_TEMPLATE_PROMPT_SOURCES)
 
 
 class AudioTemplateInput(BaseModel):
@@ -52,7 +60,7 @@ class AudioTemplateOutput(BaseModel):
     interstitials: list[dict[str, Any]] = Field(default_factory=list)
     subject_niche: str = ""
     has_talking_head: bool = False  # always False for audio-only
-    has_voiceover: bool = False     # always False for audio-only
+    has_voiceover: bool = False  # always False for audio-only
     has_permanent_letterbox: bool = False  # always False for audio-only
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,7 +71,7 @@ class AudioTemplateAgent(Agent[AudioTemplateInput, AudioTemplateOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.audio.template_recipe",
         prompt_id="analyze_audio_template",
-        prompt_version="2026-05-09",
+        prompt_version=AUDIO_TEMPLATE_PROMPT_VERSION,
         model="gemini-2.5-flash",
         # Audio analysis is more transient-prone in practice (large file uploads);
         # legacy used 3 attempts × 15s. The runtime default of 5 × [3,9,27,60] is
@@ -86,8 +94,7 @@ class AudioTemplateAgent(Agent[AudioTemplateInput, AudioTemplateOutput]):
     def render_prompt(self, input: AudioTemplateInput) -> str:  # noqa: A002
         # Slice beats to the best section.
         section_beats = [
-            b for b in input.beat_timestamps_s
-            if input.best_start_s <= b <= input.best_end_s
+            b for b in input.beat_timestamps_s if input.best_start_s <= b <= input.best_end_s
         ]
         section_duration = input.best_end_s - input.best_start_s
 
@@ -101,9 +108,7 @@ class AudioTemplateAgent(Agent[AudioTemplateInput, AudioTemplateOutput]):
             schema=schema,
         )
 
-    def parse(
-        self, raw_text: str, input: AudioTemplateInput
-    ) -> AudioTemplateOutput:  # noqa: A002
+    def parse(self, raw_text: str, input: AudioTemplateInput) -> AudioTemplateOutput:  # noqa: A002
         try:
             data = json.loads(raw_text)
         except (ValueError, TypeError) as exc:
@@ -145,8 +150,7 @@ class AudioTemplateAgent(Agent[AudioTemplateInput, AudioTemplateOutput]):
             sync_style = "cut-on-beat"
 
         section_beats = [
-            b for b in input.beat_timestamps_s
-            if input.best_start_s <= b <= input.best_end_s
+            b for b in input.beat_timestamps_s if input.best_start_s <= b <= input.best_end_s
         ]
         section_duration = input.best_end_s - input.best_start_s
 

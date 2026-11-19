@@ -24,11 +24,11 @@ enum NativeEditorAIStatus: Equatable {
 
     var title: String {
         switch self {
-        case .sending: "Sending your message…"
-        case .thinking: "Kria is working…"
-        case .preparingPreview: "Preparing preview…"
-        case .rendering: "Preparing your video…"
-        case .syncing: "Syncing your video…"
+        case .sending: String(localized: "Sending your message…")
+        case .thinking: String(localized: "Kria is working…")
+        case .preparingPreview: String(localized: "Preparing preview…")
+        case .rendering: String(localized: "Preparing your video…")
+        case .syncing: String(localized: "Syncing your video…")
         }
     }
 

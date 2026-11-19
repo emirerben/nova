@@ -70,13 +70,20 @@ async def test_availability_validates_snapshot_and_published_generation_alias(mo
     row = SimpleNamespace(
         id=draft_id,
         variant_key="wrong" if case == "wrong_variant" else "v",
+        base_job_id=job.id,
         base_generation_id=generation,
-        snapshot_json=None if case == "missing_body" else snapshot.snapshot,
+        snapshot_json=None
+        if case == "missing_body"
+        else {"kind": "editor", "editor_payload": {"base_generation": generation}},
         parent_draft_id=None,
     )
     if case in {"wrong_variant", "missing_body"}:
         row.base_generation_id = "new-generation"
-    monkeypatch.setattr(drafts, "published_source_generation", lambda *_: "published-source")
+        if row.snapshot_json is not None:
+            row.snapshot_json["editor_payload"]["base_generation"] = "new-generation"
+    monkeypatch.setattr(
+        "app.services.device_render.published_source_generation", lambda *_: "published-source"
+    )
     monkeypatch.setattr(drafts, "_out", lambda *_args, **_kwargs: snapshot)
     result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row]))
     db = SimpleNamespace(execute=AsyncMock(return_value=result))

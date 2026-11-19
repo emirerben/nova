@@ -7,12 +7,888 @@
     {
       "turn_id": "t0",
       "user_message": "Make a Saturday reset vlog. Make sure the cooking and the night walk are in.",
-      "engine": "recorded"
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Make a Saturday reset vlog. Make sure the cooking and the night walk are in.",
+          "prior_turns": [],
+          "variant_snapshot": {
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title"
+            ],
+            "base_generation": "gen-1",
+            "has_narrated_captions": false,
+            "max_duration_s": 240,
+            "remaining_duration_s": 217.5,
+            "slots": [
+              {
+                "key": "slot-1",
+                "slot_id": "slot-1",
+                "parent_segment_id": null,
+                "clip_index": 0,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 0.0,
+                "output_end_s": 3.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V6",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T19:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "cooking pasta",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-2",
+                "slot_id": "slot-2",
+                "parent_segment_id": null,
+                "clip_index": 1,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 3.5,
+                "output_end_s": 5.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V1",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T08:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "waking up",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-3",
+                "slot_id": "slot-3",
+                "parent_segment_id": null,
+                "clip_index": 2,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 5.5,
+                "output_end_s": 8.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V8",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T22:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "night walk",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-4",
+                "slot_id": "slot-4",
+                "parent_segment_id": null,
+                "clip_index": 3,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 8.5,
+                "output_end_s": 10.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V3",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T10:15:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "laundry",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-5",
+                "slot_id": "slot-5",
+                "parent_segment_id": null,
+                "clip_index": 4,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 10.5,
+                "output_end_s": 13.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V5",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T16:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "gym session",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-6",
+                "slot_id": "slot-6",
+                "parent_segment_id": null,
+                "clip_index": 5,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 13.5,
+                "output_end_s": 16.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V2",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T09:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "cleaning the flat",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-7",
+                "slot_id": "slot-7",
+                "parent_segment_id": null,
+                "clip_index": 6,
+                "in_s": 0.0,
+                "duration_s": 2.5,
+                "duration_beats": null,
+                "source_duration_s": 2.5,
+                "output_start_s": 16.5,
+                "output_end_s": 19.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V7",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T21:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "journaling",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-8",
+                "slot_id": "slot-8",
+                "parent_segment_id": null,
+                "clip_index": 7,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 19.0,
+                "output_end_s": 22.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V4",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T12:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "grocery run",
+                  "provenance": "vision"
+                }
+              }
+            ],
+            "text_bars": [],
+            "total_duration_s": 22.5,
+            "label_facts": true,
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "timeline_patch_capabilities": {
+              "duration_s": true,
+              "in_s": true,
+              "removed": true,
+              "transition_after": true,
+              "transition_duration_s": true,
+              "look_preset": false,
+              "playback_rate": false,
+              "source_crop": false
+            },
+            "source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "V6",
+                "kind": "video",
+                "generation": "00301cf5c515",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "V1",
+                "kind": "video",
+                "generation": "b89dc05c7352",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "V8",
+                "kind": "video",
+                "generation": "bb4f799d9519",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "V3",
+                "kind": "video",
+                "generation": "23ba8237810e",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "V5",
+                "kind": "video",
+                "generation": "7efdfd245fa3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "V2",
+                "kind": "video",
+                "generation": "7f5087601920",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "V7",
+                "kind": "video",
+                "generation": "c1d197ee3edd",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "V4",
+                "kind": "video",
+                "generation": "131ce915bd84",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "replacement_source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "V6",
+                "kind": "video",
+                "generation": "00301cf5c515",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "V1",
+                "kind": "video",
+                "generation": "b89dc05c7352",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "V8",
+                "kind": "video",
+                "generation": "bb4f799d9519",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "V3",
+                "kind": "video",
+                "generation": "23ba8237810e",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "V5",
+                "kind": "video",
+                "generation": "7efdfd245fa3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "V2",
+                "kind": "video",
+                "generation": "7f5087601920",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "V7",
+                "kind": "video",
+                "generation": "c1d197ee3edd",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "V4",
+                "kind": "video",
+                "generation": "131ce915bd84",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "editor_ops_version": 2
+          }
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"reorder_clips_by\",\n      \"criterion\": \"capture_time\",\n      \"direction\": \"asc\"\n    },\n    {\n      \"op\": \"add_text\",\n      \"text\": \"Saturday Reset\",\n      \"start_s\": 0,\n      \"end_s\": 2.0,\n      \"style_from\": \"title\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've arranged your clips in chronological order to build that perfect Saturday reset vlog flow—from waking up all the way to your night walk. The cooking and night walk are both safely in there, and I added a starting title. Want to add labels for each activity?\",\n  \"suggestions\": [\n    \"Label each clip\",\n    \"Add a dreamy film look\",\n    \"Make it 15 seconds\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"reorder_clips_by\",\n    \"add_text\"\n  ]\n}",
+        "prompt_version": "2026-11-11-v122",
+        "model_actual": "gemini-3.1-pro-preview",
+        "recorded_at": "2026-11-13T08:30:43Z",
+        "latency_s": 12.76,
+        "model_calls": 1,
+        "tokens_in": 27055,
+        "tokens_out": 285,
+        "tokens_thoughts": 1177,
+        "test_run_id": "rf-baseline-20261113-d"
+      }
     },
     {
       "turn_id": "t1",
       "user_message": "Shorter please, 15 seconds. Open with the gym, then the cooking.",
-      "engine": "recorded"
+      "engine": "v1_copilot",
+      "copilot": {
+        "agent_input": {
+          "utterance": "Shorter please, 15 seconds. Open with the gym, then the cooking.",
+          "prior_turns": [
+            {
+              "role": "user",
+              "content": "Make a Saturday reset vlog. Make sure the cooking and the night walk are in."
+            },
+            {
+              "role": "assistant",
+              "content": "Order clips by filming time and Add text. Everything else is unchanged."
+            }
+          ],
+          "variant_snapshot": {
+            "allowed_op_families": [
+              "clip",
+              "text",
+              "title"
+            ],
+            "base_generation": "gen-1",
+            "has_narrated_captions": false,
+            "max_duration_s": 240,
+            "remaining_duration_s": 217.5,
+            "slots": [
+              {
+                "key": "slot-1",
+                "slot_id": "slot-1",
+                "parent_segment_id": null,
+                "clip_index": 1,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 0.0,
+                "output_end_s": 2.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V1",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T08:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "waking up",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-2",
+                "slot_id": "slot-2",
+                "parent_segment_id": null,
+                "clip_index": 5,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 2.0,
+                "output_end_s": 5.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V2",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T09:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "cleaning the flat",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-3",
+                "slot_id": "slot-3",
+                "parent_segment_id": null,
+                "clip_index": 3,
+                "in_s": 0.0,
+                "duration_s": 2.0,
+                "duration_beats": null,
+                "source_duration_s": 2.0,
+                "output_start_s": 5.0,
+                "output_end_s": 7.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V3",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T10:15:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "laundry",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-4",
+                "slot_id": "slot-4",
+                "parent_segment_id": null,
+                "clip_index": 7,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 7.0,
+                "output_end_s": 10.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V4",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T12:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "grocery run",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-5",
+                "slot_id": "slot-5",
+                "parent_segment_id": null,
+                "clip_index": 4,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 10.5,
+                "output_end_s": 13.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V5",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T16:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "gym session",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-6",
+                "slot_id": "slot-6",
+                "parent_segment_id": null,
+                "clip_index": 0,
+                "in_s": 0.0,
+                "duration_s": 3.5,
+                "duration_beats": null,
+                "source_duration_s": 3.5,
+                "output_start_s": 13.5,
+                "output_end_s": 17.0,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V6",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T19:00:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "cooking pasta",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-7",
+                "slot_id": "slot-7",
+                "parent_segment_id": null,
+                "clip_index": 6,
+                "in_s": 0.0,
+                "duration_s": 2.5,
+                "duration_beats": null,
+                "source_duration_s": 2.5,
+                "output_start_s": 17.0,
+                "output_end_s": 19.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V7",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T21:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "journaling",
+                  "provenance": "vision"
+                }
+              },
+              {
+                "key": "slot-8",
+                "slot_id": "slot-8",
+                "parent_segment_id": null,
+                "clip_index": 2,
+                "in_s": 0.0,
+                "duration_s": 3.0,
+                "duration_beats": null,
+                "source_duration_s": 3.0,
+                "output_start_s": 19.5,
+                "output_end_s": 22.5,
+                "removed": false,
+                "transition_after": "cut",
+                "transition_duration_s": null,
+                "look_preset": "none",
+                "media_kind": "video",
+                "media_id": "V8",
+                "facts": [
+                  {
+                    "kind": "capture_time",
+                    "value": "2026-09-19T22:30:00+03:00",
+                    "provenance": "exif"
+                  }
+                ],
+                "seen": {
+                  "text": "night walk",
+                  "provenance": "vision"
+                }
+              }
+            ],
+            "text_bars": [
+              {
+                "font_family": "Playfair Display",
+                "size_px": 72,
+                "color": "#FFFFFF",
+                "effect": "static",
+                "alignment": "center",
+                "position": "middle",
+                "id": "kria-ed4c4797c0eb4e4fb846805cdeb6e832",
+                "text": "Saturday Reset",
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "role": "generative_intro"
+              }
+            ],
+            "total_duration_s": 22.5,
+            "label_facts": true,
+            "editor_limits": {
+              "max_timeline_slots": 120
+            },
+            "timeline_patch_capabilities": {
+              "duration_s": true,
+              "in_s": true,
+              "removed": true,
+              "transition_after": true,
+              "transition_duration_s": true,
+              "look_preset": false,
+              "playback_rate": false,
+              "source_crop": false
+            },
+            "source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "V6",
+                "kind": "video",
+                "generation": "00301cf5c515",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "V1",
+                "kind": "video",
+                "generation": "b89dc05c7352",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "V8",
+                "kind": "video",
+                "generation": "bb4f799d9519",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "V3",
+                "kind": "video",
+                "generation": "23ba8237810e",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "V5",
+                "kind": "video",
+                "generation": "7efdfd245fa3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "V2",
+                "kind": "video",
+                "generation": "7f5087601920",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "V7",
+                "kind": "video",
+                "generation": "c1d197ee3edd",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "V4",
+                "kind": "video",
+                "generation": "131ce915bd84",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "replacement_source_pool": [
+              {
+                "clip_index": 0,
+                "media_id": "V6",
+                "kind": "video",
+                "generation": "00301cf5c515",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 1,
+                "media_id": "V1",
+                "kind": "video",
+                "generation": "b89dc05c7352",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 2,
+                "media_id": "V8",
+                "kind": "video",
+                "generation": "bb4f799d9519",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 3,
+                "media_id": "V3",
+                "kind": "video",
+                "generation": "23ba8237810e",
+                "duration_s": 2.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 4,
+                "media_id": "V5",
+                "kind": "video",
+                "generation": "7efdfd245fa3",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 5,
+                "media_id": "V2",
+                "kind": "video",
+                "generation": "7f5087601920",
+                "duration_s": 3.0,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 6,
+                "media_id": "V7",
+                "kind": "video",
+                "generation": "c1d197ee3edd",
+                "duration_s": 2.5,
+                "used": true,
+                "ready": true
+              },
+              {
+                "clip_index": 7,
+                "media_id": "V4",
+                "kind": "video",
+                "generation": "131ce915bd84",
+                "duration_s": 3.5,
+                "used": true,
+                "ready": true
+              }
+            ],
+            "editor_ops_version": 2
+          },
+          "original_request": "Make a Saturday reset vlog. Make sure the cooking and the night walk are in."
+        },
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_total_duration\",\n      \"target_s\": 15,\n      \"strategy\": \"proportional\"\n    },\n    {\n      \"op\": \"reorder_clips_by\",\n      \"criterion\": \"custom\",\n      \"order\": [\n        4,\n        5,\n        0,\n        1,\n        2,\n        3,\n        6,\n        7\n      ]\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Shortened the video to 15 seconds and moved the gym and cooking clips to the start.\",\n  \"suggestions\": [\n    \"Add a fast-paced text to match\",\n    \"Add sound effects\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [],\n  \"claimed_ops\": [\n    \"set_total_duration\",\n    \"reorder_clips_by\"\n  ]\n}",
+        "prompt_version": "2026-11-11-v122",
+        "model_actual": "gemini-3.1-pro-preview",
+        "recorded_at": "2026-11-13T08:30:52Z",
+        "latency_s": 9.19,
+        "model_calls": 1,
+        "tokens_in": 27204,
+        "tokens_out": 256,
+        "tokens_thoughts": 635,
+        "test_run_id": "rf-baseline-20261113-d"
+      }
     }
   ],
   "requirements": [
@@ -167,5 +1043,59 @@
       ],
       "total_duration_s": 22.5
     }
+  },
+  "initial_plan": {
+    "clips": [
+      {
+        "clip_id": "V6",
+        "start_s": 0.0,
+        "end_s": 3.5
+      },
+      {
+        "clip_id": "V1",
+        "start_s": 3.5,
+        "end_s": 5.5
+      },
+      {
+        "clip_id": "V8",
+        "start_s": 5.5,
+        "end_s": 8.5
+      },
+      {
+        "clip_id": "V3",
+        "start_s": 8.5,
+        "end_s": 10.5
+      },
+      {
+        "clip_id": "V5",
+        "start_s": 10.5,
+        "end_s": 13.5
+      },
+      {
+        "clip_id": "V2",
+        "start_s": 13.5,
+        "end_s": 16.5
+      },
+      {
+        "clip_id": "V7",
+        "start_s": 16.5,
+        "end_s": 19.0
+      },
+      {
+        "clip_id": "V4",
+        "start_s": 19.0,
+        "end_s": 22.5
+      }
+    ],
+    "texts": [],
+    "speech": [],
+    "total_duration_s": 22.5,
+    "timing_verified": true
+  },
+  "baseline": {
+    "cooking": "met",
+    "redo": "met",
+    "fifteen": "met",
+    "gym-then-cooking": "met"
   }
 }

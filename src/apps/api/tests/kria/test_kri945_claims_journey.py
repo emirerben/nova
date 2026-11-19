@@ -253,9 +253,11 @@ async def test_the_writer_limit_follows_the_creators_turkish_reply(
         "clip_intent_planner": [],
     }
     chat = await journey._approve_hook(monkeypatch, answer, speaking=True)
+    # The Main Creator reads the creator's Turkish and reports it (`conversation_language`).
+    turkish = {**answer, "main_creator": {**answer["main_creator"], "conversation_language": "tr"}}
     await chat.send(
         "Kaynaklı Cunda bilgilerini de istiyorum. Konuşmaları ve onayladığım başlığı koru.",
-        answer,
+        turkish,
     )
     disposition, reason = chat.unready()["r1"]
     assert disposition == "unsupported"

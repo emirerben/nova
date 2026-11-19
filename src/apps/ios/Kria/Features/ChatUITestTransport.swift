@@ -89,6 +89,13 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
             DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
             return
         }
+        if request.httpMethod == "GET", request.url?.pathComponents.dropLast().last == "approvals",
+           let delay = ProcessInfo.processInfo.environment["KRIA_CHAT_APPROVAL_DELAY"].flatMap(Double.init), delay > 0 {
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
+            return
+        }
         if PerfFixture.isFullProjectionRead(request) {
             Perf.mark("fixture.full.arrived")
             PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))
@@ -121,7 +128,7 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     }
     private func finishLoading() {
         if PerfFixture.isFullProjectionRead(request) { Perf.mark("fixture.full.sent") }
-        if let perf = PerfFixture.respond(request) {
+        if let perf = ChatShortenFixture.respond(request) ?? PerfFixture.respond(request) {
             guard let url = request.url,
                   let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
                 client?.urlProtocol(self, didFailWithError: URLError(.badURL))
@@ -311,6 +318,41 @@ final class CreationChatFixture: @unchecked Sendable {
     private let steerApprovalID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     static let steerFirstSummary = "Open on the laugh and keep the pacing quick."
     static let steerTypedSummary = "Your request: you small at the bottom right, white captions in the middle, no music."
+    /// KRI-1403: `KRIA_CHAT_LONG_APPROVAL=1` replays the ylab chat (thread 8044373b, build 1977). The draft message
+    /// is the card text prod sent, word for word (14 lines, about 1,800 characters, without its prefix); the approval
+    /// card is what the server sends for it since KRI-1403 (`approval_card_text(_card_summary(...))` in German, with
+    /// German "can't check automatically" reasons neutral). `KRIA_CHAT_APPROVAL_DELAY` answers the approval read that
+    /// many seconds late, as the phone's second round trip.
+    static var longApprovalFixture: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_APPROVAL"] == "1" }
+    static let longApprovalCard = """
+    Render this draft: Hier ist die einfachere Version.
+    - Teilweise: Die fünf Clips in der Reihenfolge der Aufnahme verwenden und nichts umstellen. (Ich kann die Reihenfolge, die dieser Entwurf nutzt, nicht bestätigen)
+    - Erledigt: "Ihr sucht eine Feuerwehr?"
+    - Erledigt: Keine Musik. (Keine Musik, wie gewünscht)
+    - Wie besprochen weggelassen: 3 deiner Wünsche
+    Schau dir diese Stellen im Video an:
+    - Ein „Talking“-Video mit direkter Ansprache in die Kamera auf Deutsch.
+    - Alle fünf Clips als Teile derselben Vorstellung nutzen und keine Inhalte weglassen, außer den ausdrücklich genannten Pausen und Wiederholungen. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    - Kein weiterer Text außer dem Titel und den ausdrücklich gewünschten Untertiteln.
+    - Keine Soundeffekte. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    """
+    static let longApprovalProdCard = """
+    Render this draft: Hier ist die einfachere Version.
+    - Teilweise: Die fünf Clips in der Reihenfolge der Aufnahme verwenden und nichts umstellen. (Ich kann die Reihenfolge, die dieser Entwurf nutzt, nicht bestätigen)
+    - Erledigt: "Ihr sucht eine Feuerwehr?"
+    - Erledigt: Keine Musik. (Keine Musik, wie gewünscht)
+    - Wie besprochen weggelassen: Alle Sprechpausen herausschneiden, damit die Vorstellung straff wirkt.
+    - Wie besprochen weggelassen: Bei zweimal gesprochenen Sätzen nur die letzte, saubere Version behalten.
+    - Wie besprochen weggelassen: Deutsche Untertitel Wort für Wort, gut lesbar und nie über meinem Gesicht. Die angegebenen Namen und Zahlen exakt so schreiben.
+    Schau dir diese Stellen im Video an:
+    - Ein „Talking“-Video mit direkter Ansprache in die Kamera auf Deutsch. (Das kann ich noch nicht automatisch prüfen)
+    - Alle fünf Clips als Teile derselben Vorstellung nutzen und keine Inhalte weglassen, außer den ausdrücklich genannten Pausen und Wiederholungen. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    - Kein weiterer Text außer dem Titel und den ausdrücklich gewünschten Untertiteln. (Das kann ich noch nicht automatisch prüfen)
+    - Keine Soundeffekte. (Das geht in einem Talking-Video nicht, deshalb bleibt es wie gefilmt)
+    Hinweis zu diesem Video:
+    - Ich kann die Hook-Idee für den Anfang ("Deine direkte Vorstellung mit dem gewünschten Titel eröffnen.") in diesem Video noch nicht nutzen, deshalb wird sie nicht als Text angezeigt
+    - Ich kann die geplante Story-Struktur (Vorstellung und Erfahrungen beim Produk…, Förderprogramm, Projekte und Veranstalt…, Die eigene KI-App und Erfahrungen beim…, Motivation für YLAB., Persönliche Eigenschaften und Verabschi…) in diesem Video noch nicht umsetzen, deshalb ändert sie die Reihenfolge der Clips nicht
+    """
     static var researchPreviewFixture: [String: Any] { [
         "version": 1,
         "retrieved_at": "2026-10-25T09:00:00Z",
@@ -1033,8 +1075,10 @@ final class CreationChatFixture: @unchecked Sendable {
                 }
                 append("generation_started")
             } else if action == "remove_media" {
-                state["media"] = []
-                append("action_remove_media")
+                // The server drops that one file and logs which one, so the chat can stop showing it.
+                let removed = payload["media_id"] as? String
+                state["media"] = (state["media"] as? [[String: Any]] ?? []).filter { removed == nil || $0["media_id"] as? String != removed }
+                append("action_remove_media", role: "user", payload: ["action": "remove_media", "media_id": removed ?? ""])
             }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
@@ -1398,7 +1442,12 @@ final class CreationChatFixture: @unchecked Sendable {
                     draftPayload["research_preview"] = Self.researchPreviewFixture
                 }
                 if let language = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_LANGUAGE"] { state["reply_language"] = language }
-                append("draft_applied", payload: draftPayload)
+                if Self.longApprovalFixture {
+                    // The server's draft message is the card's text without its "Render this draft:" prefix.
+                    append("draft_applied", text: Self.longApprovalProdCard.replacingOccurrences(of: "Render this draft: ", with: ""), payload: draftPayload)
+                } else {
+                    append("draft_applied", payload: draftPayload)
+                }
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
             }
             else {
@@ -1472,7 +1521,7 @@ final class CreationChatFixture: @unchecked Sendable {
             } else {
                 let approvalPayload = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 let turnID = approvalPayload?["turn_id"] as? String ?? id
-                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": approvalPayload?["draft_revision"] as? Int ?? 1, "status": "pending", "consequence_summary": "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
+                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": approvalPayload?["draft_revision"] as? Int ?? 1, "status": "pending", "consequence_summary": Self.longApprovalFixture ? Self.longApprovalCard : "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
             }
         } else if parts.last == "delta", let count = approvalDispatches[id] {
             // Ticks on the delta poll: like the server, nothing here bumps the revision until `render_queued`, so
@@ -2442,6 +2491,134 @@ extension CreationChatFixture {
             append("assistant_review", text: "Made it again from your new take.")
             save()
             return response(thread)
+        }
+        return nil
+    }
+}
+
+/// `-ui-testing-editor-chat-shorten`: an AI chat edit that shortens the cut and its title is staged on the phone as
+/// the server's draft head, based on generation `gen-1`. By the time the creator taps Save the server holds `gen-2`,
+/// which already contains the same edit with its durations quantized to a 0.5 s grid, so the first Save answers
+/// `baseline_conflict` like the real server. Seeded chats only (`KRIA_CHAT_SEED_THREADS` + `KRIA_EDITOR_FIXTURE=1`).
+///
+/// Two more scenarios share the same shortened draft head:
+/// - `-ui-testing-editor-chat-finished-at`: the variant never went through the editor, so it has only
+///   `render_finished_at` (no `render_generation_id`); the head is stamped with that time and the server does not
+///   send `head_current` (an older server). The AI's edit must still open.
+/// - `-ui-testing-editor-chat-stale-save`: the head is current and the first Save answers 409 `TIMELINE_STALE`,
+///   a conflict that says nothing about a newer version.
+enum ChatShortenFixture {
+    static let title = "SHORT LISBON TITLE"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var serverAdvanced = false
+
+    private enum Mode { case shorten, finishedAt, staleSave }
+    private static let mode: Mode? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-ui-testing-editor-chat-finished-at") { return .finishedAt }
+        if arguments.contains("-ui-testing-editor-chat-stale-save") { return .staleSave }
+        return arguments.contains("-ui-testing-editor-chat-shorten") ? .shorten : nil
+    }()
+    private static let finishedAt = "2026-09-10T10:00:00Z"
+
+    static var isEnabled: Bool { mode != nil }
+
+    private static let sourceDurations = [4.6, 6.0, 4.6]
+    private static let aiDurations = [1.4, 1.2, 1.3]
+    private static let renderedDurations = [1.5, 1.0, 1.5]
+    private static let textID = "00000000-0000-4000-8000-000000000100"
+
+    private static func slots(_ durations: [Double]) -> [[String: Any]] {
+        durations.enumerated().map { index, duration in
+            ["slot_id": "s\(index)", "clip_index": index, "in_s": 0, "duration_s": duration,
+             "source_duration_s": sourceDurations[index], "removed": false]
+        }
+    }
+
+    private static func text(_ content: String, end: Double) -> [String: Any] {
+        ["id": textID, "text": content, "start_s": 0, "end_s": end, "x_frac": 0.5, "y_frac": 0.4,
+         "font_family": "Inter", "size_px": 72, "z": 1]
+    }
+
+    private static func variant(advanced: Bool) -> [String: Any] {
+        let durations = advanced ? renderedDurations : [2.0, 2.0, 2.0]
+        let generation: [String: Any] = mode == .finishedAt
+            ? ["render_finished_at": finishedAt] : ["render_generation_id": advanced ? "gen-2" : "gen-1"]
+        return generation.merging([
+            "variant_id": "montage", "render_status": "ready",
+            "duration_s": durations.reduce(0, +), "output_url": PerfFixture.editorRenderURL, "resolved_archetype": "montage",
+            "editor_capabilities": ["timeline": true, "text_elements": true, "mix": false],
+            "user_timeline": ["slots": slots(durations)],
+            "text_elements": [advanced ? text(title, end: 4.0) : text("OLD LISBON TITLE", end: 6)],
+        ]) { current, _ in current }
+    }
+
+    private static func draftHead(threadID: String) -> [String: Any] {
+        let lanes = slots(aiDurations)
+        let words = [text(title, end: aiDurations.reduce(0, +))]
+        let base = mode == .finishedAt ? finishedAt : "gen-1"
+        return ["draft_id": "chat-shorten-\(threadID)", "item_id": threadID, "variant_key": "montage", "draft_revision": 1,
+                "snapshot_hash": "chat-shorten-1", "etag": "chat-shorten-1", "base_job_id": threadID, "base_generation_id": base,
+                "snapshot": ["kind": "editor", "editor_payload": [
+                    "editor_state_version": 2, "base_generation": base, "timeline_slots": lanes, "text_elements": words,
+                    "sections": ["timeline_slots": lanes, "text_elements": words],
+                ]],
+                "can_undo": false, "created_at": "2026-09-10T10:00:00Z"]
+    }
+
+    private static func json(_ object: Any, status: Int = 200) -> PerfFixture.Response {
+        PerfFixture.Response(status: status, data: (try? JSONSerialization.data(withJSONObject: object)) ?? Data())
+    }
+
+    private static func body(of request: URLRequest) -> [String: Any] {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                data.append(buffer, count: count)
+            }
+        }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+
+    static func respond(_ request: URLRequest) -> PerfFixture.Response? {
+        guard isEnabled, let path = request.url?.path else { return nil }
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count >= 3, PerfFixture.seededIndex(of: parts[1]) != nil else { return nil }
+        let method = request.httpMethod ?? "GET"
+        lock.lock(); defer { lock.unlock() }
+        if method == "GET", parts.count == 3, parts[0] == "generative-jobs", parts[2] == "status" {
+            return json(["variants": [variant(advanced: serverAdvanced)]])
+        }
+        if method == "GET", parts.count == 3, parts[0] == "creation-threads", parts[2] == "draft" {
+            return json(draftHead(threadID: parts[1]))
+        }
+        if method == "GET", parts.count == 5, parts[0] == "generative-jobs", parts[4] == "timeline" {
+            let clips: [[String: Any]] = PerfFixture.editorSourceFiles.indices.map { index in
+                ["clip_index": index, "native_source": [
+                    "media_id": "clip-\(index)", "source_url": "https://\(PerfSourceURLProtocol.host)/clip\(index).mp4",
+                    "original": NSNull(), "local_required": false,
+                ] as [String: Any]]
+            }
+            let generation = mode == .finishedAt ? finishedAt : serverAdvanced ? "gen-2" : "gen-1"
+            return json(["base_generation": generation, "clips": clips, "slots": [], "native_assets": []])
+        }
+        if method == "POST", parts.count == 5, parts[0] == "plan-items", parts[4] == "editor-commit" {
+            if mode == .staleSave { return json(["detail": ["code": "TIMELINE_STALE"]], status: 409) }
+            if mode == .finishedAt {
+                return json(["ok": true, "generation": "gen-3", "sections": ["timeline": true, "text_elements": true],
+                             "revision_number": 4, "revision_hash": "fixture-hash", "expected_duration_s": 4.0])
+            }
+            // The server rendered the AI edit (`gen-2`) while the creator was reviewing it on `gen-1`.
+            let sentBase = body(of: request)["base_generation"] as? String
+            let current = serverAdvanced ? "gen-2" : "gen-1"
+            serverAdvanced = true
+            guard sentBase == "gen-2", current == "gen-2" else { return json(["detail": "baseline_conflict"], status: 409) }
+            return json(["ok": true, "generation": "gen-3", "sections": ["timeline": true, "text_elements": true],
+                         "revision_number": 4, "revision_hash": "fixture-hash", "expected_duration_s": 4.0])
         }
         return nil
     }

@@ -195,9 +195,9 @@ struct SongOrderSubmission: Encodable, Equatable, Sendable {
     /// each placed clip sits, e.g. "Clip 2 at 0:08 · Clip 1 at 0:21 · Clip 3 in the background".
     func summary(positions: [String: Int]) -> String {
         guard placements != nil else {
-            return orderedMediaIDs.compactMap { positions[$0] }.map { "Clip \($0)" }.joined(separator: " · ")
+            return orderedMediaIDs.compactMap { positions[$0] }.map { String(localized: "Clip \($0)") }.joined(separator: " · ")
         }
-        return arrangementParts(positions: positions) { number, time in "Clip \(number) at \(time)" } tray: { "Clip \($0) in the background" }
+        return arrangementParts(positions: positions) { number, time in String(localized: "Clip \(number) at \(time)") } tray: { String(localized: "Clip \($0) in the background") }
             .joined(separator: " · ")
     }
 
@@ -285,7 +285,7 @@ struct SongTimelineState: Equatable {
         case tooLong(maxSeconds: Int)
         var message: String {
             switch self {
-            case .tooLong(let seconds): "That makes the video longer than \(seconds) seconds."
+            case .tooLong(let seconds): String(localized: "That makes the video longer than \(seconds) seconds.")
             }
         }
     }
@@ -312,15 +312,19 @@ struct SongTimelineState: Equatable {
         func message(clipNumber: (String) -> Int) -> String? {
             if let refusal { return refusal.message }
             var parts: [String] = []
-            if !moved.isEmpty { parts.append(Self.sentence(moved.map(\.mediaID), clipNumber, "moved over to make room.")) }
-            if !sentToTray.isEmpty { parts.append(Self.sentence(sentToTray, clipNumber, "didn't fit and went to the tray.")) }
+            if !moved.isEmpty { parts.append(Self.sentence(moved.map(\.mediaID), clipNumber, movedOver: true)) }
+            if !sentToTray.isEmpty { parts.append(Self.sentence(sentToTray, clipNumber, movedOver: false)) }
             return parts.isEmpty ? nil : parts.joined(separator: " ")
         }
 
-        private static func sentence(_ ids: [String], _ clipNumber: (String) -> Int, _ tail: String) -> String {
+        private static func sentence(_ ids: [String], _ clipNumber: (String) -> Int, movedOver: Bool) -> String {
             let numbers = ids.map(clipNumber).sorted().map(String.init)
-            guard numbers.count > 1, let last = numbers.last else { return "Clip \(numbers.first ?? "") \(tail)" }
-            return "Clips \(numbers.dropLast().joined(separator: ", ")) and \(last) \(tail)"
+            guard numbers.count > 1, let last = numbers.last else {
+                let first = numbers.first ?? ""
+                return movedOver ? String(localized: "Clip \(first) moved over to make room.") : String(localized: "Clip \(first) didn't fit and went to the tray.")
+            }
+            let list = numbers.dropLast().joined(separator: ", ")
+            return movedOver ? String(localized: "Clips \(list) and \(last) moved over to make room.") : String(localized: "Clips \(list) and \(last) didn't fit and went to the tray.")
         }
     }
 
@@ -415,9 +419,9 @@ struct SongTimelineState: Equatable {
         case trayIsBackground
         var message: String {
             switch self {
-            case .trayFillsEmptySpots: "Clips in the tray will fill empty spots where they fit."
-            case .emptySpotsCannotBeFilled: "Empty spots can't be filled — clips on one side may be left out."
-            case .trayIsBackground: "Clips in the tray play as background footage."
+            case .trayFillsEmptySpots: String(localized: "Clips in the tray will fill empty spots where they fit.")
+            case .emptySpotsCannotBeFilled: String(localized: "Empty spots can't be filled — clips on one side may be left out.")
+            case .trayIsBackground: String(localized: "Clips in the tray play as background footage.")
             }
         }
         /// A warning (still sendable) rather than a hint.

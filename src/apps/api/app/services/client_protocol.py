@@ -87,6 +87,16 @@ COLOR_MOMENTS_PROTOCOL = 48
 # 47 (split panels collapse) and 48 (colour moments) come first; protocol numbers are cumulative.
 SPEAKER_REMOVED_PROTOCOL = 49
 
+# KRI-1421: the first build that decodes, draws and edits a split panel's blank block
+# (`media_kind: "blank"` slots and recipe `blanks`, the `splitBlankPanel` capability). An older
+# build cannot decode a slot with no `clip_index`, so its Save would erase the block.
+SPLIT_BLANK_PANEL_PROTOCOL = 51
+
+# Two-language captions: the first build that draws, moves, styles and keeps the translated
+# caption line (cue `translation` + `caption_meta.translation`, its own editor track). An older
+# build would drop the line on Save, so `dual_captions_planned_for` offers it only to this build.
+DUAL_CAPTIONS_PROTOCOL = 52
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

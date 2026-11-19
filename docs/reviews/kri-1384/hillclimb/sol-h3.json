@@ -1,0 +1,100 @@
+{
+  "fixtures": 11,
+  "ran": 11,
+  "passed": 7,
+  "failure_categories": {
+    "asked instead of proposing": 3,
+    "other": 1
+  },
+  "settled_usd": 0.4488,
+  "ledger": [
+    {
+      "test_run_id": "kri1384sp-sol-h3-b1",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "7",
+      "settled_usd": "0.2976",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-sol-h3-b2",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "5",
+      "settled_usd": "0.1512",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "remove_uploaded_visuals",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": false,
+      "failure": "AssertionError: assert 10 == (6 + 3) + where 10 = len([BriefUpdate(operation='add', target_requirement_id=None, expected_version=None, kind='text', scope='title', literal='...lip', literal='Ten tokens, zero regrets', description='The arcade",
+      "category": "other"
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": true,
+      "failure": null,
+      "category": null
+    },
+    {
+      "fixture": "kri506_metadata_parse_unresolved",
+      "passed": true,
+      "failure": null,
+      "category": null
+    }
+  ]
+}

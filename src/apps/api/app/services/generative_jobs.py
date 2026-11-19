@@ -604,9 +604,23 @@ def build_generative_job(
         # superseded-requirements block (what the creator removed) is not read.
         from app.kria.brief_binding import SUPERSEDED_REQUIREMENTS_HEADING  # noqa: PLC0415
 
-        caption_language_request = parse_caption_language_request(
-            bounded_creator_request.split("\n\n" + SUPERSEDED_REQUIREMENTS_HEADING, 1)[0]
-        )
+        live_request = bounded_creator_request.split("\n\n" + SUPERSEDED_REQUIREMENTS_HEADING, 1)[0]
+        caption_language_request = parse_caption_language_request(live_request)
+        # KRI-1501: a two-language ask ("Turkish captions with English under it") keeps the
+        # spoken line as spoken and asks for a translated line under it. Persisted as the
+        # ordered languages it names; the worker picks the first one that is not spoken. It
+        # never translates the spoken line itself, so no `caption_language_request` with it.
+        from app.pipeline.caption_language import caption_language_decision  # noqa: PLC0415
+
+        translation_languages = caption_language_decision(live_request).translation_languages
+        if translation_languages:
+            all_candidates["caption_translation_request"] = list(translation_languages)
+            caption_language_request = None
+            log.info(
+                "caption_translation_request_parsed",
+                requested_languages=list(translation_languages),
+                mode=mode,
+            )
         if caption_language_request is not None:
             all_candidates["caption_language_request"] = caption_language_request
             log.info(

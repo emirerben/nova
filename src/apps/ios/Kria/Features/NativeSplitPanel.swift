@@ -6,28 +6,48 @@ import UniformTypeIdentifiers
 
 /// KRI-1335: the Split tool, the only way into split screen. With the playhead outside a split it creates one
 /// (This clip | Whole video, 2 or 3 panels). Inside a split it fills each empty panel from Gallery or Saved, and
-/// once every panel has footage it offers the layout count, the Layout area (gutter, background) and Remove split.
-/// Panel heights are set by dragging the dividers in the preview; the timeline shows the split as one block.
+/// once every panel has footage it offers extend, per-panel add/loop, full screen, the layout count, the Layout area
+/// (gutter, background) and Remove split. Panel heights are set by dragging the dividers in the preview; the timeline
+/// shows the split as one block. A tap on a panel's timeline gap arrives here as `addRequest`.
 struct NativeSplitPanel: View {
     enum Tab: String { case split = "Split" }
 
     @ObservedObject var session: NativeEditorSession
+    /// A timeline gap tapped: open the picker for that panel. Consumed (set back to nil) once adopted.
+    @Binding var addRequest: NativeSplitAddRequest?
     let onDone: () -> Void
     @State private var tab = Tab.split
-    @State private var scope = NativeSplitScope.selectedClip
+    /// Seeded once from the session (and again when the playhead leaves a split), never while the creator is choosing.
+    @State private var scope: NativeSplitScope
+    /// The panel the picker is explicitly aimed at ("Add to Top", a gap tap). Nil lets the first empty panel lead.
+    @State private var target: Int?
     /// Empty panels the creator chose to fill later.
     @State private var skipped = Set<Int>()
     @State private var showsLayout = false
+    @State private var confirmsRemove = false
+    @State private var pendingPanelCount: Int?
+
+    init(session: NativeEditorSession, addRequest: Binding<NativeSplitAddRequest?>, onDone: @escaping () -> Void) {
+        self.session = session
+        _addRequest = addRequest
+        self.onDone = onDone
+        _scope = State(initialValue: session.defaultSplitScope)
+    }
 
     private enum ScopeTab: String { case clip = "This clip", whole = "Whole video" }
 
     private var context: NativeSplitContext? { session.splitContextAtPlayhead }
     private var fillPanel: Int? { context?.emptyPanels.first { !skipped.contains($0) } }
+    /// The explicit target while it still names a panel of the section under the playhead.
+    private var explicitTarget: Int? {
+        guard let context, let target, (0..<context.section.panelCount).contains(target) else { return nil }
+        return target
+    }
 
     private var heading: String {
-        guard let context else { return "Split screen" }
-        guard let panel = fillPanel else { return "Split screen" }
-        return "Add to " + NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)
+        guard let context else { return String(localized: "Split screen") }
+        guard let panel = explicitTarget ?? fillPanel else { return String(localized: "Split screen") }
+        return String(localized: "Add to \(NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)))")
     }
 
     var body: some View {
@@ -37,12 +57,22 @@ struct NativeSplitPanel: View {
                     Text(error).kriaType(.caption).foregroundStyle(KriaColor.failureText)
                         .accessibilityIdentifier("native-editor-split-error")
                 }
+                if let hint = session.splitTrimHint {
+                    Text(hint).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                        .accessibilityIdentifier("native-editor-split-trim-hint")
+                }
                 if let context {
-                    if let panel = fillPanel {
+                    if let panel = explicitTarget ?? fillPanel {
+                        let explicit = explicitTarget != nil
                         NativeSplitFillView(
-                            session: session, context: context, panel: panel, multi: scope == .wholeVideo,
+                            session: session, context: context, panel: panel,
+                            // Several picks line up only in a panel that has no footage yet.
+                            multi: scope == .wholeVideo && context.emptyPanels.contains(panel),
+                            explicit: explicit,
                             remaining: context.emptyPanels.filter { !skipped.contains($0) }.count,
-                            skip: { skipped.insert(panel) }
+                            skip: { skipped.insert(panel) },
+                            cancel: { target = nil },
+                            finished: { target = nil }
                         )
                         .id(context.sectionID + "-" + String(panel))
                     } else {
@@ -53,7 +83,30 @@ struct NativeSplitPanel: View {
                 }
             }
         }
-        .onAppear { if context == nil { selectClipUnderPlayhead() } }
+        .onAppear {
+            if context == nil { selectClipUnderPlayhead() }
+            adoptRequest()
+        }
+        .onChange(of: addRequest) { _, _ in adoptRequest() }
+        // Leaving a split starts the next creation from the session's default again; staying never resets it.
+        .onChange(of: context?.sectionID) { _, id in
+            target = nil
+            skipped.removeAll()
+            if id == nil { scope = session.defaultSplitScope }
+        }
+        .onChange(of: session.wholeVideoUnavailableReason) { _, reason in
+            if reason != nil, scope == .wholeVideo { scope = .selectedClip }
+        }
+    }
+
+    /// A gap tap names a section and panel; honour it only while that section is still under the playhead.
+    private func adoptRequest() {
+        guard let request = addRequest else { return }
+        addRequest = nil
+        guard let context, context.sectionID == request.sectionID,
+              (0..<context.section.panelCount).contains(request.panel) else { return }
+        skipped.remove(request.panel)
+        target = request.panel
     }
 
     // MARK: Create
@@ -70,19 +123,25 @@ struct NativeSplitPanel: View {
     }
 
     private var creating: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let reason = session.wholeVideoUnavailableReason
+        return VStack(alignment: .leading, spacing: 14) {
             NativeEditorPanelTabs(
                 tabs: [ScopeTab.clip, .whole], selection: scopeBinding, accessibilityPrefix: "native-editor-split-scope",
                 identifier: { "native-editor-split-scope-" + ($0 == .whole ? "whole" : "clip") },
-                isEnabled: { $0 == .clip || session.canCreateWholeVideoSplit }
+                isEnabled: { $0 == .clip || reason == nil }
             )
+            if let reason {
+                Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("native-editor-split-scope-reason")
+            }
             HStack(spacing: 12) {
                 layoutCard(2)
                 layoutCard(3)
             }
             Text(scope == .wholeVideo
-                 ? "Your whole video becomes the Top panel. Add footage for the rest next."
-                 : "Starts with this clip. You pick the rest next.")
+                 ? String(localized: "Your whole video becomes the Top panel.")
+                 : String(localized: "Starts with the clip under the playhead."))
                 .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -133,23 +192,48 @@ struct NativeSplitPanel: View {
     // MARK: Edit
 
     @ViewBuilder private func editing(_ context: NativeSplitContext) -> some View {
+        let sectionID = context.sectionID
+        let count = context.section.panelCount
+        let withFootage = (0..<count).filter { !context.emptyPanels.contains($0) }
         VStack(alignment: .leading, spacing: 12) {
             Picker("Layout", selection: Binding(
                 get: { context.section.panelCount },
-                set: { session.setSplitScreenPanelCount($0) }
+                set: { count in
+                    if session.splitClipsRemoved(sectionID: sectionID, panelCount: count) > 0 {
+                        pendingPanelCount = count
+                    } else {
+                        session.setSplitScreenPanelCount(count)
+                    }
+                }
             )) {
                 Text("2 panels").tag(2)
                 Text("3 panels").tag(3)
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("native-editor-split-count")
+            .confirmationDialog("Remove footage?", isPresented: Binding(
+                get: { pendingPanelCount != nil }, set: { if !$0 { pendingPanelCount = nil } }
+            ), titleVisibility: .visible) {
+                Button("Remove footage", role: .destructive) {
+                    if let count = pendingPanelCount { session.setSplitScreenPanelCount(count) }
+                    pendingPanelCount = nil
+                }
+                .accessibilityIdentifier("native-editor-split-count-confirm")
+                Button("Cancel", role: .cancel) { pendingPanelCount = nil }
+                    .accessibilityIdentifier("native-editor-split-count-cancel")
+            } message: {
+                if let count = pendingPanelCount {
+                    let removed = session.splitClipsRemoved(sectionID: sectionID, panelCount: count)
+                    Text(removed == 1 ? String(localized: "Going to \(count) panels removes 1 clip from the dropped panel. Undo brings it back.") : String(localized: "Going to \(count) panels removes \(removed) clips from the dropped panel. Undo brings them back."))
+                }
+            }
 
             if session.canCollapseSplitPanels || context.section.collapseEmptyPanels {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("When a panel ends").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                     Picker("When a panel ends", selection: Binding(
                         get: { session.splitContextAtPlayhead?.section.collapseEmptyPanels ?? context.section.collapseEmptyPanels },
-                        set: { session.setSplitCollapse(sectionID: context.sectionID, $0) }
+                        set: { session.setSplitCollapse(sectionID: sectionID, $0) }
                     )) {
                         Text("Others fill the screen").tag(true)
                         Text("Leave it empty").tag(false)
@@ -159,14 +243,27 @@ struct NativeSplitPanel: View {
                 }
             }
 
-            ForEach(context.emptyPanels, id: \.self) { panel in
-                Button {
-                    skipped.removeAll()
-                } label: {
-                    Label("Add to " + NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount), systemImage: "plus")
+            if let color = session.selectedBlankColor {
+                NativeSplitBlankColorRow(session: session, color: color, sectionBackground: context.section.backgroundColor)
+            }
+
+            if session.canExtendSplitToWholeVideo(sectionID: sectionID) {
+                actionRow(String(localized: "Extend split to whole video"), icon: "arrow.left.and.right", id: "native-editor-split-extend-whole") {
+                    session.extendSplitToWholeVideo(sectionID: sectionID)
                 }
-                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
-                .accessibilityIdentifier("native-editor-split-fill-\(panel)")
+            }
+
+            ForEach(0..<count, id: \.self) { panel in
+                panelActions(panel, context: context)
+            }
+
+            actionRow(String(localized: "Full screen from playhead"), icon: "arrow.up.left.and.arrow.down.right", id: "native-editor-split-full-from",
+                      enabled: session.canMakeSplitFullScreen(sectionID: sectionID, side: .fromPlayhead)) {
+                session.makeSplitFullScreen(sectionID: sectionID, side: .fromPlayhead)
+            }
+            actionRow(String(localized: "Full screen until playhead"), icon: "arrow.up.left.and.arrow.down.right", id: "native-editor-split-full-until",
+                      enabled: session.canMakeSplitFullScreen(sectionID: sectionID, side: .untilPlayhead)) {
+                session.makeSplitFullScreen(sectionID: sectionID, side: .untilPlayhead)
             }
 
             Button {
@@ -184,12 +281,12 @@ struct NativeSplitPanel: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityValue(showsLayout ? "Expanded" : "Collapsed")
+            .accessibilityValue(showsLayout ? String(localized: "Expanded") : String(localized: "Collapsed"))
             .accessibilityIdentifier("native-editor-split-layout-toggle")
 
             if showsLayout {
                 VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Divider spacing", value: String(format: "%.1f%%", context.section.gutter * 100))
+                    LabeledContent("Divider spacing", value: String(localized: "\(context.section.gutter * 100, format: .number.precision(.fractionLength(1)))%"))
                     NativeEditorSlider(session: session, value: Binding(
                         get: { session.splitContextAtPlayhead?.section.gutter ?? context.section.gutter },
                         set: { session.setSplitScreenGutter($0) }
@@ -205,13 +302,91 @@ struct NativeSplitPanel: View {
                 .padding(.horizontal, 4)
             }
 
-            Button("Remove split") { session.removeSelectedSplitScreen() }
+            // Removing keeps ONE panel's footage and drops the rest, so the creator chooses which.
+            Button("Remove split") { confirmsRemove = true }
                 .buttonStyle(KriaButtonStyle(role: .destructive, size: .medium, fullWidth: true))
+                .accessibilityHint("Asks which panel to keep")
                 .accessibilityIdentifier("native-editor-split-remove")
         }
         .onAppear { selectMember(of: context) }
         .onChange(of: context.sectionID) { _, _ in selectMember(of: context) }
         .disabled(!session.canEditSplitScreen)
+        .confirmationDialog("Remove split?", isPresented: $confirmsRemove, titleVisibility: .visible) {
+            ForEach(withFootage, id: \.self) { panel in
+                Button(String(localized: "Keep \(NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: panel, count: count)))")) {
+                    session.removeSplitScreen(sectionID: sectionID, keepPanel: panel)
+                }
+                .accessibilityIdentifier("native-editor-split-keep-\(panel)")
+            }
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("native-editor-split-keep-cancel")
+        } message: {
+            Text("The video goes back to full screen with only the panel you keep. The other panels' footage is removed.")
+        }
+    }
+
+    /// One panel's footage actions. An empty panel only offers Add (its id stays `-fill-`); a panel with footage
+    /// offers Add to it (at the playhead gap, else after its last clip) and Loop to fill.
+    @ViewBuilder private func panelActions(_ panel: Int, context: NativeSplitContext) -> some View {
+        let title = NativeSplitScreenRows.displayTitle(NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount))
+        let sectionID = context.sectionID
+        if context.emptyPanels.contains(panel) {
+            actionRow(String(localized: "Add to \(title)"), icon: "plus", id: "native-editor-split-fill-\(panel)") {
+                skipped.remove(panel)
+                target = panel
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                let canAdd = session.canAddToSplitPanel(sectionID: sectionID, panel: panel)
+                let canLoop = Self.hasRoomToLoop(session: session, context: context, panel: panel)
+                let reason = session.canEditSplitScreen ? NativeEditorSession.splitPanelFullMessage : nil
+                HStack(spacing: 8) {
+                    actionRow(String(localized: "Add to \(title)"), icon: "plus", id: "native-editor-split-add-\(panel)",
+                              enabled: canAdd, reason: reason) {
+                        target = panel
+                    }
+                    actionRow(String(localized: "Loop to fill"), icon: "repeat", id: "native-editor-split-loop-\(panel)",
+                              label: String(localized: "Loop \(title) to fill"), enabled: canLoop, reason: reason) {
+                        session.loopFillSplitPanel(sectionID: sectionID, panel: panel)
+                    }
+                }
+                if session.canFillSplitPanelsWithBlank {
+                    actionRow(String(localized: "Fill with blank"), icon: "square.fill", id: "native-editor-split-blank-\(panel)",
+                              label: String(localized: "Fill \(title) with blank"), enabled: session.canFillSplitPanelWithBlank(sectionID: sectionID, panel: panel),
+                              reason: reason) {
+                        session.fillSplitPanelWithBlank(sectionID: sectionID, panel: panel)
+                    }
+                }
+                if let reason, !canAdd || !canLoop {
+                    Text(reason).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("native-editor-split-full-reason-\(panel)")
+                }
+            }
+        }
+    }
+
+    private func actionRow(_ title: String, icon: String, id: String, label: String? = nil, enabled: Bool = true,
+                           reason: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
+        .disabled(!enabled)
+        .accessibilityLabel(label ?? title)
+        .accessibilityHint(enabled ? "" : reason ?? "")
+        .accessibilityIdentifier(id)
+    }
+
+    /// Loop repeats a panel's clips after its last one until the section ends, so it needs free time there.
+    private static func hasRoomToLoop(session: NativeEditorSession, context: NativeSplitContext, panel: Int) -> Bool {
+        let members = session.document.clips.filter {
+            !$0.removed && $0.splitSectionID == context.sectionID && $0.splitPanelIndex == panel
+        }
+        guard !members.isEmpty else { return false }
+        let end = members.map { $0.splitOffsetS + ($0.durationS ?? 0) }.max() ?? 0
+        return end < context.section.durationS - 0.05
     }
 
     /// The layout setters act on the selected clip's section, so make sure a member of this one is selected.
@@ -225,27 +400,57 @@ struct NativeSplitPanel: View {
 
 // MARK: - Fill
 
-/// "Add to Top": the picker for the first empty panel. One tap fills it and the panel moves on to the next empty one.
+/// "Add to Top": the picker for one panel. Without an explicit target it leads with the first empty panel and one tap
+/// fills it, moving on to the next empty one. With an explicit target (a row or a timeline gap) it stays aimed at that
+/// panel, at the playhead gap or after the panel's last clip, until the pick lands or the creator cancels.
 private struct NativeSplitFillView: View {
     @ObservedObject var session: NativeEditorSession
     let context: NativeSplitContext
     let panel: Int
-    /// Whole-video split: several picks line up in this panel.
+    /// Whole-video split into an empty panel: several picks line up in it.
     let multi: Bool
+    let explicit: Bool
     let remaining: Int
     let skip: () -> Void
+    let cancel: () -> Void
+    /// A pick (or batch) landed without an error.
+    let finished: () -> Void
+
+    private var caption: String {
+        guard explicit else { return remaining > 1 ? String(localized: "\(remaining) panels still empty") : String(localized: "Pick a photo or video for this panel") }
+        switch NativeSplitPlayback.state(session: session, context: context, panel: panel) {
+        case .empty: return String(localized: "Pick a photo or video for this panel")
+        case .gap: return String(localized: "Goes in the free time at the playhead.")
+        case .playing: return String(localized: "Goes after this panel's last clip.")
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(remaining > 1 ? "\(remaining) panels still empty" : "Pick a photo or video for this panel")
-                    .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                Text(caption).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
                 Spacer()
-                if remaining > 1 {
+                if explicit {
+                    Button("Back", action: cancel)
+                        .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
+                        .accessibilityIdentifier("native-editor-split-add-cancel")
+                } else if remaining > 1 {
                     Button("Skip", action: skip)
                         .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
                         .accessibilityIdentifier("native-editor-split-skip")
                 }
+            }
+            if session.canFillSplitPanelWithBlank(sectionID: context.sectionID, panel: panel) {
+                let title = NativeSplitScreenRows.panelTitle(index: panel, count: context.section.panelCount)
+                Button {
+                    session.fillSplitPanelWithBlank(sectionID: context.sectionID, panel: panel)
+                    if explicit { finished() }
+                } label: {
+                    Label("Fill with blank", systemImage: "square.fill").lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, fullWidth: true))
+                .accessibilityLabel("Fill \(title) with blank")
+                .accessibilityIdentifier("native-editor-split-blank-\(panel)")
             }
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
@@ -253,13 +458,14 @@ private struct NativeSplitFillView: View {
                 ForEach(session.splitScreenSourceChoices, id: \.clipIndex) { source in
                     Button(source.label) {
                         session.addSplitPanelClip(sectionID: context.sectionID, panel: panel, sourceClipIndex: source.clipIndex)
+                        if explicit { finished() }
                     }
                     .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
                     .accessibilityIdentifier("native-editor-split-source-\(source.clipIndex)")
                 }
             }
             #endif
-            NativeSplitMediaPicker(session: session, multi: multi) { url in
+            NativeSplitMediaPicker(session: session, multi: multi, onFinished: finished) { url in
                 await session.addSplitPanelClip(sectionID: context.sectionID, panel: panel, fileURL: url)
             }
         }
@@ -275,13 +481,20 @@ struct NativeSplitMediaPicker: View {
     enum Tab: String { case gallery = "Gallery", saved = "Saved" }
     private enum Pick: Hashable { case photo(String), saved(UUID) }
     private typealias Loader = @MainActor () async throws -> URL
+    private typealias Entry = (pick: Pick?, load: Loader)
+    /// Whether the server opens the library. The tab row is drawn from the first frame and Saved waits for this, so the
+    /// grid below never moves under a finger that is already on its way down.
+    private enum Library { case checking, available, unavailable }
 
     @EnvironmentObject private var model: AppModel
     @ObservedObject var session: NativeEditorSession
     let multi: Bool
+    /// Called once a pick (or a whole multi batch) has been added without an error.
+    var onFinished: @MainActor () -> Void = {}
     let onAdd: @MainActor (URL) async -> Void
     @State private var tab = Tab.gallery
-    @State private var savedAvailable = false
+    @State private var library = Library.checking
+    @State private var adding: Pick?
     @State private var savedAssets: [SavedMediaAsset] = []
     @State private var savedLoaded = false
     @State private var savedError: String?
@@ -293,6 +506,16 @@ struct NativeSplitMediaPicker: View {
 
     private var api: any KriaAPIClient { model.uploads.libraryAPI }
     private var working: Bool { busy || session.isAddingClip }
+    private var hasLibrary: Bool {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive { return true }
+        #endif
+        return api.mediaLibraryOwner != nil
+    }
+    private var addingPhotoID: String? {
+        if case .photo(let id) = adding { return id }
+        return nil
+    }
     private var pickedPhotoIDs: [String] {
         var ids: [String] = []
         for pick in picked { if case .photo(let id) = pick { ids.append(id) } }
@@ -305,31 +528,29 @@ struct NativeSplitMediaPicker: View {
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import") {
                 Button("Use sample video") {
                     guard let url = Bundle.main.url(forResource: "istanbul", withExtension: "mp4") else { return }
-                    add([{ url }])
+                    add([(nil, { url })])
                 }
                 .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium))
                 .accessibilityIdentifier("native-editor-split-import")
             }
             #endif
-            if savedAvailable {
+            if hasLibrary, library != .unavailable {
                 NativeEditorPanelTabs(
                     tabs: [Tab.gallery, .saved], selection: $tab, accessibilityPrefix: "native-editor-split",
-                    identifier: { "native-editor-split-tab-" + $0.rawValue.lowercased() }
+                    identifier: { "native-editor-split-tab-" + $0.rawValue.lowercased() },
+                    isEnabled: { $0 != .saved || library == .available }
                 )
             }
             switch tab {
             case .gallery: gallery
             case .saved: saved
             }
-            if working {
-                HStack(spacing: 8) { KriaSpinner(size: 16); Text("Adding…").kriaType(.label).foregroundStyle(KriaColor.mutedInk) }
-            }
             if let error = session.addClipError {
                 Text(error).kriaType(.caption).foregroundStyle(KriaColor.failureText)
                     .accessibilityIdentifier("native-editor-split-source-error")
             }
             if multi, !picked.isEmpty {
-                Button("Add \(picked.count) \(picked.count == 1 ? "clip" : "clips")") { add(picked.map { loader(for: $0) }) }
+                Button(String(localized: "Add \(picked.count) clips")) { add(picked.map { ($0, loader(for: $0)) }) }
                     .buttonStyle(KriaButtonStyle(role: .primary, size: .large, fullWidth: true))
                     .disabled(working)
                     .accessibilityIdentifier("native-editor-split-add-picked")
@@ -345,14 +566,29 @@ struct NativeSplitMediaPicker: View {
     // MARK: Gallery
 
     @ViewBuilder private var gallery: some View {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive {
+            NativeSplitPickerFixtureGrid(disabled: working, adding: addingPhotoID) { id in choose(.photo(id)) }
+        } else {
+            photoGallery
+        }
+        #else
+        photoGallery
+        #endif
+    }
+
+    @ViewBuilder private var photoGallery: some View {
         if photoStatus == .authorized || photoStatus == .limited {
-            NativeSplitPhotoGrid(picked: pickedPhotoIDs, showsPicks: multi, disabled: working) { id in
+            NativeSplitPhotoGrid(picked: pickedPhotoIDs, showsPicks: multi, disabled: working, adding: addingPhotoID) { id in
                 choose(.photo(id))
             }
         } else {
             // No library access: the system picker still works without it.
             Button { showsSystemPicker = true } label: {
-                Label("Choose from Photos", systemImage: "photo.on.rectangle.angled")
+                HStack(spacing: 8) {
+                    if working { KriaSpinner(size: 18) } else { Image(systemName: "photo.on.rectangle.angled") }
+                    Text(working ? String(localized: "Adding…") : String(localized: "Choose from Photos"))
+                }
                     .kriaType(.button).foregroundStyle(KriaColor.ink)
                     .frame(maxWidth: .infinity, minHeight: 48)
                     .background(KriaColor.fill, in: Capsule())
@@ -364,7 +600,7 @@ struct NativeSplitMediaPicker: View {
             .onChange(of: systemPicks) { _, items in
                 guard !items.isEmpty else { return }
                 systemPicks = []
-                add(items.map { loader(for: $0) })
+                add(items.map { (nil, loader(for: $0)) })
             }
         }
     }
@@ -402,21 +638,29 @@ struct NativeSplitMediaPicker: View {
                             .modifier(GalleryTileChrome(number: multi ? number : nil, duration: asset.durationSeconds))
                     }
                     .buttonStyle(.plain)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
                     .disabled(working)
                     .accessibilityLabel(asset.displayName)
                     .accessibilityAddTraits(number != nil ? .isSelected : [])
                     .accessibilityIdentifier("native-editor-split-saved-tile-\(asset.id)")
+                    .nativeSplitAdding(adding == .saved(asset.id), identifier: "native-editor-split-adding-saved-\(asset.id)")
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
     }
 
     private func checkSaved() async {
+        #if DEBUG
+        if NativeSplitPickerFixture.isActive {
+            try? await Task.sleep(for: NativeSplitPickerFixture.libraryAnswerDelay)
+            library = .available
+            return
+        }
+        #endif
         let api = api
-        guard api.mediaLibraryOwner != nil, let capabilities = try? await api.creationCapabilities(),
-              capabilities.mediaLibrary == true else { return }
-        savedAvailable = true
+        guard api.mediaLibraryOwner != nil else { library = .unavailable; return }
+        let capabilities = try? await api.creationCapabilities()
+        library = capabilities?.mediaLibrary == true ? .available : .unavailable
     }
 
     private func loadSaved() async {
@@ -426,7 +670,7 @@ struct NativeSplitMediaPicker: View {
             savedAssets = page.assets.filter { $0.kind != "audio" }
             savedError = nil
         } catch {
-            savedError = "Saved uploads couldn’t load. Try again in a moment."
+            savedError = String(localized: "Saved uploads couldn’t load. Try again in a moment.")
         }
         savedLoaded = true
     }
@@ -461,6 +705,9 @@ struct NativeSplitMediaPicker: View {
     private func loader(for pick: Pick) -> Loader {
         switch pick {
         case .photo(let id):
+            #if DEBUG
+            if NativeSplitPickerFixture.isActive { return { try await NativeSplitPickerFixture.read() } }
+            #endif
             return { try await PhotosLibraryAssetExporter().exportFile(localIdentifier: id) }
         case .saved(let id):
             let api = api
@@ -476,7 +723,7 @@ struct NativeSplitMediaPicker: View {
     private func choose(_ pick: Pick) {
         guard !working else { return }
         if !multi {
-            add([loader(for: pick)])
+            add([(pick, loader(for: pick))])
         } else if let index = picked.firstIndex(of: pick) {
             picked.remove(at: index)
         } else {
@@ -484,24 +731,26 @@ struct NativeSplitMediaPicker: View {
         }
     }
 
-    private func add(_ loaders: [Loader]) {
+    private func add(_ entries: [Entry]) {
         guard !busy else { return }
         busy = true
         session.addClipError = nil
         let onAdd = onAdd
         Task { @MainActor in
-            defer { busy = false; picked = [] }
-            for load in loaders {
+            defer { busy = false; picked = []; adding = nil }
+            for entry in entries {
+                adding = entry.pick
                 let url: URL
                 do {
-                    url = try await load()
+                    url = try await entry.load()
                 } catch {
-                    session.addClipError = "This file couldn’t be read. Try another photo or video."
+                    session.addClipError = String(localized: "This file couldn’t be read. Try another photo or video.")
                     return
                 }
                 await onAdd(url)
                 if session.addClipError != nil { return }
             }
+            onFinished()
         }
     }
 }
@@ -511,6 +760,7 @@ private struct NativeSplitPhotoGrid: View {
     let picked: [String]
     let showsPicks: Bool
     let disabled: Bool
+    let adding: String?
     let onTap: (String) -> Void
     @State private var assets: PHFetchResult<PHAsset>?
     @State private var loader = GalleryThumbnailLoader()
@@ -552,11 +802,12 @@ private struct NativeSplitPhotoGrid: View {
                 .modifier(Chrome(showsPicks: showsPicks, number: number, duration: isVideo ? asset.duration : nil))
         }
         .buttonStyle(.plain)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
         .disabled(disabled)
-        .accessibilityLabel(isVideo ? "Video, \(GalleryTileChrome.duration(asset.duration))" : "Photo")
+        .accessibilityLabel(isVideo ? String(localized: "Video, \(GalleryTileChrome.duration(asset.duration))") : String(localized: "Photo"))
         .accessibilityAddTraits(number != nil ? .isSelected : [])
         .accessibilityIdentifier("native-editor-split-gallery-tile-\(index)")
+        .nativeSplitAdding(adding == id, identifier: "native-editor-split-adding-\(index)")
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     /// Multi mode wears the shared pick ring and number; a tap-to-fill grid only shows a video's length.
@@ -578,6 +829,26 @@ private struct NativeSplitPhotoGrid: View {
                             .padding(4)
                     }
                 }
+            }
+        }
+    }
+}
+
+extension View {
+    /// Progress on the tile being read. It sits on the tile, so nothing is inserted above the grid and the grid never
+    /// moves under the finger or slides beneath the scroll edge fade.
+    func nativeSplitAdding(_ isAdding: Bool, identifier: String) -> some View {
+        overlay {
+            if isAdding {
+                VStack(spacing: 4) {
+                    KriaSpinner(size: 20, tint: .white)
+                    Text("Adding…").font(KriaFont.body(11).weight(.semibold)).foregroundStyle(Color.white)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(KriaColor.ink.opacity(0.55))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(identifier)
             }
         }
     }
@@ -630,5 +901,67 @@ struct NativeSplitReplaceSheet: View {
         .padding(.horizontal, 24).padding(.top, 12)
         .background(KriaColor.paper)
         .presentationDetents([.large])
+    }
+}
+
+// MARK: - Block colour
+
+/// The colour of the selected blank block: the section background, five swatches (the speaker background's) and any
+/// colour the system picker offers. Each change is one undo step.
+private struct NativeSplitBlankColorRow: View {
+    @ObservedObject var session: NativeEditorSession
+    let color: String
+    let sectionBackground: String
+
+    private var swatches: [(id: String, name: String, hex: String)] {
+        // The section background is a swatch of its own only when no standard one already is that colour.
+        let standard = NativeBackgroundPanel.colorSwatches
+        return (standard.contains { $0.hex == sectionBackground.uppercased() } ? [] : [("background", "Background", sectionBackground)]) + standard
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Block colour").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                .accessibilityIdentifier("native-editor-split-blank-color-title")
+            HStack(spacing: 6) {
+                ForEach(swatches, id: \.id) { swatch in
+                    let selected = color == swatch.hex.uppercased()
+                    Button {
+                        session.endTransaction()
+                        session.setSelectedBlankColor(swatch.hex)
+                    } label: {
+                        Circle()
+                            .fill(nativeEditorColor(swatch.hex))
+                            .overlay(Circle().stroke(KriaColor.line, lineWidth: 1))
+                            .overlay {
+                                if selected {
+                                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(.white).frame(width: 20, height: 20).background(KriaColor.ink, in: Circle())
+                                }
+                            }
+                            .frame(width: 32, height: 32)
+                            .padding(6)
+                            .background(selected ? KriaColor.sage : .clear, in: Circle())
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(swatch.name)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier("native-editor-split-blank-color-" + swatch.id)
+                }
+                ColorPicker("Custom colour", selection: Binding(
+                    get: { nativeEditorColor(color) },
+                    set: { picked in
+                        session.beginTransaction()
+                        session.setSelectedBlankColor(nativeEditorHex(picked))
+                    }
+                ), supportsOpacity: false)
+                .labelsHidden()
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityIdentifier("native-editor-split-blank-color-custom")
+                Spacer(minLength: 0)
+            }
+        }
     }
 }

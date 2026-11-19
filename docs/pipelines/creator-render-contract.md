@@ -50,6 +50,20 @@ job fails closed. Historical jobs without the marker keep the legacy behavior
 for compatibility. Requirements are never reconstructed from generated output
 or reread from mutable chat during a retry.
 
+## One latest editable document
+
+A draft head is current only while its stamps match the variant's generation (or the generation a
+phone publish was made from). The server never moves a head when the generation moves: it does
+not create, restamp, retire or repoint one, and it never merges draft content. The draft
+snapshot reports `head_current` (and `base_generation`) so the phone knows; the phone converges on
+the latest and replays its own staged AI edit. The one server write is at Save: a v2 variant
+whose pinned saved draft is no longer current has that row replaced by the committed document
+(the timeline GET serves the same document without writing). `python -m app.cli.repair_editor_heads`
+is the owner-run repair for heads already left behind. `app/kria/editor_head.py` holds the
+read-only predicate. On a variant that has only `render_finished_at`, a head stamped with that
+value (written by this branch, or by `main`'s plan-review undo) is current; `main`'s draft PUT
+refused such rows and this branch accepts them.
+
 ## What is hard and what is not
 
 The core contract covers duration, audio, ordering, and exact text. Every

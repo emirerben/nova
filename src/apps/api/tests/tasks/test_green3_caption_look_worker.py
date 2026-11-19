@@ -183,16 +183,18 @@ def test_the_take_really_has_capitals_to_lowercase(monkeypatch):
     assert any(cue["text"] != cue["text"].lower() for cue in cues)
 
 
-def test_green3_review_says_what_was_done(monkeypatch):
+@pytest.mark.parametrize("pace_kept", [True, False])
+def test_green3_review_says_what_was_done(monkeypatch, pace_kept):
+    from app.config import settings  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "background_keeps_asked_pace_enabled", pace_kept)
     job = _green3_job(monkeypatch, [R1, R3, R4])
     gb._run_generative_job(str(job.id))
     variant = job.assembly_plan["variants"][0]
 
-    # Count (K1): distinct photos / videos. Since S57 (2026-11-05) each one has exactly one
-    # window (it used to be more windows than photos: the tail took turns again).
+    # Count (K1): distinct photos / videos, never the windows.
     background = variant["phone_lane_receipt"]["background"]
     assert background["media"] == 3
-    assert background["windows"] == background["media"]
 
     receipts = {
         r.requirement_id: r
@@ -200,11 +202,20 @@ def test_green3_review_says_what_was_done(monkeypatch):
             [R1, R3, R4], plan_facts_from_phone_variant(variant), include_unchecked=True
         )
     }
-    # Çiğdem S2: three photos cannot change "every 3-5 seconds" over a 30 s talk without a
-    # repeat, so the reply says so instead of "met".
-    assert receipts["r1"].status == "partial"
-    assert receipts["r1"].reason.startswith("3 photos or videos take turns behind you")
-    assert "you asked for a change about every 4 s" in receipts["r1"].reason
+    if pace_kept:
+        # KRI-1494: the named "every 3-5 seconds" is kept -- photos already shown come back,
+        # none stays over 5 s, and the reply says it is done.
+        assert background["windows"] > background["media"]
+        assert background["longest_s"] <= 5.0
+        assert receipts["r1"].status == "met", receipts["r1"]
+        assert receipts["r1"].reason.startswith("3 photos or videos take turns behind you")
+    else:
+        # Switch off: S57 (2026-11-05) gives each photo exactly one window, so three photos
+        # cannot change "every 3-5 seconds" over a 30 s talk and the reply says so (Çiğdem S2).
+        assert background["windows"] == background["media"]
+        assert receipts["r1"].status == "partial"
+        assert receipts["r1"].reason.startswith("3 photos or videos take turns behind you")
+        assert "you asked for a change about every 4 s" in receipts["r1"].reason
     # Prod: "I can't check the captions on this draft yet." / KRI-1164's Talking refusal.
     assert receipts["r3"].status == "met", receipts["r3"]
     assert receipts["r3"].reason == "Captions are small, white, lowercase and in the middle."

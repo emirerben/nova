@@ -81,6 +81,22 @@ ANSWER = ((FIRST, LAST),)
 PROD_PAUSES = [(row["start_s"], row["end_s"]) for row in FIXTURE["variant_silence_cut"]["removed"]]
 SILENCES = tuple((start, end) for start, end in FIXTURE["silences_ambient_adaptive"]["spans"])
 MODES = [SPEECH_CLEANUP_MIXED_GAP_MODE, "off"]
+# KRI-1492 (Çiğdem S2 "Cigdem 2", this same take): whisper stamped the last sentence's "So"
+# (word 80) from 28.58 s, over the pause after "story."; the voice starts where the silence ends
+# (28.516-29.168 s). The mixed-gap (V2) plan now carves that stamped head (rule 0,
+# `trim_sentence_head`) and tightens the pause; V1 ("off") keeps exactly prod's three pauses.
+HEAD_WORD = 80
+HEAD_VOICE_START_S = 29.168063
+HEAD_PAUSE = (28.64075, 29.043063)
+# A word is touched only when a removal overlaps its voice: word 80's stamped head is the pause.
+VOICED = [{**row, "start_s": HEAD_VOICE_START_S} if row["i"] == HEAD_WORD else row for row in WORDS]
+
+
+def _pauses(mode: str) -> list[tuple[float, float]]:
+    """The pause cuts of the plan without a retake: prod's three, plus KRI-1492's in V2."""
+    return [*PROD_PAUSES, HEAD_PAUSE] if mode == SPEECH_CLEANUP_MIXED_GAP_MODE else PROD_PAUSES
+
+
 EPS = 1e-6
 SR = 16_000
 
@@ -168,7 +184,7 @@ def _touched(result: SpeechCleanupAnalysisResult, indexes) -> list[int]:
     return [
         index
         for index in indexes
-        if any(_overlaps(WORDS[index], r.start_s, r.end_s) for r in result.cut_plan.removed)
+        if any(_overlaps(VOICED[index], r.start_s, r.end_s) for r in result.cut_plan.removed)
     ]
 
 
@@ -208,10 +224,10 @@ def _removed_flat(result: SpeechCleanupAnalysisResult) -> list[float]:
     return _flat((r.start_s, r.end_s) for r in result.cut_plan.removed)
 
 
-def _is_prod_pause(start_s: float, end_s: float) -> bool:
+def _is_prod_pause(start_s: float, end_s: float, mode: str) -> bool:
     return any(
         abs(start_s - prod_start) < 1e-3 and abs(end_s - prod_end) < 1e-3
-        for prod_start, prod_end in PROD_PAUSES
+        for prod_start, prod_end in _pauses(mode)
     )
 
 
@@ -266,10 +282,11 @@ def test_replay_is_free_one_transcription_and_no_filler_relisten(detector) -> No
 def test_without_a_detector_the_plan_is_the_three_production_pauses(mode: str) -> None:
     result = _analyze(None, mode=mode).result
 
-    assert _removed_flat(result) == pytest.approx(_flat(PROD_PAUSES), abs=1e-3)
+    assert _removed_flat(result) == pytest.approx(_flat(_pauses(mode)), abs=1e-3)
     assert {r.reason for r in result.cut_plan.removed} == {"silence"}
+    head_s = HEAD_PAUSE[1] - HEAD_PAUSE[0] if mode == SPEECH_CLEANUP_MIXED_GAP_MODE else 0.0
     assert result.cut_plan.time_saved_s == pytest.approx(
-        FIXTURE["variant_silence_cut"]["time_saved_s"], abs=1e-3
+        FIXTURE["variant_silence_cut"]["time_saved_s"] + head_s, abs=1e-3
     )
     assert _touched(result, range(len(WORDS))) == []  # pauses alone never take a word
 
@@ -284,7 +301,7 @@ def test_pause_cuts_with_the_detector_are_prod_pauses_or_absorbed_by_the_retake(
     for removal in result.cut_plan.removed:
         if removal is retake:
             continue
-        assert _is_prod_pause(removal.start_s, removal.end_s), removal  # nothing new appears
+        assert _is_prod_pause(removal.start_s, removal.end_s, mode), removal  # nothing new
     kept_pauses = [(r.start_s, r.end_s) for r in result.cut_plan.removed if r.reason == "silence"]
     for start_s, end_s in PROD_PAUSES:  # nothing prod cut is lost, except inside the retake
         in_retake = retake.start_s - EPS <= start_s and end_s <= retake.end_s + EPS
@@ -382,8 +399,8 @@ def test_no_usable_detector_answer_means_no_retake_at_all(detector, mode: str) -
     assert result.public_receipt.category_counts.retakes == 0
     assert all(f.category != "retake" for f in result.findings)
     assert _retake_removals(result) == []
-    # Fail open to exactly what prod cut: the three pauses, no word touched.
-    assert _removed_flat(result) == pytest.approx(_flat(PROD_PAUSES), abs=1e-3)
+    # Fail open to exactly the plan's pauses (prod's three, + KRI-1492's in V2), no word touched.
+    assert _removed_flat(result) == pytest.approx(_flat(_pauses(mode)), abs=1e-3)
     assert _touched(result, range(len(WORDS))) == []
     assert _not_removed(result, RESTART) == list(RESTART)  # and the restart stays, as in prod
 
@@ -413,8 +430,9 @@ def test_cut_plan_is_consistent_and_stays_above_the_minimum(mode: str) -> None:
     assert receipt.estimated_removed_ms == round(removed_s * 1000)
     assert receipt.result_duration_ms == receipt.source_duration_ms - receipt.estimated_removed_ms
     counts = receipt.category_counts
-    assert (counts.retakes, counts.long_pauses, counts.filler_sounds) == (1, 2, 0)
-    assert receipt.candidate_count == len(result.findings) == 3
+    head = 1 if mode == SPEECH_CLEANUP_MIXED_GAP_MODE else 0  # KRI-1492's pause
+    assert (counts.retakes, counts.long_pauses, counts.filler_sounds) == (1, 2 + head, 0)
+    assert receipt.candidate_count == len(result.findings) == 3 + head
 
     # The persisted snapshot revalidates and hydrates the same executable plan.
     restored = SpeechCleanupAnalysisResult.from_payload(json.loads(json.dumps(result.to_payload())))

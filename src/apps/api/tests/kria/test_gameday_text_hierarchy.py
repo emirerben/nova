@@ -23,6 +23,8 @@ from app.schemas.edit_proposal import PinnedText
 from tests.kria.test_pinned_texts import _compiled, _pinned
 from tests.kria.test_pinned_texts import _plan as _fixture_plan
 
+pytestmark = pytest.mark.journey("kri-669-gameday")
+
 COPY = ["Gameday", "Aston Villa v Fenerbahçe", "6 am"]
 
 

@@ -1,4 +1,5 @@
 import Foundation
+import KriaMediaEngine
 import Combine
 import SwiftData
 import CryptoKit
@@ -56,6 +57,7 @@ enum ProfileFetchState: Equatable, Sendable {
     private var lastKnownLocalIdentity: String?
 
     func clearLocalAccountMedia() {
+        prewarmer.cancelAll()
         guard let identity = localStorageIdentity else { return }
         try? DeviceRenderIntentPersistence.store.removeAccount(owner: identity)
         try? TeleprompterStore.removeAccount(accountID: identity)
@@ -65,10 +67,14 @@ enum ProfileFetchState: Equatable, Sendable {
     }
     private let tokenStore: TokenStore
     private let api: KriaAPIClient
+    /// A recorded take's hash and proxy preparation; it belongs to the account that recorded it (see `signOut`).
+    private let prewarmer: SourcePrewarmer
     private let defaults: UserDefaults
     private var sessionExpiredSubscription: AnyCancellable?
     private var projectDeletedSubscription: AnyCancellable?
-    init(tokenStore: TokenStore = KeychainTokenStore(), api: (any KriaAPIClient)? = nil, defaults: UserDefaults = .standard) {
+    init(tokenStore: TokenStore = KeychainTokenStore(), api: (any KriaAPIClient)? = nil, defaults: UserDefaults = .standard,
+         prewarmer: SourcePrewarmer = .shared) {
+        self.prewarmer = prewarmer
         self.tokenStore = tokenStore
         self.api = api ?? KriaAPI(tokenStore: tokenStore)
         self.defaults = defaults
@@ -113,6 +119,8 @@ enum ProfileFetchState: Equatable, Sendable {
         Task { [weak self] in await self?.refreshProfile() }
     }
     func signOut() {
+        // A take's transcode and proxy belong to the signed-out account; nothing of it outlives the session.
+        prewarmer.cancelAll()
         let refreshToken = try? tokenStore.read()?.refreshToken
         // Saved conversations go with an explicit sign-out (read the identity before the session is deleted).
         if let identity = localStorageIdentity { Task { await TranscriptCache.shared.removeAccount(owner: identity) } }
@@ -132,6 +140,7 @@ enum ProfileFetchState: Equatable, Sendable {
         }
     }
     private func expireSession() {
+        prewarmer.cancelAll()
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
         lastKnownLocalIdentity = nil
@@ -200,14 +209,14 @@ enum AccountIdentity {
     static func detailLine(name: String?, email: String?, providers: [String]) -> String? {
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let provider = providers.first?.capitalized
-        let signedInWith = provider.map { "Signed in with \($0)" }
+        let signedInWith = provider.map { String(localized: "Signed in with \($0)") }
         if let trimmedName, !trimmedName.isEmpty {
             guard let email, !email.isEmpty else { return signedInWith }
             guard let provider else { return email }
             return "\(email) · \(provider)"
         }
         guard let signedInWith else { return nil }
-        if let email, isPrivateRelay(email: email) { return "\(signedInWith) · hidden email" }
+        if let email, isPrivateRelay(email: email) { return String(localized: "\(signedInWith) · hidden email") }
         return signedInWith
     }
 
@@ -697,7 +706,7 @@ enum WorkspaceDestination: Equatable, Sendable {
         // The server deletion is already committed; never present it as a failed
         // delete just because the recoverable device cache cannot save.
         do { try cache?.removeProject(project.id) }
-        catch { cacheWarning = "Project deleted. Device storage couldn’t finish updating." }
+        catch { cacheWarning = String(localized: "Project deleted. Device storage couldn’t finish updating.") }
         projects.removeAll { $0.id == project.id }
         libraryProjects.removeAll { $0.id == project.id || $0.id == project.activeJobID }
         if selectedProject?.id == project.id { selectedProject = projects.first }

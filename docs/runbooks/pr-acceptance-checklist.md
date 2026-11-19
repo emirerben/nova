@@ -48,6 +48,19 @@ CI checks required declarations and mapped checks, while reviewers assess whethe
 the evidence supports the completion claim. Passing metadata checks alone proves
 neither action grounding nor a correct export.
 
+## Merging
+
+An agent merges only when every check on the PR's current head has passed or was
+skipped. `scripts/hooks/merge-guard.py` (a Claude Code `PreToolUse` hook in
+`.claude/settings.json`) blocks `gh pr merge` while any check is failed, cancelled
+or still running, and names the checks. It also sees wrapped forms (`bash -c`,
+`$(...)`, `(...)`, `eval`, shell heredocs, `gh api .../pulls/N/merge`) and blocks on
+any internal error. `gh pr merge --auto` passes the guard, but GitHub merges at
+once when the required checks are already green, even if other checks are red or
+still running; wait for every check before using it. When `main` is red, the
+repair merges first. A person can merge past the guard by running the command
+themselves. Test: `cd scripts/ci && python3 -m pytest test_merge_guard.py`.
+
 ## After merge and authorized rollout
 
 - Confirm the final deployed revision (`fly releases --app nova-video`, image SHA
@@ -65,8 +78,8 @@ neither action grounding nor a correct export.
 ## Workflow rules
 
 - One worktree, one PR, one hot file: serialize changes to shared files such as
-  `brief_checks.py`. Main Creator / brief-extractor prompt versions are automatic
-  fingerprints: never bump or pin them (`docs/pipelines/prompt-version-history.md`).
+  `brief_checks.py`. Prompt versions listed in
+  `docs/pipelines/prompt-version-history.md` are automatic fingerprints: never bump or pin them.
 - Never stack a PR on an unmerged branch; verify the destination branch and base.
 - Name the evidence level in handoffs. “Implemented” is not “deployed”; a deployed
   revision is not proof that the creator's request succeeded.

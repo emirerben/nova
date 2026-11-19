@@ -15,6 +15,22 @@ NOT_APPLIED_ON_ROUTE = "not_applied_on_route"
 RECORDED_ONLY_ON_ROUTE = "recorded_only_on_route"
 
 
+# Why a planner-settable field is declared in a route's ``UNREAD_DECLARED`` (KRI-1429): the route's
+# code never reads it and its table has no card line for it. ``tests/kria/test_route_field_
+# coverage.py`` keeps that list equal to what the code scan finds, so a field cannot go unread
+# and unsaid without somebody writing it here, and a field the route starts to read or disclose
+# leaves the list.
+KNOWN_GAP = (
+    "Planner-settable and not read by this route; no card line says so (KRI-1429). "
+    "Disclose it with a NotApplied entry, or read it."
+)
+EDITORIAL_PLAN_NOT_RUN = (
+    "Never reaches this route: Main Creator drops an editorial plan unless the plan is a "
+    "music-led phone montage of video clips (`_editorial_plan_misfit`). Today the drop is a log "
+    "line only (KRI-1429)."
+)
+
+
 def registry_enabled() -> bool:
     """Every route reads its own table (``ROUTE_REGISTRY_ENABLED``). False: only the unified
     montage discloses, from the frozen pre-registry table (`_legacy_unified`), only with

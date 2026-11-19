@@ -1,0 +1,319 @@
+{
+  "by_category": {
+    "asked instead of proposing": {
+      "sol_medium_failures": 14,
+      "gemini_pass": 6,
+      "sol_high_fail": 14,
+      "gemini_fail": 8
+    },
+    "other": {
+      "sol_medium_failures": 10,
+      "gemini_fail": 7,
+      "sol_high_not in control": 10,
+      "gemini_pass": 3
+    },
+    "requirement not extracted (brief_updates)": {
+      "sol_medium_failures": 15,
+      "gemini_pass": 7,
+      "sol_high_fail": 15,
+      "gemini_fail": 1,
+      "gemini_not run": 7
+    },
+    "text update missing": {
+      "sol_medium_failures": 4,
+      "gemini_pass": 3,
+      "sol_high_not in control": 4,
+      "gemini_not run": 1
+    },
+    "reply wording (muted)": {
+      "sol_medium_failures": 4,
+      "gemini_pass": 2,
+      "sol_high_not in control": 4,
+      "gemini_fail": 2
+    }
+  },
+  "rows": [
+    {
+      "fixture": "barcelona_shot_labels",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "decoy_kri1038_en_recorded_voiceover_words",
+      "sol_medium_category": "other",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "decoy_kri1038_en_subtitles_quote_as_i_say",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "decoy_kri1292_text_no_length",
+      "sol_medium_category": "text update missing",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "decoy_kri1292_text_window_is_not_a_hold",
+      "sol_medium_category": "text update missing",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1038_en_title_replace_legacy",
+      "sol_medium_category": "other",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_en",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_tr",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_brief",
+      "sol_medium_category": "reply wording (muted)",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_insert_open_tr",
+      "sol_medium_category": "reply wording (muted)",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_show_when_mentioned",
+      "sol_medium_category": "reply wording (muted)",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri1151_talking_cutaways_tr",
+      "sol_medium_category": "reply wording (muted)",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "not run",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "not run",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "not run",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "not run",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "not run",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "not run",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri1292_text_hold_tr_bir_saniye_boyunca",
+      "sol_medium_category": "text update missing",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri188_east_run_brief_updates",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri190_route_facts_and_order",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri506_approved_continuation",
+      "sol_medium_category": "other",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri506_initial_generation",
+      "sol_medium_category": "other",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri506_revision_candidate",
+      "sol_medium_category": "other",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri586_delegated_hook_first_turn",
+      "sol_medium_category": "other",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri586_generate_after_choice",
+      "sol_medium_category": "other",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "sol_medium_category": "other",
+      "gemini_high": "pass",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri806_don_julio_kept_lines",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri840_fullscreen_reaction_beat",
+      "sol_medium_category": "other",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "kri841_talking_ending_clip",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "fail",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "n2_voiceover_fullscreen_photo_sequence",
+      "sol_medium_category": "other",
+      "gemini_high": "fail",
+      "sol_high": "not in control"
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "sol_medium_category": "asked instead of proposing",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "pass",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "sol_medium_category": "requirement not extracted (brief_updates)",
+      "gemini_high": "not run",
+      "sol_high": "fail"
+    },
+    {
+      "fixture": "qendresa_title_hold_with_video_length",
+      "sol_medium_category": "text update missing",
+      "gemini_high": "not run",
+      "sol_high": "not in control"
+    }
+  ]
+}

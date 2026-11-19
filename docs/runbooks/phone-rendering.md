@@ -2138,6 +2138,31 @@ device performance and full preview/export visual parity remain release gates.
    with no crashes or critical thermal state. Enable only verified groups;
    KRI-29 remains incomplete until every agreed group passes.
 
+## Overlapped export frames (KRI-1185)
+
+Every on-device export (the editor Save and the server-driven phone renders of every edit type) draws two frames at once.
+A frame spends most of its time on Vision's neural engine and then on the GPU, so a second frame in flight roughly halves
+a Talking Save (iPhone 13 Pro, 30 s: 32.4 s to 16.9 s). `RecipeWriter` hands the export a copy of the player's composition
+whose compositor is `RecipeExportVideoCompositor` (or the Look twin); AVPlayer and the image generator keep the serial one.
+`RecipeFramePipeline` keeps matte decisions and the text, drawing and motion stores in frame order.
+
+- **Setting.** `ExportFrameOverlap.framesInFlight` (default 2, range 1 to 4). The app applies `UserDefaults`
+  `kria.exportFramesInFlight` at launch (`ExportOverlapSwitch`). Launch argument `-kria.exportFramesInFlight 1` is the QA off
+  switch: at 1 `RecipeWriter` returns the player's composition untouched (no copy, no class swap), the exact old path.
+  Depth 3 and 4 measured the same time as 2 on the phone and cost memory, so 2 is the default.
+- **Low memory.** Depth 2 costs about 100 MB more at an export's peak (measured on a 6 GB iPhone 13 Pro: `phys_footprint` growth
+  median 226 MB against 122 MB at depth 1). A phone reporting under 5 GB of physical memory (the 4 GB iPhone 12 and SE 3 report
+  about 3.7 GB) therefore defaults to depth 1, the old path, unless `kria.exportFramesInFlight` is set (`ExportOverlapSwitch.lowMemoryBytes`).
+  4 GB phones were not tested.
+- **Not byte for byte.** Two saves of the same recipe can differ in decoded pixels: the hardware H.264 encoder's output for
+  identical frames varies with how quickly they arrive. Compare composed frames (`RecipeWriter.frameTap`), never the file.
+- **Remote kill switch (not built).** Feed the setting from the `phone_rendering` capabilities block the app already fetches
+  (`CreationFlow.swift` decodes `recipe_versions` and `verified_features` from it; API side `routes/device_render.py`): add
+  an `export_frames_in_flight` field, and set `ExportFrameOverlap.framesInFlight` where the app stores that block. Until then
+  the switch is a launch argument only.
+- **Tests.** `ExportFramePipelineTests` (composed-frame hashes, cut, full-screen window, text, injected failure, cancel),
+  `ExportOverlapSwitchTests`, and the opt-in device benchmark `TalkSaveBench` (`TALKSAVE_RUN=1`).
+
 ## Preview instrumentation and parity (KRI-95)
 
 `NativeEditorSession.previewInstrumentation` (a `KriaMediaEngine.MetricsCollector`)
@@ -3863,16 +3888,17 @@ Troubleshooting:
   stays B-roll unless the creator's answer stacked it; a take WITH candidates is always
   placed (check `position_basis` / `likelihood` in the receipt).
 - **`user_song_plan_declined`.** A real decline (song missing/replaced/unreadable, or
-  fallback impossible). The chat shows `Job.error_detail` verbatim for this code
-  (`CREATOR_FACING_DETAIL_CODES`), so keep those strings creator-facing. Before
+  fallback impossible). The chat shows the exception's `creator_detail` for this code
+  (stamped by `_fail_job` as `assembly_plan.creator_failure_detail`), so keep those strings
+  creator-facing. Before
   KRI-466 these surfaced as `phone_plan_unsupported` with the generic "your iPhone
   can't render yet" copy.
 - **`silent_audio_declined`.** The talking take has no sound at all (KRI-653: a dead-mic
   in-app recording; Whisper/Gemini hallucinate words over silence and the speech cut then
   removes ~all of it). Raised by `_run_phone_subtitled_job` via `_silent_audio_status`
   (`clip_speech.audio_presence`: loudest 50 ms window < -60 dB, or a >= 3 s clip with < 1 s
-  of windows >= -45 dB). Like `user_song_plan_declined` its `error_detail` is creator-facing
-  and in `CREATOR_FACING_DETAIL_CODES`. A measurement failure (`unknown`) fails OPEN. The
+  of windows >= -45 dB). Like `user_song_plan_declined` its message is creator-facing and
+  exposed as `creator_detail`. A measurement failure (`unknown`) fails OPEN. The
   speech-cleanup preflight refuses the same audio as `no_speech_track` before any Whisper spend.
 - **"Your song was replaced after this edit was approved".** The item's
   `song_generation` or duration no longer matches the approved plan; the creator
@@ -4231,6 +4257,69 @@ Simulator before/after: `scripts/ios/qendresa-card-layout-e2e.py prepare OUT --f
 `screen` must flip, `card_hook` (a card's text in the first 3 s; the kit's own `hook` also
 passes on a misread dimmed caption) must flip, `full_speaker` stays, and the rendered-frame face
 check plus its negative control and the watermark check must hold.
+
+## Talking card strip (KRI-1478)
+
+A wide (landscape) layout card is cut to its measured text column (`source_crop` on the card
+clip, from `background_text_focus.measure_text_column` at bind) so the page is readable, and it
+cuts in and out with no fade. Where its band is free it is 0.94 of the frame wide
+(`phone_card_layout.strip_for`). A card the layout moved beside the Kria wordmark (Q1 run 4:
+x 0.21-0.97, off-centre) becomes a centred 0.94 strip in the part of the same band that is clear
+of the wordmark (below it in the bottom band: y 0.789-0.98 in that run), when that part has the
+layout's minimum height and touches nothing the card avoided; otherwise it keeps its box. The
+strip never leaves the card's own band, so nothing new is covered, and the bottom edge of the
+band (item 15) is unchanged. A second Visual for a mention a strip card already holds takes the
+second half of that window (each part >= 1.5 s in source seconds) instead of `overlap`. When
+the mention is too short for two such parts, the first card keeps all of it and the second
+follows it to the end of its own proposed window, if at least 1.5 s is left there and nothing
+else is on screen; otherwise it stays unplaced and is named as not shown, with its reason.
+
+Gate (all required): `TALKING_CARD_STRIP_ENABLED` (default off) + the whole card layout gate
+above (its flag, `cardLayout`, protocol >= 40) + `sourceCrop` and `mediaCards` in
+`PHONE_RENDER_VERIFIED_FEATURES`. No newer build: the engine draws a cropped placed clip since
+KRI-140. Fallback to today's whole-picture card (with its fade): no measurable column or line
+pitch, a portrait or square picture, under three text lines in the band, a tilted, zoomed or
+animated card, an alpha sticker.
+
+Editor: the phone editor draws a card from x / y / scale with no crop, so
+`phone_subtitled_editor.lanes_from_recipe` hands a strip card back as the whole-picture card it
+replaced. Opening the editor shows that card, and a Save renders it (today's card, with the
+fade): the strip is the first render's look only. No iOS change.
+
+Apply: `fly secrets set TALKING_CARD_STRIP_ENABLED=true` (api + worker) + restart. Rollback:
+`fly secrets set TALKING_CARD_STRIP_ENABLED=false` (api + worker) + restart; new renders are
+today's cards, recipes already pinned are not rewritten. Guards: `tests/services/test_phone_card_layout.py` (run-3 job on and off),
+`tests/services/test_talking_card_layout_gate.py` (gate, worker), `tests/kria/test_recipes_v2.py`,
+`tests/pipeline/test_phone_subtitled_plan.py`, `tests/services/test_phone_subtitled_editor.py`.
+
+Not proven without a phone render: that the shipped build draws a cropped still card as the
+engine test does; real sharpness and that the hard cut survives the phone encoder; the crop
+starts at the top of the picture (no vertical text measure), so a page that opens on a logo
+shows the logo; after pause cuts a shared half can be on screen under 1.5 s.
+
+## List-label plate (KRI-1484)
+
+While her recordings play behind her (a speaker-background window or picture fill, never her
+full-screen take), a numbered list label tries the top band first (y 0.15,
+`phone_list_labels.LABEL_BACKDROP_Y_FRAC`, under `LIST_LABEL_EXAMPLE_ASK_ENABLED`) and, with
+`LIST_LABEL_PLATE_ENABLED`, is drawn on an opaque dark plate: the row's `background_color`
+`#141414`, cream letters and outline unchanged, the text layer's `background` with the default
+8 / 4 px padding. Measured on her Q2 run 3 export: zoomed README pages have text in every band,
+and only an opaque plate made all five labels readable. A label whose time is not wholly over
+the recordings (she is still full screen) keeps today's spot and look.
+
+Gate: `LIST_LABEL_PLATE_ENABLED` (default off) + `authoredText` in
+`PHONE_RENDER_VERIFIED_FEATURES` (without it: no plate, the video is made). Off: byte-identical
+rows. Editor: the plate is the row's own `background_color`, which the phone editor reads from the
+row (`NativeEditorRenderCompiler.authoredStyle`) and keeps on a Save; the server keeps and draws it.
+
+Apply: `fly secrets set LIST_LABEL_PLATE_ENABLED=true` (api + worker) + restart. Rollback: `...=false`
++ restart; new renders have no plate, saved rows keep theirs. Guards:
+`tests/pipeline/test_phone_list_labels.py` (`test_b*`), `tests/tasks/test_qendresa_list_labels_worker.py`
+(`test_18`-`test_20`), `tests/tasks/test_speaker_full_opening_list_labels.py`.
+
+Not proven without a phone render: the plate's look and padding on the device, that it reads on a
+scrolling page, and the editor Save/reopen on a phone.
 
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 

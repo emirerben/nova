@@ -66,7 +66,7 @@ struct RerecordFailure: Equatable, Sendable {
     /// Sending the same bytes again can succeed. False when the take itself is the problem and needs recording again.
     let retryable: Bool
 
-    static let unchanged = "Your current take is unchanged."
+    static let unchanged = String(localized: "Your current take is unchanged.")
 
     init(code: String?, message: String, retryable: Bool) {
         self.code = code; self.message = message; self.retryable = retryable
@@ -94,21 +94,21 @@ struct RerecordFailure: Equatable, Sendable {
     static func known(code: String?, transient: Bool) -> Self {
         func make(_ text: String, retryable: Bool) -> Self { Self(code: code, message: "\(text) \(unchanged)", retryable: retryable) }
         switch code {
-        case "media_replace_unavailable": return make("Re-recording isn’t available right now.", retryable: false)
-        case "render_in_progress": return make("Your video is still being made. Try again when it’s done.", retryable: true)
-        case "retake_target_missing", "revision_mismatch": return make("This chat changed. Close this and try again.", retryable: true)
-        case "retake_target_not_speaker": return make("That isn’t the clip you speak in. Re-record the clip you speak in.", retryable: false)
-        case "retake_speaker_unknown": return make("Make the video first, then re-record the clip you speak in.", retryable: false)
-        case "retake_same_source", "source_already_attached": return make("That recording is already in your edit.", retryable: false)
-        case "retake_source_unresolved": return make("Kria couldn’t use that take as your speaker. Record it again.", retryable: false)
-        case "retake_has_no_audio": return make("That take has no sound. Record it again.", retryable: false)
+        case "media_replace_unavailable": return make(String(localized: "Re-recording isn’t available right now."), retryable: false)
+        case "render_in_progress": return make(String(localized: "Your video is still being made. Try again when it’s done."), retryable: true)
+        case "retake_target_missing", "revision_mismatch": return make(String(localized: "This chat changed. Close this and try again."), retryable: true)
+        case "retake_target_not_speaker": return make(String(localized: "That isn’t the clip you speak in. Re-record the clip you speak in."), retryable: false)
+        case "retake_speaker_unknown": return make(String(localized: "Make the video first, then re-record the clip you speak in."), retryable: false)
+        case "retake_same_source", "source_already_attached": return make(String(localized: "That recording is already in your edit."), retryable: false)
+        case "retake_source_unresolved": return make(String(localized: "Kria couldn’t use that take as your speaker. Record it again."), retryable: false)
+        case "retake_has_no_audio": return make(String(localized: "That take has no sound. Record it again."), retryable: false)
         case "retake_unsupported_format", "retake_target_not_clip", "retake_kind_mismatch", "retake_library_unsupported", "device_render_unsupported":
-            return make("This edit can’t swap its take.", retryable: false)
+            return make(String(localized: "This edit can’t swap its take."), retryable: false)
         case "upload_not_finished", "registration_changed", "identity_unavailable", "upload_verification_error", "media_verification_error":
-            return make("Kria couldn’t finish checking your take.", retryable: true)
+            return make(String(localized: "Kria couldn’t finish checking your take."), retryable: true)
         case "thread_archived", "thread_deleted", "thread_not_found", "thread_id_invalid", "draft_missing":
-            return make("This chat can’t take a new take.", retryable: false)
-        default: return make("Kria couldn’t swap in your new take.", retryable: transient)
+            return make(String(localized: "This chat can’t take a new take."), retryable: false)
+        default: return make(String(localized: "Kria couldn’t swap in your new take."), retryable: transient)
         }
     }
 }

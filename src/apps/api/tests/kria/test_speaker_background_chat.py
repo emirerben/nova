@@ -55,7 +55,15 @@ def _open_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
-        [*settings.phone_render_verified_features, "speakerBackground"],
+        [
+            *(
+                f
+                for f in settings.phone_render_verified_features
+                if f
+                not in {"speakerBackgroundWindows", "speakerBackgroundColor", "backgroundFocus"}
+            ),
+            "speakerBackground",
+        ],
     )
 
 
@@ -1022,24 +1030,27 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # keep-the-take-whole line also records speech_cleanup false), and for KRI-1292 (`hold_s`
     # for a text at a spoken word), and for KRI-1327 (`subject_outline`, a line around a person),
     # and for KRI-1355 (the typed no-title ask, `title: "off"`). The extractor prompt digests were
-    # re-frozen for KRI-1365 (shorter/faster asks and "revert to the old version" are edits).
+    # re-frozen for KRI-1365 (shorter/faster asks and "revert to the old version" are edits). The
+    # Main Creator digests were re-frozen for KRI-1384 (every stated ask is recorded whatever the
+    # action); the extractor strips that sentence, so its digests are unchanged. All were
+    # re-frozen for KRI-1405 (typed `no_sound_effects`; a kept ask after a simpler version).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "c0151ced250653122f3510792a6ff85204f097703fd55f500e9bccedfafc3379"
+        "3799fbe71c7cd2fb0601d3db3581dd5fc6156d7a3a6b416ba668d927b50cc61b"
     )
     assert digest(brief_prompt_section(True)) == (
-        "a49e1033ccb62fb079006cc403e1a9e58e74b7aefd7d9e556deaddf5e9675948"
+        "33fbb9cfe8461a942d8273b848f5a96fc0070c5d4fa869022494f8e88d5535f4"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "0cdcbd1c0a89df7ac461c85cdbb71abf10328c89a56cb912a4cd87d7c72e22fe"
+        "fa27631e9de41ec6b364cc355b987def7e1da56d3863d85485a2ba4a5816d58d"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "7510aa78cb918a0b7e42156c67a233bd66439ea5e1e75ee96eb36a04a1af0e74"
+        "04c75efc186882ee0d4b14d4f65a799ac311c35d77127c5b9bd9ab692db25776"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "85abd22964f0f8312e2e6e89864e534a99c47b9a19ff92789a3322316e3d65ae"),
-        (True, "9f6aebcb471fc165a3c534e7697d6587f9007f220e5075384dd210cb1121261a"),
+        (False, "a1042d0f70c2107fb5e1d48a0286ed8d17b43c2d28c2f07db06f643fc71735b1"),
+        (True, "7e2f134d291a8104d1db0744f1a5eb8f424478df779ed14648d6801aafe1fcde"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

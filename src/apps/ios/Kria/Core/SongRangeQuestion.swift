@@ -127,18 +127,18 @@ struct SongRangeAnswer: Encodable, Equatable, Sendable {
     /// The read-only line once answered, e.g. "Song part: 0:40 to 1:20".
     var summary: String {
         switch choice {
-        case .wholeSong: "Song part: whole song"
-        case .part(let range): "Song part: \(SongRangeMath.timecode(range.start)) to \(SongRangeMath.timecode(range.end))"
-        case .unreadable: "Song part answered"
+        case .wholeSong: String(localized: "Song part: whole song")
+        case .part(let range): String(localized: "Song part: \(SongRangeMath.timecode(range.start)) to \(SongRangeMath.timecode(range.end))")
+        case .unreadable: String(localized: "Song part answered")
         }
     }
 
     /// What VoiceOver reads for the answered line.
     var spokenSummary: String {
         switch choice {
-        case .wholeSong: "Whole song"
+        case .wholeSong: String(localized: "Whole song")
         case .part(let range): range.spokenSummary
-        case .unreadable: "Song part answered"
+        case .unreadable: String(localized: "Song part answered")
         }
     }
 }

@@ -32,9 +32,6 @@ Decision points NOT unit-reachable (not covered here):
 - ``routes/creator_agent`` "photo sub-second timing" fallback (the inline regex in
   ``_apply_explicit_render_intent``) runs only when ``recognize_mixed_media_timing``
   returns None; it is measured through ``_apply_explicit_render_intent`` as a whole.
-- ``kria/planner`` re-plan decision inside ``plan_kria_turn`` (async, DB + model);
-  measured through its pure helpers ``_is_text_edit_ask`` / ``_fast_path_eligible`` /
-  ``_is_single_ask``.
 - ``pipeline/silence_cut`` retake detection is an LLM agent, not a word rule; only the
   lexical filler lexicon (``is_filler_token``) is measured.
 """
@@ -79,28 +76,16 @@ def _paraphrase_only(text: str) -> bool:
     )
 
 
-def _full_replan(text: str) -> bool:
-    from app.kria.brief import wants_full_replan
+def _removes_one_clip(text: str) -> bool:
+    from app.kria.brief import _asks_remove
 
-    return wants_full_replan(text)
-
-
-def _text_edit_ask(text: str) -> bool:
-    from app.kria.planner import _is_text_edit_ask
-
-    return _is_text_edit_ask(text)
+    return _asks_remove(text)
 
 
-def _needs_replan(text: str) -> bool:
-    from app.kria.planner import _fast_path_eligible
+def _states_title_hold(text: str) -> bool:
+    from app.kria.planner import title_hold_grounded
 
-    return not _fast_path_eligible(text)
-
-
-def _compound_ask(text: str) -> bool:
-    from app.kria.planner import _is_single_ask
-
-    return not _is_single_ask(text)
+    return title_hold_grounded(2.0, evidence=text, user_sources=[text])
 
 
 _CHOICE_QUESTION = {
@@ -635,80 +620,6 @@ CASES: tuple[Case, ...] = (
             "tr": "Başlığın daha büyük ve altın rengi olmasını istiyorsun.",
             "tr_ascii": "Basligin daha buyuk ve altin rengi olmasini istiyorsun.",
             "tr_upper": "BAŞLIĞIN DAHA BÜYÜK VE ALTIN RENGİ OLMASINI İSTİYORSUN.",
-        },
-    ),
-    # D05: "from scratch" is a full re-plan, not an editor op.
-    Case(
-        "D05",
-        "chat_routing",
-        "kria.brief.wants_full_replan",
-        "redo from scratch",
-        _full_replan,
-        "do it again from scratch",
-        True,
-        {"tr": "Baştan yap", "tr_ascii": "bastan yap", "tr_upper": "BAŞTAN YAP"},
-    ),
-    # D06: "do it again based on my prompt" is a re-plan.
-    Case(
-        "D06",
-        "chat_routing",
-        "kria.brief.wants_full_replan",
-        "redo from my prompt",
-        _full_replan,
-        "try again based on my prompt",
-        True,
-        {
-            "tr": "İsteğime göre yeniden oluştur",
-            "tr_ascii": "istegime gore yeniden olustur",
-            "tr_upper": "İSTEĞİME GÖRE YENİDEN OLUŞTUR",
-            "tr_mixed": "prompta göre tekrar dene",
-        },
-    ),
-    # D07: a text/title ask keeps the copilot's answer instead of re-planning.
-    Case(
-        "D07",
-        "chat_routing",
-        "kria.planner._is_text_edit_ask",
-        "text edit ask",
-        _text_edit_ask,
-        "change the title",
-        True,
-        {
-            "tr": "Başlığı değiştir",
-            "tr_ascii": "basligi degistir",
-            "tr_upper": "BAŞLIĞI DEĞİŞTİR",
-            "tr_mixed": "title'ı değiştir",
-        },
-    ),
-    # D08: re-plan wording ("a different version") skips the editor fast path.
-    Case(
-        "D08",
-        "chat_routing",
-        "kria.planner._fast_path_eligible",
-        "re-plan cue blocks fast path",
-        _needs_replan,
-        "make a different version",
-        True,
-        {
-            "tr": "Farklı bir versiyon yap",
-            "tr_ascii": "farkli bir versiyon yap",
-            "tr_upper": "FARKLI BİR VERSİYON YAP",
-        },
-    ),
-    # D09: two asks joined by "and" are not a single fast-path ask.
-    Case(
-        "D09",
-        "chat_routing",
-        "kria.planner._is_single_ask",
-        "compound ask detection",
-        _compound_ask,
-        "make the title bigger and change the font",
-        True,
-        {
-            "tr": "Başlığı büyüt ve fontu değiştir",
-            "tr_ascii": "basligi buyut ve fontu degistir",
-            "tr_upper": "BAŞLIĞI BÜYÜT VE FONTU DEĞİŞTİR",
-            "tr_mixed": "Başlığı büyüt ayrıca fontu değiştir",
         },
     ),
     # D10: "you choose" hands a pending choice to Kria's recommended option.
@@ -1782,6 +1693,36 @@ CASES: tuple[Case, ...] = (
             "tr_upper": "BU SEFERLİK SARI YAP",
         },
     ),
+    # D54: dropping one named clip is an editor op on an edit turn, not a re-plan.
+    Case(
+        "D54",
+        "chat_routing",
+        "kria.brief._asks_remove",
+        "remove one named clip",
+        _removes_one_clip,
+        "remove the third clip",
+        True,
+        {
+            "tr": "Üçüncü klibi sil",
+            "tr_ascii": "ucuncu klibi sil",
+            "tr_upper": "ÜÇÜNCÜ KLİBİ SİL",
+        },
+    ),
+    # D55: a title hold the creator states in words grounds the model's hold.
+    Case(
+        "D55",
+        "chat_routing",
+        "kria.planner.title_hold_grounded",
+        "title hold in words",
+        _states_title_hold,
+        "keep the title for two seconds",
+        True,
+        {
+            "tr": "Başlık iki saniye kalsın",
+            "tr_ascii": "baslik iki saniye kalsin",
+            "tr_upper": "BAŞLIK İKİ SANİYE KALSIN",
+        },
+    ),
     # ---------------------------------------------------------------- normalization
     # N01: shared Turkish-aware fold: every spelling of "kırmızı" folds alike.
     Case(
@@ -1814,17 +1755,6 @@ CASES: tuple[Case, ...] = (
         _legacy_fold,
         "do it again",
         "do it again",
-        {"en_upper": "DO IT AGAIN"},
-    ),
-    # N04: ...which makes an uppercase English redo miss the re-plan route.
-    Case(
-        "N04",
-        "normalization",
-        "kria.brief.wants_full_replan",
-        "uppercase English redo",
-        _full_replan,
-        "do it again",
-        True,
         {"en_upper": "DO IT AGAIN"},
     ),
     # N05: lyric alignment matches Whisper and canonical lyric words letter-insensitively.

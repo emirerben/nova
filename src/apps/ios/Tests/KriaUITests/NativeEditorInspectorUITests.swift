@@ -30,7 +30,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
     }
 
     private func assertSplitPeers(_ before: SplitTimelineSnapshot, unchangedIn after: SplitTimelineSnapshot,
-                                 excluding edited: Set<String>, file: StaticString = #filePath, line: UInt = #line) throws {
+                                 excluding edited: Set<String>, sections expectedSections: [[String: Any]]? = nil,
+                                 file: StaticString = #filePath, line: UInt = #line) throws {
         for row in before.rows {
             let id = try XCTUnwrap(row["slot_id"] as? String, file: file, line: line)
             if !edited.contains(id) {
@@ -38,7 +39,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
                     "Panel edits must preserve every peer and serial neighbor field", file: file, line: line)
             }
         }
-        XCTAssertEqual(NSArray(array: after.sections), NSArray(array: before.sections), file: file, line: line)
+        XCTAssertEqual(NSArray(array: after.sections), NSArray(array: expectedSections ?? before.sections), file: file, line: line)
         XCTAssertEqual(NSDictionary(dictionary: after.mix), NSDictionary(dictionary: before.mix), file: file, line: line)
     }
 
@@ -56,6 +57,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
         for _ in 0..<3 where !tool.isHittable { rail.swipeLeft() }
         XCTAssertTrue(tool.isHittable, "Split is the last tool on the rail")
         tool.tap()
+        // The default scope is Whole video; these journeys build a one-clip split.
+        let clipScope = app.buttons["native-editor-split-scope-clip"]
+        XCTAssertTrue(clipScope.waitForExistence(timeout: 10))
+        clipScope.tap()
         let card = app.buttons["native-editor-split-create-\(panels)"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         card.tap()
@@ -168,7 +173,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
     }
 
-    func testSplitPanelHandleExtensionClampsAtSectionAndMinimumWithoutMovingPeers() throws {
+    func testSplitPanelHandleExtensionGrowsSectionAndClampsAtMinimumWithoutMovingPeers() throws {
         let (app, original) = try launchTwoPanelAcceptance()
         let editedID = try XCTUnwrap(original.rows[0]["slot_id"] as? String)
         XCTAssertEqual(original.rows[0]["duration_s"] as? Double, 4)
@@ -194,21 +199,37 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(shortRow["in_s"] as? Double, original.rows[0]["in_s"] as? Double)
         try assertSplitPeers(original, unchangedIn: shortened, excluding: [editedID])
 
-        // Source has20s, but this panel can extend only to its4s section boundary.
+        // Source has 20 s and a fixed section grows with its longest member, so dragging past the 4 s section end extends.
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
+        // The timeline scrolls itself while a finger rests in the 56 pt zone at its edge (`updateAutoScrollX`), and
+        // this drag ends with a 0.2 s hold, so a drop inside that zone overshoots the length it measures. The clip
+        // starts right of centre, so slide it left under the fixed playhead until the whole extension fits short of it.
+        dragPlayheadForward(originalWidth * 0.6, in: app)
+        XCTAssertTrue(member.isSelected, "Seeking with the playhead keeps the clip selected")
+        XCTAssertTrue(trailing.isHittable)
+        let lane = app.scrollViews["native-editor-lane-scroll"].frame
         let extensionDistance = originalWidth
-        XCTAssertLessThan(trailing.frame.midX + extensionDistance, app.frame.maxX - 12)
+        XCTAssertLessThan(trailing.frame.midX + extensionDistance, lane.maxX - 56 - 8, "The drop must stay out of the edge scroll zone")
         dragHandle(trailing, by: extensionDistance)
         let extended = try splitSnapshot(app)
-        XCTAssertEqual(NSDictionary(dictionary: try extended.row(editedID)), NSDictionary(dictionary: original.rows[0]),
-            "Overshooting extension clamps exactly to the section while preserving every source/edit field")
-        try assertSplitPeers(original, unchangedIn: extended, excluding: [editedID])
+        let extendedRow = try extended.row(editedID)
+        let extendedDuration = try XCTUnwrap(extendedRow["duration_s"] as? Double)
+        XCTAssertGreaterThan(extendedDuration, 4.5, "Dragging past the section end grows the panel clip")
+        XCTAssertLessThanOrEqual(extendedDuration, 6.5)
+        XCTAssertEqual(try XCTUnwrap(extended.sections.first?["duration_s"] as? Double), extendedDuration, accuracy: 0.001,
+            "The fixed section grows to its longest member")
+        var expectedExtended = original.rows[0]
+        expectedExtended["duration_s"] = extendedRow["duration_s"]
+        XCTAssertEqual(NSDictionary(dictionary: extendedRow), NSDictionary(dictionary: expectedExtended),
+            "Extension changes only panel duration")
+        try assertSplitPeers(original, unchangedIn: extended, excluding: [editedID], sections: extended.sections)
 
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
-        XCTAssertGreaterThan(trailing.frame.midX - originalWidth * 1.1, app.frame.minX + 12)
-        dragHandle(trailing, by: -originalWidth * 1.1)
+        let extendedWidth = member.frame.width
+        XCTAssertGreaterThan(trailing.frame.midX - extendedWidth * 1.1, app.frame.minX + 12)
+        dragHandle(trailing, by: -extendedWidth * 1.1)
         let minimum = try splitSnapshot(app)
         let minimumRow = try minimum.row(editedID)
         XCTAssertEqual(try XCTUnwrap(minimumRow["duration_s"] as? Double), 0.1, accuracy: 0.001)
@@ -216,7 +237,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         expectedMinimum["duration_s"] = minimumRow["duration_s"]
         XCTAssertEqual(NSDictionary(dictionary: minimumRow), NSDictionary(dictionary: expectedMinimum),
             "Minimum clamp changes only panel duration")
-        try assertSplitPeers(original, unchangedIn: minimum, excluding: [editedID])
+        try assertSplitPeers(original, unchangedIn: minimum, excluding: [editedID], sections: extended.sections)
         for expected in [extended, shortened, original] {
             let undo = app.buttons["native-editor-undo"]
             XCTAssertTrue(undo.isEnabled)
@@ -228,53 +249,74 @@ final class NativeEditorInspectorUITests: XCTestCase {
         }
     }
 
-    // Fills the empty Bottom panel from the picker's import hook. The panel's footage is a new slot (a fill never
-    // replaces), so the real registration, undo, redo and Save/reopen all act on one added clip.
-    func testDelayedPanelImportKeepsCapturedOwnerUndoAndReopen() throws {
+    /// The document rows without an attachment, for polling.
+    private func liveRows(_ app: XCUIApplication) -> [[String: Any]] {
+        let element = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
+        guard let data = (element.value as? String)?.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = root["editor_payload"] as? [String: Any], let sections = payload["sections"] as? [String: Any] else { return [] }
+        return sections["timeline_slots"] as? [[String: Any]] ?? []
+    }
+
+    // KRI-1419: fills the empty Bottom panel from the picker's import hook while the fixture holds the server's
+    // registration. The block must be in the panel and the preview before the upload is admitted; Save waits for
+    // the upload and sends the admitted index; reopen shows the same block.
+    func testDelayedPanelImportShowsAtOnceAndSavesTheAdmittedIndex() throws {
         let flags = ["-ui-testing-editor-gameday-add", "-ui-testing-editor-split-import",
                      "-ui-testing-editor-split-persistence", "-ui-testing-editor-split-persistence-reset"]
         let (app, before) = try launchTwoPanelAcceptance(extraArguments: flags, fill: false)
         let sectionID = try XCTUnwrap(before.sections[0]["id"] as? String)
         let importButton = app.buttons["native-editor-split-import"]
         XCTAssertTrue(importButton.waitForExistence(timeout: 10))
-        importButton.tap()
-        app.buttons["native-editor-split-done"].tap()
-        selectTimelineClip(1, in: app)
-        let pending = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: pending.rows), NSArray(array: before.rows), "Selection must change before registration completes")
-        try assertSplitPeers(before, unchangedIn: pending, excluding: [])
         let release = app.buttons["split-import-release"]
-        let registered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: release)
-        XCTAssertEqual(XCTWaiter.wait(for: [registered], timeout: 90), .completed, "Real proxy preparation, reservation and PUT must reach registration")
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.isSelected)
-        let stillPending = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: stillPending.rows), NSArray(array: before.rows))
-        release.tap()
-        let probe = app.descendants(matching: .any)["native-editor-test-document"].firstMatch
-        let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "editor_source_placement_id"), object: probe)
-        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 40), .completed)
-        let imported = try splitSnapshot(app)
-        XCTAssertEqual(imported.rows.count, before.rows.count + 1, "Filling an empty panel adds exactly one clip")
-        let target = try XCTUnwrap(imported.rows.first { $0["editor_source_placement_id"] != nil })
-        XCTAssertEqual(target["clip_index"] as? Int, 4)
-        XCTAssertEqual(target["split_section_id"] as? String, sectionID)
-        XCTAssertEqual(target["split_panel_index"] as? Int, 1, "The import lands in the empty Bottom panel")
-        XCTAssertFalse(try XCTUnwrap(target["editor_source_placement_id"] as? String).isEmpty)
-        let addedID = try XCTUnwrap(target["slot_id"] as? String)
-        try assertSplitPeers(before, unchangedIn: imported, excluding: [addedID])
+        let picked = Date()
+        importButton.tap()
+        var released = false
+        var timeToBlock: TimeInterval?
+        while Date().timeIntervalSince(picked) < 120 {
+            if liveRows(app).contains(where: { $0["editor_source_placement_id"] != nil }) {
+                timeToBlock = Date().timeIntervalSince(picked)
+                break
+            }
+            if !released, release.exists, release.isEnabled { release.tap(); released = true }
+        }
+        let measured = XCTAttachment(string: String(format: "time_to_block_s=%.3f released_first=%@", timeToBlock ?? -1, released ? "yes" : "no"))
+        measured.name = "KRI-1419 time from pick to block"
+        measured.lifetime = .keepAlways
+        add(measured)
+        XCTAssertNotNil(timeToBlock, "The picked clip must reach the timeline")
+        XCTAssertFalse(released, "The block appears before the server admits the upload")
+        let pending = try splitSnapshot(app)
+        XCTAssertEqual(pending.rows.count, before.rows.count + 1, "Filling an empty panel adds exactly one clip")
+        let block = try XCTUnwrap(pending.rows.first { $0["editor_source_placement_id"] != nil })
+        XCTAssertLessThan(try XCTUnwrap(block["clip_index"] as? Int), 0, "Until admission the block plays the local file")
+        XCTAssertEqual(block["split_section_id"] as? String, sectionID)
+        XCTAssertEqual(block["split_panel_index"] as? Int, 1, "The import lands in the empty Bottom panel")
+        let addedID = try XCTUnwrap(block["slot_id"] as? String)
+        try assertSplitPeers(before, unchangedIn: pending, excluding: [addedID])
+        app.buttons["native-editor-split-done"].tap()
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists, "The preview plays the pending block")
         app.buttons["native-editor-undo"].tap()
-        let undone = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: undone.rows), NSArray(array: before.rows))
-        try assertSplitPeers(before, unchangedIn: undone, excluding: [])
+        XCTAssertEqual(NSArray(array: try splitSnapshot(app).rows), NSArray(array: before.rows))
         app.buttons["native-editor-redo"].tap()
-        let redone = try splitSnapshot(app)
-        XCTAssertEqual(NSArray(array: redone.rows), NSArray(array: imported.rows))
-        try assertSplitPeers(imported, unchangedIn: redone, excluding: [])
+        XCTAssertEqual(NSArray(array: try splitSnapshot(app).rows), NSArray(array: pending.rows))
+
         let save = app.buttons["native-editor-save"]
         XCTAssertTrue(save.isEnabled)
         save.tap()
+        let finishing = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Finishing 1 upload…"), object: save)
+        XCTAssertEqual(XCTWaiter.wait(for: [finishing], timeout: 5), .completed, "Save waits for the upload and says so")
+        let registered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: release)
+        XCTAssertEqual(XCTWaiter.wait(for: [registered], timeout: 90), .completed, "Real proxy preparation, reservation and PUT must reach registration")
+        release.tap()
         let saved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ AND isEnabled == false", "Saved"), object: save)
-        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 40), .completed, "Save runs on its own once the upload is admitted")
+        let imported = try splitSnapshot(app)
+        let target = try XCTUnwrap(try imported.row(addedID))
+        XCTAssertEqual(target["clip_index"] as? Int, 4, "The saved block names the admitted source")
+        XCTAssertNil(target["pending_local"])
+        XCTAssertEqual(target["split_panel_index"] as? Int, 1)
+        try assertSplitPeers(before, unchangedIn: imported, excluding: [addedID])
         app.terminate()
         app.launchArguments.removeAll { $0 == "-ui-testing-editor-split-persistence-reset" }
         app.launch()
@@ -283,7 +325,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
         let reopened = try splitSnapshot(app)
         XCTAssertEqual(NSArray(array: reopened.rows), NSArray(array: imported.rows))
-        try assertSplitPeers(imported, unchangedIn: reopened, excluding: [])
         XCTAssertFalse(app.buttons["native-editor-save"].isEnabled)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists)
     }
@@ -324,6 +365,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // A short gesture on blank ruler space can be interpreted as deselection.
         clip.tap()
         let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+        scrollLanesToTop(in: app, until: playhead)
         XCTAssertTrue(playhead.isHittable)
         let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: clip.frame.width / 2, dy: 0)),
@@ -488,6 +530,27 @@ final class NativeEditorInspectorUITests: XCTestCase {
         start.press(forDuration: 0.25, thenDragTo: end, withVelocity: 20, thenHoldForDuration: 0.3)
     }
 
+    /// Drags the playhead handle right: the clips slide left under it. Selection stays.
+    private func dragPlayheadForward(_ distance: CGFloat, in app: XCUIApplication) {
+        let playhead = app.descendants(matching: .any)["native-editor-playhead"].firstMatch
+        scrollLanesToTop(in: app, until: playhead)
+        XCTAssertTrue(playhead.isHittable)
+        let start = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: distance, dy: 0)),
+            withVelocity: 20, thenHoldForDuration: 0.3)
+    }
+
+    /// Selecting a clip on a lower panel row scrolls the lanes up one row, which carries the playhead handle under the
+    /// transport bar. Scrolls back down until the handle can be grabbed again.
+    private func scrollLanesToTop(in app: XCUIApplication, until handle: XCUIElement) {
+        let lanes = app.scrollViews["native-editor-lane-scroll"]
+        for _ in 0..<4 where !handle.isHittable {
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                dx: lanes.frame.minX + 24, dy: lanes.frame.minY + 120))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 90)))
+        }
+    }
+
     private func selectTimelineClip(_ number: Int, in app: XCUIApplication) {
         let clip = app.descendants(matching: .any)["native-editor-clip-\(number)"].firstMatch
         let lanes = app.scrollViews["native-editor-lane-scroll"]
@@ -602,38 +665,66 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-selection-boundary", "-ui-testing-editor-color-cuts"]
         app.launch()
-        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 30))
-        func pixels() -> [UInt8] {
-            let screenshot = app.screenshot().image.cgImage!
+        // Every element inside the preview container shares its identifier; the video canvas is the largest. A query
+        // can also come back empty for one sample (seen as {{inf, inf}, {0, 0}} on the sample taken as a 10 s wait
+        // times out, while the tree still shows the preview), which crashed the runner on a force-unwrapped crop
+        // (CI, 11-15). Such a sample is skipped and counted, and the failure names the last real pixel result.
+        var lastSkip = "", skipped = 0, lastPixels = "no pixel sample"
+        func pixels() -> [UInt8]? {
+            guard let screenshot = app.screenshot().image.cgImage, app.frame.width > 0 else {
+                lastSkip = "screenshot had no image"; skipped += 1; return nil
+            }
             let scale = Double(screenshot.width) / app.frame.width
-            let rect = preview.frame
-            let crop = screenshot.cropping(to: CGRect(x: (rect.minX + rect.width * 0.2) * scale,
-                y: (rect.minY + rect.height * 0.3) * scale,
-                width: rect.width * 0.6 * scale, height: rect.height * 0.2 * scale))!
+            let candidates = app.descendants(matching: .any).matching(identifier: "native-editor-preview").allElementsBoundByIndex
+                .filter(\.exists).map(\.frame)
+            guard let rect = candidates.max(by: { $0.width * $0.height < $1.width * $1.height }) else {
+                lastSkip = "no native-editor-preview element"; skipped += 1; return nil
+            }
+            let bounds = CGRect(x: 0, y: 0, width: screenshot.width, height: screenshot.height)
+            let region = CGRect(x: (rect.minX + rect.width * 0.2) * scale, y: (rect.minY + rect.height * 0.3) * scale,
+                                width: rect.width * 0.6 * scale, height: rect.height * 0.2 * scale).integral
+            guard region.width >= 1, region.height >= 1, bounds.contains(region),
+                  let crop = screenshot.cropping(to: region) else {
+                lastSkip = "preview \(NSCoder.string(for: rect)) of \(candidates.map(NSCoder.string(for:))) "
+                    + "gives crop \(NSCoder.string(for: region)) outside the \(screenshot.width)x\(screenshot.height) screenshot"
+                skipped += 1
+                return nil
+            }
             var bytes = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
-            let context = CGContext(data: &bytes, width: crop.width, height: crop.height,
+            guard let context = CGContext(data: &bytes, width: crop.width, height: crop.height,
                 bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                lastSkip = "no bitmap context for \(crop.width)x\(crop.height)"; skipped += 1; return nil
+            }
             context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
             return bytes
         }
         func assertPicture(blue: Bool, text: Bool, name: String) {
             let predicate = NSPredicate { _, _ in
-                let bytes = pixels()
+                guard let bytes = pixels() else { return false }
                 let backgrounds = stride(from: 0, to: bytes.count, by: 4).filter {
                     blue ? bytes[$0 + 2] > 200 && bytes[$0] < 50 : bytes[$0] > 200 && bytes[$0 + 2] < 50
                 }.count
                 let whites = stride(from: 0, to: bytes.count, by: 4).filter {
                     bytes[$0] > 220 && bytes[$0 + 1] > 220 && bytes[$0 + 2] > 220
                 }.count
+                lastPixels = "\(backgrounds) of \(bytes.count / 4) pixels \(blue ? "blue" : "red"), \(whites) white"
                 return backgrounds > bytes.count / 8 && (text ? whites > 20 : whites == 0)
             }
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 10), .completed, name)
+            skipped = 0; lastSkip = ""; lastPixels = "no pixel sample"
+            let matched = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 10) == .completed
+            XCTAssertTrue(matched, "\(name): last sample \(lastPixels); \(skipped) sample(s) skipped" + (skipped > 0 ? " (last: \(lastSkip))" : ""))
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.name = name
             shot.lifetime = .keepAlways
             add(shot)
+            if !matched {
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "\(name) accessibility tree"
+                tree.lifetime = .keepAlways
+                add(tree)
+            }
         }
         assertPicture(blue: false, text: false, name: "Initial preceding clip")
         app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
@@ -1238,6 +1329,54 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(time.value as? String, initialTime)
         XCTAssertEqual(playhead.frame.midX, originalX, accuracy: 1)
         }
+    }
+
+    /// KRI-1450: #2317's release-velocity glide kept the timeline moving after XCUITest's fast, exact drags, so every
+    /// editor UI test that asserts where a drag lands broke. Ways this can go wrong (written before the fix):
+    /// 1. The glide runs in the editor's test mode, so a 0.05 s press-and-drag lands seconds away from its release.
+    /// 2. The glide is switched off everywhere (or for real users) to quiet the tests, so a flick stops dead again.
+    /// 3. The opt-in launch argument is ignored, so nothing covers the glide in UI tests any more.
+    /// This test covers 2 and 3: without the opt-in the time stays where the flick let go, and with it the same flick
+    /// lands further on. `testTimelineSwipesSeekUnderFixedPlayhead` covers 1.
+    func testFlickGlidesOnPastTheReleaseOnlyWhenTheGlideIsSwitchedOn() {
+        /// The time shown right after the release, and once it has stopped changing.
+        func flick(glide: Bool) -> (released: String?, settled: String?) {
+            let app = XCUIApplication()
+            app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+                + (glide ? ["-ui-testing-editor-timeline-glide"] : [])
+            app.launch()
+            defer { app.terminate() }
+            let timeline = app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch
+            let time = app.descendants(matching: .any)["native-editor-current-time"].firstMatch
+            guard timeline.waitForExistence(timeout: 8) else { return (nil, nil) }
+            let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -110, dy: 0)))
+            let released = time.value as? String
+            var settled = released
+            for _ in 0..<30 {
+                Thread.sleep(forTimeInterval: 0.2)
+                let now = time.value as? String
+                if now == settled { break }
+                settled = now
+            }
+            return (released, settled)
+        }
+        let exact = flick(glide: false)
+        XCTAssertNotNil(exact.released)
+        XCTAssertNotEqual(exact.released, "0:00.0", "the drag itself seeks")
+        XCTAssertEqual(exact.settled, exact.released, "in editor test mode the timeline stops where the finger let go")
+        let glided = flick(glide: true)
+        if let off = seconds(exact.settled), let on = seconds(glided.settled) {
+            XCTAssertGreaterThan(on, off + 0.3, "with the glide switched on, the same flick carries on past where it let go")
+        } else {
+            XCTFail("unreadable times \(String(describing: exact.settled)), \(String(describing: glided.settled))")
+        }
+    }
+
+    private func seconds(_ label: String?) -> Double? {
+        guard let parts = label?.split(separator: ":"), parts.count == 2,
+              let minutes = Double(parts[0]), let seconds = Double(parts[1]) else { return nil }
+        return minutes * 60 + seconds
     }
 
     func testTimelineResizeShrinksPreviewAndRestoresIt() {

@@ -89,6 +89,9 @@ def test_a_recording_that_never_shows_is_not_reported_as_met(monkeypatch):
 def test_unheard_phrase_that_still_rotates_in_is_met(monkeypatch):
     """5.1: an unheard phrase is not "never shown". With one entry unphrased the layout falls
     back to a rotation and both recordings play, so nothing is missing."""
+    # KRI-1494: with this switch on, a NAMED pace brings photos back to keep it
+    # (tests/tasks/test_cigdem2_background_pace.py); this test pins S57 without it.
+    monkeypatch.setattr(gb.settings, "background_keeps_asked_pace_enabled", False)
     job = _windows_job(
         monkeypatch,
         [

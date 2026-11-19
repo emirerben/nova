@@ -62,6 +62,11 @@ STRATEGY = {
 }
 
 
+# Production has verified these since the snapshot's live read; the cases below start with the
+# lane closed and open it explicitly.
+CLOSED_BY_DEFAULT = frozenset({"speakerBackgroundWindows", "speakerBackgroundColor"})
+
+
 @pytest.fixture(autouse=True)
 def _gate(prod_profile, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
@@ -70,7 +75,10 @@ def _gate(prod_profile, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         settings,
         "phone_render_verified_features",
-        [*settings.phone_render_verified_features, "speakerBackground"],
+        [
+            *(f for f in settings.phone_render_verified_features if f not in CLOSED_BY_DEFAULT),
+            "speakerBackground",
+        ],
     )
 
 

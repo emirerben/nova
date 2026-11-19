@@ -2,7 +2,7 @@
 
 A creator approved a 42-word English sentence and a 26-word Turkish one, word by word, for a
 fast montage. The fast pace cut the plan to a few seconds; a piece cannot stay on screen for less
-than 0.25 s, so the sentence could not be read inside the video it was planned into.
+than one frame, so the sentence could not be read inside the video it was planned into.
 
 Failure modes, written before the fix:
  1. fast pace, no length stated: the plan is at least the longest sentence's minimum read time;
@@ -68,11 +68,9 @@ def _planned(brief, *, strategy: dict = STRATEGY, media=None) -> tuple[float, li
 
 
 def test_a_fast_plan_is_at_least_the_longest_sentences_minimum_read_time() -> None:
-    plain, _ = _planned(None)
     planned, conflicts = _planned(_brief())
 
-    assert plain < 42 * 0.25  # the premise: the fast plan alone cannot show the sentence
-    assert planned >= 42 * 0.25 - 1e-6
+    assert planned >= 42 / 30 - 1e-6
     assert conflicts == []
 
 

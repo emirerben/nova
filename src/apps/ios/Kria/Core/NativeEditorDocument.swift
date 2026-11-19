@@ -16,6 +16,9 @@ enum EditorSelectionKind: String, Codable, CaseIterable, Hashable, Sendable {
     /// The Talk-to-camera speaker drawn small in a frame (`speaker_background.speaker_frame`), moved and resized by hand
     /// on the preview. The id is `speakerID` globally or a slot id for one occurrence.
     case speaker
+    /// KRI-1501: one cue's translated caption line (`caption_cues[i].translation`), its own editor track. Client-only;
+    /// the id is the cue's id.
+    case captionTranslation = "caption_translation"
 }
 
 struct EditorSelection: Codable, Equatable, Hashable, Sendable {
@@ -103,11 +106,15 @@ struct EditorCapability: Codable, Equatable, Sendable {
     /// The server's current value for a settings capability (`orientation`,
     /// `landscape_fit`), e.g. `"portrait"` / `"fit"`. Nil for lane capabilities.
     var value: String?
+    /// KRI-1501: `editor_capabilities.caption_translation = {"languages": [...]}`, the languages the translated caption
+    /// line may use. Nil for every other capability.
+    var languages: [String]?
 
-    init(editable: Bool, reason: String? = nil, value: String? = nil) {
+    init(editable: Bool, reason: String? = nil, value: String? = nil, languages: [String]? = nil) {
         self.editable = editable
         self.reason = reason
         self.value = value
+        self.languages = languages
     }
 
     init(from decoder: Decoder) throws {
@@ -119,12 +126,14 @@ struct EditorCapability: Codable, Equatable, Sendable {
         editable = object["editable"]?.boolValue ?? false
         reason = object["reason"]?.stringValue
         value = object["value"]?.stringValue
+        languages = object["languages"]?.arrayValue?.compactMap(\.stringValue)
     }
 
     func encode(to encoder: Encoder) throws {
         var object: [String: JSONValue] = ["editable": .bool(editable)]
         if let reason { object["reason"] = .string(reason) }
         if let value { object["value"] = .string(value) }
+        if let languages { object["languages"] = .array(languages.map(JSONValue.string)) }
         try object.encode(to: encoder)
     }
 }
@@ -1158,7 +1167,7 @@ struct EditorDocument: Equatable, Sendable {
 }
 
 private enum NativeEditorMotionCodec {
-    static let fps = 30.0
+    static let fps = Double(EditorLimits.outputFPS)
 }
 
 private extension EditorSection {
@@ -1311,6 +1320,8 @@ private extension EditorDocument {
             ("shape", ["caption_shape"]),
             // KRI-1007: a cue-native variant stores the all-captions animation beside its caption fields.
             ("animation_phases", ["caption_animation_phases"]),
+            // KRI-1501: the translated-line track, persisted on the variant as `caption_translation`.
+            ("translation", ["caption_translation"]),
         ]
         for (canonicalKey, keys) in aliases {
             if let value = value(for: canonicalKey, aliases: keys) { result[canonicalKey] = value }
@@ -1353,6 +1364,8 @@ private extension EditorDocument {
     func encodeSlot(_ item: EditorTimelineSlot) -> JSONValue {
         var known: [String: JSONValue] = ["slot_id": item.id.map(JSONValue.string) ?? .null, "clip_index": .number(Double(item.clipIndex)), "in_s": .number(item.inS), "duration_beats": item.durationBeats.map { .number(Double($0)) } ?? .null, "duration_s": item.durationS.map(JSONValue.number) ?? .null, "removed": .bool(item.removed), "transition_after": .string(item.transitionAfter), "transition_duration_s": item.transitionDurationS.map(JSONValue.number) ?? .null, "parent_segment_id": item.parentSegmentID.map(JSONValue.string) ?? .null, "look_adjustments": item.lookAdjustments.map(JSONValue.object) ?? .null]
         if let lookPreset = item.lookPreset { known["look_preset"] = .string(lookPreset) }
+        // A blank has no source, and the server refuses a clip index on it.
+        if item.isBlank { known.removeValue(forKey: "clip_index") }
         return .object(merged(item.raw, known))
     }
     func encodeText(_ item: EditorTextElement) -> JSONValue { .object(merged(item.raw, ["id": .string(item.id), "text": .string(item.text), "start_s": .number(item.startS), "end_s": .number(item.endS), "role": item.role.map(JSONValue.string) ?? .null])) }
@@ -1390,7 +1403,7 @@ private extension EditorDocument {
 private extension EditorDocument {
     // New placements have no slot_id until Save assigns one. Keep them through
     // draft hydration and subsequent chat/commit round trips.
-    static func decodeSlots(_ rows: [JSONValue]) -> [EditorTimelineSlot] { rows.compactMap { value in guard let o = object(value), let index = integer(o["clip_index"]), let inS = number(o["in_s"]) else { return nil }; return EditorTimelineSlot(id: string(o["slot_id"]), clipIndex: index, inS: inS, durationS: number(o["duration_s"]), durationBeats: integer(o["duration_beats"]), removed: o["removed"]?.boolValue ?? false, parentSegmentID: string(o["parent_segment_id"]), transitionAfter: string(o["transition_after"]) ?? "cut", transitionDurationS: number(o["transition_duration_s"]), lookPreset: string(o["look_preset"]), lookAdjustments: object(o["look_adjustments"]), raw: o) } }
+    static func decodeSlots(_ rows: [JSONValue]) -> [EditorTimelineSlot] { rows.compactMap { value in guard let o = object(value), let index = integer(o["clip_index"]) ?? (o["media_kind"]?.stringValue == EditorTimelineSlot.blankMediaKind ? -1 : nil), let inS = number(o["in_s"]) ?? (index == -1 ? 0 : nil) else { return nil }; return EditorTimelineSlot(id: string(o["slot_id"]), clipIndex: index, inS: inS, durationS: number(o["duration_s"]), durationBeats: integer(o["duration_beats"]), removed: o["removed"]?.boolValue ?? false, parentSegmentID: string(o["parent_segment_id"]), transitionAfter: string(o["transition_after"]) ?? "cut", transitionDurationS: number(o["transition_duration_s"]), lookPreset: string(o["look_preset"]), lookAdjustments: object(o["look_adjustments"]), raw: o) } }
     static func decodeText(_ rows: [JSONValue]) -> [EditorTextElement] { rows.compactMap { value in guard let o = object(value), let id = string(o["id"]), let text = string(o["text"]), let start = number(o["start_s"]), let end = number(o["end_s"]) else { return nil }; return EditorTextElement(id: id, text: text, startS: start, endS: end, role: string(o["role"]), raw: o) } }
     static func decodeCaptions(_ rows: [JSONValue]) -> [EditorCaptionCue] {
         var used = Set(rows.compactMap { object($0).flatMap { string($0["id"]) } })
@@ -1448,6 +1461,13 @@ private extension EditorDocument {
             // `music_operations.window`, `lanes.text`). A capability object
             // with `editable`/`reason` is a leaf; preserve its reason instead
             // of collapsing the whole parent to an unusable false value.
+            // KRI-1501: `caption_translation` is offered as `{"languages": [...]}`; its presence is the gate.
+            if let languages = objectValue["languages"]?.arrayValue {
+                result[prefix] = EditorCapability(editable: objectValue["editable"]?.boolValue ?? true,
+                                                  reason: objectValue["reason"]?.stringValue,
+                                                  languages: languages.compactMap(\.stringValue))
+                return
+            }
             let isLeaf = objectValue["editable"] != nil
                 || (objectValue["reason"] != nil
                     && objectValue.keys.allSatisfy { $0 == "editable" || $0 == "reason" })

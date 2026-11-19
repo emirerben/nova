@@ -175,8 +175,6 @@ async def _dispose_async_engine():
 class Cassette(ModelClient):
     """One recorded writer response per call; remembers the prompts it was sent."""
 
-    supports_clarification_retry = False
-
     def __init__(self, *responses: str | Exception) -> None:
         self.responses = list(responses)
         self.prompts: list[str] = []

@@ -37,13 +37,14 @@ line bounds the Genius path produced. Legacy rows with
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import ClassVar
 
 import structlog
 from pydantic import BaseModel, Field
 
-from app.agents._runtime import Agent, AgentSpec, TerminalError
+from app.agents._runtime import Agent, AgentSpec, RunContext, TerminalError
 from app.pipeline.lyrics_alignment import (
     AlignmentResult,
     align,
@@ -65,6 +66,10 @@ from app.services.whisper_lyrics import (
 )
 
 log = structlog.get_logger()
+
+# ``compute`` takes no context, but the Whisper request it makes is paid and needs the run's
+# attribution (usage purpose, owner) for the cost ledger.
+_RUN_CTX: ContextVar[RunContext | None] = ContextVar("nova_lyrics_run_ctx", default=None)
 
 # ── Publishability allowlist ─────────────────────────────────────────────────
 
@@ -312,6 +317,13 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
     def render_prompt(self, input: LyricsInput) -> str:  # noqa: ARG002
         # Unused: rule_based agents never hit the model client.
         return ""
+
+    def run(self, input, *, ctx: RunContext | None = None):  # noqa: A002
+        token = _RUN_CTX.set(ctx)
+        try:
+            return super().run(input, ctx=ctx)
+        finally:
+            _RUN_CTX.reset(token)
 
     def parse(self, raw_text: str, input: LyricsInput) -> LyricsOutput:  # noqa: ARG002
         # Unused: rule_based agents skip the LLM path entirely. The
@@ -569,6 +581,7 @@ def _finish_extraction(
             input_.audio_path,
             prompt=prompt_hint,
             language=input_.language,
+            ctx=_RUN_CTX.get(),
         )
     except WhisperLyricsError as exc:
         raise TerminalError(f"nova.audio.lyrics: whisper transcription failed — {exc}") from exc

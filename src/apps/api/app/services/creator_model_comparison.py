@@ -12,10 +12,12 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.agents.model_registry import SOL, SONNET, model_spec, provider_of
 from app.services.request_following_cases import digest
 
-MODELS = ("gemini-3.1-pro-preview", "claude-sonnet-5-5", "gpt-6.1-sol")
+MODELS = ("gemini-3.1-pro-preview", SONNET, SOL)
 AGENTS = ("main_creator", "edit_copilot")
+OUTPUT_MODES = ("json", "native", "json_guarded", "tools")
 JSON_GUARD_VERSION = "json-guard-v1"
 JSON_GUARD = """\n\nOUTPUT TRANSPORT json-guard-v1:
 Return exactly one JSON object satisfying the output contract above.
@@ -40,9 +42,9 @@ def agent_class(name):
 
         return MainCreatorAgent
     if name == "edit_copilot":
-        from app.agents.edit_copilot import EditCopilotAgent
+        from app.agents.edit_copilot import ChatEditCopilotAgent
 
-        return EditCopilotAgent
+        return ChatEditCopilotAgent
     raise ValueError("unsupported agent")
 
 
@@ -55,6 +57,7 @@ def schema_audit(schema: dict, model: str) -> dict:
     blockers instead of dropping fields or silently switching output modes.
     """
     blockers, unions, optional = [], 0, 0
+    provider = provider_of(model)
 
     def walk(node, path="$"):
         nonlocal unions, optional
@@ -68,17 +71,17 @@ def schema_audit(schema: dict, model: str) -> dict:
                     blockers.append(f"{path}:open_object")
                 missing = set(props) - set(node.get("required", []))
                 optional += len(missing)
-                if model == "gpt-6.1-sol" and missing:
+                if provider == "openai" and missing:
                     blockers.append(f"{path}:optional_properties:{len(missing)}")
             if "anyOf" in node or "oneOf" in node:
                 unions += 1
-            if model == "gpt-6.1-sol" and "oneOf" in node:
+            if provider == "openai" and "oneOf" in node:
                 blockers.append(f"{path}:oneOf_requires_explicit_projection")
             for key, value in node.items():
                 walk(value, f"{path}/{key}")
 
     walk(schema)
-    if model == "claude-sonnet-5-5":
+    if provider == "anthropic":
         definitions = schema.get("$defs", {})
 
         def references(node):
@@ -122,22 +125,21 @@ def schema_audit(schema: dict, model: str) -> dict:
 
 
 def build_agent(name, arm: Arm, client):
-    if arm.model not in MODELS or arm.output_mode not in ("json", "native", "json_guarded"):
+    if arm.model not in MODELS or arm.output_mode not in OUTPUT_MODES:
         raise ValueError("unsupported model or output mode")
-    if arm.output_mode == "native" and arm.model == "claude-sonnet-5-5":
+    if arm.output_mode == "tools" and name != "edit_copilot":
+        raise ValueError("only the edit copilot answers with tool calls")
+    if arm.output_mode == "native" and provider_of(arm.model) == "anthropic":
         raise ValueError(
             "Sonnet rejected the full Main Creator/Copilot compiled grammar; "
             "select an explicit JSON profile until a capability-scoped schema is verified"
         )
-    from app.agents._text_providers import TEXT_EFFORTS
-
-    efforts = (
-        ("low", "medium", "high") if arm.model.startswith("gemini") else TEXT_EFFORTS[arm.model]
-    )
-    if arm.effort not in efforts:
+    if arm.effort not in model_spec(arm.model).efforts:
         raise ValueError("unsupported effort")
     agent = agent_class(name)(client)
     schema = None
+    if arm.output_mode == "tools":
+        agent = tools_agent(agent)
     if arm.output_mode == "json_guarded":
         base = type(agent)
 
@@ -190,7 +192,7 @@ def build_agent(name, arm: Arm, client):
 
         agent = NativeAgent(client)
         agent.spec = replace(agent.spec, prompt_version=agent.spec.prompt_version + "+" + VERSION)
-        if arm.model.startswith("claude"):
+        if provider_of(arm.model) == "anthropic":
             agent.spec = replace(
                 agent.spec,
                 prompt_version=agent.spec.prompt_version + "+" + ANTHROPIC_PROJECTION_VERSION,
@@ -212,6 +214,19 @@ def build_agent(name, arm: Arm, client):
     return agent
 
 
+def tools_agent(agent):
+    """The edit copilot on typed tool calls (KRI-1393), keeping the agent's model, attempts,
+    deadlines and fallback chain. Every model in that chain must take tool calls."""
+    from app.agents.copilot_tools import TOOLS_VERSION, ToolsEditCopilotAgent
+
+    models = (agent.spec.model, *agent.spec.fallback_models)
+    if not all((spec := model_spec(model)) is not None and spec.supports_tools for model in models):
+        raise ValueError("every copilot model must take tool calls in tools mode")
+    tools = ToolsEditCopilotAgent(agent.client)
+    tools.spec = replace(agent.spec, prompt_version=agent.spec.prompt_version + "+" + TOOLS_VERSION)
+    return tools
+
+
 def configure_creator_agent(agent, name):
     """Server-only opt-in. JSON defaults return the existing instance unchanged."""
     from app.config import settings
@@ -219,6 +234,9 @@ def configure_creator_agent(agent, name):
     mode = getattr(settings, name + "_output_mode")
     if mode == "json":
         return agent
+    if mode == "tools" and name == "edit_copilot":
+        # Production semantics: the configured attempts, deadlines and fallback chain stay.
+        return tools_agent(agent)
     return build_agent(
         name,
         Arm(
@@ -238,6 +256,7 @@ def runtime_digest():
         "agents/_model_client.py",
         "agents/_text_providers.py",
         "agents/_creator_wire.py",
+        "agents/model_registry.py",
         "agents/main_creator.py",
         "agents/edit_copilot.py",
         "services/ai_cost_control.py",
@@ -265,6 +284,7 @@ def prepare_case(case, arm, *, allow_holdout=False):
     agent = build_agent(case["agent"], arm, None)
     validated = agent.Input.model_validate(case["input"])
     prompt = agent.render_prompt(validated)
+    tool_request = agent.tool_request(validated)
     from app.services.ai_cost_control import PRICE_VERSION, estimate_call_cost_usd
 
     models = (agent.spec.model, *agent.spec.fallback_models)
@@ -272,7 +292,8 @@ def prepare_case(case, arm, *, allow_holdout=False):
         estimate_call_cost_usd(
             model=model,
             prompt=prompt
-            + (json.dumps(agent.spec.response_schema) if agent.spec.response_schema else ""),
+            + (json.dumps(agent.spec.response_schema) if agent.spec.response_schema else "")
+            + (tool_request.accounting_text() if tool_request is not None else ""),
             max_output_tokens=agent.max_output_tokens,
             media_mime=None,
         )
@@ -304,8 +325,8 @@ def prepare_case(case, arm, *, allow_holdout=False):
             if arm.model.startswith("gemini")
             else "json_object"
         )
-        if arm.output_mode != "native"
-        else "native",
+        if arm.output_mode not in ("native", "tools")
+        else arm.output_mode,
         "max_attempts": agent.spec.max_attempts,
         "fallback_models": list(agent.spec.fallback_models),
         "estimated_max_usd": round(estimate, 8),

@@ -25,6 +25,8 @@ from app.services.phone_editor import prepare_phone_editor_commit
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from tests.pipeline.test_phone_subtitled_plan import _CUES, _binding
 
+pytestmark = pytest.mark.journey("kri-589-drawing")
+
 FIXTURE = json.loads(
     (
         Path(__file__).resolve().parents[5]

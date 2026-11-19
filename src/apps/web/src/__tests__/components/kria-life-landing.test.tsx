@@ -102,7 +102,7 @@ describe("KriaLifeLanding", () => {
     expect(getProductDemoStep(9.8)).toBe(3);
   });
 
-  it("renders only the generated reel and primary CTA for launch", () => {
+  it("renders only the generated reel, with no link into the removed web editor", () => {
     const { container } = render(<KriaLifeLanding />);
 
     expect(
@@ -111,11 +111,9 @@ describe("KriaLifeLanding", () => {
         name: /kria turns the moments in your camera roll/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Create a video" })).toHaveAttribute(
-      "href",
-      "/plan",
-    );
-    expect(screen.getAllByRole("link", { name: "Create a video" })).toHaveLength(1);
+    // The web editor is gone (KRI-1398): nothing on the landing links into it.
+    expect(screen.queryByRole("link", { name: "Create a video" })).not.toBeInTheDocument();
+    expect(container.querySelector('a[href^="/plan"]')).toBeNull();
     expect(screen.queryByText(/film your life/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /see how it works/i })).not.toBeInTheDocument();
     expect(

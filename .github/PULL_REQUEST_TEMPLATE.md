@@ -10,7 +10,8 @@
 - [ ] .env.example updated if new env vars were added
 - [ ] VIDEO_CONTEXT.md consulted for any video processing changes
 - [ ] Applied release labels when needed: `release:major` or `release:minor`, plus one changelog category (`release:added`, `release:fixed`, `release:changed`, `release:deprecated`, `release:removed`, or `release:security`). No label means a patch-level `Changed` entry.
-- [ ] If a Kria creation or edit journey is affected, the author linked the PR CI journey artifact for this HEAD (offline replay plus the iPhone unit leg), named the request and expected output, and recorded model/prompt, cost, and any gaps. PR CI no longer renders fixture journeys on the iPhone simulator: when this PR needs native render evidence, run CI manually on this branch (Actions → CI → Run workflow) and link that run; otherwise the nightly CI run is the first native render. See `docs/reviews/kri-559-journey-verification.md`.
+- [ ] Creation-bug fix: the PR body names the production job id of a real replay (`make kria-replay-job JOB=<id>`: same footage and request, production flag snapshot, real models), the Main Creator model it ran on (`main_creator` in the output), and how many replays ran with what each produced, as a count such as "3 of 4 `device_plan_ready`" (video path, device plan, or the failure reason that remains, only when the output says `reproduction: reproduced`). One success is a sample, not proof that the failure is gone. Name which message's render it is when the output has `stopped_early`, and any `model_differences` (the replay planned on another model than production did for that job). A stubbed or fixture replay does not count, and neither does an outcome of `diverged_from_production` (the replay left production's route) or `stalled`, or a failure whose `reproduction` is `failure_reason_matched_route_differs` or `reproduction_unproven` (same reason, but `reproduction_gaps` names an agent production did not run or fail, or a cause other than the exact planning error or error detail production recorded); write "n/a: <why>" if no production job exists. See `docs/runbooks/replay-from-job-id.md`.
+- [ ] If a Kria creation or edit journey is affected, the author linked the PR CI journey artifact for this HEAD (offline replay, plus the iPhone unit leg when the PR changes an iPhone input), named the request and expected output, and recorded model/prompt, cost, and any gaps. PR CI no longer renders fixture journeys on the iPhone simulator: when this PR needs native render evidence, run CI manually on this branch (Actions → CI → Run workflow) and link that run; otherwise the nightly CI run is the first native render. See `docs/reviews/kri-559-journey-verification.md`.
 - [ ] Reviewer checked the journey case matches this change, required stages passed on this HEAD, native render evidence comes from a manual CI run on this HEAD when the change needs it, and any live-model result is labelled separately from offline replay.
 - [ ] For prompt, model, or provider changes, link the applicable free replay checks. Any separately approved live evaluation names its exact revision and settled cost; paid calls are not required by this checklist.
 
@@ -29,6 +30,8 @@
      not_applicable checks need a concrete reason. A local_fix claim keeps broader gaps open.
      Passed checks need commands and immutable artifact references. Use safe repo-relative
      paths at this HEAD, or pinned GitHub blob/action artifact/run-attempt URLs.
+     patch_id: python3 scripts/ci/pr-evidence.py --patch-id --base origin/main --head HEAD
+     (it survives rebases and body edits; any change to the diff needs a new one).
      Passed incident/content checks also name expectation_source: a separate immutable
      source/acceptance artifact, not prose claiming the result is correct.
      Run: bash scripts/preship-check.sh --pr-body .dev/pr-body.md
@@ -37,7 +40,7 @@
 ```request-evidence
 {
   "schema_version": 1,
-  "head_sha": "",
+  "patch_id": "",
   "claim": "local_fix",
   "issue": "",
   "original_request": "",

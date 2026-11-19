@@ -683,7 +683,11 @@ async def test_partial_apply_names_what_was_not_done(copilot_edit_context, monke
         outcome="proposed",
         reply=_EAST_RUN_MODEL_CLAIM,
         rejection_reasons=[
-            {"op": "set_edit_direction", "reason": "capability_unavailable", "detail": "x"}
+            {
+                "op": "set_edit_direction",
+                "reason": "capability_unavailable",
+                "detail": "I can't change that on this edit yet.",
+            }
         ],
         unmet_requests=[
             {
@@ -694,6 +698,11 @@ async def test_partial_apply_names_what_was_not_done(copilot_edit_context, monke
                 "request": "put clips in chronological order",
                 "reason": "I don't know when they were filmed",
             },
+            # KRI-1386: the parser names the op it dropped from a surviving bundle.
+            {
+                "request": "change the edit direction",
+                "reason": "I can't change that on this edit yet",
+            },
         ],
     )
     monkeypatch.setattr(actions, "run_copilot_turn", AsyncMock(return_value=response))
@@ -703,10 +712,8 @@ async def test_partial_apply_names_what_was_not_done(copilot_edit_context, monke
 
     reply, payload = _reply_and_payload()
     assert reply.startswith("Made the title bigger.")
-    assert (
-        "Not done: change the edit direction (that isn't something I can change in this edit yet)."
-        in reply
-    )
+    assert "Not done: change the edit direction (I can't change that on this edit yet)." in reply
+    assert reply.count("edit direction") == 1, "named once, not again from rejection_reasons"
     assert "Not done: label each clip with its place (I can't see where it was filmed)." in reply
     assert "Not done: put clips in chronological order" in reply
     assert "Everything else is unchanged" not in reply

@@ -33,6 +33,7 @@ from app.models import (
     Job,
     PlanItem,
 )
+from app.services.cleared_failures import record_cleared_turn_failure
 from app.services.creation_thread_titles import conversation_revision_matches
 from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.device_render import (
@@ -417,6 +418,7 @@ async def prepare_render_retry(
             db.add(renewal)
             await db.flush()
             existing.result = {**existing.result, "approval_id": str(renewal.id)}
+            record_cleared_turn_failure(rows[CreatorAgentTurn])
             existing.status = "awaiting_approval"
             existing.error = None
             existing.completed_at = None
@@ -532,6 +534,7 @@ async def prepare_render_retry(
     db.add(approval)
     await db.flush()
     execution.result = {**execution.result, "approval_id": str(approval.id)}
+    record_cleared_turn_failure(turn)
     turn.status = "awaiting_approval"
     turn.error = None
     turn.completed_at = None
@@ -694,6 +697,7 @@ def claim_render_retry(approval_id: uuid.UUID):  # noqa: ANN201
                 approval.status = "cancelled"
                 turn.status = "failed"
                 turn.error = execution.error
+                turn.completed_at = datetime.now(UTC)
                 from app.tasks.kria_runtime import _append_sync_event  # noqa: PLC0415
 
                 _append_sync_event(

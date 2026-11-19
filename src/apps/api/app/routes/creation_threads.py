@@ -53,10 +53,11 @@ from app.kria.api_schemas import (
     ThreadDeltaOut,
 )
 from app.kria.brief import CreativeBrief
-from app.kria.device_render import DeviceRenderCapabilities
+from app.kria.device_render import DeviceRenderCapabilities, WatermarkExemption
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.language import is_status_question
 from app.kria.media_sources import (
+    PROJECT_AUDIO_CONTENT_TYPES,
     PROXY_MEDIA_PREFIX,
     AnalysisProxyDescriptor,
     ClipCapture,
@@ -68,9 +69,8 @@ from app.kria.media_sources import (
 )
 from app.kria.plan_contract import CONTRACT_VERSION
 from app.kria.reply_language import (
-    creator_typed_language,
+    creator_stored_language,
     detect_chat_language,
-    needs_typed_history,
     remember_reply_language,
     reply_language_for,
     resolve_reply_language,
@@ -105,7 +105,6 @@ from app.models import (
     User,
 )
 from app.routes import creator_agent
-from app.routes.music_jobs import _SLOT_UPLOAD_AUDIO_CT
 from app.routes.plan_items import (
     _ALLOWED_CONTENT_TYPES,
     _IMAGE_CONTENT_TYPES,
@@ -239,7 +238,7 @@ _MEDIA_TYPES = frozenset(
         *_ALLOWED_CONTENT_TYPES,
         *_IMAGE_CONTENT_TYPES,
         "audio/x-m4a",
-        *_SLOT_UPLOAD_AUDIO_CT,
+        *PROJECT_AUDIO_CONTENT_TYPES,
     }
 )
 _MEDIA_EXTENSIONS = {
@@ -1051,7 +1050,7 @@ def _media_capabilities(
             "current": 1 if item.voiceover_gcs_path else 0,
             "max": 1,
             "max_file_bytes": _MAX_VOICEOVER_BYTES,
-            "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+            "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
         },
         # Only once a song is attached, so every existing consumer of this
         # projection is untouched for items without one.
@@ -1061,7 +1060,7 @@ def _media_capabilities(
                     "current": 1,
                     "max": 1,
                     "max_file_bytes": _MAX_VOICEOVER_BYTES,
-                    "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                    "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
                 }
             }
             if getattr(item, "song_gcs_path", None)
@@ -2251,7 +2250,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
-    from app.tasks.content_plan_build import job_failure_message
+    from app.tasks.content_plan_build import creator_failure_detail, job_failure_message
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
@@ -2273,9 +2272,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
         # A sentence, never the raw taxonomy code -- the failure card used to
         # print `failure_reason` itself verbatim (KRI-163). `failure_reason`
         # stays above for admin/debug consumers that still want the code.
-        "failure_message": job_failure_message(
-            job.failure_reason, getattr(job, "error_detail", None)
-        ),
+        "failure_message": job_failure_message(job.failure_reason, creator_failure_detail(job)),
         "variants": variants,
     }
 
@@ -2972,6 +2969,23 @@ async def _load_status_reconciliation_rows(
     return item, session, job
 
 
+# A job's live phase as the status line names it. Turkish never shows it (its line leaves the
+# phase out), so its half repeats the English.
+_PHASE_NAMES: dict[str, tuple[str, str]] = {
+    "queued": ("queued", "queued"),
+    "download_clips": ("download clips", "download clips"),
+    "analyze_clips": ("analyze clips", "analyze clips"),
+    "match_clips": ("match clips", "match clips"),
+    "match_song": ("match song", "match song"),
+    "assemble": ("assemble", "assemble"),
+    "mix_audio": ("mix audio", "mix audio"),
+    "generate_copy": ("generate copy", "generate copy"),
+    "render_variants": ("render variants", "render variants"),
+    "upload": ("upload", "upload"),
+    "finalize": ("finalize", "finalize"),
+}
+
+
 def _status_message(
     *, thread: CreationThread, session: CreatorAgentSession | None, job: Job | None
 ) -> str:
@@ -2981,7 +2995,12 @@ def _status_message(
             tr="Videon sırada. Takipteyim, başlayınca bu sohbete yazacağım.",
         )
     if job is not None and job.status not in PLAN_ITEM_JOB_TERMINAL:
-        phase = str(job.current_phase or "").replace("_", " ").strip()
+        raw_phase = str(job.current_phase or "")
+        if raw_phase in _PHASE_NAMES:
+            # German reads a known phase in German (KRI-1408).
+            phase = say(en=_PHASE_NAMES[raw_phase][0], tr=_PHASE_NAMES[raw_phase][1])
+        else:
+            phase = raw_phase.replace("_", " ").strip()
         # The phase is an English pipeline name, so the Turkish line leaves it out.
         if phase:
             return say(
@@ -4232,9 +4251,14 @@ async def capabilities(
         "idea_example_feedback": bool(settings.creator_editorial_taste_for(user.id)),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
+            watermark_exemption=(
+                WatermarkExemption.for_account(user.id)
+                if native_client and settings.phone_watermark_exempt_for(user.id)
+                else None
+            ),
             recipe_versions=[2] if phone_enabled else [],
             verified_features=(settings.phone_render_verified_features if phone_enabled else []),
-        ).model_dump(),
+        ).model_dump(exclude_none=True),
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),
@@ -4328,14 +4352,14 @@ async def capabilities(
             "voiceover": {
                 "max": 1,
                 "max_file_bytes": _MAX_VOICEOVER_BYTES,
-                "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
             },
             **(
                 {
                     "song": {
                         "max": 1,
                         "max_file_bytes": _MAX_VOICEOVER_BYTES,
-                        "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                        "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
                     }
                 }
                 if song_available
@@ -4466,16 +4490,15 @@ async def create_thread(
         content=body.message,
         client_event_id=body.client_event_id,
     )
-    # KRI-784: a clearly Turkish/English first message sets the chat's language, so
-    # a short follow-up ("ok") keeps it. The device language only picks this
+    # KRI-784: a clearly Turkish/English first message sets a runtime-v1 (web) chat's
+    # language, so a short follow-up ("ok") keeps it. A runtime-v2 chat sends no message here
+    # (422 above): its model decides on the first turn. The device language only picks this
     # prompt's copy and is never stored.
     remember_reply_language(thread, detect_chat_language(body.message))
-    # Green 5: a new chat greets in the language the creator types in their other chats when
+    # Green 5: a new chat greets in the stored language of the creator's latest other chat when
     # its first message (if any) does not say; the device language is the last resort.
-    typed_elsewhere = (
-        await creator_typed_language(db, creator_id=user.id, exclude_thread_id=thread.id)
-        if needs_typed_history(body.message, None)
-        else None
+    typed_elsewhere = await creator_stored_language(
+        db, creator_id=user.id, exclude_thread_id=thread.id
     )
     await _append(
         db,
@@ -6918,7 +6941,7 @@ async def _verify_registered_uploads(
             str(metadata.content_type or media.content_type or "").split(";", 1)[0].lower()
         )
         kind_allowed = (media.kind == "video" and content_type in _ALLOWED_CONTENT_TYPES) or (
-            media.kind == "audio" and content_type in _SLOT_UPLOAD_AUDIO_CT
+            media.kind == "audio" and content_type in PROJECT_AUDIO_CONTENT_TYPES
         )
         kind_limit = _MAX_BYTES_PER_FILE if media.kind == "video" else _MAX_VOICEOVER_BYTES
         if metadata.size <= 0 or metadata.size > kind_limit or not kind_allowed:

@@ -102,15 +102,27 @@ Q2_CAPTIONS = BriefRequirement(
 LIGHT_GREY = 0xE5 / 255
 LIME = {(0x84, 0xCC, 0x16), (0xC5, 0xF8, 0x2A)}
 
-# Where her face is DRAWN with the corner preset: a typical upright face box (0.33-0.67 x
-# 0.22-0.40 of the take) mapped through `small_bottom_right` (kit test_q2_caption_over_corner_face).
+# Where her face is DRAWN with the corner preset. KRI-1483: her real face (Q2 run 3, job 77c63496:
+# 0.207-0.845 x 0.211-0.618 of the take), not the kit's typical 0.33-0.67 x 0.22-0.40 box, which
+# is small enough to sit above a box at y 0.79 and so never caught the box on her face.
+Q2_TAKE_FACE = (0.2067, 0.2113, 0.8452, 0.6175)
 _F = SPEAKER_FRAME_PRESETS["small_bottom_right"]
 CORNER_FACE = (
-    _F["x_fraction"] + (0.33 - 0.5) * _F["width_fraction"],
-    _F["y_fraction"] + (0.22 - 0.5) * _F["width_fraction"],
-    _F["x_fraction"] + (0.67 - 0.5) * _F["width_fraction"],
-    _F["y_fraction"] + (0.40 - 0.5) * _F["width_fraction"],
+    _F["x_fraction"] + (Q2_TAKE_FACE[0] - 0.5) * _F["width_fraction"],
+    _F["y_fraction"] + (Q2_TAKE_FACE[1] - 0.5) * _F["width_fraction"],
+    _F["x_fraction"] + (Q2_TAKE_FACE[2] - 0.5) * _F["width_fraction"],
+    _F["y_fraction"] + (Q2_TAKE_FACE[3] - 0.5) * _F["width_fraction"],
 )
+_REAL_ENVIRONMENT = styling._ensure_generation_environment
+
+
+def _her_take_face(monkeypatch, face=Q2_TAKE_FACE):
+    """Her face reaches placement the way prod samples it: the real environment pass (the
+    harness stubs it out), with simulated I/O."""
+    from tests.tasks.test_caption_corner_face import _simulate_environment
+
+    monkeypatch.setattr(styling, "_ensure_generation_environment", _REAL_ENVIRONMENT)
+    _simulate_environment(monkeypatch, face)
 
 
 def _shape_job(
@@ -225,6 +237,7 @@ def test_q1_two_white_words_the_spoken_one_bright_the_other_dimmed(monkeypatch):
 
 def test_q2_black_words_in_a_light_grey_rounded_box_low_and_off_her_face(monkeypatch):
     job = _shape_job(monkeypatch, [R1, Q2_CAPTIONS, R4], request=Q2_PROMPT, corner=True)
+    _her_take_face(monkeypatch)
     variant = _run(job)
     layers = _caption_layers(job)
     assert len(layers) > 10
@@ -561,3 +574,93 @@ def test_box_text_always_reads_on_the_asked_box(monkeypatch, color, box, fill, o
         assert variant["caption_editor_style"]["stroke_color"] == outline
     # B3: the asked colour is on screen, so the review may call the look met.
     assert _receipt(asked, variant).status == "met"
+
+
+# --------------------------------------- KRI-1476: Q1 run 3 (job 3ef3cbe5), a face ask
+#
+# Run 3's brief filed "... in the top or bottom part of the screen, not over my face" (her
+# cards sentence) with ``keep_text_off: [face]``. A face ask keeps every text off her face, so
+# her two-word middle captions (y 0.62, on the chin of the sampler's face box) had to move --
+# but they fell to y 0.86: kit rule "captions sit at 0.5-0.75" FAIL, done-list "Partly: the
+# captions sit lower than you asked".
+#
+# F2  The face ask throws a middle block to the lower third although the spot just under her
+#     chin is clear.
+# F3  The face ask stops counting: a caption line left on her face.
+# F8  The done-list calls a block outside the middle row "in the middle", or a block still in
+#     the row "lower than you asked".
+# OFF The switch off renders run 3 exactly as it was.
+
+# r4 exactly as filed on 2026-11-14 (the Visuals facts are the brief model's own).
+Q1_CARDS_OFF_FACE = BriefRequirement(
+    id="q1cards",
+    kind="style",
+    scope="global",
+    description=(
+        "When I talk about something, show the matching screenshot or screen recording in the "
+        "top or bottom part of the screen, not over my face."
+    ),
+    facts={
+        "keep_text_off": [{"kind": "face"}],
+        "visual_position": "top_or_bottom",
+        "keep_visuals_off_face": True,
+        "match_visuals_to_speech": True,
+    },
+)
+Q1_NO_TEXT_ON_FACE = BriefRequirement(
+    id="q1face",
+    kind="style",
+    scope="global",
+    description="No text on my face",
+    facts={"keep_text_off": [{"kind": "face"}]},
+)
+# opening_title_placement.face_boxes of the job, united: her chin at 0.6175 of the height.
+Q1_FACE = (0.2067, 0.2113, 0.8452, 0.6175)
+
+
+def _q1_face_job(monkeypatch, face_ask):
+    from app.pipeline import phone_subtitled_title as title_mod
+    from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
+
+    job = _shape_job(monkeypatch, [Q1_CAPTIONS, face_ask], request=Q1_PROMPT, corner=False)
+    box = NormalizedBox(*Q1_FACE)
+
+    def faces(_path, anchors, **_kw):
+        return [ProtectedRegion(a, a, box, "face") for a in anchors], {"decoded": len(anchors)}
+
+    monkeypatch.setattr(title_mod, "sample_face_regions", faces)
+    return job
+
+
+@pytest.mark.parametrize(
+    "face_ask", [Q1_CARDS_OFF_FACE, Q1_NO_TEXT_ON_FACE], ids=["as_filed", "face_only"]
+)
+def test_q1_a_face_ask_steps_her_captions_just_under_her_chin(monkeypatch, face_ask):
+    job = _q1_face_job(monkeypatch, face_ask)
+    variant = _run(job)
+
+    look = variant["caption_look_receipt"]
+    assert 0.62 < look["position_y_frac"] <= 0.68, look
+    assert look["over_face"] is False
+    protected = variant["protected_text_regions"]
+    assert protected["targets"][0]["requirement_ids"] == [face_ask.id]
+    assert protected["texts"]["captions"] == "clear"
+    assert protected["face_texts"]["captions"] == "clear"
+    # No caption line reaches up to her chin: the ink starts under the face box.
+    centres = [layer.anchor_y / CANVAS_H for layer in _caption_layers(job)]
+    assert centres and all(0.62 < y <= 0.70 for y in centres), sorted(set(centres))
+    # Still the row she asked for, off her face: "Done" for the captions.
+    assert _receipt(Q1_CAPTIONS, variant).status == "met"
+
+
+def test_q1_switch_off_the_face_ask_renders_run_3_as_it_was(monkeypatch):
+    monkeypatch.setattr(settings, "keep_text_off_caption_spot_enabled", False)
+    job = _q1_face_job(monkeypatch, Q1_CARDS_OFF_FACE)
+    variant = _run(job)
+
+    assert variant["caption_look_receipt"]["position_y_frac"] == 0.86
+    assert variant["caption_margin_v"] == 269
+    assert "caption_face_band_placement" not in variant
+    assert variant["protected_text_regions"]["targets"][0]["requirement_ids"] == ["q1cards"]
+    receipt = _receipt(Q1_CAPTIONS, variant)
+    assert receipt.status == "partial" and "lower than you asked" in receipt.reason

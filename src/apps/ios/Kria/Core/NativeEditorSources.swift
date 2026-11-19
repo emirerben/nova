@@ -136,7 +136,7 @@ struct NativeEditorBaseSource: Sendable {
     }
 
     func hydrate(_ document: EditorDocument, duration: Double) throws -> EditorDocument {
-        guard duration.isFinite, duration > 0, document.revision.baseGeneration == generation else { throw APIError.conflict }
+        guard duration.isFinite, duration > 0, document.revision.baseGeneration == generation else { throw APIError.baselineConflict }
         guard document.editorState != "empty" else { return document }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
         var result = document
@@ -203,11 +203,11 @@ enum NativePhoneTalkingSource {
     /// build has never heard of still gets an honest line.
     static func rangeClosedCopy(reason: String?) -> String {
         switch reason {
-        case "talking_range_multi_clip": "Range works on single-clip talking videos for now."
-        case "talking_range_word_cuts": "Range isn’t available after removing words from this video yet."
-        case "talking_range_processed_audio": "Range isn’t available after cleaning up this video’s sound yet."
-        case "talking_range_cut_mismatch": "This video’s cut changed. Make the video again to choose a range."
-        default: "Range isn’t available for this video yet."
+        case "talking_range_multi_clip": String(localized: "Range works on single-clip talking videos for now.")
+        case "talking_range_word_cuts": String(localized: "Range isn’t available after removing words from this video yet.")
+        case "talking_range_processed_audio": String(localized: "Range isn’t available after cleaning up this video’s sound yet.")
+        case "talking_range_cut_mismatch": String(localized: "This video’s cut changed. Make the video again to choose a range.")
+        default: String(localized: "Range isn’t available for this video yet.")
         }
     }
 
@@ -835,7 +835,7 @@ actor NativeEditorSourceResolver {
     }
 
     func resolve(_ pool: NativeEditorSourcePool, generation: String, requiredIndices: Set<Int>? = nil) async throws -> [Int: ResolvedEditorSource] {
-        guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.conflict }
+        guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.baselineConflict }
         guard Set(pool.clips.map(\.clipIndex)).count == pool.clips.count else { throw APIError.invalidResponse }
         var result: [Int: ResolvedEditorSource] = [:]
         let required = requiredIndices ?? Set(pool.clips.map(\.clipIndex))

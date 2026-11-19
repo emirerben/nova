@@ -9,11 +9,16 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents.editor_ops_v2 import OpSpec
+from app.kria.reply_language import say
 from app.kria.split_screen import (
+    BLANK_KIND,
     SplitScreenSection,
+    is_blank_row,
     layout_split_timeline,
     sync_collapsed_section_durations,
 )
+from app.schemas.editor_window import below_editor_minimum, snap_to_editor_minimum
+from app.services.editor_limits import EDITOR_MIN_CLIP_S
 
 
 class SectionCommand(BaseModel):
@@ -26,7 +31,7 @@ class CreateSection(SectionCommand):
     start_s: float | None = Field(default=None, ge=0, le=1800)
     end_s: float | None = Field(default=None, gt=0, le=1800)
     full_length: bool = False
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     panel_weights: list[float] | None = None
     gutter: float = Field(default=0, ge=0, le=0.1)
     background_color: str = Field(default="#000000", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -35,7 +40,7 @@ class CreateSection(SectionCommand):
 
 class UpdateSection(SectionCommand):
     section_id: str
-    duration_s: float | None = Field(default=None, ge=0.1, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
     panel_count: Literal[2, 3] | None = None
     panel_weights: list[float] | None = None
     gutter: float | None = Field(default=None, ge=0, le=0.1)
@@ -49,6 +54,32 @@ class AssignPanel(SectionCommand):
     panel_index: int = Field(ge=0, le=2, strict=True)
     offset_s: float = Field(default=0, ge=0, le=1800)
     duplicate: bool = False
+
+
+class AddPanelClip(SectionCommand):
+    section_id: str
+    panel_index: int = Field(ge=0, le=2, strict=True)
+    clip_index: int = Field(ge=0, strict=True)
+    offset_s: float | None = Field(default=None, ge=0, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
+    grow_section: bool = True
+
+
+_HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
+
+
+class AddBlank(SectionCommand):
+    section_id: str
+    panel_index: int = Field(ge=0, le=2, strict=True)
+    offset_s: float | None = Field(default=None, ge=0, le=1800)
+    duration_s: float | None = Field(default=None, ge=EDITOR_MIN_CLIP_S, le=1800)
+    color: str | None = Field(default=None, pattern=_HEX_COLOR)
+    grow_section: bool = True
+
+
+class SetBlankColor(SectionCommand):
+    slot_index: int = Field(ge=0, strict=True)
+    color: str = Field(pattern=_HEX_COLOR)
 
 
 class SwapPanels(SectionCommand):
@@ -92,10 +123,41 @@ _MODELS = {
     "create_split_screen": CreateSection,
     "update_split_screen": UpdateSection,
     "assign_split_panel": AssignPanel,
+    "add_split_panel_clip": AddPanelClip,
+    "add_split_blank": AddBlank,
+    "set_split_blank_color": SetBlankColor,
     "swap_split_panels": SwapPanels,
     "remove_split_screen": RemoveSection,
 }
+_BLANK_OPS = frozenset({"add_split_blank", "set_split_blank_color"})
 _MEMBERSHIP = ("split_section_id", "split_panel_index", "split_offset_s")
+
+
+def blank_refusal_code() -> str:
+    """The code Save answers with for this build: its 426 below protocol 51, else its 422."""
+    from app.services.client_protocol import SPLIT_BLANK_PANEL_PROTOCOL, current_client_protocol
+
+    protocol = current_client_protocol()
+    if protocol is None or protocol < SPLIT_BLANK_PANEL_PROTOCOL:
+        return "client_update_required"
+    return "split_blank_panel_unavailable"
+
+
+def _refuse_blank(name: str, state: Any) -> None:
+    code = blank_refusal_code()
+    state.reject(op=name, reason="capability_unavailable", detail=code)
+    if code == "client_update_required":
+        note = say(
+            en="A blank block in a split screen needs the latest Kria update.",
+            tr="Bölünmüş ekranda boş blok için Kria'nın son sürümü gerekiyor.",
+        )
+    else:
+        note = say(
+            en="A blank block in a split screen is not available on this edit yet.",
+            tr="Bölünmüş ekranda boş blok bu düzenlemede henüz kullanılamıyor.",
+        )
+    if note not in state.reply_notes:
+        state.reply_notes.append(note)
 
 
 def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
@@ -108,12 +170,19 @@ def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None
             detail="Split screen is unavailable for this edit",
         )
         return None
+    if name in _BLANK_OPS and snapshot.get("split_blank_available") is not True:
+        _refuse_blank(name, state)
+        return None
     try:
         clean = _MODELS[name].model_validate(payload).model_dump(exclude_none=True)
         if isinstance(payload.get("panel_count"), bool):
             raise ValueError("invalid panel count")
         slots = snapshot.get("slots") or []
-        if name == "create_split_screen":
+        if name == "set_split_blank_color":
+            target = slots[clean["slot_index"]]
+            if target.get("media_kind") != BLANK_KIND or target.get("removed"):
+                raise ValueError("Choose a blank block to recolour")
+        elif name == "create_split_screen":
             indexes = clean["slot_indexes"]
             if any(
                 isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(slots)
@@ -138,6 +207,11 @@ def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None
                     raise ValueError("panel outside section")
             if name == "assign_split_panel" and clean["slot_index"] >= len(slots):
                 raise ValueError("invalid slot index")
+            if name == "add_split_panel_clip" and not any(
+                r.get("clip_index") == clean["clip_index"] and r.get("ready")
+                for r in snapshot.get("replacement_source_pool", [])
+            ):
+                raise ValueError("Source is not approved")
         if "panel_weights" in clean and (
             len(clean["panel_weights"]) not in (2, 3) or any(w <= 0 for w in clean["panel_weights"])
         ):
@@ -186,7 +260,18 @@ SPECS = [
 def validate_state(state: Any) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError
 
-    live_sections = {r.get("split_section_id") for r in state.slots if not r.get("removed")}
+    # A section lives while a clip with footage does: blanks alone have nothing to play, so they
+    # go with it, as on the phone.
+    live_sections = {
+        r.get("split_section_id")
+        for r in state.slots
+        if not r.get("removed") and not is_blank_row(r)
+    }
+    for row in state.slots:
+        if is_blank_row(row):
+            row["in_s"] = 0.0  # a blank has no source window to move
+            if row.get("split_section_id") not in live_sections:
+                row["removed"] = True
     state.split_screen_sections[:] = [
         s for s in state.split_screen_sections if s["id"] in live_sections
     ]
@@ -198,8 +283,11 @@ def validate_state(state: Any) -> None:
 
 
 def _bound_duration(row: dict, room: float, editor: Any) -> None:
-    if room < 0.1:
-        raise ValueError("The section leaves less than 0.1 seconds for this clip")
+    if below_editor_minimum(room):
+        raise ValueError(
+            f"The section leaves less than {EDITOR_MIN_CLIP_S:g} seconds for this clip"
+        )
+    room = snap_to_editor_minimum(room)
     duration = editor._slot_duration(row)
     if duration <= room + 1e-6:
         return
@@ -227,7 +315,11 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
             state.job, state.variant
         ):
             raise ValueError("Collapsing panels is unavailable for this edit")
-        if name == "create_split_screen":
+        if name in _BLANK_OPS and not editor.split_blank_available(state.job, state.variant):
+            raise ValueError(blank_refusal_code())
+        if name == "set_split_blank_color":
+            _recolor_blank(state, command)
+        elif name == "create_split_screen":
             indexes = [editor._snapshot_slot_index(state, i) for i in command["slot_indexes"]]
             if len(set(indexes)) != len(indexes) or sorted(indexes) != list(
                 range(min(indexes), max(indexes) + 1)
@@ -245,7 +337,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                 source = editor.copy_source_occurrence(rows[0])
                 span = editor._slot_duration(source)
                 start, end = command.get("start_s", 0), command.get("end_s", span)
-                if end > span or end - start < 0.1:
+                if end > span or below_editor_minimum(end - start):
                     raise ValueError("The split section must fit inside the selected clip")
                 from app.kria.clip_source_clock import slice_source_window
 
@@ -311,6 +403,7 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                     row["split_panel_index"] < revised["panel_count"]
                     and row["split_offset_s"] < revised["duration_s"]
                     for row in members
+                    if not is_blank_row(row)
                 ):
                     raise ValueError(
                         "This edit leaves only an empty section background with no media occurrence"
@@ -325,7 +418,11 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                         _bound_duration(row, revised["duration_s"] - row["split_offset_s"], editor)
                 if revised["panel_count"] > section["panel_count"]:
                     for source in members:
-                        if source["split_panel_index"] == 0 and not source.get("removed"):
+                        if (
+                            source["split_panel_index"] == 0
+                            and not source.get("removed")
+                            and not is_blank_row(source)
+                        ):
                             row = editor.copy_source_occurrence(source)
                             row["slot_id"] = str(uuid4())
                             row["split_panel_index"] = 2
@@ -360,6 +457,10 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                     if r.get("split_section_id") == section["id"]
                 ]
                 state.slots.insert(max(remaining) + 1 if remaining else index, row)
+            elif name == "add_split_panel_clip":
+                _add_panel_clip(state, section, members, command)
+            elif name == "add_split_blank":
+                _add_blank(state, section, members, command)
             elif name == "swap_split_panels":
                 a, b = command["first_panel"], command["second_panel"]
                 if max(a, b) >= section["panel_count"]:
@@ -368,8 +469,13 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
                     panel = row["split_panel_index"]
                     row["split_panel_index"] = b if panel == a else a if panel == b else panel
             else:
+                # A blank only exists inside a split, so it never becomes a full-screen clip.
                 kept = sorted(
-                    [r for r in members if r["split_panel_index"] == command["keep_panel"]],
+                    [
+                        r
+                        for r in members
+                        if r["split_panel_index"] == command["keep_panel"] and not is_blank_row(r)
+                    ],
                     key=lambda r: r["split_offset_s"],
                 )
                 if not kept:
@@ -387,6 +493,149 @@ def _apply(state: Any, op: dict[str, Any]) -> None:
     except (ValueError, TypeError) as exc:
         raise editor.KriaEditorOpError(str(exc)) from exc
     state.changed.add("timeline")
+
+
+# A photo added to a panel plays this long, as on the phone (`addedClipDurationS`).
+_ADDED_PHOTO_S = 3.0
+
+
+def _add_panel_clip(state: Any, section: dict, members: list[dict], command: dict) -> None:
+    """Put an approved source into a panel like the phone's `insertSplitPanelSource`.
+
+    It starts after the panel's last clip unless `offset_s` says where. The phone refuses a full
+    panel because its person can lengthen the section by hand. Chat has no such step, so the
+    section grows to hold the whole clip, unless `grow_section` is false and the clip is cut to
+    the room that is left.
+    """
+    from app.services import kria_editor_ops as editor
+
+    source = next(
+        (
+            r
+            for r in editor.replacement_source_pool(state.job, state.variant)
+            if r["clip_index"] == command["clip_index"] and r.get("ready")
+        ),
+        None,
+    )
+    if source is None:
+        raise ValueError("Source is not approved")
+    panel = command["panel_index"]
+    if panel >= section["panel_count"]:
+        raise ValueError("The panel does not exist")
+    photo = source["kind"] == "image"
+    native = _ADDED_PHOTO_S if photo else source.get("duration_s")
+    if native is None or below_editor_minimum(native):
+        raise ValueError("The selected video needs an approved measured duration")
+    length = command.get("duration_s", native)
+    if not photo:
+        length = min(length, native)
+    peers = [r for r in members if r["split_panel_index"] == panel]
+    offset = command.get("offset_s")
+    if offset is None:
+        offset = max((r["split_offset_s"] + editor._slot_duration(r) for r in peers), default=0.0)
+    if any(
+        offset < r["split_offset_s"] + editor._slot_duration(r) - 1e-6
+        and offset + length > r["split_offset_s"] + 1e-6
+        for r in peers
+    ):
+        raise ValueError("This panel already has a clip at that time. Choose a later offset_s.")
+    if command["grow_section"]:
+        section["duration_s"] = max(section["duration_s"], offset + length)
+    else:
+        length = min(length, section["duration_s"] - offset)
+        if below_editor_minimum(length):
+            raise ValueError("This panel is full. Shorten a clip in it to make room.")
+        length = snap_to_editor_minimum(length)
+    row = {
+        "slot_id": str(uuid4()),
+        "clip_index": command["clip_index"],
+        "media_id": source["media_id"],
+        "media_kind": source["kind"],
+        "in_s": 0.0,
+        "duration_s": length,
+        "duration_beats": None,
+        "removed": False,
+        "transition_after": "cut",
+        "look_preset": "none",
+        "source_start_locked": True,
+        "split_section_id": section["id"],
+        "split_panel_index": panel,
+        "split_offset_s": offset,
+    }
+    if not photo:
+        row["source_duration_s"] = native
+    last = max(i for i, r in enumerate(state.slots) if r.get("split_section_id") == section["id"])
+    state.slots.insert(last + 1, row)
+
+
+def _add_blank(state: Any, section: dict, members: list[dict], command: dict) -> None:
+    """Put a flat-colour block in a panel like the phone's `fillSplitPanelWithBlank`.
+
+    The block starts after the panel's last member (a clip or another blank) unless `offset_s`
+    says where, and with no `duration_s` it fills the free time up to the next member or the end
+    of the section, as the phone's block does. The phone refuses a full panel. Chat follows
+    `add_split_panel_clip`: a given `duration_s` grows the section to hold the block, unless
+    `grow_section` is false and the block is cut to the room left. A full panel with no
+    `duration_s` has no length to give the block, so it is refused. The colour defaults to the
+    section's background.
+    """
+    from app.services import kria_editor_ops as editor
+
+    panel = command["panel_index"]
+    if panel >= section["panel_count"]:
+        raise ValueError("The panel does not exist")
+    peers = [r for r in members if r["split_panel_index"] == panel]
+    offset = command.get("offset_s")
+    if offset is None:
+        offset = max((r["split_offset_s"] + editor._slot_duration(r) for r in peers), default=0.0)
+    length = command.get("duration_s")
+    if length is None:
+        room = min(
+            [r["split_offset_s"] for r in peers if r["split_offset_s"] > offset + 1e-6]
+            + [section["duration_s"]]
+        )
+        length = room - offset
+        if below_editor_minimum(length):
+            raise ValueError(
+                "This panel is full. Give duration_s to lengthen the section, "
+                "or shorten a clip in it to make room."
+            )
+    if any(
+        offset < r["split_offset_s"] + editor._slot_duration(r) - 1e-6
+        and offset + length > r["split_offset_s"] + 1e-6
+        for r in peers
+    ):
+        raise ValueError("This panel already has a clip at that time. Choose a later offset_s.")
+    if command["grow_section"]:
+        section["duration_s"] = max(section["duration_s"], offset + length)
+    else:
+        length = min(length, section["duration_s"] - offset)
+        if below_editor_minimum(length):
+            raise ValueError("This panel is full. Shorten a clip in it to make room.")
+    row = {
+        "slot_id": str(uuid4()),
+        "media_kind": BLANK_KIND,
+        "color": (command.get("color") or section.get("background_color") or "#000000").upper(),
+        "in_s": 0.0,
+        "duration_s": length,
+        "duration_beats": None,
+        "removed": False,
+        "transition_after": "cut",
+        "split_section_id": section["id"],
+        "split_panel_index": panel,
+        "split_offset_s": offset,
+    }
+    last = max(i for i, r in enumerate(state.slots) if r.get("split_section_id") == section["id"])
+    state.slots.insert(last + 1, row)
+
+
+def _recolor_blank(state: Any, command: dict) -> None:
+    from app.services import kria_editor_ops as editor
+
+    row = state.slots[editor._snapshot_slot_index(state, command["slot_index"])]
+    if not is_blank_row(row) or row.get("removed"):
+        raise ValueError("Choose a blank block to recolour")
+    row["color"] = command["color"].upper()
 
 
 def live_timeline_units(rows: list[dict]) -> list[list[dict]]:
@@ -454,7 +703,7 @@ def _apply_occurrence(state: Any, op: dict) -> None:
             if photo and speaker:
                 raise ValueError("Use default framing before replacing this speaker with a photo")
             duration = source.get("duration_s")
-            if not photo and (duration is None or duration < 0.1):
+            if not photo and (duration is None or below_editor_minimum(duration)):
                 raise ValueError("The selected video needs an approved measured duration")
             for key in (
                 "asset_id",
@@ -712,28 +961,36 @@ def _keep_output_window(state: Any, start: float, end: float) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError
 
     starts, sections, total = layout_split_timeline(state.slots, state.split_screen_sections)
-    if start < 0 or end > total + 1e-6 or end - start < 0.1:
-        raise KriaEditorOpError("The output trim must leave at least 0.1 seconds")
+    if start < 0 or end > total + 1e-6 or below_editor_minimum(end - start):
+        raise KriaEditorOpError(
+            f"The output trim must leave at least {EDITOR_MIN_CLIP_S:g} seconds"
+        )
     windows = {s.id: (max(start, s.start), min(end, s.end)) for s in sections}
     for row, row_start in zip(
         (r for r in state.slots if not r.get("removed")), starts, strict=True
     ):
         row_end = row_start + float(row["duration_s"])
         left, right = max(start, row_start), min(end, row_end)
-        if right - left < 0.1 - 1e-6:
+        if below_editor_minimum(right - left):
             row["removed"] = True
             continue
         row.update(slice_source_window(row, left - row_start, right - row_start))
+        row["duration_s"] = snap_to_editor_minimum(float(row["duration_s"]))
         if row.get("split_section_id"):
             row["split_offset_s"] = left - windows[row["split_section_id"]][0]
     state.split_screen_sections[:] = [
-        s for s in state.split_screen_sections if windows[s["id"]][1] - windows[s["id"]][0] >= 0.1
+        s
+        for s in state.split_screen_sections
+        if not below_editor_minimum(windows[s["id"]][1] - windows[s["id"]][0])
     ]
     for section in state.split_screen_sections:
         low, high = windows[section["id"]]
-        section["duration_s"] = high - low
+        section["duration_s"] = snap_to_editor_minimum(high - low)
         if not any(
-            not r.get("removed") and r.get("split_section_id") == section["id"] for r in state.slots
+            not r.get("removed")
+            and not is_blank_row(r)
+            and r.get("split_section_id") == section["id"]
+            for r in state.slots
         ):
             raise KriaEditorOpError(
                 "This trim leaves only an empty section background with no media occurrence"
@@ -798,10 +1055,12 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
     if strategy == "trim_tail":
         desired = lengths[:]
         desired[-1] += target - total
-    if min(desired) < 0.1:
+    if below_editor_minimum(min(desired)):
         raise KriaEditorOpError(
-            "The requested length leaves a timeline unit shorter than 0.1 seconds"
+            "The requested length leaves a timeline unit shorter than "
+            f"{EDITOR_MIN_CLIP_S:g} seconds"
         )
+    desired = [snap_to_editor_minimum(value) for value in desired]
     for _ in range(6):
         for index, ((section, rows), (old_section, old_rows)) in enumerate(
             zip(units, original, strict=True)
@@ -813,10 +1072,12 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
                 for row, old in zip(rows, old_rows, strict=True):
                     offset = float(old["split_offset_s"]) * factor
                     wanted = min(float(old["duration_s"]) * factor, duration - offset)
-                    if wanted < 0.1 - 1e-6:
+                    if below_editor_minimum(wanted):
                         raise KriaEditorOpError(
-                            "The requested length leaves a panel clip shorter than 0.1 seconds"
+                            "The requested length leaves a panel clip shorter than "
+                            f"{EDITOR_MIN_CLIP_S:g} seconds"
                         )
+                    wanted = snap_to_editor_minimum(wanted)
                     row.update(resize_source_window(old, wanted))
                     row["split_offset_s"] = offset
             else:
@@ -831,8 +1092,9 @@ def retarget_output(state: Any, target: float, strategy: str) -> None:
             break
         index = adjustable[-1]
         desired[index] += target - reached
-        if desired[index] < 0.1:
+        if below_editor_minimum(desired[index]):
             break
+        desired[index] = snap_to_editor_minimum(desired[index])
     raise KriaEditorOpError("The requested duration cannot fit the available source footage")
 
 

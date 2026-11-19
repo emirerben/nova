@@ -61,7 +61,6 @@ from app.agents._schemas.edit_format import (
     render_program_for_intent,
 )
 from app.agents._schemas.reaction_beats import (
-    DEFAULT_BACKGROUND_CADENCE_S,
     MAX_INSERT_CLIPS,
     BackgroundSequenceEntry,
     normalise_background_color,
@@ -1946,12 +1945,10 @@ def _repair_creator_speaker_background(
         notices.append(SPEAKER_BACKGROUND_NOTICES["kind_off"])
         media = None
     entries: list[BackgroundSequenceEntry] = []
-    cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+    cadence_s: float | None = None
     frame = "full"
     asked_windows = wanted is not None and (
-        bool(wanted.sequence)
-        or wanted.speaker_frame != "full"
-        or wanted.cadence_s != DEFAULT_BACKGROUND_CADENCE_S
+        bool(wanted.sequence) or wanted.speaker_frame != "full" or wanted.cadence_s is not None
     )
     if asked_windows and wanted is not None:
         if not speaker_background_windows_open(manifest):
@@ -1978,7 +1975,7 @@ def _repair_creator_speaker_background(
             if lost:
                 notices.append(SPEAKER_BACKGROUND_NOTICES["sequence_not_found"])
             if not entries:
-                cadence_s = DEFAULT_BACKGROUND_CADENCE_S
+                cadence_s = None
     opening = False
     opening_s: float | None = None
     if wanted is not None and wanted.full_screen_opening:
@@ -2115,7 +2112,11 @@ def compile_strategy_to_plan(
                 edit_format=strategy.edit_format,
             )
         media_ids = {media.media_id for media in manifest.media}
-        if any(panel.media_id not in media_ids for panel in strategy.split_screen.panels):
+        if any(
+            clip.media_id not in media_ids
+            for panel in strategy.split_screen.panels
+            for clip in panel.sequence
+        ):
             raise CreatorStrategyError("A split panel source is not in the approved media")
 
     # KRI-118 item 2: repair a chat-picked story shape (day_vlog/single_hero)

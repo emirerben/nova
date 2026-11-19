@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any
 
 from app.kria.brief import BriefRequirement
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._lines import direction_line, pacing_line, stated_length
 from app.kria.route_capabilities._types import (
+    EDITORIAL_PLAN_NOT_RUN,
+    KNOWN_GAP,
     Applied,
     AskDecline,
     GivenAsks,
@@ -100,14 +103,14 @@ FIELD_HANDLING: dict[str, Handling] = {
     # The cuts follow the voiceover's alignment, never the planned story order.
     "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
-        lines.pacing_line(
+        pacing_line(
             lines.pace_not_followed,
             "the cuts follow your voiceover",
             "kesimler seslendirmeni izliyor",
         )
     ),
     "direction": NotApplied(
-        lines.direction_line(
+        direction_line(
             "fast_montage",
             "the video follows your voiceover",
             "video seslendirmeni izliyor",
@@ -116,9 +119,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "caption_style": NotApplied(lines.captions_always_on),
     # The steps tile the whole recorded voice, so the voice sets the length.
     "target_duration_s": NotApplied(
-        lines.stated_length(
-            "its length follows your voiceover", "uzunluğu seslendirmeni takip ediyor"
-        )
+        stated_length("its length follows your voiceover", "uzunluğu seslendirmeni takip ediyor")
     ),
     "title_animation": NotApplied(WithAsks(_title_animation)),
     "label_position": NotApplied(lines.label_position),
@@ -156,3 +157,20 @@ ASK_DECLINES: tuple[AskDecline, ...] = (
     AskDecline("text_animation", _declines("fade"), lines.title_entrance_fade_decline),
     AskDecline("text_animation", _declines("unanimated"), lines.animation_decline),
 )
+
+# Planner-settable fields this route's code never reads and its table does not mention: today a
+# value the planner sets here is dropped without a word (KRI-1429). Kept equal to the code scan by
+# `tests/kria/test_route_field_coverage.py`; delete an entry when the field is read or listed.
+UNREAD_DECLARED: dict[str, str] = {
+    "closing_title": KNOWN_GAP,
+    "editorial_plan": EDITORIAL_PLAN_NOT_RUN,
+    "execution_contract": KNOWN_GAP,
+    "image_layout": KNOWN_GAP,
+    "mixed_media_timing": KNOWN_GAP,
+    "montage_cadence": KNOWN_GAP,
+    "opening_title_duration_s": KNOWN_GAP,
+    "render_program": KNOWN_GAP,
+    "shot_labels": KNOWN_GAP,
+    "split_screen": KNOWN_GAP,
+    "video_reuse_policy": KNOWN_GAP,
+}

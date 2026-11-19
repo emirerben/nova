@@ -4,15 +4,15 @@ import SwiftUI
 extension CameraRollItemReason {
     var shortLabel: String {
         switch self {
-        case .providerError: "Couldn't analyze"
-        case .budgetPaused: "Paused for now"
-        case .unsupportedType: "Not supported"
-        case .tooLarge: "Too large"
-        case .tooLong: "Too long"
-        case .icloudUnavailable: "iCloud unavailable"
-        case .noUsableMoment: "No usable moment"
-        case .accessRevoked: "No access"
-        case .uploadFailed: "Upload failed"
+        case .providerError: String(localized: "Couldn't analyze")
+        case .budgetPaused: String(localized: "Paused for now")
+        case .unsupportedType: String(localized: "Not supported")
+        case .tooLarge: String(localized: "Too large")
+        case .tooLong: String(localized: "Too long")
+        case .icloudUnavailable: String(localized: "iCloud unavailable")
+        case .noUsableMoment: String(localized: "No usable moment")
+        case .accessRevoked: String(localized: "No access")
+        case .uploadFailed: String(localized: "Upload failed")
         }
     }
 }
@@ -197,7 +197,7 @@ struct CameraRollTileView: View {
         .padding(.horizontal, 6).frame(maxWidth: .infinity, maxHeight: .infinity).background(KriaColor.fill)
     }
 
-    private func statusPill(_ text: String, dot: Bool = false, spinner: Bool = false, butter: Bool = false) -> some View {
+    private func statusPill(_ text: LocalizedStringKey, dot: Bool = false, spinner: Bool = false, butter: Bool = false) -> some View {
         VStack { Spacer(); HStack {
             HStack(spacing: 5) {
                 if dot { Circle().fill(KriaColor.zinc).frame(width: 6, height: 6) }
@@ -238,18 +238,18 @@ struct CameraRollTileView: View {
     }
 
     private func accessibilityLabel(_ state: CameraRollItemState) -> String {
-        let kind = (entry.metadata?.kind ?? entry.savedAsset?.kind) == "image" ? "Photo" : "Video"
+        let kind = (entry.metadata?.kind ?? entry.savedAsset?.kind) == "image" ? String(localized: "Photo", comment: "Media kind") : String(localized: "Video", comment: "Media kind")
         let status: String
         switch state.phase {
-        case .picking, .queued: status = "waiting"
-        case .exporting: status = "preparing"
-        case .uploading: status = "uploading"
-        case .analyzing: status = "being looked at"
-        case .ready: status = "ready"
-        case .needsRetry: status = "didn't finish. \(state.message ?? "")"
-        case .failed, .excluded: status = "can't be used. \(state.message ?? "")"
+        case .picking, .queued: status = String(localized: "waiting", comment: "Tile state read by VoiceOver after the media kind")
+        case .exporting: status = String(localized: "preparing", comment: "Tile state read by VoiceOver after the media kind")
+        case .uploading: status = String(localized: "uploading", comment: "Tile state read by VoiceOver after the media kind")
+        case .analyzing: status = String(localized: "being looked at", comment: "Tile state read by VoiceOver after the media kind")
+        case .ready: status = String(localized: "ready", comment: "Tile state read by VoiceOver after the media kind")
+        case .needsRetry: status = String(localized: "didn't finish. \(state.message ?? "")")
+        case .failed, .excluded: status = String(localized: "can't be used. \(state.message ?? "")")
         }
-        return "\(kind), \(status)"
+        return String(localized: "\(kind), \(status)", comment: "VoiceOver label: media kind, then its state")
     }
 }
 

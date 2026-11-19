@@ -13,25 +13,28 @@ import json
 import math
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, Literal, NamedTuple, get_args
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.agents import editor_ops_v2 as _v2
-from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
+from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents._schemas.text_animation_phases import (
     TEXT_ANIMATION_VOCAB,
     edge_alias_pattern,
     phases_patch,
 )
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.agents._tool_calls import ToolExchange
 from app.agents.editor_ops_v2 import overlays as _v2_overlays
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
+from app.agents.model_registry import JSON_COPILOT_MODEL, cross_provider_fallback
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
@@ -39,8 +42,10 @@ from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import prompt_language_line, say
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
+from app.schemas.editor_window import below_editor_minimum
 from app.services.editor_limits import (
     EDITOR_MAX_TIMELINE_SLOTS,
+    EDITOR_MIN_CLIP_S,
     MAX_EDITOR_OPS,
     MOTION_FPS,
     MOTION_MAX_ACTIVE_FRAMES,
@@ -122,7 +127,31 @@ log = structlog.get_logger()
 # only where the snapshot offers the `color_moments` family (flag + verified token + protocol 48),
 # or, with that gate closed, on an edit that still carries moments, marked REMOVAL ONLY (only
 # taking them off is accepted), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-11-v122"
+# v124 (KRI-1387): a repair call appends "## REPAIR: OPERATIONS THAT WERE NOT APPLIED" (each
+# rejected op, why, and the open families or valid indices) and asks for corrected ops tagged
+# "repairs"; the first ask of a turn is byte-identical.
+# v125 (KRI-1388): with no HISTORY STATE (every iPhone chat) the copilot says it cannot undo or
+# replay from chat instead of claiming there is nothing to undo or repeat.
+# v126 (KRI-1394): editor actions chat gained on iPhone edits, each taught in its own fragment and
+# printed only where the snapshot offers it, so every other prompt is byte-identical:
+# set_user_song (YOUR SONG, the creator's own song), patch_caption_line (one caption line's size
+# and place, `caption_line_placement`), set_layer_order (LAYER ORDER), remove_full_screen_opening
+# (BACKGROUND `full_screen_opening`) and set_video_shape (VIDEO SHAPE). An edit with a creator song
+# and the `user_song` family drops the AUDIO LIMITS line that said chat cannot change it.
+# v127 (KRI-1393): EDIT_COPILOT_OUTPUT_MODE=tools answers with a tool per open op. Its system block
+# is these rules with each op's definition bullet moved into that op's tool description and the
+# JSON output block replaced by prompts/edit_copilot_tools.txt; the turn block is the user
+# message. JSON mode (the default) is byte-identical.
+# v128 (KRI-1394): make_split_full_screen (SPLIT FULL SCREEN, prompts/edit_copilot_ops/
+# split_full_screen.txt), printed only where a split section can play part full screen from chat,
+# so every other prompt is byte-identical.
+# v129 (KRI-1420): add_split_panel_clip, a second clip in a split panel from the approved source
+# pool, taught in the SPLIT SCREEN fragment (prompts/edit_copilot_ops/split_screen.txt), printed
+# only where split_screen_available is true, so every other prompt is byte-identical.
+# v130 (KRI-1457): add_split_blank and set_split_blank_color, a flat-colour block in a split panel
+# (prompts/edit_copilot_ops/split_blank.txt), printed only where split_blank_available is true (a
+# protocol 51 build with splitBlankPanel verified), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-14-v130"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -656,6 +685,10 @@ CopilotRejectionReason = Literal[
     "missing_required",
     "invalid_value",
     "stale_target",
+    # The parser accepted the op but the editor compiler refused it (KRI-1387).
+    "compile_error",
+    # A valid op held back because an atomic sibling failed (bulk media, text appearance).
+    "held_back",
 ]
 
 
@@ -755,6 +788,10 @@ def _load_motion_preset_controls() -> dict[str, dict[str, dict[str, Any]]]:
 
 
 _MOTION_PRESET_CONTROLS = _load_motion_preset_controls()
+# The fields a patch_motion_block patch may change.
+MOTION_PATCH_FIELDS = frozenset(
+    {"start_s", "end_s", "palette", "intensity", "params", "speed", "easing", "hold_frames"}
+)
 _OVERLAY_PATCH_FIELDS = frozenset(
     {
         "start_s",
@@ -813,6 +850,101 @@ _FONT_KIND_HINTS: dict[str, str] = {
 }
 
 
+class RejectedOp(BaseModel):
+    """One operation the model asked for that did not apply, and what would make it valid."""
+
+    op: str
+    # A `CopilotRejectionReason`; a lane may add its own (color moments: "not_requested").
+    reason: str
+    detail: str
+    # The coercer's plain-words reason a value was refused, when it gave one.
+    note: str = ""
+    # Facts of this edit the model needs to fix it: the open op families, the valid indices.
+    hint: str = ""
+    # The op as the model wrote it (or as parsed, for a compile error). None when the rejection
+    # came from a pass over already-parsed ops: those are named, never re-asked.
+    raw: dict[str, Any] | None = None
+
+
+_MAX_REPAIR_ROUNDS = 2
+_MAX_REPAIR_OPS = 12
+# Typed tool transport: a model that calls one tool per response (Sol) needs a round per
+# operation before it calls `reply`: at most one per op of a bundle, then the reply. The turn
+# deadline bounds them too.
+MAX_TOOL_ROUNDS = MAX_EDITOR_OPS + 1
+
+
+class CopilotRepair(BaseModel):
+    """One repair round (KRI-1387): re-ask for the rejected ops only, keep the rest."""
+
+    repair_round: int = Field(ge=1, le=MAX_TOOL_ROUNDS)
+    # The first answer's own fields except its ops: its reply, claim, intent and confidence
+    # describe the whole request, so every round keeps them.
+    base: dict[str, Any]
+    # Ops already accepted (and compiled, when the caller checks compile). Never re-parsed.
+    kept_ops: list[dict[str, Any]] = Field(default_factory=list)
+    rejected: list[RejectedOp] = Field(default_factory=list, max_length=_MAX_REPAIR_OPS)
+    # Rejections with no op to re-ask (a pass over parsed ops dropped it): every round names them.
+    unrepairable: list[RejectedOp] = Field(default_factory=list)
+    # Server notes from earlier rounds (time zone, missing filming times) for the kept ops.
+    notes: list[str] = Field(default_factory=list)
+    # Typed tool transport only (KRI-1393): every earlier answer of this turn with the tool
+    # results it got, sent back as the conversation. In memory only: never dumped or persisted.
+    exchanges: list[ToolExchange] = Field(default_factory=list, exclude=True)
+    # Typed tool transport only: the first answer called operations but not `reply`. This round
+    # hears what applied and writes the turn's reply, so its own fields become the answer's.
+    awaiting_reply: bool = Field(default=False, exclude=True)
+
+    @model_validator(mode="after")
+    def _has_work(self) -> CopilotRepair:
+        if not self.awaiting_reply and (
+            not self.rejected or self.repair_round > _MAX_REPAIR_ROUNDS
+        ):
+            raise ValueError("a repair round needs a rejected op, within the repair rounds")
+        return self
+
+    def answer(self, response: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
+        """This round's corrected ops under the first answer's fields, and the repair ids an
+        unmet entry settled. The round's own intent, confidence and reply are ignored: an
+        unsure correction must not turn the kept edit into a question. A round awaiting the
+        reply is the exception: its fields are the turn's answer."""
+        ops = response.get("ops")
+        if self.awaiting_reply:
+            unmet = response.get("unmet_requests")
+            settled = {
+                tag
+                for item in (unmet if isinstance(unmet, list) else [])
+                if (tag := _repair_tag(item)) is not None
+            }
+            return {**response, "ops": ops if isinstance(ops, list) else []}, settled
+        own_unmet = response.get("unmet_requests")
+        own_unmet = (
+            [item for item in own_unmet if isinstance(item, dict)]
+            if isinstance(own_unmet, list)
+            else []
+        )
+        base_unmet = self.base.get("unmet_requests")
+        merged = {
+            **self.base,
+            "ops": ops if isinstance(ops, list) else [],
+            "unmet_requests": [*(base_unmet if isinstance(base_unmet, list) else []), *own_unmet],
+        }
+        settled = {tag for item in own_unmet if (tag := _repair_tag(item)) is not None}
+        return merged, settled
+
+    def tag_for(self, name: str, taken: set[str]) -> str | None:
+        """An untagged corrected op answers the first open rejected op of its name (a typed
+        wire output cannot carry the "repairs" key)."""
+        return next(
+            (
+                f"r{index}"
+                for index, item in enumerate(self.rejected, start=1)
+                if item.op == name and f"r{index}" not in taken
+            ),
+            None,
+        )
+
+
 class EditCopilotInput(BaseModel):
     """Per-turn input for the editor copilot."""
 
@@ -825,6 +957,8 @@ class EditCopilotInput(BaseModel):
     # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the
     # prompt is byte-identical and the field is left out of input dumps.
     reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
+    # KRI-1387: set only on a repair call, so a first ask's prompt and input dump are unchanged.
+    repair: CopilotRepair | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class EditCopilotOutput(BaseModel):
@@ -861,6 +995,11 @@ class EditCopilotOutput(BaseModel):
     length_options: list[dict[str, Any]] = Field(
         default_factory=list, max_length=4, exclude_if=lambda value: not value
     )
+    # KRI-1387: the next repair round, when an edit turn has rejected ops a round could fix.
+    repair: CopilotRepair | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Every op that did not apply, as the parser saw it (the typed tool transport answers each
+    # call with its own result). In memory only: never dumped.
+    not_applied: list[RejectedOp] = Field(default_factory=list, exclude=True)
 
 
 _MAX_UNMET_REQUESTS = 6
@@ -1406,6 +1545,20 @@ def _format_snapshot(snapshot: dict) -> str:
                     sort_keys=True,
                 )
             )
+    full_screen = snapshot.get("split_full_screen")
+    if isinstance(full_screen, list) and full_screen:
+        lines.append("SPLIT FULL SCREEN (part of a section full screen, make_split_full_screen):")
+        for row in full_screen[:20]:
+            if not isinstance(row, dict) or row.get("panel_count") not in (2, 3):
+                continue
+            lines.append(
+                f"section {_clean_prompt_data(row.get('section_id'), max_chars=160)!r} plays "
+                f"{_fmt_round3(_first_number(row, ('start_s',)))}-"
+                f"{_fmt_round3(_first_number(row, ('end_s',)))}s with "
+                f"{row['panel_count']} panels; at_s from "
+                f"{_fmt_round3(_first_number(row, ('at_s_min',)))} to "
+                f"{_fmt_round3(_first_number(row, ('at_s_max',)))}"
+            )
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
         lines.append("TEXT APPEARANCE: version=1; targets=")
@@ -1657,6 +1810,11 @@ def _format_snapshot(snapshot: dict) -> str:
                 max_chars=100,
             )
             media_kind = _field(slot.get("media_kind") or slot.get("kind") or "", max_chars=12)
+            blank_color = (
+                f" color={_field(slot.get('color'), max_chars=8)!r}"
+                if slot.get("media_kind") == "blank"
+                else ""
+            )
             facts_text = _format_slot_facts(slot.get("facts"), _field)
             seen = slot.get("seen")
             if isinstance(seen, dict) and seen.get("text"):
@@ -1665,7 +1823,7 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"({_field(seen.get('provenance') or 'vision', max_chars=12)})"
                 )
             lines.append(
-                f"{i}. media_id={media_id!r} media_kind={media_kind!r} "
+                f"{i}. media_id={media_id!r} media_kind={media_kind!r}{blank_color} "
                 f"output={_fmt_range(start, end)} duration={_fmt_num(duration)}s "
                 f"in={_fmt_num(in_s)}s source={_fmt_num(source)}s moment={moment!r} "
                 f"look_preset={look_preset!r} "
@@ -2055,6 +2213,29 @@ def _format_snapshot(snapshot: dict) -> str:
         else:
             lines.append("(none)")
 
+    shape = snapshot.get("video_shape")
+    if isinstance(shape, dict):
+        axes = [
+            f"{key}={_field(shape.get(key), max_chars=20)} "
+            f"({'editable' if shape.get(f'{key}_editable') else 'not editable'})"
+            for key in ("orientation", "landscape_fit")
+        ]
+        lines.append("\nVIDEO SHAPE (change it with set_video_shape): " + "; ".join(axes))
+
+    layer_order = snapshot.get("layer_order")
+    if isinstance(layer_order, dict):
+        lines.append("\nLAYER ORDER (ids bottom to top; move one with set_layer_order):")
+        for name, label in (
+            ("cards", "cards on top of the video"),
+            ("pictures", "uploaded pictures"),
+        ):
+            ids = layer_order.get(name)
+            if isinstance(ids, list) and ids:
+                lines.append(
+                    f"{label}: "
+                    + ", ".join(repr(_field(value, max_chars=80)) for value in ids[:20])
+                )
+
     if isinstance(snapshot.get("color_moments"), dict):
         lane = snapshot["color_moments"]
         fade = _fmt_round3(lane.get("end_fade_s")) if lane.get("end_fade_s") else "none"
@@ -2106,6 +2287,23 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
             else:
                 lines.append("current: (none)")
+            if background.get("opening_removable") is True:
+                from app.agents.editor_ops_v2.background import is_opening  # noqa: PLC0415
+
+                opening = next(
+                    (
+                        span
+                        for span in background.get("full_screen_windows") or []
+                        if is_opening(span)
+                    ),
+                    {},
+                )
+                lines.append(
+                    "full_screen_opening: the speaker is full screen "
+                    f"{_fmt_round3(_first_number(opening, ('start_s',)))}-"
+                    f"{_fmt_round3(_first_number(opening, ('end_s',)))}s before the background "
+                    "(remove_full_screen_opening takes it away)"
+                )
             if background.get("color_available") is True:
                 lines.append("color: available (a plain colour can go behind the speaker)")
             elif background.get("color_available") is False:
@@ -2177,11 +2375,13 @@ def _format_snapshot(snapshot: dict) -> str:
         meta = captions.get("meta") if isinstance(captions.get("meta"), dict) else {}
         lines.append("\nCAPTIONS (cue_index values are authoritative for this turn):")
         if cues:
-            for cue in _component_rows(cues, 40, component_context_enabled):
+            for position, cue in enumerate(_component_rows(cues, 40, component_context_enabled)):
                 if not isinstance(cue, dict):
                     continue
+                # Server snapshots carry no `index` key; the list position IS the cue_index.
+                index = cue.get("index") if isinstance(cue.get("index"), int) else position
                 lines.append(
-                    f"{cue.get('index')}. id={_field(cue.get('id'), max_chars=80)!r} "
+                    f"{index}. id={_field(cue.get('id'), max_chars=80)!r} "
                     f"timing={_fmt_round3(_first_number(cue, ('start_s',)))}-"
                     f"{_fmt_round3(_first_number(cue, ('end_s',)))}s "
                     f"role={_field(cue.get('smart_role'), max_chars=20)!r} "
@@ -2203,6 +2403,33 @@ def _format_snapshot(snapshot: dict) -> str:
             f"stroke={_fmt_round3(_first_number(meta, ('stroke_width',)))} "
             f"shadow={meta.get('shadow_enabled')!r}"
         )
+        placement = captions.get("line_placement")
+        if isinstance(placement, dict):
+            own = placement.get("lines") if isinstance(placement.get("lines"), dict) else {}
+            shared = {
+                key: _first_number(placement, (key,))
+                for key in ("size_px", "position_x_frac", "position_y_frac")
+            }
+            lines.append(
+                "caption_line_placement: available (patch_caption_line); every line: "
+                + " ".join(
+                    f"{key}={'default' if value is None else _fmt_round3(value)}"
+                    for key, value in shared.items()
+                )
+                + "; lines with their own: "
+                + (
+                    ", ".join(
+                        f"{_field(cue_id, max_chars=80)!r} "
+                        + " ".join(
+                            f"{key}={_fmt_round3(_safe_finite_float(value))}"
+                            for key, value in values.items()
+                        )
+                        for cue_id, values in list(own.items())[:20]
+                        if isinstance(values, dict)
+                    )
+                    or "(none)"
+                )
+            )
         capabilities = snapshot.get("editor_capabilities")
         if isinstance(capabilities, dict) and capabilities.get("caption_animation") is True:
             phases = meta.get("animation_phases")
@@ -2265,6 +2492,30 @@ def _format_snapshot(snapshot: dict) -> str:
                 )
         else:
             lines.append("(none)")
+
+    song = snapshot.get("user_song")
+    if isinstance(song, dict):
+        lines.append("\nYOUR SONG (the creator's own song; change it with set_user_song):")
+        if song.get("removed"):
+            lines.append("removed in this draft (the camera's own sound plays)")
+        else:
+            least = _fmt_num(_first_number(song, ("min_window_s",)))
+            window = (
+                f"window: editable (keep at least {least}s)"
+                if song.get("window_editable")
+                else "window: locked (lip-sync)"
+                if song.get("mode") == "lipsync"
+                else "window: not editable"
+            )
+            lines.append(
+                f"mode={_field(song.get('mode'), max_chars=20)} "
+                f"length={_fmt_round3(_first_number(song, ('duration_s',)))}s "
+                f"plays {_fmt_round3(_first_number(song, ('window_start_s',)))}-"
+                f"{_fmt_round3(_first_number(song, ('window_end_s',)))}s of the song "
+                f"volume={_fmt_round3(_first_number(song, ('volume',)))} "
+                f"(volume {'editable' if song.get('volume_editable') else 'not editable'}); "
+                f"{window}; removable={song.get('removable') is True}"
+            )
 
     audio_notes = snapshot.get("audio_notes")
     if isinstance(audio_notes, list) and audio_notes:
@@ -2493,11 +2744,14 @@ class _ParseState:
     def __init__(self, confidence: float) -> None:
         self.confidence = confidence
         self.invalid_value_seen = False
+        self.invalid_values = 0
         self.rejection_reasons: list[dict[str, str]] = []
-        # The raw op currently being parsed, and the ones rejected for values
-        # the model could fix on a second try (see `_value_retry_hint`).
+        # The raw op `_parse_op` is reading (None between ops) and the note a coercer gave
+        # for it, so each rejection keeps the op the model can repair (KRI-1387).
         self.current_raw: dict[str, Any] | None = None
-        self.invalid_raw_ops: list[dict[str, Any]] = []
+        self.current_note = ""
+        self.current_rejected = False
+        self.rejected_ops: list[RejectedOp] = []
         # KRI-219: a v2 selector op that matched nothing sets this; parse() turns
         # it into an honest clarification (never a silent no-op).
         self.selector_clarification: str | None = None
@@ -2519,24 +2773,35 @@ class _ParseState:
         self.utterance = ""
 
     def invalid_value(self, note: str | None = None) -> None:
+        # Rejects the op being parsed, never the turn: the confidence gate reads only the
+        # model's own confidence (KRI-1386).
         self.invalid_value_seen = True
-        self.confidence = min(self.confidence, 0.4)
-        if note and note not in self.invalid_notes:
-            self.invalid_notes.append(note)
+        self.invalid_values += 1
+        if note:
+            self.current_note = note
+            if note not in self.invalid_notes:
+                self.invalid_notes.append(note)
 
     def reject(self, *, op: str, reason: str, detail: str) -> None:
         self.rejection_reasons.append({"op": op, "reason": reason, "detail": detail})
-        if (
-            reason in _VALUE_RETRY_REASONS
-            and isinstance(self.current_raw, dict)
-            and len(self.invalid_raw_ops) < _VALUE_RETRY_MAX_OPS
-        ):
-            self.invalid_raw_ops.append(self.current_raw)
+        if op == "bundle" or self.current_rejected:
+            return  # one op, one repair item, even when a coercer rejects it twice
+        self.current_rejected = self.current_raw is not None
+        self.rejected_ops.append(
+            RejectedOp(
+                op=op,
+                reason=reason,
+                detail=detail,
+                note=self.current_note if reason == "invalid_value" else "",
+                raw=self.current_raw,
+            )
+        )
+
+    def end_op(self) -> None:
+        self.current_raw, self.current_note, self.current_rejected = None, "", False
 
 
-_VALUE_RETRY_REASONS = frozenset({"invalid_value", "missing_required"})
-_VALUE_RETRY_MAX_OPS = 8
-_VALUE_RETRY_RULES = (
+_VALUE_RULES = (
     "Value rules: position must be one of top, middle, bottom, custom -- "
     "for a corner or an exact spot use position custom with x_frac/y_frac 0-1: "
     "x_frac is the anchor the alignment pins (left alignment = the text's LEFT "
@@ -2551,21 +2816,228 @@ _VALUE_RETRY_RULES = (
 )
 
 
-def _value_retry_hint(state: _ParseState) -> str:
-    """One targeted retry: quote what was rejected and the rules it broke."""
-    rejected = json.dumps(state.invalid_raw_ops, ensure_ascii=False)[:1200]
-    details = "; ".join(
-        f"{item['op']}: {item['detail']}"
-        for item in state.rejection_reasons
-        if item["reason"] in _VALUE_RETRY_REASONS
-    )[:600]
-    return (
-        "\n\nYour previous reply was rejected because these operations carried "
-        f"invalid or missing values: {rejected}. Reasons: {details}. {_VALUE_RETRY_RULES} "
-        "Re-emit the SAME requested edit with valid values (keep every other field "
-        "unchanged). If it genuinely cannot be expressed, return ops: [] and say what "
-        "is not possible instead of claiming a change."
+# Each kind: how the repair block labels it for the model, and why the creator is told it
+# did not apply (en, tr). Capability and compile details are already written for the creator.
+_REJECTION_KINDS: dict[str, tuple[str, tuple[str, str] | None]] = {
+    "unknown_operation": (
+        "not an operation this editor has",
+        ("I don't have a way to do that here", "bunu burada yapmanın bir yolu yok"),
+    ),
+    "capability_unavailable": ("not available on this edit", None),
+    "missing_required": (
+        "a required field is missing",
+        ("a detail it needs was missing", "gereken bir bilgi eksikti"),
+    ),
+    "invalid_value": (
+        "a value is not valid",
+        ("that value isn't one I can use", "bu değeri kullanamıyorum"),
+    ),
+    "stale_target": (
+        "it points at something that is not in CURRENT DRAFT",
+        ("that part isn't in this edit", "o kısım bu düzenlemede yok"),
+    ),
+    "compile_error": ("the editor refused it", None),
+    "held_back": (
+        "held back: it applies only together with an operation that failed",
+        (
+            "it goes together with a change I couldn't make",
+            "yapamadığım bir değişiklikle birlikte gidiyor",
+        ),
+    ),
+}
+# Rejections that mean the edit has no lane for the op: nothing applied is "unsupported".
+UNSUPPORTED_REJECTIONS = frozenset({"capability_unavailable", "unknown_operation", "compile_error"})
+_REPAIR_TAG_RE = re.compile(r"^r([1-9][0-9]?)$")  # kri667: an id format, not words
+
+
+def _kept_notes(state: _ParseState, repairable: Sequence[RejectedOp]) -> list[str]:
+    """Server notes the next round keeps: not the ones explaining an op it may yet fix."""
+    names = {item.op for item in repairable}
+    explaining = {item.detail for item in repairable} | {item.note for item in repairable}
+    explaining |= {
+        say(en=en, tr=tr) for name, (en, tr) in _v2.REGISTRY.closed_notes.items() if name in names
+    }
+    return [note for note in dict.fromkeys(state.reply_notes) if note not in explaining]
+
+
+_JSON_REPAIR_ANSWER = (
+    "For each item, return ONE corrected operation in `ops` carrying "
+    '`"repairs": "<id>"`, or, when it cannot be done on this edit, an `unmet_requests` '
+    'entry `{"request", "reason", "repairs": "<id>"}` written for the creator. Send no '
+    "other operations. Return the same JSON keys as before."
+)
+
+
+def repair_feedback(rejections: Sequence[RejectedOp], *, answer: str = _JSON_REPAIR_ANSWER) -> str:
+    """The repair block for rejected ops (KRI-1387): each op, why it failed, how to fix it.
+
+    Every rejection kind comes back so the model can swap a closed family for an open one,
+    retarget a stale index, fill a missing field, fix a value, or say it can't be done.
+    ``rejections[i]`` is answered under the id ``r{i + 1}``. ``answer`` says how to reply: JSON
+    keys by default, tool calls for the typed tool transport (KRI-1393).
+    """
+    lines = [
+        "## REPAIR: OPERATIONS THAT WERE NOT APPLIED",
+        "",
+        "Your previous answer to this message was checked. The operations below were NOT "
+        "applied. Every other operation in it is accepted and will apply: do not send it "
+        "again. " + answer,
+        "",
+    ]
+    for index, item in enumerate(rejections, start=1):
+        lines.extend(repair_item_lines(index, item))
+    if any(item.reason in {"invalid_value", "missing_required"} for item in rejections):
+        lines.extend(("", _VALUE_RULES))
+    return "\n".join(lines)
+
+
+def repair_item_lines(index: int, item: RejectedOp) -> tuple[str, str]:
+    """One rejected op as the repair block shows it: what was sent, and why it did not apply."""
+    label = _REJECTION_KINDS.get(item.reason, (item.reason, None))[0]
+    sent = json.dumps(item.raw, ensure_ascii=False, sort_keys=True)[:600] if item.raw else "{}"
+    why = " ".join(part.strip() for part in (item.detail, item.note, item.hint) if part)
+    return f"- r{index} `{item.op}` {sent}", f"  Not applied ({label}): {why}"[:900]
+
+
+def _repair_tag(raw: object) -> str | None:
+    tag = raw.get("repairs") if isinstance(raw, dict) else None
+    return tag if isinstance(tag, str) and _REPAIR_TAG_RE.match(tag) else None
+
+
+def _index_limits(snapshot: dict) -> dict[str, int]:
+    """How many targets each index field can address in this snapshot."""
+    slot_count = _snapshot_len(snapshot, _SLOT_INDEX_KEYS)
+    live_slots = [
+        slot
+        for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
+        if isinstance(slot, dict) and not slot.get("removed")
+    ]
+    return {
+        "bar_index": len(_snapshot_list(snapshot, _TEXT_INDEX_KEYS)),
+        "slot_index": slot_count,
+        "from_index": slot_count,
+        "to_index": slot_count,
+        "sfx_index": _section_len(snapshot, "sfx", "placements"),
+        "overlay_index": _section_len(snapshot, "overlays", "cards"),
+        "cue_index": _section_len(snapshot, "captions", "cues"),
+        "camera_effect_index": len(snapshot.get("camera_effects") or []),
+        "visual_block_index": len(snapshot.get("visual_blocks") or []),
+        "boundary_index": max(len(live_slots) - 1, 0),
+    }
+
+
+def _op_payload(raw: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    payload = raw.get("payload")
+    return {**raw, **payload} if isinstance(payload, dict) else raw
+
+
+def _rejection_hint(item: RejectedOp, snapshot: dict) -> str:
+    """Facts of this edit that make the rejected op fixable: open families, valid indices."""
+    if item.reason in {"unknown_operation", "capability_unavailable"}:
+        families = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
+        if isinstance(families, list) and families:
+            return "Operation families open on this edit: " + ", ".join(map(str, families)) + "."
+        return ""
+    if item.reason != "stale_target":
+        return ""
+    limits = _index_limits(snapshot)
+    ranges = [
+        f"{key} 0-{limits[key] - 1}" if limits[key] else f"{key}: none exist"
+        for key in limits
+        if key in _op_payload(item.raw)
+    ]
+    return f"Valid targets: {', '.join(ranges)}." if ranges else ""
+
+
+# Op-name word -> what the creator calls that part of the edit (en, tr). First match wins.
+_OP_TARGET_WORDS: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (("direction",), "the edit direction", "kurgunun yönü"),
+    (("caption",), "the captions", "altyazılar"),
+    (("text", "title", "label"), "the text", "yazı"),
+    (("music", "mix", "song"), "the music", "müzik"),
+    (("sfx", "sound"), "the sound effects", "ses efektleri"),
+    (("overlay", "visual", "media", "image", "motion", "slide"), "the pictures", "görseller"),
+    (("background", "speaker"), "the background", "arka plan"),
+    (("transition",), "the transitions", "geçişler"),
+    (("effect", "look", "color", "camera"), "the look", "görünüm"),
+)
+# Index field -> the numbered thing it addresses (en, tr), shown 1-based.
+_INDEX_TARGETS = (
+    ("bar_index", "text", "yazı"),
+    ("slot_index", "clip", "klip"),
+    ("cue_index", "caption", "altyazı"),
+    ("overlay_index", "picture", "görsel"),
+    ("sfx_index", "sound effect", "ses efekti"),
+)
+
+
+def _op_target(item: RejectedOp) -> tuple[str, str]:
+    payload = _op_payload(item.raw)
+    for key, en, tr in _INDEX_TARGETS:
+        index = payload.get(key)
+        if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < 1000:
+            return f"{en} {index + 1}", f"{index + 1}. {tr}"
+    words = item.op.lower()
+    for keys, en, tr in _OP_TARGET_WORDS:
+        if any(word in words for word in keys):  # kri667: op identifiers, not words
+            return en, tr
+    return "the clips", "klipler"
+
+
+def _not_applied(item: RejectedOp) -> tuple[dict[str, str], str]:
+    """An op that did not apply, in plain words (never parser jargon): the unmet entry
+    {request: what was asked, reason: why not} and the reply sentence naming it."""
+    target_en, target_tr = _op_target(item)
+    action = say(
+        en="change {target}",
+        tr="{target} için değişiklik yapmak",
+        target=say(en=target_en, tr=target_tr),
     )
+    phrases = _REJECTION_KINDS.get(item.reason, ("", None))[1]
+    if item.note:
+        why = item.note
+    elif phrases is not None:
+        why = say(en=phrases[0], tr=phrases[1])
+    else:
+        why = item.detail or say(en="I couldn't apply it", tr="uygulayamadım")
+    why = why.strip().rstrip(".")
+    sentence = say(
+        en="I couldn't {action}: {why}.",
+        tr="{action} mümkün olmadı: {why}.",
+        action=action,
+        why=why,
+    )
+    entry = {"request": action[:160], "reason": why[:200]}
+    return entry, sentence[:1].upper() + sentence[1:]
+
+
+def _with_not_applied(
+    unmet: list[dict[str, str]], not_applied: Sequence[RejectedOp]
+) -> tuple[list[dict[str, str]], list[str]]:
+    """The model's unmet requests plus one entry per op that did not apply (bounded), and the
+    reply sentences that name those ops."""
+    entries, sentences = list(unmet), []
+    for item in not_applied:
+        entry, sentence = _not_applied(item)
+        if entry not in entries:
+            entries.append(entry)
+            sentences.append(sentence)
+    if len(entries) <= _MAX_UNMET_REQUESTS:
+        return entries, sentences
+    rest = len(entries) - (_MAX_UNMET_REQUESTS - 1)
+    summary = say(
+        en="{rest} other changes weren't applied.",
+        tr="{rest} değişiklik daha uygulanmadı.",
+        rest=rest,
+    )
+    named = max(0, _MAX_UNMET_REQUESTS - 1 - len(unmet))
+    entries = entries[: _MAX_UNMET_REQUESTS - 1]
+    entries.append(
+        {"request": say(en="other changes", tr="diğer değişiklikler"), "reason": summary}
+    )
+    return entries, [*sentences[:named], summary]
 
 
 _BULK_SCOPES = frozenset({"timeline", "unused_sources"})
@@ -2650,10 +3122,11 @@ _PENDING_NEGATION_RE = _BilingualPattern(
     r"\b(?:yapma|yapmayin|yapmasin|ekleme|eklemeyin|dokunma|dokunmayin|kullanma|"
     r"kullanmayin|haric|olmadan|disinda|degil|olmasin|istemiyorum|atla|atlayin|gecme)\b",
 )
-# Group 1 is the number. Turkish writes a decimal comma ("2,5 saniye"): callers normalize.
+# Group 1 is the number. Turkish and German write a decimal comma ("2,5 saniye",
+# "2,5 Sekunden"): callers normalize. The German unit rides on the loose (second) pattern.
 _DURATION_ANSWER_RE = _BilingualPattern(
     r"\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
-    r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b)",
+    r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b|sekunde\w*|sek\b)",
 )
 _VAGUE_DURATION_RE = _BilingualPattern(
     r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b",
@@ -3202,7 +3675,11 @@ def _sanitize_pending_actions(
                 action["integrity"] = integrity
         if name == "set_media_duration" and "duration_s" in raw:
             duration = _as_float(raw.get("duration_s"))
-            if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
+            if (
+                duration is None
+                or below_editor_minimum(duration)
+                or duration > MAX_PROPOSAL_DURATION_S
+            ):
                 continue
             action["duration_s"] = round(duration, 6)
         sanitized.append(action)
@@ -3444,7 +3921,7 @@ def _clean_bulk_operation(
         payload.pop("preset_id", None)
     if name == "set_media_duration":
         duration = _as_float(payload.get("duration_s"))
-        if duration is None or not 0.1 <= duration <= MAX_PROPOSAL_DURATION_S:
+        if duration is None or below_editor_minimum(duration) or duration > MAX_PROPOSAL_DURATION_S:
             state.invalid_value()
             return None
         payload["duration_s"] = round(duration, 6)
@@ -3612,9 +4089,9 @@ def _story_direction_not_staged(direction: str) -> str:
     """The registry's direction line (`route_capabilities._lines.direction_line`) for a story
     direction: the editor drawer stages fast-montage cuts only (no client stages story beats),
     so nothing changes, and the creator reads why."""
-    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+    from app.kria.route_capabilities._lines import direction_line  # noqa: PLC0415
 
-    line = lines.direction_line(
+    line = direction_line(
         "fast_montage",
         "this editor can only restage it as a fast montage, so nothing changed. "
         "A different direction needs a fresh edit",
@@ -3644,12 +4121,17 @@ def _with_direction_fragment(prompt: str, snapshot: object) -> str:
 
 
 class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
+    """The copilot in plain JSON, on Gemini: slide posts and creation text composition.
+
+    The chat turn runs ``ChatEditCopilotAgent``, the only copilot ``EDIT_COPILOT_MODEL`` moves.
+    """
+
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.edit.copilot",
         prompt_id="edit_copilot",
         sensitive_io=True,
         prompt_version=EDIT_COPILOT_PROMPT_VERSION,
-        model=settings.edit_copilot_model,
+        model=JSON_COPILOT_MODEL,
         max_attempts=2,
         backoff_s=(2.0,),
         # Durable Kria turns supply a shared deadline and post-processing
@@ -3658,7 +4140,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # 124.3 s at 16,384) before this deadline, so it ends as a retryable truncation
         # and never as an outcome-unknown fence (same rule as the Main Creator).
         timeout_s=130.0,
-        thinking_level=settings.edit_copilot_thinking_level,
+        thinking_level="high",
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
     )
@@ -3677,17 +4159,34 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # Cache-friendly order: everything stable across turns first (rules, catalogs,
         # lane fragments), per-turn data last, so Gemini's implicit prefix cache
         # can reuse the long shared head.
+        prompt = self.rules_prompt(input)
+        turn = self.turn_prompt(input)
+        prompt = f"{prompt.rstrip(chr(10))}\n\n{turn.rstrip(chr(10))}\n"
+        if input.repair is not None:
+            prompt = f"{prompt}\n{repair_feedback(input.repair.rejected)}\n"
+        # KRI-520: the reply-language instruction goes last, after every fragment.
+        # "" for English/unknown: byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
+
+    def rules_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
+        """Rules, catalogs and the lane fragments this edit offers: the same for every turn of
+        an edit."""
         prompt = load_prompt(
             "edit_copilot",
             font_catalog=_font_catalog(),
             effect_catalog=_effect_catalog(),
             caption_font_catalog=_caption_font_catalog(),
             custom_effect_catalog=_custom_effect_catalog(),
+            min_clip_s=f"{EDITOR_MIN_CLIP_S:g}",
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)
-        prompt = _with_direction_fragment(prompt, input.variant_snapshot)
-        turn = load_prompt(
+        return _with_direction_fragment(prompt, input.variant_snapshot)
+
+    def turn_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
+        """This turn's message, draft and history."""
+        return load_prompt(
             "edit_copilot_turn",
             utterance=(
                 _clean_component_data(input.utterance)
@@ -3699,11 +4198,6 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             snapshot=_format_snapshot(input.variant_snapshot),
             max_ops=_operation_limit(input.variant_snapshot),
         )
-        prompt = f"{prompt.rstrip(chr(10))}\n\n{turn.rstrip(chr(10))}\n"
-        # KRI-520: the reply-language instruction goes last, after every fragment.
-        # "" for English/unknown: byte-identical prompt.
-        language_line = prompt_language_line(input.reply_language)
-        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
         try:
@@ -3713,7 +4207,12 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         if not isinstance(data, dict):
             raise SchemaError("edit_copilot: response is not a JSON object")
 
-        if data.get("research_request") is not None:
+        repair = input.repair
+        # Repair ids this answer settled: a corrected op or an unmet entry carrying one.
+        settled: set[str] = set()
+        if repair is not None:
+            data, settled = repair.answer(data)
+        elif data.get("research_request") is not None:
             from app.services.researched_text import ResearchUnavailable
 
             try:
@@ -3739,14 +4238,18 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         confidence = _coerce_confidence(data.get("confidence", 0.5))
         state = _ParseState(confidence)
         state.utterance = input.utterance or ""
+        if repair is not None:
+            state.reply_notes.extend(repair.notes)
         raw_ops = data.get("ops") or []
         if not isinstance(raw_ops, list):
             raw_ops = []
-        prior_referent_context = _prior_referent_context(input)
+        # A repair round's ops replace rejected ones: the first answer already resolved the
+        # earlier clarification and merged its pending actions.
+        prior_referent_context = _prior_referent_context(input) if repair is None else None
         prior_referent_selector = (
             prior_referent_context.get("selector") if prior_referent_context is not None else None
         )
-        prior_pending_actions = _prior_pending_actions(input)
+        prior_pending_actions = _prior_pending_actions(input) if repair is None else []
         # A direct media reference ("the images") can continue the pending
         # plan just like a pronoun.  A comparative duration ("make them
         # shorter") is not a value; never accept the model's guessed number
@@ -3791,7 +4294,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 raw_ops = []
 
         ops: list[dict] = []
-        max_ops = _operation_limit(input.variant_snapshot)
+        kept_ops = list(repair.kept_ops) if repair is not None else []
+        max_ops = _operation_limit(input.variant_snapshot) - sum(
+            str(op.get("op")) not in (_BULK_OPS | {"replace_caption_text"}) for op in kept_ops
+        )
         ordinary_op_count = 0
         bulk_caption_op_count = 0
         bulk_parse_failed = False
@@ -3860,11 +4366,21 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         # KRI-667: raw op name -> the name parse turned it into (set_title -> edit_text),
         # so the model's claimed_ops can be matched against the ops that survived.
         renamed: dict[str, str] = {}
+        # Each accepted op with the raw op it came from, so an atomic rule can hand the whole
+        # bundle back to a repair round.
+        accepted: list[tuple[dict[str, Any], dict]] = []
+        # Repair ids whose corrected op was rejected again: the new rejection replaces them.
+        retried: set[str] = set()
         for raw_op in raw_ops:
+            tag = _repair_tag(raw_op)
             # Research provenance is attached only by the grounded server step,
             # after model parsing. Ordinary model operations cannot invent it.
             if isinstance(raw_op, dict):
-                raw_op = {key: value for key, value in raw_op.items() if key != "research"}
+                raw_op = {
+                    key: value
+                    for key, value in raw_op.items()
+                    if key not in {"research", "repairs"}
+                }
             # A bulk caption replacement is one atomic client operation no
             # matter how many cues it changes. Keep it outside the ordinary
             # per-operation cap so a model that emits it after 12 unrelated
@@ -3875,6 +4391,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 if isinstance(raw_op, dict)
                 else ""
             )
+            if repair is not None and tag is None:
+                tag = repair.tag_for(raw_name, settled | retried)
             if raw_name == "replace_caption_text":
                 if bulk_caption_op_count >= 1:
                     continue
@@ -3885,8 +4403,13 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 # overflow bundle fail closed instead of silently truncating.
                 continue
             parsed = _parse_op(raw_op, input.variant_snapshot, state)
+            state.end_op()
+            if tag is not None:
+                (settled if parsed is not None else retried).add(tag)
             if parsed is not None:
                 ops.append(parsed)
+                if isinstance(raw_op, dict):
+                    accepted.append((raw_op, parsed))
                 if raw_name and parsed.get("op") != raw_name:
                     renamed[raw_name] = str(parsed.get("op"))
                 if raw_name == "replace_caption_text":
@@ -3898,27 +4421,32 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             elif raw_name == "patch_text_appearance":
                 appearance_parse_failed = True
 
+        atomic_detail = None
         if bulk_parse_failed:
-            state.reject(
-                op="bundle",
-                reason="invalid_value",
-                detail=(
-                    "one or more bulk media actions could not resolve every eligible target; "
-                    "the complete bundle was rejected without partial operations"
-                ),
+            # A bulk op means "all of them": a partial selection would claim every image or clip.
+            atomic_detail = (
+                "one or more bulk media actions could not resolve every eligible target; "
+                "the complete bundle was rejected without partial operations"
             )
-            ops = []
         if appearance_requested and appearance_parse_failed:
-            state.reject(
-                op="bundle",
-                reason="invalid_value",
-                detail="text appearance changes are atomic; no sibling operation was applied",
+            # One appearance change restyles many texts; a sibling alone would restyle half.
+            atomic_detail = "text appearance changes are atomic; no sibling operation was applied"
+        if atomic_detail is not None:
+            state.reject(op="bundle", reason="invalid_value", detail=atomic_detail)
+            # The valid siblings go back to a repair round with the op that failed.
+            state.rejected_ops.extend(
+                RejectedOp(op=str(parsed["op"]), reason="held_back", detail=atomic_detail, raw=raw)
+                for raw, parsed in accepted
             )
             ops = []
 
         ops, no_effect_reply = _drop_normalized_no_effect_ops(ops, input.variant_snapshot)
         ops = _ground_descriptive_captions(ops, input.variant_snapshot, input.utterance, state)
         ops = _effect_removal_pass(ops, input.variant_snapshot, input.utterance, state)
+        if kept_ops:
+            # Kept ops already passed these checks in an earlier round and still apply, so a
+            # correction that changes nothing is not "nothing changed".
+            ops, no_effect_reply = [*kept_ops, *ops], None
 
         capacity_pending_seed = _bulk_pending_for_clarification(
             ops,
@@ -3970,10 +4498,32 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             )
             bulk_context = _bulk_clarification_context([], input.utterance, bulk_pending_actions)
 
+        if ops and self.compile_check is not None:
+            from app.services.thought_summaries import publish_step  # noqa: PLC0415
+
+            publish_step(
+                f"Checking {len(ops)} {'edit' if len(ops) == 1 else 'edits'} in your editor"
+            )
+            ops = self._compiled_ops(ops, state)
+        if repair is not None:
+            # A rejected op the answer neither corrected nor declared unmet stays not done.
+            leftover = [
+                item
+                for index, item in enumerate(repair.rejected, start=1)
+                if f"r{index}" not in settled | retried
+            ] + repair.unrepairable
+            state.rejected_ops.extend(leftover)
+            state.rejection_reasons.extend(
+                {"op": item.op, "reason": item.reason, "detail": item.detail}
+                for item in leftover
+                if item.reason != "held_back"
+            )
+
         reply = str(data.get("reply") or "").strip()
         # KRI-667: the model's claim describes the model's reply. Every branch below that
         # replaces that reply with server text restates the claim for the new text.
-        claimed_ops = _sanitize_claimed_ops(data.get("claimed_ops"), renamed)
+        model_claimed_ops = _sanitize_claimed_ops(data.get("claimed_ops"), renamed)
+        claimed_ops = model_claimed_ops
         if no_effect_reply is not None:
             # "Already like that / nothing changed": describes no change.
             reply = no_effect_reply
@@ -3998,6 +4548,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                         "her görsel ne kadar kısa olsun?"
                     ),
                 )
+            elif (referent or "clips") in _HOW_SHORT_QUESTIONS:
+                # German needs the noun inside the sentence (KRI-1362).
+                question = _HOW_SHORT_QUESTIONS[referent or "clips"]
+                reply = say(en=question[0], tr=question[1])
             else:
                 reply = say(
                     en="How short should the {v1} be?",
@@ -4055,10 +4609,8 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         if state.confidence < _CONFIDENCE_CLARIFY_THRESHOLD:
             needs_clarification = True
 
-        # Parser rejections lower confidence and therefore keep the legacy
-        # clarification hint, but the stable outcome must disclose what
-        # actually happened. Otherwise an invalid operation is presented as a
-        # question instead of the concrete execution failure.
+        # A question the model asked still discloses a concrete rejection beside it, so an
+        # invalid operation is never presented as only a question.
         if capacity_reply is not None or (needs_clarification and not state.rejection_reasons):
             outcome: CopilotOutcome = "clarification"
         elif ops:
@@ -4066,10 +4618,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         elif any(item["reason"] == "stale_target" for item in state.rejection_reasons):
             outcome = "stale"
         elif (
-            any(
-                item["reason"] in {"capability_unavailable", "unknown_operation"}
-                for item in state.rejection_reasons
-            )
+            any(item["reason"] in UNSUPPORTED_REJECTIONS for item in state.rejection_reasons)
             or intent == "reject"
         ):
             outcome = "unsupported"
@@ -4113,29 +4662,22 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 current_pending,
             )
 
-        if (
-            outcome == "failed"
-            and state.invalid_raw_ops
-            and self._value_retry_armed
-            and not self._value_retry_used
-        ):
-            # The model understood the request but wrote a value the contract
-            # does not accept (e.g. position "top_left"). Dropping the op and
-            # telling the creator "I couldn't build a valid draft change" wastes
-            # a turn the model can fix itself: raise once so the runtime's
-            # schema retry re-asks with the rejected ops quoted (2026-09-19,
-            # job d9a965b0). A second failure returns honestly as before.
-            self._value_retry_used = True
-            self._value_retry_hint = _value_retry_hint(state)
-            raise SchemaError(
-                "edit_copilot: operation values rejected -- retrying with the rejected ops quoted"
-            )
-
         unmet_requests = _sanitize_unmet_requests(data.get("unmet_requests"))
+        not_applied = [
+            item
+            for item in state.rejected_ops
+            if item.reason in _REJECTION_KINDS
+            # Clips already in the asked order: a no-op the reply already explains.
+            and not (state.reorder_noop and item.op == "reorder_clips_by")
+        ]
+        reasons = [item["reason"] for item in unmet_requests if item["reason"]]
+        if ops and not_applied:
+            # KRI-1386: the ops that survived apply; every one that did not is named, so a
+            # partial edit never reads as the whole request.
+            unmet_requests, sentences = _with_not_applied(unmet_requests, not_applied)
+            reasons.extend(sentences)
         if unmet_requests:
-            reasons = list(
-                dict.fromkeys(item["reason"] for item in unmet_requests if item["reason"])
-            )
+            reasons = list(dict.fromkeys(reasons))
             if reasons:
                 # Structured unmet outcomes are authoritative even when the model
                 # labels a partial bundle as an edit and writes completion copy.
@@ -4162,6 +4704,45 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 else:
                     reply = f"{reply} {limitation}".strip()
 
+        next_repair = None
+        # A lane limit (capability_unavailable inside an open family) is already the honest
+        # answer; re-asking costs a model call to hear it again. A closed family is worth a
+        # round: an op from an open family may do it.
+        repairable = [
+            item
+            for item in not_applied
+            if item.raw is not None
+            and (
+                item.reason != "capability_unavailable"
+                or not _family_allowed(item.op, input.variant_snapshot)
+            )
+        ]
+        next_round = (repair.repair_round if repair is not None else 0) + 1
+        if (
+            intent == "edit"
+            and not needs_clarification
+            and 0 < len(repairable) <= _MAX_REPAIR_OPS
+            and next_round <= _MAX_REPAIR_ROUNDS
+        ):
+            next_repair = CopilotRepair(
+                repair_round=next_round,
+                base=(
+                    repair.base
+                    if repair is not None and not repair.awaiting_reply
+                    else {
+                        **{k: v for k, v in data.items() if k not in {"ops", "research_request"}},
+                        "claimed_ops": model_claimed_ops,
+                    }
+                ),
+                kept_ops=ops,
+                rejected=[
+                    item.model_copy(update={"hint": _rejection_hint(item, input.variant_snapshot)})
+                    for item in repairable
+                ],
+                unrepairable=[item for item in not_applied if item not in repairable],
+                notes=_kept_notes(state, repairable),
+            )
+
         try:
             return EditCopilotOutput(
                 intent=intent,  # type: ignore[arg-type]
@@ -4178,23 +4759,30 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 reply_notes=" ".join(dict.fromkeys(state.reply_notes)),
                 claimed_ops=claimed_ops,
                 length_options=offered_lengths if outcome == "clarification" else [],
+                repair=next_repair,
+                not_applied=not_applied,
             )
         except Exception as exc:  # noqa: BLE001
             raise RefusalError(f"edit_copilot: output validation — {exc}") from exc
 
-    # Per-instance targeted retry state (one EditCopilotAgent per turn). The
-    # retry is only armed inside `run()`: a direct `parse()` (tests, replay
-    # tooling) keeps returning the honest "failed" outcome without raising.
-    _value_retry_armed: bool = False
-    _value_retry_used: bool = False
-    _value_retry_hint: str | None = None
+    # KRI-1387: pre-compile hook, set by callers that hold the variant the runtime compiles
+    # against (the Kria planner). It returns (ops that compile, [(op, error), ...]).
+    compile_check: Callable[[list[dict]], tuple[list[dict], list[tuple[dict, str]]]] | None = None
 
-    def run(self, input: EditCopilotInput | dict, *, ctx: RunContext | None = None):  # noqa: A002
-        self._value_retry_armed = getattr(self.client, "supports_clarification_retry", True)
-        return super().run(input, ctx=ctx)
+    def _compiled_ops(self, ops: list[dict], state: _ParseState) -> list[dict]:
+        """Keep the ops the editor compiles; a refused op becomes a rejection in this turn."""
+        try:
+            ok, refused = self.compile_check(ops)  # type: ignore[misc]
+        except Exception:  # noqa: BLE001 - advisory: the runtime compile still decides
+            log.warning("edit_copilot.compile_check_failed", exc_info=True)
+            return ops
+        for op, error in refused:
+            state.current_raw = op
+            state.reject(op=str(op.get("op") or "unknown"), reason="compile_error", detail=error)
+            state.end_op()
+        return ok
 
     def schema_clarification(self) -> str:
-        hint = self._value_retry_hint or ""
         return (
             "\n\nIMPORTANT: return ONLY valid JSON with keys: intent "
             "(edit|clarify|describe|reject|unknown), ops (array of editor op objects), "
@@ -4202,14 +4790,34 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             "needs_clarification (boolean), clarification_context (object or null), "
             "pending_actions (array), unmet_requests (array of {request, reason}), "
             "claimed_ops (array of the op names reply describes as done; [] if none). "
-            "No markdown or prose outside JSON." + hint
+            "No markdown or prose outside JSON."
         )
 
     def refusal_clarification(self) -> str:
         return self.schema_clarification()
 
 
+class ChatEditCopilotAgent(EditCopilotAgent):
+    """The chat turn's copilot (``run_copilot_turn``): EDIT_COPILOT_MODEL at
+    EDIT_COPILOT_THINKING_LEVEL, read at import. ``configure_creator_agent`` applies
+    EDIT_COPILOT_OUTPUT_MODE to it, so a non-Gemini model here can answer with tool calls."""
+
+    spec: ClassVar[AgentSpec] = replace(
+        EditCopilotAgent.spec,
+        model=settings.edit_copilot_model,
+        # An OpenAI or Anthropic copilot answers on Gemini after a provider failure (KRI-1393);
+        # the Gemini default has none, as before.
+        fallback_models=cross_provider_fallback(settings.edit_copilot_model),
+        thinking_level=settings.edit_copilot_thinking_level,
+    )
+
+
 _TR_REFERENT_NOUNS = {"images": "Görseller", "videos": "Videolar", "clips": "Klipler"}
+_HOW_SHORT_QUESTIONS = {
+    "images": ("How short should the images be?", "Görseller ne kadar kısa olsun?"),
+    "videos": ("How short should the videos be?", "Videolar ne kadar kısa olsun?"),
+    "clips": ("How short should the clips be?", "Klipler ne kadar kısa olsun?"),
+}
 
 
 def _server_reply(ops: list[dict], notes: str) -> str:
@@ -4222,19 +4830,19 @@ def _server_reply(ops: list[dict], notes: str) -> str:
             if op.get("mode") == "append":
                 parts.append(
                     say(
-                        en="Added the filming hour to {count} clip{v1}.",
+                        en="Added the filming hour to {count} clip."
+                        if count == 1
+                        else "Added the filming hour to {count} clips.",
                         tr="{count} klibe çekim saatini ekledim.",
                         count=count,
-                        v1="s" if count != 1 else "",
                     )
                 )
             else:
                 parts.append(
                     say(
-                        en="Labelled {count} clip{v1}.",
+                        en="Labelled {count} clip." if count == 1 else "Labelled {count} clips.",
                         tr="{count} klibe etiket ekledim.",
                         count=count,
-                        v1="s" if count != 1 else "",
                     )
                 )
         else:
@@ -4296,6 +4904,7 @@ CAPABILITY_UNAVAILABLE_DETAIL = "I can't change that on this edit yet."
 
 
 def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None:
+    state.end_op()
     if not isinstance(raw_op, dict):
         log.warning("edit_copilot.drop_non_object_op", op=raw_op)
         state.reject(op="unknown", reason="unknown_operation", detail="operation must be an object")
@@ -4411,7 +5020,13 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
     clarification_before = state.selector_clarification
     no_effect_count_before = len(state.no_effect_clarifications)
     rejections_before = len(state.rejection_reasons)
+    invalid_before = state.invalid_values
     parsed = _coerce_payload(name, payload, snapshot, state)
+    if parsed is not None and state.invalid_values > invalid_before:
+        # A coercer refused one value but returned the rest: applying the rest would change
+        # less than the model asked for, so the whole op is rejected (and repairable).
+        log.warning("edit_copilot.partial_value_refused", op=name)
+        parsed = None
     if parsed is None:
         if len(state.rejection_reasons) > rejections_before:
             return None  # the coercer already recorded why
@@ -4548,20 +5163,14 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
 
 def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
     text_bars = _snapshot_list(snapshot, _TEXT_INDEX_KEYS)
-    text_count = len(text_bars)
-    slot_count = _snapshot_len(snapshot, _SLOT_INDEX_KEYS)
-    sfx_count = _section_len(snapshot, "sfx", "placements")
-    overlay_count = _section_len(snapshot, "overlays", "cards")
-    cue_count = _section_len(snapshot, "captions", "cues")
-    camera_effect_count = len(snapshot.get("camera_effects") or [])
-    visual_block_count = len(snapshot.get("visual_blocks") or [])
+    limits = _index_limits(snapshot)
     transition_slots = [
         slot
         for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
         if isinstance(slot, dict) and not slot.get("removed")
     ]
     for key in ("bar_index",):
-        if key in payload and not _index_in_bounds(payload[key], text_count):
+        if key in payload and not _index_in_bounds(payload[key], limits["bar_index"]):
             log.warning("edit_copilot.drop_text_index_oob", op=name, index=payload.get(key))
             return False
         if key in payload and name in {"set_text_timing", "remove_text"}:
@@ -4570,7 +5179,7 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
                 log.warning("edit_copilot.drop_locked_lyric_text_op", op=name, index=payload[key])
                 return False
     for key in ("slot_index", "from_index", "to_index"):
-        if key in payload and not _index_in_bounds(payload[key], slot_count):
+        if key in payload and not _index_in_bounds(payload[key], limits["slot_index"]):
             log.warning(
                 "edit_copilot.drop_slot_index_oob",
                 op=name,
@@ -4578,21 +5187,23 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
                 index=payload.get(key),
             )
             return False
-    if "sfx_index" in payload and not _index_in_bounds(payload["sfx_index"], sfx_count):
+    if "sfx_index" in payload and not _index_in_bounds(payload["sfx_index"], limits["sfx_index"]):
         log.warning("edit_copilot.drop_sfx_index_oob", op=name, index=payload.get("sfx_index"))
         return False
-    if "overlay_index" in payload and not _index_in_bounds(payload["overlay_index"], overlay_count):
+    if "overlay_index" in payload and not _index_in_bounds(
+        payload["overlay_index"], limits["overlay_index"]
+    ):
         log.warning(
             "edit_copilot.drop_overlay_index_oob",
             op=name,
             index=payload.get("overlay_index"),
         )
         return False
-    if "cue_index" in payload and not _index_in_bounds(payload["cue_index"], cue_count):
+    if "cue_index" in payload and not _index_in_bounds(payload["cue_index"], limits["cue_index"]):
         log.warning("edit_copilot.drop_cue_index_oob", op=name, index=payload.get("cue_index"))
         return False
     if "camera_effect_index" in payload and not _index_in_bounds(
-        payload["camera_effect_index"], camera_effect_count
+        payload["camera_effect_index"], limits["camera_effect_index"]
     ):
         log.warning(
             "edit_copilot.drop_camera_effect_index_oob",
@@ -4615,7 +5226,7 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
         )
         return False
     if "visual_block_index" in payload and not _index_in_bounds(
-        payload["visual_block_index"], visual_block_count
+        payload["visual_block_index"], limits["visual_block_index"]
     ):
         log.warning(
             "edit_copilot.drop_visual_block_index_oob",
@@ -5005,23 +5616,21 @@ def _ground_descriptive_captions(
         state.reply_notes.append(
             say(
                 en=(
-                    "Clip{v1} {names} "
-                    '{v2}\'t look like "{words}" from '
-                    "what I saw, so I didn't put that wording on "
-                    "{v3}. Tell me what "
-                    "{v4}, or ask me to describe "
+                    "Clip {names} doesn't look like \"{words}\" from what I saw, so I didn't "
+                    "put that wording on it. Tell me what it is, or ask me to describe what I see."
+                )
+                if len(mismatched) == 1
+                else (
+                    "Clips {names} don't look like \"{words}\" from what I saw, so I didn't "
+                    "put that wording on them. Tell me what they are, or ask me to describe "
                     "what I see."
                 ),
                 tr=(
                     'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
                     "ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
                 ),
-                v1="s" if len(mismatched) != 1 else "",
                 names=names,
-                v2="don" if len(mismatched) != 1 else "doesn",
                 words=words,
-                v3="them" if len(mismatched) != 1 else "it",
-                v4="they are" if len(mismatched) != 1 else "it is",
             )
         )
     if not written:
@@ -5059,30 +5668,31 @@ def _ground_descriptive_captions(
         + "."
     )
     if unseen:
-        plural = "s" if len(unseen) != 1 else ""
         state.reply_notes.append(
             say(
                 en=(
-                    "I left out clip{plural} {join_unseen}: I can't tell what "
-                    "{v1}. Tell me and I'll add "
-                    "{v2}."
+                    "I left out clips {join_unseen}: I can't tell what they show. "
+                    "Tell me and I'll add them."
+                )
+                if len(unseen) != 1
+                else (
+                    "I left out clip {join_unseen}: I can't tell what it shows. "
+                    "Tell me and I'll add it."
                 ),
                 tr=(
                     "Klip {join_unseen} dışarıda kaldı: ne gösterdiğini anlayamadım. "
                     "Söylersen ekleyeyim."
                 ),
-                plural=plural,
                 join_unseen=", ".join(unseen),
-                v1="they show" if plural else "it shows",
-                v2="them" if plural else "it",
             )
         )
     if skipped:
         state.reply_notes.append(
             say(
-                en=("I didn't caption clip{v1} {join_skipped}."),
+                en="I didn't caption clip {join_skipped}."
+                if len(skipped) == 1
+                else "I didn't caption clips {join_skipped}.",
                 tr="Klip {join_skipped} için yazı eklemedim.",
-                v1="s" if len(skipped) != 1 else "",
                 join_skipped=", ".join(skipped),
             )
         )
@@ -5282,12 +5892,12 @@ def _coerce_label_each_clip(
         labels.append(entry)
     if from_time:
         if untimed:
-            plural = "s" if len(untimed) != 1 else ""
             state.reply_notes.append(
                 say(
-                    en="No filming time for clip{plural} {join_untimed}.",
+                    en="No filming time for clip {join_untimed}."
+                    if len(untimed) == 1
+                    else "No filming time for clips {join_untimed}.",
                     tr="Klip {join_untimed} için çekim saati yok.",
-                    plural=plural,
                     join_untimed=", ".join(untimed),
                 )
             )
@@ -5684,12 +6294,12 @@ def _coerce_payload(
         start, end = _slot_window(slot) if isinstance(slot, dict) else (None, None)
         if start is not None and end is not None:
             remaining = end - start - out["start_s"]
-            if remaining < 0.1:
+            if below_editor_minimum(remaining):
                 state.invalid_value()
                 return None
     if name == "trim_output_start":
         total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
-        if total_s is not None and total_s - out["start_s"] < 0.1:
+        if total_s is not None and below_editor_minimum(total_s - out["start_s"]):
             state.invalid_value()
             return None
     if name == "remove_music":
@@ -5909,17 +6519,7 @@ def _coerce_payload(
             if not isinstance(patch, dict) or not patch:
                 state.invalid_value()
                 return None
-            allowed_patch = {
-                "start_s",
-                "end_s",
-                "palette",
-                "intensity",
-                "params",
-                "speed",
-                "easing",
-                "hold_frames",
-            }
-            if any(key not in allowed_patch for key in patch):
+            if any(key not in MOTION_PATCH_FIELDS for key in patch):
                 state.invalid_value()
                 return None
             clean_patch: dict[str, Any] = {}

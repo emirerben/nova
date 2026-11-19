@@ -2,9 +2,8 @@
 
 Producer: ``nova.audio.song_classifier`` (admin-time, once per track).
 Consumers: ``nova.audio.music_matcher`` (job-time match scoring) plus the
-existing ``transition_picker`` / ``text_designer`` agents that read
-``copy_tone`` + ``transition_style`` off the track when running in
-auto-music mode.
+existing ``text_designer`` agent that reads ``copy_tone`` +
+``transition_style`` off the track when running in auto-music mode.
 
 This is intentionally a *creative* schema. Structural fields (beats,
 tempo, energy curve) live on ``AudioTemplateOutput`` and are not
@@ -118,7 +117,7 @@ class MusicLabels(BaseModel):
         description="Consumed by text_designer + platform_copy in auto-music mode.",
     )
     transition_style: TransitionStyle = Field(
-        description="Consumed by transition_picker in auto-music mode.",
+        description="Track-level transition style hint for auto-music mode.",
     )
     color_grade: str = Field(
         default="none",

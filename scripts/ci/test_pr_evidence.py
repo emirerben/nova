@@ -1,18 +1,22 @@
 """Failure modes first: exercise the public gate with actual Git repositories.
 
-A missing/malformed receipt, stale head, or unverifiable artifact must fail. A
-partial fix may name unfinished work, but cannot claim complete fulfillment.
+A missing/malformed receipt, a receipt for a different patch, or an unverifiable
+artifact must fail. A rebase, amend or merge of the base branch that leaves the
+patch unchanged must not. A partial fix may name unfinished work, but cannot
+claim complete fulfillment.
 Changing, renaming, deleting, or leaving runtime code untracked cannot bypass
 scope selection. PR text is data: commands in it must never run.
 """
 
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).with_name("pr-evidence.py").resolve()
 KINDS = (
@@ -59,6 +63,11 @@ class EvidenceCLITests(unittest.TestCase):
         self.git("commit", "-qm", "change")
         self.head = self.git("rev-parse", "HEAD")
 
+    def patch_id(self, base=None, head=None):
+        result = self.run_gate(None, "--patch-id", base=base, head=head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
     def receipt(self):
         checks = []
         for kind in KINDS:
@@ -85,7 +94,7 @@ class EvidenceCLITests(unittest.TestCase):
         )
         return {
             "schema_version": 1,
-            "head_sha": self.head,
+            "patch_id": self.patch_id(),
             "claim": "local_fix",
             "issue": "KRI-577",
             "original_request": "Use the six named cafe moments with a photo after the wave.",
@@ -155,8 +164,262 @@ class EvidenceCLITests(unittest.TestCase):
             value[field] = text
             self.assertFails(self.body(value), field)
 
-    def test_head_must_be_exact_and_current(self):
+    def test_receipt_must_name_this_prs_patch(self):
         value = self.receipt()
+        value["patch_id"] = "0" * 40
+        self.assertFails(self.body(value), "patch_id does not match")
+
+    def test_missing_or_double_identity_fails(self):
+        value = self.receipt()
+        del value["patch_id"]
+        self.assertFails(self.body(value), "requires fields")
+        value = self.receipt()
+        value["head_sha"] = self.head
+        self.assertFails(self.body(value), "requires fields")
+
+    def branch_pr(self):
+        """Turn the committed history into base <- pr, with main free to advance."""
+        self.git("branch", "pr")
+        self.git("checkout", "-q", "-B", "main", self.base)
+
+    def advance_main(self, name="docs/elsewhere.md", text="unrelated main work\n"):
+        self.write(name, text)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "main moves")
+        return self.git("rev-parse", "HEAD")
+
+    def evidence_passes(self, receipt, *, base, head):
+        result = self.run_gate(self.body(receipt), base=base, head=head)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_rebase_with_identical_patch_keeps_evidence_valid(self):
+        receipt = self.receipt()
+        self.branch_pr()
+        new_base = self.advance_main()
+        self.git("checkout", "-q", "pr")
+        self.git("rebase", "-q", new_base)
+        new_head = self.git("rev-parse", "HEAD")
+        self.assertNotEqual(new_head, self.head)
+        self.evidence_passes(receipt, base=new_base, head=new_head)
+
+    def test_rebase_over_neighbouring_edits_in_the_same_file_keeps_evidence(self):
+        self.write(
+            "src/apps/api/app/kria/planner.py", "\n".join(map(str, range(40))) + "\n"
+        )
+        self.git("add", "-A")
+        self.git("commit", "-qm", "wider file")
+        self.base = self.git("rev-parse", "HEAD")
+        lines = (self.repo / "src/apps/api/app/kria/planner.py").read_text().split("\n")
+        lines[5] = "pr edit"
+        self.write("src/apps/api/app/kria/planner.py", "\n".join(lines))
+        self.commit()
+        receipt = self.receipt()
+        self.branch_pr()
+        lines[8] = "main edit two lines clear of the PR hunk"
+        lines[5] = "5"
+        self.write("src/apps/api/app/kria/planner.py", "\n".join(lines))
+        self.git("add", "-A")
+        self.git("commit", "-qm", "main edits a neighbouring line")
+        new_base = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "pr")
+        self.git("rebase", "-q", new_base)
+        self.evidence_passes(receipt, base=new_base, head=self.git("rev-parse", "HEAD"))
+
+    def commit_over_receipt(self, base, before, after):
+        """PR adds `before` over `base`, receipt recorded; a later commit makes it `after`."""
+        path = "src/apps/api/app/kria/planner.py"
+        self.write(path, base)
+        self.commit()
+        self.base = self.head
+        self.write(path, before)
+        self.commit()
+        receipt = self.receipt()
+        self.write(path, after)
+        self.commit()
+        self.assertFails(self.body(receipt), "patch_id does not match")
+
+    def test_reindenting_a_line_invalidates_evidence(self):
+        self.commit_over_receipt(
+            "def reserve(s):\n    if not s.control:\n        log()\n    return\n",
+            "def reserve(s):\n    if not s.control:\n        log()\n    raise Policy()\n    return\n",
+            "def reserve(s):\n    if not s.control:\n        log()\n        raise Policy()\n    return\n",
+        )
+
+    def test_moving_an_added_line_to_another_place_invalidates_evidence(self):
+        base = "def health():\n    log()\n    return ok\n\n\ndef startup():\n    boot()\n    return up\n"
+        self.commit_over_receipt(
+            base,
+            base.replace("    return ok", "    audit()\n    return ok"),
+            base.replace("    return up", "    audit()\n    return up"),
+        )
+
+    def test_git_diff_config_cannot_change_the_patch_id(self):
+        path = "src/apps/api/app/kria/planner.py"
+        before = "  x\n  x\na\n{\n  y\nend\n  x\nb\n{\n}\nend\na\n  y\na\n"
+        after = "  x\n  x\na\n{\n  y\nend\n  x\nb\n{\nend\n}\nend\na\na\n  y\nb\na\n"
+        self.write(path, before)
+        self.commit()
+        self.base = self.head
+        self.write(path, after)
+        self.commit()
+        expected = self.patch_id()
+        home = self.repo / ".git" / "fake-home"
+        home.mkdir()
+        (home / ".gitconfig").write_text("[diff]\n\talgorithm = histogram\n")
+        env = {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
+        same_flags = [
+            "diff",
+            "--no-color",
+            "--indent-heuristic",
+            "--inter-hunk-context=0",
+            "--binary",
+            "-U1",
+            self.base,
+            self.head,
+        ]
+
+        def raw_id():
+            diff = subprocess.run(
+                ["git", "-C", str(self.repo), *same_flags],
+                env={**os.environ, **env},
+                capture_output=True,
+            ).stdout
+            return (
+                subprocess.run(
+                    ["git", "patch-id", "--verbatim"], input=diff, capture_output=True
+                )
+                .stdout.split()[0]
+                .decode()
+            )
+
+        self.assertNotEqual(
+            raw_id(), expected, "fixture no longer separates histogram from myers"
+        )
+        with mock.patch.dict("os.environ", env):
+            self.assertEqual(self.patch_id(), expected, "global git config leaked in")
+            for key, value in (
+                ("diff.algorithm", "histogram"),
+                ("diff.indentHeuristic", "false"),
+                ("diff.suppressBlankEmpty", "true"),
+                ("diff.context", "7"),
+                ("diff.interHunkContext", "9"),
+                ("color.ui", "always"),
+                ("diff.noprefix", "true"),
+            ):
+                self.git("config", key, value)
+            self.assertEqual(self.patch_id(), expected, "repo git config leaked in")
+
+    def test_rebase_that_changes_the_patch_invalidates_evidence(self):
+        receipt = self.receipt()
+        self.branch_pr()
+        new_base = self.advance_main()
+        self.git("checkout", "-q", "pr")
+        self.git("rebase", "-q", new_base)
+        self.write("src/apps/api/app/kria/planner.py", "fixed behavior, then changed\n")
+        self.git("commit", "-qam", "conflict resolution rewrote the fix")
+        result = self.run_gate(
+            self.body(receipt), base=new_base, head=self.git("rev-parse", "HEAD")
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("patch_id does not match", result.stderr)
+
+    def test_any_new_code_commit_invalidates_evidence(self):
+        receipt = self.receipt()
+        self.write(
+            "src/apps/api/app/kria/planner.py", "fixed behavior\nplus one line\n"
+        )
+        self.commit()
+        result = self.run_gate(self.body(receipt))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("patch_id does not match", result.stderr)
+
+    def test_changed_binary_artifact_invalidates_evidence(self):
+        (self.repo / "reports").mkdir(exist_ok=True)
+        (self.repo / "reports/out.mp4").write_bytes(b"\x00\x01frame-a")
+        self.commit()
+        receipt = self.receipt()
+        (self.repo / "reports/out.mp4").write_bytes(b"\x00\x01frame-b")
+        self.commit()
+        self.assertFails(self.body(receipt), "patch_id does not match")
+
+    def test_mode_only_change_invalidates_evidence(self):
+        receipt = self.receipt()
+        self.git("update-index", "--chmod=+x", "src/apps/api/app/kria/planner.py")
+        self.git("commit", "-qm", "make executable")
+        self.head = self.git("rev-parse", "HEAD")
+        self.assertFails(self.body(receipt), "patch_id does not match")
+
+    def test_amend_and_force_push_with_the_same_patch_keep_evidence(self):
+        receipt = self.receipt()
+        old_head = self.head
+        self.git("commit", "--amend", "-qm", "reworded after review")
+        self.head = self.git("rev-parse", "HEAD")
+        self.assertNotEqual(self.head, old_head)
+        self.evidence_passes(receipt, base=self.base, head=self.head)
+
+    def test_squashing_the_same_changes_keeps_evidence(self):
+        self.write("docs/note.md", "second commit\n")
+        self.commit()
+        receipt = self.receipt()
+        self.git("reset", "--soft", self.base)
+        self.git("commit", "-qm", "squashed")
+        self.evidence_passes(
+            receipt, base=self.base, head=self.git("rev-parse", "HEAD")
+        )
+
+    def test_merging_main_into_the_branch_keeps_evidence(self):
+        receipt = self.receipt()
+        self.branch_pr()
+        new_base = self.advance_main()
+        self.git("checkout", "-q", "pr")
+        self.git("merge", "-q", "--no-ff", "-m", "merge main", new_base)
+        merged = self.git("rev-parse", "HEAD")
+        self.assertEqual(
+            len(self.git("rev-list", "--parents", "-n1", merged).split()), 3
+        )
+        self.evidence_passes(receipt, base=new_base, head=merged)
+
+    def test_evidence_copied_from_another_pr_is_rejected(self):
+        other = self.receipt()
+        self.git("checkout", "-q", "-B", "other-pr", self.base)
+        self.write("src/apps/api/app/kria/planner.py", "a different fix entirely\n")
+        self.commit()
+        self.head = self.git("rev-parse", "HEAD")
+        self.assertFails(self.body(other), "patch_id does not match")
+
+    def test_evidence_for_an_unrelated_commit_is_rejected(self):
+        value = self.receipt()
+        branch = self.git("rev-parse", "--abbrev-ref", "HEAD")
+        self.git("checkout", "-q", "--orphan", "unrelated")
+        self.git("rm", "-rqf", ".")
+        self.write("reports/incident.json", '{"other":"history"}\n')
+        self.git("add", "-A")
+        self.git("commit", "-qm", "unrelated root")
+        stray = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", branch)
+        value["checks"][0]["artifact"] = (
+            f"https://github.com/emirerben/nova/commit/{stray}"
+        )
+        self.assertFails(self.body(value), "artifact")
+        value["checks"][0]["artifact"] = (
+            f"https://github.com/emirerben/nova/blob/{stray}/reports/incident.json"
+        )
+        self.assertFails(self.body(value), "artifact")
+
+    def test_empty_patch_has_nothing_to_fingerprint(self):
+        result = self.run_gate(None, "--patch-id", base=self.head, head=self.head)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("empty diff", result.stderr)
+
+    def test_empty_body_fails_for_affected_changes(self):
+        self.assertFails("", "request-evidence")
+
+    def test_legacy_head_sha_receipts_still_validate_against_the_exact_head(self):
+        value = self.receipt()
+        del value["patch_id"]
+        value["head_sha"] = self.head
+        result = self.run_gate(self.body(value))
+        self.assertEqual(result.returncode, 0, result.stderr)
         value["head_sha"] = self.base
         self.assertFails(self.body(value), "head_sha")
 

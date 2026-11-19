@@ -40,7 +40,7 @@ struct SlidePostStickerLayerView: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Picture")
                 .accessibilityValue(value(sticker, selected: selected))
-                .accessibilityHint(selected ? "Drag to move, pinch to resize, twist to rotate" : "Double tap to select")
+                .accessibilityHint(selected ? String(localized: "Drag to move, pinch to resize, twist to rotate") : String(localized: "Double tap to select"))
                 .accessibilityAddTraits(selected ? .isSelected : [])
                 .accessibilityAction(named: "Select") { accessibility.onSelect(sticker.id) }
                 .accessibilityAction(named: "Remove") { accessibility.onRemove(sticker.id) }
@@ -49,9 +49,9 @@ struct SlidePostStickerLayerView: View {
     }
 
     private func value(_ sticker: SlidePostSticker, selected: Bool) -> String {
-        var parts = ["width \(Int((sticker.widthFrac * 100).rounded()))%", "rotation \(Int(sticker.rotationDeg))",
-                     "position \(Int((sticker.xFrac * 100).rounded()))%, \(Int((sticker.yFrac * 100).rounded()))%"]
-        if selected { parts.append("selected") }
+        var parts = [String(localized: "width \(Int((sticker.widthFrac * 100).rounded()))%"), String(localized: "rotation \(Int(sticker.rotationDeg))"),
+                     String(localized: "position \(Int((sticker.xFrac * 100).rounded()))%, \(Int((sticker.yFrac * 100).rounded()))%")]
+        if selected { parts.append(String(localized: "selected")) }
         return parts.joined(separator: ", ")
     }
 }
@@ -86,6 +86,8 @@ struct SlidePostStickerCanvas: View {
 
     @State private var loaded: [String: UIImage] = [:]
     @State private var mode = Mode.idle
+    /// A system-cancelled drag never reaches `onEnded`; this lets `onChange` drop the stuck move/handle mode.
+    @GestureState private var touchActive = false
     @State private var gestureKey = UUID().uuidString
     @State private var movedFar = false
     @State private var wasSelectedAtTouch = false
@@ -187,10 +189,19 @@ struct SlidePostStickerCanvas: View {
             .contentShape(SlidePostTextHitShape(rects: rects))
             .highPriorityGesture(touchGesture(images))
             .simultaneousGesture(pinchGesture)
+            .onChange(of: touchActive) { _, active in
+                guard !active else { return }
+                // Let a normal `onEnded` (which reads `mode` to resolve tap-to-deselect) run first.
+                Task { @MainActor in
+                    await Task.yield()
+                    if !touchActive, !mode.isIdle, !mode.isPinch { mode = .idle }
+                }
+            }
     }
 
     private func touchGesture(_ images: [String: UIImage]) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("slidepost-sticker-canvas"))
+            .updating($touchActive) { _, active, _ in active = true }
             .onChanged { value in
                 if mode.isIdle { begin(at: value.startLocation, images) }
                 dragChanged(value, images)
@@ -296,7 +307,7 @@ struct SlidePostStickerCanvas: View {
                 .allowsHitTesting(false)
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("slidepost-sticker-selection")
-                .accessibilityValue("selected")
+                .accessibilityValue(String(localized: "selected"))
             Image(systemName: "arrow.up.left.and.arrow.down.right")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white)

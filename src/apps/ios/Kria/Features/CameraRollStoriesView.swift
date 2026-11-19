@@ -2,6 +2,12 @@ import SwiftUI
 import AVKit
 import PhotosUI
 
+/// One preview of a moment, holding the player the sheet shows.
+struct CameraRollMomentPreview: Identifiable {
+    let id = UUID()
+    let player: AVPlayer
+}
+
 struct CameraRollStoriesView: View {
     let api: any KriaAPIClient
     let collection: CameraRollCollection
@@ -27,11 +33,12 @@ struct CameraRollStoriesView: View {
     @State private var error: String?
     @State private var inspection: String?
     @State private var question = "What is clearly visible in this interval?"
-    @State private var player: AVPlayer?
-    @State private var showsPreview = false
+    /// The moment being previewed. The player travels inside it so the sheet never reads a separate value stale.
+    @State private var momentPreview: CameraRollMomentPreview?
     @State private var editingWording: CameraRollStory?
+    /// The idea's progress, kept after its sheet closes so reopening the same idea finds it still running.
     @State private var use: CameraRollIdeaUse?
-    @State private var showsUse = false
+    @State private var shownUse: CameraRollIdeaUse?
     @State private var taste: EditorialTasteProfile?
     @State private var showsTaste = false
     @State private var ratingStory: CameraRollStory?
@@ -52,7 +59,7 @@ struct CameraRollStoriesView: View {
         }
         .onDisappear {
             onReviewed(CameraRollStories(stories: stories, coverage: result.coverage, suggestedResearchTopic: result.suggestedResearchTopic))
-            player?.pause()
+            momentPreview?.player.pause()
         }
         .interactiveDismissDisabled(busy)
         .sheet(item: $ratingStory) { story in
@@ -60,8 +67,9 @@ struct CameraRollStoriesView: View {
                 feedbackSaved.insert("\(story.id)-\(story.revision)")
             }
         }
-        .sheet(isPresented: $showsPreview, onDismiss: { player?.pause(); player = nil }) {
-            if let player { VideoPlayer(player: player).ignoresSafeArea(edges: .bottom) }
+        .sheet(item: $momentPreview) { shown in
+            VideoPlayer(player: shown.player).ignoresSafeArea(edges: .bottom)
+                .onDisappear { shown.player.pause() }
         }
         .sheet(item: $editingWording) { story in
             if let plan = story.contentPlan {
@@ -72,7 +80,7 @@ struct CameraRollStoriesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsUse) { if let use { CameraRollUseSheet(use: use) } }
+        .sheet(item: $shownUse) { CameraRollUseSheet(use: $0) }
     }
 
     private var standaloneContent: some View {
@@ -80,7 +88,7 @@ struct CameraRollStoriesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                 if let coverage = result.coverage, !coverage.unindexed.isEmpty {
-                    Label("\(coverage.unindexed.count) \(coverage.unindexed.count == 1 ? "video needs" : "videos need") source or analysis review before inclusion.", systemImage: "info.circle")
+                    Label("\(coverage.unindexed.count) videos need source or analysis review before inclusion.", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 } else if let coverage = result.coverage, !coverage.incompleteSpeech.isEmpty {
                     Label("Some audio needs checking", systemImage: "info.circle")
@@ -140,7 +148,7 @@ struct CameraRollStoriesView: View {
                             }
                         }
                         if taste?.enabled == true && taste?.memoryPaused == false {
-                            Button(feedbackSaved.contains("\(story.id)-\(story.revision)") ? "Feedback saved" : "Would you post this?") { ratingStory = story }
+                            Button(feedbackSaved.contains("\(story.id)-\(story.revision)") ? String(localized: "Feedback saved") : String(localized: "Would you post this?")) { ratingStory = story }
                                 .font(KriaFont.body(13)).frame(minHeight: 44)
                                 .accessibilityIdentifier("idea-feedback")
                         }
@@ -224,7 +232,7 @@ struct CameraRollStoriesView: View {
 
     private func embeddedKicker(_ story: CameraRollStory) -> String {
         let seconds = Int(story.duration.rounded())
-        return "\(story.contentPlan?.formLabel ?? "Idea") · \(story.moments.count) \(story.moments.count == 1 ? "clip" : "clips") · \(seconds / 60):\(String(format: "%02d", seconds % 60))"
+        return String(localized: "\(story.contentPlan?.formLabel ?? String(localized: "Idea")) · \(String(localized: "\(story.moments.count) clips")) · \(seconds / 60):\(String(format: "%02d", seconds % 60))")
     }
 
     private func clipStrip(_ story: CameraRollStory) -> some View {
@@ -271,7 +279,7 @@ struct CameraRollStoriesView: View {
         .shadow(color: KriaColor.ink.opacity(0.18), radius: 28, y: 6).padding(.horizontal, 12).padding(.bottom, 28)
     }
 
-    private func secondaryLabel(_ title: String) -> some View {
+    private func secondaryLabel(_ title: LocalizedStringKey) -> some View {
         Text(title).font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
             .frame(maxWidth: .infinity, minHeight: 40).background(KriaColor.fill, in: Capsule()).frame(minHeight: 44).contentShape(Capsule())
     }
@@ -354,7 +362,7 @@ struct CameraRollStoriesView: View {
 
     private func sourceLabel(_ moment: CameraRollMoment) -> String {
         let index = collection.entries.firstIndex { $0.savedAsset?.id == moment.assetID }
-        return index.map { "Video \($0 + 1)" } ?? "Source video"
+        return index.map { String(localized: "Video \($0 + 1)") } ?? String(localized: "Source video")
     }
     @MainActor private func change(_ story: CameraRollStory, order: [UUID]?, audioPolicy: String?, action: String) async {
         busy = true; error = nil; defer { busy = false }
@@ -388,7 +396,7 @@ struct CameraRollStoriesView: View {
         busy = true; error = nil; defer { busy = false }
         do {
             let result = try await api.inspectCameraRollMoment(collectionID: collection.id, revision: collection.serverRevision ?? 0, momentID: moment.id, question: question.isEmpty ? "What is visible?" : question, cacheOnly: cacheOnly)
-            inspection = result.answer.isEmpty ? "The check could not answer confidently." : "\(result.answer) — \(result.evidence) (AI check; review the footage.)"
+            inspection = result.answer.isEmpty ? String(localized: "The check could not answer confidently.") : String(localized: "\(result.answer) — \(result.evidence) (AI check; review the footage.)")
         } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
     @MainActor private func preview(_ moment: CameraRollMoment) async {
@@ -406,17 +414,17 @@ struct CameraRollStoriesView: View {
             item.forwardPlaybackEndTime = CMTime(seconds: moment.end, preferredTimescale: 600)
             let created = AVPlayer(playerItem: item)
             await created.seek(to: CMTime(seconds: moment.start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
-            player = created; showsPreview = true
+            momentPreview = CameraRollMomentPreview(player: created)
         } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
     /// Opens the idea's progress: on the owner that keeps it running, or here for the standalone review.
     @MainActor private func select(_ story: CameraRollStory) {
         if let onUse { onUse(story); return }
-        showsUse = true
-        if let use, use.story.id == story.id { return }
+        if let use, use.story.id == story.id { shownUse = use; return }
         let collection = collection
         let started = CameraRollIdeaUse(story: story, api: api, collection: { collection }, open: onSelected)
         use = started
+        shownUse = started
         started.start()
     }
 }
@@ -455,12 +463,12 @@ struct CameraRollOpenQuestionsView: View {
     @State private var drafts: [String: String] = [:]
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(plan.unresolvedQuestions.isEmpty ? "Your answers" : "Before you build this").font(KriaFont.body(13).weight(.semibold))
+            Text(plan.unresolvedQuestions.isEmpty ? String(localized: "Your answers") : String(localized: "Before you build this")).font(KriaFont.body(13).weight(.semibold))
             ForEach(plan.openQuestions ?? []) { item in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(item.question).font(KriaFont.body(15).weight(.medium))
                     if item.isResolved {
-                        Text(item.answer ?? "Skipped").font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
+                        Text(item.answer ?? String(localized: "Skipped")).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
                             .accessibilityIdentifier("story-question-resolved-\(item.id)")
                     } else {
                         TextField("Your answer", text: Binding(get: { drafts[item.id] ?? "" }, set: { drafts[item.id] = String($0.prefix(200)) }), axis: .vertical)
@@ -480,7 +488,7 @@ struct CameraRollOpenQuestionsView: View {
             .background(KriaColor.menu, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private func questionChip(_ title: String) -> some View {
+    private func questionChip(_ title: LocalizedStringKey) -> some View {
         Text(title).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
             .padding(.horizontal, 14).frame(height: 36).background(Color.white, in: Capsule()).frame(minHeight: 44).contentShape(Capsule())
     }
@@ -552,7 +560,7 @@ struct CollectionOriginalsReview: View {
                                 let file = try await PhotoItemFileLoader().load(item: item, identifier: item.itemIdentifier ?? "picker")
                                 defer { try? FileManager.default.removeItem(at: file) }
                                 linked.formUnion(try await CollectionOriginalRelinker.link(file: file, assets: assets, owner: owner))
-                            } catch { self.error = "Choose the original, unmodified video. This selection didn't match the saved footage." }
+                            } catch { self.error = String(localized: "Choose the original, unmodified video. This selection didn't match the saved footage.") }
                         }
                     }
                 }.kriaPage()

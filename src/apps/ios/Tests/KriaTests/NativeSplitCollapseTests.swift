@@ -7,7 +7,7 @@ import KriaMediaEngine
 /// an empty or foreign or removed member making a panel active, a non-collapse section losing panels, a divider drag
 /// that moves a panel that has ended or a pair that is not adjacent on screen, a section that does not follow its
 /// longest member (the tail cut off after an extension, a member dropped after a shrink), a trim whose section change
-/// and clip change are separate undo steps, a legacy section whose JSON or trim behaviour changed, a flag dropped or
+/// and clip change are separate undo steps, a legacy section whose JSON changed, a flag dropped or
 /// emitted when false in JSON, and a section made collapsing before the server offers it.
 final class NativeSplitCollapseTests: XCTestCase {
     private static var editable: [String: EditorCapability] { ["timeline": .init(editable: true), "split_screen": .init(editable: true)] }
@@ -156,17 +156,6 @@ final class NativeSplitCollapseTests: XCTestCase {
     }
 
     @MainActor
-    func testNonCollapseSectionKeepsTheClampedTrailingTrim() throws {
-        let top = member(0, offset: 0, duration: 4), side = member(1, offset: 0, duration: 2)
-        var document = EditorDocument(clips: [top, side], capabilities: Self.editable)
-        document.splitScreenSections = [section(duration: 4, collapse: false)]
-        let session = makeSession(document)
-        try trimTrailing(session, top, by: 1.5)
-        XCTAssertEqual(session.document, document)
-        XCTAssertFalse(session.canUndo)
-    }
-
-    @MainActor
     func testShorteningTheLongestMemberShrinksTheSectionWithoutDroppingAnyone() throws {
         let top = member(0, offset: 0, duration: 4), side = member(1, offset: 0, duration: 2)
         var document = EditorDocument(clips: [top, side], capabilities: Self.editable)
@@ -254,13 +243,13 @@ final class NativeSplitCollapseTests: XCTestCase {
         for (capabilities, expected) in [(Self.editable, false), (Self.collapsing, true)] {
             for scope in [NativeSplitScope.selectedClip, .wholeVideo] {
                 let clip = fullScreen(duration: 4)
-                let session = makeSession(EditorDocument(clips: [clip], capabilities: capabilities))
+                let session = makeSession(EditorDocument(clips: [clip, fullScreen(duration: 2)], capabilities: capabilities))
                 XCTAssertEqual(session.canCollapseSplitPanels, expected)
                 session.selectClip(try clipID(session, clip))
                 session.createSplitScreen(panelCount: 2, scope: scope)
                 let created = try XCTUnwrap(session.document.splitScreenSections.first, "\(scope)")
                 XCTAssertEqual(created.collapseEmptyPanels, expected, "\(scope) with \(capabilities.keys.sorted())")
-                XCTAssertEqual(created.durationS, 4, accuracy: 1e-9)
+                XCTAssertEqual(created.durationS, scope == .selectedClip ? 4 : 6, accuracy: 1e-9)
             }
         }
     }

@@ -20,6 +20,7 @@ use (`--usage-purpose`, `--test-run-id`, `--max-cost-usd` <= $2, `--approve-rese
 from __future__ import annotations
 
 import argparse
+import math
 import os
 from pathlib import Path
 
@@ -40,6 +41,22 @@ def _pct(value: float | None) -> str:
 
 
 LIVE_COST_CAP_USD = 2.0
+ACTION_PREFIX = "action_"
+
+
+def _percentile(values: list[float], share: float) -> float:
+    """Nearest-rank percentile: the smallest value at or above `share` of the sample."""
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(share * len(ordered)) - 1)]
+
+
+def _recorded_calls(fixtures: list[RFFixture]) -> list[dict]:
+    return [
+        t.copilot
+        for f in fixtures
+        for t in f.turns
+        if t.engine == "v1_copilot" and "raw_text" in (t.copilot or {})
+    ]
 
 
 def collect(
@@ -71,6 +88,14 @@ def render_report(phase: str = "baseline", mode: Mode = "replay") -> str:
         if mode == "replay"
         else "LIVE mode: every v1_copilot turn called a real model (not a recording)."
     )
+    threads = [(f, r) for f, r in replayed if not f.fixture_id.startswith(ACTION_PREFIX)]
+    actions = [(f, r) for f, r in replayed if f.fixture_id.startswith(ACTION_PREFIX)]
+    kpi_threads = compute_kpi(r for _, r in threads)
+    kpi_actions = compute_kpi(r for _, r in actions)
+    calls = [c for c in _recorded_calls([f for f, _ in replayed]) if c.get("latency_s") is not None]
+    latency = [float(c["latency_s"]) for c in calls]
+    models = sorted({str(c["model_actual"]) for c in calls if c.get("model_actual")})
+    versions = sorted({str(c["prompt_version"]) for c in calls if c.get("prompt_version")})
     lines = [
         f"# Request-following KPI: {phase}",
         "",
@@ -81,13 +106,45 @@ def render_report(phase: str = "baseline", mode: Mode = "replay") -> str:
         "",
         f"- **Requirements met: {_pct(kpi.met_share)}** "
         f"({kpi.overall.met}/{kpi.overall.total}; partial {kpi.overall.partial}, "
-        f"unmet {kpi.overall.unmet})",
-        f"- Replies that overclaimed (talked as if a requirement was handled when it was not, "
-        f"with no 'not done' marker): **{kpi.overall.overclaims}**",
-        f"- Threads measured from recordings: {kpi.threads_scored}. Authored threads awaiting "
-        f"recordings (not in the KPI): {kpi.threads_unrecorded}.",
-        "- Small-sample warning: until authored threads are recorded (P6b), the KPI is the "
-        "East Run thread alone. Read it as a trend line per phase, not as a rate.",
+        f"unmet {kpi.overall.unmet}), over every recorded thread and the per-action set.",
+        f"- **Replies that overclaimed: {kpi.overall.overclaims}** (a requirement was missed and "
+        "the reply never said so: where the requirement names claim terms, the reply names one; "
+        "otherwise the turn applied ops and the reply has no 'not done' marker. A turn that "
+        "applied nothing claims nothing).",
+    ]
+    if latency:
+        lines.append(
+            f"- **Turn time: p50 {_percentile(latency, 0.5):.1f}s, p95 "
+            f"{_percentile(latency, 0.95):.1f}s** over {len(latency)} recorded copilot calls "
+            "(wall time of the live model call, retries included; planner routing, queueing "
+            "and render are not in it)."
+        )
+    lines += [
+        "",
+        "| Set | Threads | Requirements | Met | Partial | Unmet | Met share | Overclaims |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        f"| Conversation threads | {kpi_threads.threads_scored} | {kpi_threads.overall.total} | "
+        f"{kpi_threads.overall.met} | {kpi_threads.overall.partial} | "
+        f"{kpi_threads.overall.unmet} | {_pct(kpi_threads.met_share)} | "
+        f"{kpi_threads.overall.overclaims} |",
+        f"| Per-action set | {kpi_actions.threads_scored} | {kpi_actions.overall.total} | "
+        f"{kpi_actions.overall.met} | {kpi_actions.overall.partial} | "
+        f"{kpi_actions.overall.unmet} | {_pct(kpi_actions.met_share)} | "
+        f"{kpi_actions.overall.overclaims} |",
+        "",
+        f"Threads measured from recordings: {kpi.threads_scored}. Threads awaiting recordings "
+        f"(not in the KPI): {kpi.threads_unrecorded}.",
+        "",
+        "## Provenance",
+        "",
+        f"- Recorded model: {', '.join(models) or 'none'}.",
+        f"- Prompt version of the recordings: {', '.join(versions) or 'none'}.",
+        "- Measured path: `EditCopilotAgent` -> `_honest_outcome` -> `compile_editor_ops` "
+        "(`runner.replay_v1_copilot`). The planner's routing in front of the copilot and the "
+        "repair retry behind it are not in this path, and nothing was rendered.",
+        "- Snapshots are built by the real `build_editor_snapshot` over a synthetic phone "
+        "(`render_destination: device`) variant, with the clip facts the chat path hands the "
+        "copilot. Footage is synthetic (invented places only).",
         "",
         "## By request type",
         "",
@@ -104,7 +161,34 @@ def render_report(phase: str = "baseline", mode: Mode = "replay") -> str:
             f"{_pct(row.met_share)} | {row.overclaims} |"
         )
 
-    for fixture, result in replayed:
+    lines += [
+        "",
+        "## Per-action set (one plain request per `agent_ops` parity group, phone snapshot)",
+        "",
+        "`Reference` is what the real parser and compiler do with a hand-written op for the "
+        "request on the real variant: `reaches` (parses and compiles), `blocked at parse` or "
+        "`blocked at compile`. A blocked group cannot be met by any model today.",
+        "",
+        "| Thread | Request | Reference | Model emitted | Status | Why |",
+        "|---|---|---|---|---|---|",
+    ]
+    for fixture, result in actions:
+        probe = fixture.reference_probe or {}
+        if not probe.get("parsed_ops"):
+            reach = "blocked at parse"
+        elif probe.get("compiles") is True:
+            reach = "reaches"
+        else:
+            reach = "blocked at compile"
+        emitted = [op.get("op") for turn in result.turns for op in turn.parsed_ops] or "no op"
+        score_row = result.scores[0] if result.scores else None
+        lines.append(
+            f"| {fixture.fixture_id} | {fixture.turns[0].user_message} | {reach} | {emitted} | "
+            f"{score_row.status if score_row else 'unrecorded'} | "
+            f"{score_row.reason if score_row else ''} |"
+        )
+
+    for fixture, result in threads:
         if result.unrecorded:
             continue
         lines += [
@@ -144,6 +228,8 @@ def render_report(phase: str = "baseline", mode: Mode = "replay") -> str:
     for (fixture, ref), (_, replay) in zip(
         references, [r for r in replayed if r[0].reference], strict=True
     ):
+        if fixture.fixture_id.startswith(ACTION_PREFIX):
+            continue
         met = sum(1 for s in ref.scores if s.status == "met")
         state = "awaiting recording" if replay.unrecorded else "recorded"
         lines.append(

@@ -1,0 +1,3 @@
+FULL-SCREEN OPENING (only when BACKGROUND shows `full_screen_opening`)
+
+The speaker starts full screen in their own take before the background or the corner appears. When the creator wants the background or the corner from the very first frame -> {"op":"remove_full_screen_opening"}. It keeps the background, the timed backgrounds, the corner and any other full-screen moment; remove_background would take everything away.

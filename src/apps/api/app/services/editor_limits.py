@@ -60,3 +60,27 @@ MOTION_MAX_ACTIVE_FRAMES = _limits()["motion_max_active_seconds"] * MOTION_FPS
 MOTION_MAX_CONCURRENT_COMPLEXITY = _limits()["motion_max_concurrent_complexity"]
 MOTION_MAX_COMPLEXITY_MULTIPLIER = _limits()["motion_max_complexity_multiplier"]
 MOTION_MAX_COMPLEXITY_UNITS = MOTION_MAX_ACTIVE_FRAMES * MOTION_MAX_COMPLEXITY_MULTIPLIER
+
+# KRI-1377: each numeric limit below is written once. Code, the AI prompts
+# (`app.agents.prompt_vocab` tokens) and the native app (`EditorLimits.generated.swift`, from
+# `scripts/generate_native_text_contract.py`) all read it; import the name, never retype the number.
+# Not here because their purpose differs: the per-word overlay floors (`overlay_pacing`,
+# `text_overlay_v2.pipeline`) and the song-lyric word floor (`NativeUserSong.minWordS`).
+FRAME_S = 1 / MOTION_FPS
+
+# Shortest an editor clip window may be. Compare with `app.schemas.editor_window` helpers.
+EDITOR_MIN_CLIP_S = 0.1
+
+# Source seconds per output second a clip may play at.
+PLAYBACK_RATE_MIN = 0.25
+PLAYBACK_RATE_MAX = 4.0
+
+# `TextAnimationPhases.speed` and `VisualAnimation.speed`: entrance and exit length scale.
+ANIMATION_SPEED_MIN = 0.25
+ANIMATION_SPEED_MAX = 3
+
+# A text piece may be as short as one output frame: the least the video can show.
+MIN_TEXT_PIECE_S = FRAME_S
+# Window edges are rounded to the microsecond, so a piece sized to exactly `MIN_TEXT_PIECE_S` can
+# measure a microsecond short; below the floor means short by more than this.
+TEXT_PIECE_TOLERANCE_S = 2e-6

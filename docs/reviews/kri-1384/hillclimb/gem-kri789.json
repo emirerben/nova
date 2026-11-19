@@ -1,0 +1,47 @@
+{
+  "fixtures": 1,
+  "ran": 1,
+  "passed": 1,
+  "failure_categories": {},
+  "settled_usd": 0.1864,
+  "ledger": [
+    {
+      "test_run_id": "kri1384sp-gem-kri789-b1",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "1",
+      "settled_usd": "0.0613",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-kri789-b2",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "1",
+      "settled_usd": "0.0685",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384sp-gem-kri789-b3",
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "status": "settled",
+      "capability": "",
+      "calls": "1",
+      "settled_usd": "0.0566",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "kri789_one_take_start_end_lines_trim",
+      "passed": true,
+      "failure": null,
+      "category": null
+    }
+  ]
+}

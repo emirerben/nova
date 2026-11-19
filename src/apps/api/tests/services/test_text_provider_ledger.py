@@ -30,39 +30,42 @@ def provider_ledger(ledger):  # noqa: F811
 )
 @pytest.mark.parametrize("unknown", [False, True])
 def test_agent_run_new_provider_ledger(provider_ledger, model, provider, unknown):
+    """An unknown outcome stays fenced at its provider; the Gemini fallback answers (KRI-1385).
+
+    Failure modes: the unknown call is repeated at the same provider (double charge), its
+    reservation is released or settled (spend under-counted), or the run fails although a
+    model at another provider could still answer.
+    """
     request = _request(provider_ledger, model, estimate=0.1)
     client = MockModelClient()
-    response = (
-        ProviderOutcomeUnknownError("outcome unknown")
-        if unknown
-        else ModelInvocation(raw_text='{"answer":"ok","score":90}', tokens_in=100, tokens_out=20)
-    )
-    client.queue(model, response)
+    answer = ModelInvocation(raw_text='{"answer":"ok","score":90}', tokens_in=100, tokens_out=20)
+    client.queue(model, ProviderOutcomeUnknownError("outcome unknown") if unknown else answer)
+    client.queue("gemini-2.5-flash", answer)
     agent = SampleAgent(client)
     agent.spec = replace(
         agent.spec, model=model, fallback_models=("gemini-2.5-flash",), max_attempts=2
     )
+    agent.run(SampleInput(topic="test"), ctx=request.ctx)
     if unknown:
+        # The identical request again pays nobody: the first provider is fenced as unknown,
+        # the fallback's answer is already settled.
         with pytest.raises(ProviderOutcomeUnknownError):
             agent.run(SampleInput(topic="test"), ctx=request.ctx)
-        with pytest.raises(ProviderOutcomeUnknownError):
-            agent.run(SampleInput(topic="test"), ctx=request.ctx)
-    else:
-        agent.run(SampleInput(topic="test"), ctx=request.ctx)
-    assert len(client.invocations) == 1
+    assert [call["model"] for call in client.invocations] == (
+        [model, "gemini-2.5-flash"] if unknown else [model]
+    )
     with sync_engine.connect() as db:
         row = (
             db.execute(
                 text(
                     "SELECT provider,status,settled_cost_usd FROM ai_cost_reservations "
-                    "WHERE test_run_id = :id"
+                    "WHERE test_run_id = :id AND provider = :provider"
                 ),
-                {"id": request.ctx.test_run_id},
+                {"id": request.ctx.test_run_id, "provider": provider},
             )
             .mappings()
             .one()
         )
-    assert row["provider"] == provider
     assert row["status"] == ("unknown" if unknown else "settled")
     if not unknown:
         assert float(row["settled_cost_usd"]) > 0

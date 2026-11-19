@@ -316,6 +316,42 @@ def _coerce_remove_background(name: str, payload: dict, snapshot: dict, state: A
     return {"op": name}
 
 
+# Qendresa item 16 / KRI-1394: the speaker's full-screen opening is the full-screen window that
+# starts at the top of the edit (`NativeEditorSession.speakerFullScreenOpening`, within 0.05 s).
+OPENING_START_S = 0.05
+NO_OPENING_NOTE = (
+    "There is no full-screen opening of you to take away.",
+    "Kaldırılacak tam ekran bir açılışın yok.",
+)
+OPENING_LOCKED_NOTE = (
+    "Taking away the full-screen opening isn't available on this edit yet.",
+    "Tam ekran açılışı kaldırmak bu düzenlemede henüz yok.",
+)
+
+
+def is_opening(span: object) -> bool:
+    start = span.get("start_s") if isinstance(span, dict) else None
+    return (
+        isinstance(start, (int, float)) and not isinstance(start, bool) and start <= OPENING_START_S
+    )
+
+
+def _coerce_remove_full_screen_opening(
+    name: str, payload: dict, snapshot: dict, state: Any
+) -> dict | None:
+    section = snapshot.get("background") if isinstance(snapshot, dict) else None
+    section = section if isinstance(section, dict) else {}
+    if section.get("opening_removable") is True:
+        return {"op": name}
+    opening = any(is_opening(span) for span in section.get("full_screen_windows") or ())
+    en, tr = OPENING_LOCKED_NOTE if opening else NO_OPENING_NOTE
+    detail = say(en=en, tr=tr)
+    state.reject(op=name, reason="capability_unavailable", detail=detail)
+    if detail not in state.reply_notes:
+        state.reply_notes.append(detail)
+    return None
+
+
 SPECS: list[OpSpec] = [
     OpSpec(
         name="set_background",
@@ -339,6 +375,14 @@ SPECS: list[OpSpec] = [
         fields=frozenset(),
         family=frozenset({"background", "speaker_background"}),
         coerce=_coerce_remove_background,
+    ),
+    # KRI-1394: offered by the BACKGROUND section's `opening_removable` (full-opening gate open).
+    OpSpec(
+        name="remove_full_screen_opening",
+        required=frozenset(),
+        fields=frozenset(),
+        family=frozenset({"background", "speaker_background"}),
+        coerce=_coerce_remove_full_screen_opening,
     ),
     # Qendresa item 18: own family, in `allowed_op_families` only while the focus gate is open.
     OpSpec(
@@ -673,6 +717,30 @@ def _op_clear_speaker_frame(state: Any, op: dict[str, Any]) -> None:  # noqa: AR
     state.summary = "Put you back full screen"
 
 
+def _op_remove_full_screen_opening(state: Any, op: dict[str, Any]) -> None:  # noqa: ARG001
+    from app.services.kria_editor_ops import (  # noqa: PLC0415
+        KriaEditorOpError,
+        background_full_opening_open,
+    )
+
+    if not background_full_opening_open(state.job, state.variant):
+        raise KriaEditorOpError("Taking away the full-screen opening isn't available on this edit")
+    working = _working_document(state)
+    spans = working.get("full_screen_windows") if isinstance(working, dict) else None
+    opening = next((span for span in spans or () if is_opening(span)), None)
+    if opening is None:
+        raise KriaEditorOpError("There is no full-screen opening of you to take away")
+    # The fill, the timed backgrounds, the corner and any other full-screen window (an ending)
+    # stay, as `removeFullScreenOpening` keeps them.
+    rest = [dict(span) for span in spans if span is not opening]
+    document = {key: value for key, value in working.items() if key != "full_screen_windows"}
+    if rest:
+        document["full_screen_windows"] = rest
+    state.speaker_background = document
+    state.changed.add("speaker_background")
+    state.summary = "Took away the full-screen opening"
+
+
 def _op_remove_background(state: Any, op: dict[str, Any]) -> None:  # noqa: ARG001
     from app.services.kria_editor_ops import (  # noqa: PLC0415
         KriaEditorOpError,
@@ -696,6 +764,7 @@ def register_handlers() -> None:
     kria_editor_ops.register_handler("set_background", _op_set_background)
     kria_editor_ops.register_handler("set_background_color", _op_set_background_color)
     kria_editor_ops.register_handler("remove_background", _op_remove_background)
+    kria_editor_ops.register_handler("remove_full_screen_opening", _op_remove_full_screen_opening)
     kria_editor_ops.register_handler("set_background_sequence", _op_set_background_sequence)
     kria_editor_ops.register_handler("set_background_focus", _op_set_background_focus)
     kria_editor_ops.register_handler("set_speaker_frame", _op_set_speaker_frame)

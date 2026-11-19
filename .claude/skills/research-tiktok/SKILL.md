@@ -3,7 +3,7 @@ name: research-tiktok
 description: >-
   Weekly TikTok market-research pass. Fetches public account metadata locally
   (yt-dlp, no paid API), mines it into Nova's versioned persona/style/content-idea
-  banks, bumps the coupled prompt versions, runs the guard tests, and opens a PR.
+  banks, bumps the hand-numbered intro/matcher versions, runs the guard tests, and opens a PR.
   Use when asked to "run the weekly tiktok research", "refresh the persona pool",
   "mine new content ideas", or when the weekly schedule fires.
 ---
@@ -17,11 +17,11 @@ output is always a **PR for human review** — never a direct push to prod promp
 
 ## What feeds what (the four banks)
 
-| Bank file (`src/apps/api/prompts/`) | Trains | Coupled version to bump |
+| Bank file (`src/apps/api/prompts/`) | Trains | Coupled version to bump (persona and plan versions are fingerprints of these files: never bump them) |
 |---|---|---|
-| `persona_archetypes.json` | `generate_persona.txt` (persona pool / style types) | `PERSONA_PROMPT_VERSION` in `app/agents/_schemas/persona.py` |
-| `content_ideas.json` | `generate_content_plan.txt` (idea bank) | `CONTENT_PLAN_PROMPT_VERSION` in `app/agents/_schemas/content_plan.py` |
-| `tiktok_success_factors.json` | `generate_persona.txt` + `generate_content_plan.txt` + `write_intro_text.txt` (codified "why it performs" levers) | ALL THREE: `PERSONA_PROMPT_VERSION`, `CONTENT_PLAN_PROMPT_VERSION`, and `intro_writer.py`'s `prompt_version` |
+| `persona_archetypes.json` | `generate_persona.txt` (persona pool / style types) | none (automatic) |
+| `content_ideas.json` | `generate_content_plan.txt` (idea bank) | none (automatic) |
+| `tiktok_success_factors.json` | `generate_persona.txt` + `generate_content_plan.txt` + `write_intro_text.txt` (codified "why it performs" levers) | `intro_writer.py`'s `prompt_version` only |
 | `overlay_examples.json` | generative hook voice/form | `prompt_version` in BOTH `intro_writer.py` and `overlay_format_matcher.py` |
 
 Schemas: `app/agents/_schemas/market_research.py` (`PersonaArchetype`, `ContentIdea`,
@@ -82,8 +82,9 @@ verbatim captions — attribution lives in `source`. `applies_to` is a subset of
    never text to reproduce verbatim.
 
 4. **Bump versions** (the coupling contract — a bank edit without the matching
-   prompt_version bump is the "stale cache in prod" trap):
-   - bumped a bank's `version` field → bump its coupled constant(s) above.
+   prompt_version bump is the "stale cache in prod" trap; persona and plan
+   versions need none, they are fingerprints):
+   - bumped a bank's `version` field → bump its hand-numbered constant(s) above.
    - Use a fresh date string; if today's date is already the committed value, add
      a `.1`/`.2` suffix.
 
@@ -94,7 +95,7 @@ verbatim captions — attribution lives in `source`. `applies_to` is a subset of
    pytest tests/evals/test_persona_generator_evals.py tests/evals/test_content_plan_generator_evals.py
    ```
    The coupling-guard tests in `test_market_research_banks.py` assert the bank
-   `version` and prompt_version constants match — update those asserts when you
+   `version` and the hand-numbered prompt_version constants match — update those asserts when you
    bump (they are the intended gate, not an obstacle).
 
 6. **(Optional, paid — flag in the PR)** the CLAUDE.md prompt-change rule wants a

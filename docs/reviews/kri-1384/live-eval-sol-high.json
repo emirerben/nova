@@ -1,0 +1,208 @@
+{
+  "fixtures": 29,
+  "ran": 29,
+  "passed": 0,
+  "failure_categories": {
+    "asked instead of proposing": 14,
+    "requirement not extracted (brief_updates)": 15
+  },
+  "settled_usd": 1.4662,
+  "ledger": [
+    {
+      "test_run_id": "kri1384-sol-high-aa-20261113",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "15",
+      "settled_usd": "0.8034",
+      "held_usd": "0.0000"
+    },
+    {
+      "test_run_id": "kri1384-sol-high-ab-20261113",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "status": "settled",
+      "capability": "planning",
+      "calls": "14",
+      "settled_usd": "0.6628",
+      "held_usd": "0.0000"
+    }
+  ],
+  "cases": [
+    {
+      "fixture": "barcelona_shot_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "decoy_kri1038_en_spoken_words_stale_title",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_en_subtitles_quote_as_i_say",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_en_word_captions_no_quote",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_kri1038_tr_altyazi_kelime_kelime",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "decoy_qendresa_plain_word_captions_long_pauses",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: True'] + where ['no update records speech_cleanup: True'] = <function restart_brief_failures at 0x116395010>((None or []), {'cut_restarts': False, 'speech_cleanup': True}) + whe",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1038_en_cumulative_build_up",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1038_t1_29ekim_tr_quote_legacy",
+      "passed": false,
+      "failure": "KeyError: 'brief_updates'",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_en",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1151_insert_between_speech_tr",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' != 'ask_user'",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri1189_green3_restart_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_keep_retakes_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: False'] + where ['no update records speech_cleanup: False'] = <function restart_brief_failures at 0x116395010>((None or []), {'cut_restarts': False, 'speech_cleanup': False}) + ",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_s1_dead_air_restart_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t1_yanlis_basladigim_tr",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t2_tekrar_aldigim_tr",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri1189_t3_okays_and_restarts_en",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "kri127_open_vocabulary_dish_labels",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri129_caption_food_and_weather",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri188_east_run_brief_updates",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri190_route_facts_and_order",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri238_talking_add_captions",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri297_fullscreen_overlays_unavailable",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri422_per_shot_texts",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri806_don_julio_kept_lines",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri841_talking_ending_clip",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "kri849_dj_t1_ask_if_unclear",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "production_prompt_fah",
+      "passed": false,
+      "failure": "AssertionError: assert 'ask_user' == 'propose_strategy' - propose_strategy + ask_user",
+      "category": "asked instead of proposing"
+    },
+    {
+      "fixture": "qendresa_q1_caption_two_words_tight",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech_cleanup: True'] + where ['no update records cut_restarts: true for an unquoted restart ask', 'no update records speech",
+      "category": "requirement not extracted (brief_updates)"
+    },
+    {
+      "fixture": "qendresa_q2_caption_box_all_pauses",
+      "passed": false,
+      "failure": "AssertionError: assert not ['no update records speech_cleanup: True'] + where ['no update records speech_cleanup: True'] = <function restart_brief_failures at 0x1159440f0>((None or []), {'cut_restarts': False, 'speech_cleanup': True}) + whe",
+      "category": "requirement not extracted (brief_updates)"
+    }
+  ]
+}

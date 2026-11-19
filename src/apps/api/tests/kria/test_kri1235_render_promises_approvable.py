@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -229,11 +231,13 @@ def _rows(report: dict) -> dict[str, dict]:
 # ------------------------------------------------------------------ 1. the prod replay
 
 
-def test_q1_turn1_replay_says_what_prod_said(q1_prod):
+def test_q1_turn1_replay_says_what_prod_said(q1_prod, monkeypatch):
     """The replay reaches prod's own reasons, so the verdicts below are about prod's input.
 
     r4 (the cards) matched prod word for word when this was written; KRI-1237 changes its
-    verdict on purpose, so it is not pinned here."""
+    verdict on purpose, so it is not pinned here. KRI-1480 moves labels named by their own
+    trigger (r5-r9) to the list-label promise; prod then ran without it."""
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
     rows = _rows(_assess())
     for rid, (_disposition, reason) in PROD_TURN_1.items():
         if rid != "r4":
@@ -285,6 +289,60 @@ def test_a_turkish_turn_is_not_held_either(q1_prod):
     for rid in PROMISE_ROWS:
         assert rows[rid]["disposition"] == "unverified", rows[rid]
         assert rows[rid]["reason"] != PROD_TURN_1[rid][1], "expected the Turkish twin"
+
+
+# KRI-1472: Q1 run 3 (prod 2026-11-14) filed "Only my voice, no music." as two rows; the
+# untyped half ("Only my voice.", `voice_only: true`) held the draft and was "left out".
+RUN3_VOICE = [
+    _r("r7", "audio", "Only my voice.", facts={"voice_only": True}),
+    _r("r8", "audio", "No music.", facts={"audio_intent": "no_music"}),
+]
+
+
+def test_run3_only_my_voice_is_done_never_held_or_left_out(q1_prod):
+    brief = CreativeBrief(version=1, requirements=RUN3_VOICE)
+    report = _assess(brief)
+    rows = _rows(report)
+    assert (rows["r7"]["disposition"], rows["r7"]["reason"]) == (
+        "executable",
+        "No music, as asked.",
+    )
+    assert rows["r8"]["disposition"] == "executable"
+    assert report["ready"] is True
+
+
+def test_run3_only_my_voice_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "voice_only_ask_enabled", False)
+    brief = CreativeBrief(version=1, requirements=RUN3_VOICE)
+    report = _assess(brief)
+    assert (_rows(report)["r7"]["disposition"], _rows(report)["r7"]["reason"]) == (
+        "unsupported",
+        bc._TALKING_NO_SUCH_EDIT,
+    )
+    assert report["ready"] is False
+    # KRI-1465: the ask is listed without its closing full stop ("Only my voice: ...").
+    assert "- Only my voice: " in readiness_reply(brief, report)
+
+
+# Q2 run 3 (prod 2026-11-15): the same sentence filed as a typed row and an UNTYPED one that
+# restates it ("Only my voice: ..."); the untyped one held the draft.
+Q2_VOICE = [
+    _r("r13", "audio", "Only my voice: no music.", facts={"audio_intent": "no_music"}),
+    _r("r14", "audio", "Only my voice: keep the speaker audible and mute the screen recordings."),
+]
+
+
+def test_q2_only_my_voice_restated_without_a_fact_is_done_never_held(q1_prod, monkeypatch):
+    brief = CreativeBrief(version=1, requirements=Q2_VOICE)
+    report = _assess(brief)
+    assert {row["disposition"] for row in report["requirements"]} == {"executable"}
+    assert report["ready"] is True
+    monkeypatch.setattr(settings, "voice_only_ask_enabled", False)
+    off = _rows(_assess(brief))
+    assert (off["r14"]["disposition"], off["r14"]["reason"]) == (
+        "unsupported",
+        bc._TALKING_NO_SUCH_EDIT,
+    )
 
 
 # ----------------------------------------------- 2. each promise, through its real checker
@@ -618,3 +676,171 @@ def test_the_longest_cleanup_promise_fits_a_receipt():
     for joined in ("; ".join(parts), "; ".join(bc._REASON_TR[p] for p in parts)):
         assert len(joined) <= 300, len(joined)
         assert _promised_at_render(_ASK, _partial(joined), bc.PlanFacts())
+
+
+# --- KRI-1471: Q1 run 3 (prod 2026-11-14, thread 05aa3a87): the list example filed per clip ---
+#
+# The same prompt, a week later, reached readiness as ONE `text / per_clip` row with no literal
+# (job 3ef3cbe5's binding). Readiness answered "unsupported: None of the 11 clips got its own
+# text in this draft." and "Make it without these" dropped her labels.
+RUN3_VISUALS = tuple(f"asset-0000000{n}-0000-4000-8000-00000000000{n}" for n in range(10))
+RUN3_R5 = _r(
+    "r5",
+    "text",
+    "When I list the five repos, show each one as big text, like “1. Spec-kit”.",
+    scope="per_clip",
+    facts={"numbered": True, "text_size": "large", "show_when_mentioned": True},
+)
+
+
+def _assess_run3(*requirements: BriefRequirement) -> tuple[CreativeBrief, dict]:
+    brief = CreativeBrief(version=1, requirements=list(requirements))
+    report = assess_readiness(
+        brief,
+        dict(Q1_STRATEGY),
+        media={"clip_paths": [TAKE]},
+        manifest=_manifest(*RUN3_VISUALS),
+        creator_id=CREATOR,
+        protected_regions=[],
+        protected_marks=True,
+    )
+    return brief, report
+
+
+def test_run3_the_list_example_row_is_a_promise_not_a_hold(q1_prod):
+    brief, report = _assess_run3(RUN3_R5)
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == ("unverified", bc._TALKING_LIST_LABEL_PLAN)
+    assert report["ready"] is True
+
+
+def test_run3_list_example_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
+    brief, report = _assess_run3(RUN3_R5)
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == (
+        "unsupported",
+        "None of the 11 clips got its own text in this draft.",
+    )
+    assert report["ready"] is False
+    # KRI-1465: listed without its closing full stop, so the reply never reads ".:".
+    assert f"- {RUN3_R5.listed()}: " in readiness_reply(brief, report)
+
+
+# --- KRI-1486: Q2 run 3 (prod 2026-11-15, thread F04383A7): a cue the take never says ------
+#
+# "Show the trending page when I talk about what's hot this week." held the draft as
+# `needs_choice` ("No pop-in for what's hot this week."), though she never says it and nothing
+# could be chosen. Now it is reported and approvable; words she does say keep the hold.
+Q2_TRENDING = _r(
+    "r4",
+    "style",
+    "Show the trending page when I talk about what’s hot this week.",
+    facts={"triggers": ["what’s hot this week"]},
+)
+Q2_BEATS = [
+    {"beat_id": "logo", "trigger": "GitHub logo", "visual_id": RUN3_VISUALS[0], "anchor": "title"}
+]
+
+
+def _assess_q2(transcript: str) -> dict:
+    return assess_readiness(
+        CreativeBrief(version=1, requirements=[Q2_TRENDING]),
+        {**Q1_STRATEGY, "reaction_beats": Q2_BEATS},
+        media={
+            "clip_paths": [TAKE],
+            "clip_assignments": [
+                {"kind": "video", "media_id": TAKE, "analysis": {"transcript": transcript}}
+            ],
+        },
+        manifest=_manifest(*RUN3_VISUALS),
+        creator_id=CREATOR,
+        protected_regions=[],
+        protected_marks=True,
+    )
+
+
+def test_q2_a_cue_the_take_never_says_is_reported_not_held(q1_prod):
+    report = _assess_q2("Number one, Spec Kit. Number two, Impeccable.")
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == (
+        "unverified",
+        "You don't say “what’s hot this week” in your take, so nothing is shown for it",
+    )
+    assert report["ready"] is True
+
+
+def test_q2_a_cue_she_says_with_no_pop_in_still_needs_her_choice(q1_prod):
+    report = _assess_q2("Number one, Spec Kit. And here is what's hot this week.")
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == (
+        "needs_choice",
+        "No pop-in for what’s hot this week.",
+    )
+    assert report["ready"] is False
+
+
+def test_q2_unsaid_cue_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "unsaid_cue_report_enabled", False)
+    report = _assess_q2("Number one, Spec Kit. Number two, Impeccable.")
+    (row,) = report["requirements"]
+    assert (row["disposition"], row["reason"]) == (
+        "needs_choice",
+        "No pop-in for what’s hot this week.",
+    )
+
+
+# --- KRI-1510: Cusco T3 (prod 2026-11-16, thread b6bf01c5): a PLANNED sticker on a word ------
+# never said. The planner put the llama sticker on "lama" (the kit's trap) and the draft said
+# "Done"; only the finished video said "I never heard lama in your voice". Now the draft says
+# so and stays approvable; the three stickers on words she says stay "met".
+_T3 = json.loads(
+    (Path(__file__).parents[1] / "fixtures" / "kri1511_cusco_t3" / "sticker1.json").read_text(
+        encoding="utf-8"
+    )
+)
+T3_ROWS = [
+    _r(row["id"], row["kind"], row["description"], facts=row["facts"])
+    for row in _T3["requirements"]
+    if row["id"] in ("r1", "r2", "r3", "r4")
+]
+T3_BEATS = [
+    {**{k: beat[k] for k in ("beat_id", "trigger", "occurrence", "visual_role")}, "visual_id": v}
+    for beat, v in zip(_T3["beats"], RUN3_VISUALS, strict=False)
+]
+
+
+def _assess_t3() -> dict:
+    return assess_readiness(
+        CreativeBrief(version=1, requirements=T3_ROWS),
+        {**Q1_STRATEGY, "reaction_beats": T3_BEATS},
+        media={
+            "clip_paths": [TAKE],
+            "clip_assignments": [
+                {"kind": "video", "media_id": TAKE, "analysis": {"transcript": _T3["transcript"]}}
+            ],
+        },
+        manifest=_manifest(*RUN3_VISUALS),
+        creator_id=CREATOR,
+        protected_regions=[],
+        protected_marks=True,
+    )
+
+
+def test_t3_a_planned_sticker_on_a_word_never_said_is_reported_and_approvable(q1_prod):
+    report = _assess_t3()
+    rows = {row["requirement_id"]: row for row in report["requirements"]}
+    assert (rows["r4"]["disposition"], rows["r4"]["reason"]) == (
+        "unverified",
+        "You don't say “lama” in your take, so nothing is shown for it",
+    )
+    assert [rows[rid]["disposition"] for rid in ("r1", "r2", "r3")] == ["executable"] * 3
+    assert report["ready"] is True
+
+
+def test_t3_switch_off_says_done_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "unsaid_planned_cue_report_enabled", False)
+    report = _assess_t3()
+    rows = {row["requirement_id"]: row for row in report["requirements"]}
+    assert rows["r4"]["disposition"] == "executable"
+    assert report["ready"] is True

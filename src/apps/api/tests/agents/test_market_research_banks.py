@@ -3,8 +3,8 @@
 Covers the loaders, schema validation, prompt injection into the plan agents,
 and the version-coupling guard: because persona_archetypes.json /
 content_ideas.json / overlay_examples.json are PART of their agents' prompts,
-their `version` must move in lockstep with the agent prompt_version (the same
-"stale cache in prod" trap CLAUDE.md calls out for overlay + Layer-2).
+the persona and plan versions derive from them and the overlay bank `version` moves in
+lockstep with the hand-numbered intro and matcher versions.
 """
 
 from __future__ import annotations
@@ -15,23 +15,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.agents._schemas.content_plan import (
-    CONTENT_PLAN_PROMPT_VERSION,
-    ContentPlanInput,
-)
+from app.agents._schemas.content_plan import ContentPlanInput
 from app.agents._schemas.market_research import (
     ContentIdea,
     PerformanceSignal,
     PersonaArchetype,
     SuccessFactor,
 )
-from app.agents._schemas.persona import PERSONA_PROMPT_VERSION, Persona, PersonaQuestionnaire
+from app.agents._schemas.persona import Persona, PersonaQuestionnaire
 from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 from app.agents.overlay_examples import library_version, load_overlay_examples
 from app.agents.persona_examples import (
     _performance_score,
-    archetypes_version,
-    content_ideas_version,
     format_archetypes,
     format_ideas_for_pillars,
     format_success_factors,
@@ -206,93 +201,20 @@ def test_intro_writer_prompt_injects_success_factors():
 
 
 # ---- version-coupling guard -------------------------------------------------
-# These are the contract: the bank's `version` and the consuming agent's
-# prompt_version were both touched in the same change. We assert they MATCH the
-# committed constants so a future bank edit that forgets the agent bump fails CI.
+# The persona and content-plan prompt versions are fingerprints of their prompt files
+# and banks (tests/agents/test_prompt_fingerprint.py), so a bank edit moves them with
+# no hand bump (test_plan_agents_fingerprint_their_banks keeps the banks in those
+# source lists). The intro writer and
+# overlay matcher are still hand-numbered, so their bank-version tripwires stay below.
 
 
-def test_persona_bank_version_couples_to_prompt_version():
-    # Bump 2026-05-31: added gap-in-market-founder-01 archetype (nermozdemir origin-story pattern).
-    # Bump 2026-06-05: added posts_per_week field (structured post frequency 1-7).
-    # Bump 2026-06-06: interview_turns replaces flat fields as primary input.
-    # Bump 2026-06-06.1: added $tiktok_analysis block (deep TikTok profile analysis).
-    # Bump 2026-06-07: weekly research refresh — added adventure-humor-candid-01 archetype
-    #                  (izzsiomoi humor+extreme pattern, vi=124x).
-    # Bump 2026-06-11: direction fork — added goal / content_mode / current_situation
-    #                  outputs (interview fork + Buenos Aires grounding fix); banks untouched.
-    # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
-    #                  (allexmarielle 9to5 professional aesthetic lane).
-    # Bump 2026-07-11-kria: product rename only; banks untouched.
-    # Bump 2026-10-21-language: creator-language line (KRI-784); banks untouched.
-    # Bump 2026-10-25-research-19: weekly refresh — added seasonal-culture-lens-01
-    #                  (allexmarielle pop-culture season filter, vi=3.92x).
-    # Bump 2026-11-01-research-20: weekly refresh — added personal-product-reviewer-01
-    #                  (nermozdemir honest product review lane, vi=4.42x).
-    # Bump 2026-11-08-research-21: weekly refresh — version lockstep bump (no new archetypes);
-    #                  content_ideas + success_factors edited this cycle.
-    assert archetypes_version() == "2026-11-08-research-21"
-    assert PERSONA_PROMPT_VERSION == "2026-11-08-research-21"
-
-
-def test_content_idea_bank_version_couples_to_prompt_version():
-    # Prompt led to 2026-05-31 (anti-cringe), 2026-05-31.1 (edit_format emission),
-    # 2026-06-01 (near-duplicate dedup / $variety_constraint regeneration block),
-    # then 2026-06-01.1 (weekly research refresh: idea bank bumped to 2026-05-31 —
-    # allexmarielle qualifier hook + morning sensory, nermozdemir origin/naming,
-    # izzsiomoi sunrise hike).
-    # 2026-06-05: posts_per_week alignment — prompt now uses $posts_per_week +
-    #             $target_item_count to produce the right idea count per week.
-    # 2026-06-05.1: per-item filming_guide (2–4 shots keyed to edit_format).
-    # 2026-06-06: added $tiktok_analysis block (deep TikTok profile analysis).
-    # 2026-06-07: weekly research refresh — added 4 new ideas (adventure-humor,
-    #             implied-question, serial-brand-chapter, art-cultural-moment).
-    # 2026-06-08: retrospective-footage rule (past-event ideas).
-    # 2026-06-11: direction-aware planning — $direction_lines, $content_mode_block,
-    #             past-trips-are-edit-material rule (Buenos Aires fix); banks untouched.
-    # 2026-06-13: M1 Bring-Your-Own-Ideas — $user_ideas block added above IDEA_BANK;
-    #             banks untouched (new block is conditional-empty when no seeds).
-    # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
-    #             parallel-life-aspiration-01 ideas.
-    # 2026-10-21-language: creator-language line (KRI-784); banks untouched.
-    # Bump 2026-10-25-research-19: weekly refresh — added season-culture-lens-01,
-    #                  minimal-verdict-aesthetic-01.
-    # Bump 2026-11-01-research-20: weekly refresh — added return-to-beloved-spot-01,
-    #                  unexpected-candid-abroad-01, product-review-hope-it-helps-01,
-    #                  desire-one-liner-lifestyle-01.
-    # Bump 2026-11-08-research-21: weekly refresh — added local-cultural-food-identity-01
-    #                  (izzsiomoi pandesal, vi=3.3x, 8.5% er) and
-    #                  community-fate-participation-01 (nermozdemir ceremony set, vi=3.7x).
-    assert content_ideas_version() == "2026-11-08-research-21"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-08-research-21"
-
-
-def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
+def test_success_factor_bank_version_couples_to_intro_prompt_version():
     from app.agents.intro_writer import IntroTextWriterAgent
 
-    # The success-factor bank is part of THREE prompts (persona, content plan,
-    # intro). Bump 2026-06-07: weekly research refresh — added 3 corpus factors
-    # (implied-question-hook vi=120x, humor-extreme-adventure vi=124x,
-    # serial-brand-chapters consistent vi=2-5x across 5 founder chapter videos).
-    # Content plan bumped to 2026-06-08 (retrospective-footage rule), then persona +
-    # content plan both to 2026-06-11 (direction fork + grounding, this branch).
-    # Intro bumped to 2026-06-12 when overlay_examples added broader cluster exemplars.
-    # Bump 2026-06-14: weekly research refresh — added 2 corpus factors
-    # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
-    # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
-    # Persona/content plan bumped to 2026-07-11-kria: product rename only; banks untouched.
-    # Intro bumped to 2026-08-05: anti-slop pattern-class ban + translate-don't-echo
-    #                  (plans/015 — monkey/marketing incident); banks untouched here
-    #                  (success-factor bank unchanged; overlay bank moved separately).
-    # Persona/content plan bumped to 2026-10-21-language (KRI-784); banks untouched.
-    # Bump 2026-10-25-research-19: dated two-word caption reference; causal effect unmeasured.
-    # Bump 2026-11-01-research-20: added honest-review-warm-cta-corpus-14 (vi=4.4x reach,
-    #                  low-er "hope it helps" pattern) and ritual-return-beloved-spot-corpus-15
-    #                  (vi=3.9x, 0.116 er — ritual vs discovery framing).
-    # Bump 2026-11-08-research-21: added community-ownership-decision-corpus-16
-    #                  (nermozdemir ceremony set vi=3.7x — "fate in your hands" participation).
+    # Persona and content plan derive their versions from the bank file. The intro
+    # writer still carries a hand-numbered version, so the bank `version` and it move
+    # together. Bump 2026-11-08-research-21: added community-ownership-decision-corpus-16.
     assert success_factors_version() == "2026-11-08-research-21"
-    assert PERSONA_PROMPT_VERSION == "2026-11-08-research-21"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-08-research-21"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-11-08-research-21"
 
 

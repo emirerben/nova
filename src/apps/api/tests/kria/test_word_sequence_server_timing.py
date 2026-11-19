@@ -15,7 +15,7 @@ Failure modes written down before the fix (each has a test below):
  2. paired sequences retimed independently by the composer: one shared span by construction;
  3. a pair at the same video length as its words need at the minimum piece time still fits;
  4. words that cannot fit even at the minimum piece time: an honest typed failure, never flicker;
- 5. changed approved wording still rejected (control);
+ 5. changed approved wording: the reword is dropped and the approved words render (KRI-1376);
  6. a plain explanation ask that does research and fails: a typed creation_text failure, not a bug;
  7. the length plan never undercuts the longest sequence's minimum reading time, and a creator's
     explicit shorter length is never stretched.
@@ -171,7 +171,7 @@ def test_paired_sequences_the_composer_paces_alone_share_one_span(monkeypatch) -
     assert [r["text"] for r in english] == ENGLISH.split()
     assert local[0]["start_s"] == pytest.approx(english[0]["start_s"], abs=1 / 30)
     assert local[-1]["end_s"] == pytest.approx(english[-1]["end_s"], abs=1 / 30)
-    assert all(r["end_s"] - r["start_s"] >= 0.25 - 1e-3 for r in [*local, *english])
+    assert all(r["end_s"] - r["start_s"] >= 1 / 30 - 1e-3 for r in [*local, *english])
     assert compose_creation_text(composed, creator_request="same") == composed
 
 
@@ -190,13 +190,19 @@ def test_a_saved_server_timed_program_replays_without_the_composer(monkeypatch) 
     assert again == composed
 
 
-def test_words_that_cannot_fit_at_the_minimum_piece_time_fail_honestly(monkeypatch) -> None:
-    # 42 English words need at least 10.5 s at 0.25 s a piece; three short clips make 6 s.
-    with pytest.raises(CreationTextCompositionError, match="42 words one at a time needs at least"):
-        _compose(monkeypatch, _own_pace(), length_s=6, seconds=[2, 2, 2])
+def test_words_that_cannot_get_a_frame_each_fail_honestly() -> None:
+    from app.services.creation_text_composition import _ServerTimedSequence, _shared_span
+
+    words = ["word"] * 100
+    owned = [_ServerTimedSequence(bar_id="b", words=words, text=" ".join(words), position=None)]
+    with pytest.raises(
+        CreationTextCompositionError, match="100 words one at a time needs at least"
+    ):
+        _shared_span(owned, 3.0)
+    assert _shared_span(owned, 4.0) == (0.0, 4.0)
 
 
-def test_changed_approved_wording_is_still_rejected(monkeypatch) -> None:
+def test_changed_approved_wording_is_dropped_and_the_approved_words_render(monkeypatch) -> None:
     def reword(agent, input, *, ctx=None):  # noqa: ARG001
         bar = next(b for b in input.variant_snapshot["text_bars"] if b["text"] == ENGLISH)
         reply = {
@@ -207,8 +213,14 @@ def test_changed_approved_wording_is_still_rejected(monkeypatch) -> None:
         }
         return agent.parse(json.dumps(reply), input)
 
-    with pytest.raises(CreationTextCompositionError, match="confirmed copy|Text changed before"):
-        _compose(monkeypatch, reword)
+    _, composed = _compose(monkeypatch, reword)
+    pieces = _pieces(composed, ENGLISH)
+    assert [row["text"] for row in pieces] == ENGLISH.split()
+    assert [row["text"] for row in _pieces(composed, LOCAL)] == LOCAL.split()
+    assert (pieces[0]["start_s"], pieces[-1]["end_s"]) == (
+        _pieces(composed, LOCAL)[0]["start_s"],
+        _pieces(composed, LOCAL)[-1]["end_s"],
+    )
 
 
 def test_a_failing_research_step_is_a_typed_creation_text_failure(monkeypatch) -> None:
