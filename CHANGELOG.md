@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.21.0] - 2026-11-19
+
+### Changed
+- Use the same audio policy for song upload and attachment (#2384) <!-- release-pr: 2384 -->
+
 ## [0.89.20.0] - 2026-11-19
 
 ### Changed
