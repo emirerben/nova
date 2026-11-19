@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.7.0] - 2026-11-19
+
+### Changed
+- feat(ci): shadow the Mac-only-when-an-iPhone-input-changed rule (KRI-1536) (#2388) <!-- release-pr: 2388 -->
+
 ## [0.89.6.0] - 2026-11-19
 
 ### Changed
