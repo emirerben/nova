@@ -88,6 +88,17 @@ public enum DeviceRenderContinuationStage: String, Codable, Sendable {
     case notStarted, exportStarted, outputReady
 }
 
+struct DeviceRenderTiming: Codable, Equatable, Sendable {
+    struct Suspension: Codable, Equatable, Sendable {
+        let suspendedAt: Date
+        var resumedAt: Date?
+    }
+
+    let startedAt: Date
+    var lastCompletedExportMilliseconds: UInt64?
+    var lastSuspension: Suspension?
+}
+
 public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
     public let request: DeviceRenderRequest
     public let attemptID: UUID
@@ -101,6 +112,7 @@ public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
     /// receipts, which decode unchanged.
     public var pendingReport: DeviceRenderPendingReport? = nil
     public var continuationStage: DeviceRenderContinuationStage? = nil
+    var timing: DeviceRenderTiming? = nil
 }
 
 public struct DeviceRenderPendingReport: Codable, Equatable, Sendable {
@@ -615,9 +627,17 @@ public actor DeviceRenderCoordinator {
     /// app, and keep the receipt resumable (`recover()` continues it on foreground).
     private func suspend(_ attempt: UUID, run: UUID) {
         guard runID == run, receipt?.attemptID == attempt, running != nil else { return }
+        recordSuspension()
         suspendedAttempt = attempt
         running?.cancel()
     }
+    private func recordSuspension() {
+        guard let timing = receipt?.timing,
+              timing.lastSuspension == nil || timing.lastSuspension?.resumedAt != nil else { return }
+        receipt?.timing?.lastSuspension = .init(suspendedAt: Date())
+        try? persist()
+    }
+
     private func isTransient(_ error: Error) -> Bool {
         if let error = error as? DeviceRenderTransientFailure { return error.isTransientDeviceRenderFailure }
         if let error = error as? URLError { return Self.transportCodes.contains(error.code) }
@@ -710,6 +730,13 @@ public actor DeviceRenderCoordinator {
 
     private func perform(attempt: UUID, run: UUID, origin: DeviceRenderExecutionOrigin, safeContinuation: Bool) async {
         guard current(attempt), runID == run, let identity = receipt?.request.identity else { return }
+        if receipt?.timing == nil {
+            receipt?.timing = .init(startedAt: Date())
+            try? persist()
+        } else if let suspension = receipt?.timing?.lastSuspension, suspension.resumedAt == nil {
+            receipt?.timing?.lastSuspension?.resumedAt = Date()
+            try? persist()
+        }
         var window: DeviceRenderExecutionWindow?
         do {
             try Task.checkCancellation()
@@ -768,6 +795,7 @@ public actor DeviceRenderCoordinator {
                 guard current(attempt) else { return }
                 if suspendedAttempt == attempt || Self.isInterruption(error) {
                     // Leaving Kria mid-render is not a failure: keep it resumable.
+                    recordSuspension()
                     suspendedAttempt = nil
                     park(attempt, error: nil)
                     return
@@ -845,14 +873,17 @@ public actor DeviceRenderCoordinator {
             output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
             receipt?.continuationStage = .exportStarted
             try persist()
+            let exportStart = DispatchTime.now().uptimeNanoseconds
             _ = try await EngineSignpost.measureAsync("talk.save.export") {
                 try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
                                           progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt, run: run) } })
             }
+            let exportMilliseconds = (DispatchTime.now().uptimeNanoseconds - exportStart) / 1_000_000
             guard current(attempt) else { return }
             try await validateOutputDuration(output, for: saved.request)
             guard current(attempt) else { return }
             receipt?.outputURL = output
+            receipt?.timing?.lastCompletedExportMilliseconds = exportMilliseconds
             receipt?.outputFingerprint = try EngineSignpost.measure("talk.save.hashOutput") { try SHA256Fingerprinter().fingerprint(file: output) }
             receipt?.continuationStage = .outputReady
             try update(attempt, phase: .localReady)
