@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.16.0] - 2026-11-19
+
+### Changed
+- fix(ci): back to two API shards; four pushed a 53-second test into its 60-second timeout (KRI-1539) (#2395) <!-- release-pr: 2395 -->
+
 ## [0.89.15.0] - 2026-11-19
 
 ### Changed
