@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.27.0] - 2026-11-19
+
+### Changed
+- fix(ios): compile on Xcode 27.2 by naming the Task type in the slide paste handler (KRI-1542) (#2399) <!-- release-pr: 2399 -->
+
 ## [0.89.26.0] - 2026-11-19
 
 ### Changed
