@@ -402,8 +402,12 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(trailing.waitForExistence(timeout: 2))
         let originalValue = try! XCTUnwrap(clip.value as? String)
         let originalDuration = Self.clipDuration(clip)
-        let start = trailing.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.15, thenDragTo: start.withOffset(CGVector(dx: -72, dy: 0)))
+        // Move the clip end away from the viewport boundary so both sides of its handle are on screen.
+        let playhead = app.descendants(matching: .any)["native-editor-playhead"]
+        let ruler = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+        ruler.press(forDuration: 0, thenDragTo: ruler.withOffset(CGVector(dx: 48, dy: 0)))
+        let start = clip.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: 6, dy: 0))
+        start.press(forDuration: 0, thenDragTo: start.withOffset(CGVector(dx: -72, dy: 0)))
 
         expectation(for: NSPredicate(format: "value != %@", originalValue), evaluatedWith: clip)
         waitForExpectations(timeout: 2)
@@ -418,8 +422,8 @@ final class EditorUITests: XCTestCase {
 
         let leading = app.descendants(matching: .any)["native-editor-trim-leading"]
         XCTAssertTrue(leading.waitForExistence(timeout: 2))
-        let restoredStart = leading.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        restoredStart.press(forDuration: 0.15, thenDragTo: restoredStart.withOffset(CGVector(dx: -24, dy: 0)))
+        let restoredStart = clip.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: -6, dy: 0))
+        restoredStart.press(forDuration: 0, thenDragTo: restoredStart.withOffset(CGVector(dx: -24, dy: 0)))
         expectation(for: NSPredicate(format: "value != %@", originalValue), evaluatedWith: clip)
         waitForExpectations(timeout: 2)
         XCTAssertGreaterThan(Self.clipDuration(clip), originalDuration)

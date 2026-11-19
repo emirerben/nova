@@ -2209,8 +2209,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(handle.exists)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-trim-leading"].firstMatch.exists)
         let before = text.value as? String
-        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: -20, dy: 0)))
+        let start = text.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: 6, dy: 0))
+        start.press(forDuration: 0, thenDragTo: start.withOffset(CGVector(dx: -20, dy: 0)))
         XCTAssertNotEqual(text.value as? String, before)
         XCTAssertTrue(handle.exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
