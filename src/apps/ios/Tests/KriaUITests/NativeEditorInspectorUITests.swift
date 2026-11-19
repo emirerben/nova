@@ -205,7 +205,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // The timeline scrolls itself while a finger rests in the 56 pt zone at its edge (`updateAutoScrollX`), and
         // this drag ends with a 0.2 s hold, so a drop inside that zone overshoots the length it measures. The clip
         // starts right of centre, so slide it left under the fixed playhead until the whole extension fits short of it.
-        dragPlayheadForward(originalWidth * 0.6, in: app)
+        dragPlayheadForward(originalWidth * 0.8, in: app)
         XCTAssertTrue(member.isSelected, "Seeking with the playhead keeps the clip selected")
         XCTAssertTrue(trailing.isHittable)
         let lane = app.scrollViews["native-editor-lane-scroll"].frame
@@ -228,6 +228,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
         let extendedWidth = member.frame.width
+        dragPlayheadForward(originalWidth * 0.6, in: app)
         XCTAssertGreaterThan(trailing.frame.midX - extendedWidth * 1.1, app.frame.minX + 12)
         dragHandle(trailing, by: -extendedWidth * 1.1)
         let minimum = try splitSnapshot(app)
