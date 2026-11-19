@@ -705,11 +705,6 @@ struct SlidePostWorkspaceView: View {
 
     private func browseControls(_ draft: SlidePostDraft) -> some View {
         let slide = session.selectedSlide
-        let paste: (([NSItemProvider]) -> Void)? = clipboardHasContent ? slide.map { target in
-            { providers in
-                Task<Void, Never> { await session.paste(providers: providers, slideID: target.id, stickers: stickerPaste) }
-            }
-        } : nil
         let hasTexts = !(slide?.edits?.effectiveTexts.isEmpty ?? true)
         return VStack(spacing: 8) {
             slideStrip(draft)
@@ -722,7 +717,7 @@ struct SlidePostWorkspaceView: View {
                 showsDraw: drawingOn, onDraw: beginDrawing,
                 canClearDrawing: slide?.edits?.drawing != nil, onClearDrawing: { if let id = slide?.id { session.clearDrawing(slideID: id) } },
                 onGenerate: generateOn ? slide.map { target in { openGeneratePicture(for: target.id) } } : nil,
-                onPaste: paste,
+                onPaste: clipboardHasContent ? slide.map { target in { providers in Task { await session.paste(providers: providers, slideID: target.id, stickers: stickerPaste) } } } : nil,
                 onText: beginTextEditing,
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },
