@@ -31,6 +31,29 @@ SHARED_MOTION_PATHS = (
     "src/apps/web/tsconfig.json",
 )
 
+# Everything outside the selector and CI policy that the iPhone build or its
+# tests can read: the app tree, the scripts that drive it, resources Xcode
+# bundles from the web tree, and the fonts and parity fixtures Swift tests open
+# by path. A PR that changes none of these gives the Mac the same bytes `main`
+# already built and tested; a stale mobile contract is caught on Linux by
+# ios-contracts, and regenerating it changes src/apps/ios/Kria/Generated/.
+# test_select_tests.py scans the iPhone tree for repo paths missing from here.
+IOS_NATIVE_INPUTS = (
+    "src/apps/ios/",
+    "scripts/ios/",
+    ".github/workflows/ios.yml",
+    "src/apps/web/public/fonts/",
+    "src/apps/web/public/plan/type-posters/",
+    "src/apps/web/public/landing/raw-story/",
+    "src/apps/api/assets/fonts/",
+    "src/packages/motion-runtime/",
+    "tests/fixtures/",
+    "brand/social/dist/",
+)
+# Swift parity tests open files directly in this directory, some by a name built
+# at run time. Its subdirectories hold API-only fixtures.
+IOS_NATIVE_FIXTURE_DIR = "src/apps/api/tests/fixtures/"
+
 # This is deliberately independent from the broad suite selector.  KRI-559 is
 # a cross-runtime proof: the saved creation transport must survive the API
 # compiler, persisted-draft boundary, and the actual iPhone exporter.
@@ -354,6 +377,10 @@ def affected(path):
     if path.startswith("scripts/ios/") or path == ".github/workflows/ios.yml":
         return {"ios", "ios_ui"}
     if path.startswith("src/apps/api/"):
+        # Fonts and parity fixtures Swift unit tests open by path: both sides
+        # read the file, so both suites run.
+        if declared_native_input(path):
+            return {"api", "ios"}
         # Public contracts affect both clients; internal pipeline/tests only API.
         contracts = (
             "app/routes/",
@@ -450,6 +477,44 @@ def render_evidence_selection(event, base, head):
     except (subprocess.CalledProcessError, UnicodeError, OSError):
         return True
     return not paths or render_evidence.triggered(paths)
+
+
+def declared_native_input(path):
+    """Whether a path is a declared iPhone build or test input."""
+    if path.startswith(IOS_NATIVE_INPUTS):
+        return True
+    name = path.removeprefix(IOS_NATIVE_FIXTURE_DIR)
+    return name != path and "/" not in name
+
+
+def native_input(path):
+    """Whether a changed path can alter what the Mac builds or tests.
+
+    Declared inputs, plus every path `affected` cannot place (shared packages,
+    CI policy, new directories): those select all suites and stay fail closed.
+    """
+    return declared_native_input(path) or affected(path) == set(SUITES)
+
+
+def native_inputs_changed(event, base, head):
+    """Shadow of the PR Mac rule (KRI-1534): did this PR change an iPhone input?
+
+    Reported next to `native_validation` and not yet used to skip anything.
+    Everything except a pull request with a readable, non-empty diff is True.
+    """
+    if event != "pull_request":
+        return True
+    try:
+        ancestor = git("merge-base", base, head).decode().strip()
+        raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
+        paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
+        return not paths or any(
+            native_input(path)
+            for path in paths
+            if not release_only(path, ancestor, head)
+        )
+    except (subprocess.CalledProcessError, UnicodeError, OSError):
+        return True
 
 
 def journey_selection(event, base, head):
@@ -766,6 +831,18 @@ def main():
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
     output += f"ios_render_evidence={str(render).lower()}\n"
+    native_inputs = native_inputs_changed(
+        event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
+    )
+    output += f"ios_native={str(native_inputs).lower()}\n"
+    mac_runs = native_validation(event, suites, native)
+    inputs_note = (
+        "changed"
+        if native_inputs
+        else "unchanged (shadow: this Mac run would be skipped)"
+        if mac_runs
+        else "unchanged"
+    )
     print(reason + "\n" + output)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -777,6 +854,7 @@ def main():
                 f" ({shards} native leg{'s' if shards > 1 else ''})\n\n"
                 f"iPhone validation legs: {', '.join(legs)}\n\n"
                 f"Export/OCR unit proofs: {'run' if render else 'skipped (no render code changed; main runs them)'}\n\n"
+                f"iPhone inputs: {inputs_note}\n\n"
                 + "\n".join(
                     f"- {s}: {'run' if s in suites else 'not applicable'}"
                     for s in SUITES

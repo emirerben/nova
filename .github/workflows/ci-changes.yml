@@ -34,6 +34,9 @@ on:
       ios_render_evidence:
         description: Whether PR unit runs include the slow export/OCR proofs (scripts/ios/render_evidence.py).
         value: ${{ jobs.select.outputs.ios_render_evidence }}
+      ios_native:
+        description: Shadow (KRI-1534), not yet used to skip a job. Whether the PR changed an iPhone build or test input (select-tests.py IOS_NATIVE_INPUTS).
+        value: ${{ jobs.select.outputs.ios_native }}
 
 jobs:
   select:
@@ -55,6 +58,7 @@ jobs:
       native_legs: ${{ steps.select.outputs.native_legs }}
       journey_mapped: ${{ steps.select.outputs.journey_mapped }}
       ios_render_evidence: ${{ steps.select.outputs.ios_render_evidence }}
+      ios_native: ${{ steps.select.outputs.ios_native }}
     steps:
       - uses: actions/checkout@v4
         with:

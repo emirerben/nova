@@ -235,6 +235,64 @@ How to read it:
   leg. About a third of the failed PR Mac-minutes fell in such periods, judged
   by the last `iOS` run on `main` that had started before the PR run.
 
+## Mac rule under shadow (KRI-1534)
+
+Today a PR gets a Mac when it selects `ios` or a journey flagged `needs_native`.
+That put a Mac on 92% of merged PRs, most of which changed no file the iPhone
+build or its tests can read. For those PRs the Mac rebuilds and retests the same
+bytes as `main`: the `unit` leg runs before the offline fixture bundle is
+downloaded, the fixture-driven legs run nightly only, and a stale mobile
+contract is caught on Linux by `ios-contracts`.
+
+The proposed rule: a PR needs a Mac only when it changes an iPhone input
+(`IOS_NATIVE_INPUTS` in `scripts/ci/select-tests.py`), a CI policy path or a path
+the selector cannot classify. It is **reported, not enforced**: the selector
+emits `ios_native` and the selection summary says "iPhone inputs: unchanged
+(shadow: this Mac run would be skipped)". Every job still runs as before.
+
+The list is exact where it can be: the app tree, the scripts that drive it,
+bundled web resources, API fonts, the shared parity fixtures, and the files
+directly inside `src/apps/api/tests/fixtures/` (Swift tests open those by name,
+some built at run time; the folders below it are API-only). A PR that changes
+one of those API files now also runs the Swift unit suite, which it did not
+before: both sides read the file.
+
+Two checks keep the input list honest:
+
+- `test_every_repo_path_the_iphone_tree_names_is_a_declared_native_input` scans
+  Swift string literals and project config for repo paths outside
+  `src/apps/ios/`. A new fixture or font a Swift test opens by path fails that
+  test until it is declared. The scan cannot see a path assembled at run time
+  from pieces, which is why unknown paths still select a Mac.
+- `scripts/ci/native-inputs-backtest.py` replays the rule over real PR runs and
+  lists every Mac failure on a run the rule would have skipped, with whether
+  `main`'s own iOS run was already red.
+
+Replay of 2026-11-05 to 2026-11-19 (897 pull-request `CI` runs):
+
+| | Runs |
+| --- | --- |
+| Rule would start no Mac | 216 (24%) |
+| ... a Mac really ran to an end | 151 |
+| ... passed / green on re-run | 123 / 2 |
+| ... failed and stayed red | 26 |
+| Changed an API font or fixture Swift tests open | 56 |
+
+None of the 26 was caused by its PR; every log was read, and `main`'s own iOS
+run was red just before each. 24 are one Swift test-build error (test doubles
+no longer conforming to `KriaAPIClient`) on unrelated branches between
+2026-11-06 22:12 and 2026-11-07 12:19. One is a unit test that `main`'s iOS run
+failed the same evening (run 42412737860), on a PR that changed two Python
+files. One is the Mac's wait step reporting a failed Linux journey job, which
+the rule does not skip. Under the rule those PRs would not have gone red for a
+break they did not cause; `main`'s own iOS run still reports it.
+
+The replay covers the rule exactly as written here. It does not cover narrowing
+`scripts/ci/journey-manifest.json` or `.env.example`, which still select
+everything.
+
+Enforcement is a separate change with its own rollback switch.
+
 ## Verification and rollback
 
 ```sh
