@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.5.0] - 2026-11-19
+
+### Changed
+- chore(ci): repeatable CI baseline for Mac-minutes and required-check wait (KRI-1535) (#2386) <!-- release-pr: 2386 -->
+
 ## [0.89.4.0] - 2026-11-18
 
 ### Changed
