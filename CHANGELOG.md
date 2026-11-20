@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.40.0] - 2026-11-20
+
+### Changed
+- Send account deletion emails from the monitored Kria mailbox (#2409) <!-- release-pr: 2409 -->
+
 ## [0.89.39.0] - 2026-11-20
 
 ### Changed
