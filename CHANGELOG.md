@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.35.0] - 2026-11-20
+
+### Changed
+- ci: run the API tests as three shards packed by measured file time (KRI-1544) (#2406) <!-- release-pr: 2406 -->
+
 ## [0.89.34.0] - 2026-11-20
 
 ### Changed
