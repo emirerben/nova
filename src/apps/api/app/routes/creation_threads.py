@@ -3710,7 +3710,13 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 item,
                 detector_policy=current_detector_policy(),
             )
-            row = await current_analysis_async(db, item.id)
+            # KRI-1554: a source longer than the analysis window has no current analysis; a row
+            # saved before that rule covered only its start, so it is never shown.
+            row = (
+                None
+                if resolution.reason == "source_too_long"
+                else await current_analysis_async(db, item.id)
+            )
             # Historical note (2026-09-24, thread f249fb29): this projection
             # once passed a `storage_path` that `schedule_item_preflight_*`
             # did not, so a phone Talking item could show "applicable" with

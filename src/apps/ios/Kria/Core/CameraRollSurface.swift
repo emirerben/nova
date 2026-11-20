@@ -403,8 +403,10 @@ struct CameraRollEvent: Identifiable {
             let owner = originals.owner
             let api = api
             // KRI-1554: the library length limit is the server's (`media.clips.max_duration_s`); a cached read.
+            // A failed read keeps the last limit the server stated, so a long video is not downloaded for nothing.
             let maximumVideoSeconds = (try? await api.creationCapabilities())?
                 .media?[CreationMediaRole.clip.capabilityKey]?.durationLimit(isImage: false)
+                ?? CameraRollPreflight.knownMaximumVideoSeconds
             CameraRollPreflight.remember(maximumVideoSeconds: maximumVideoSeconds)
             await engine.upload(jobs, loop: .live(api: api, providers: providers, maximumVideoSeconds: maximumVideoSeconds), pollingCollectionID: pollableCollectionID) { [weak self] id, asset in
                 guard let self, currentOwner == owner else { throw SourceAssetError.invalidBinding }

@@ -981,6 +981,10 @@ struct AttachmentSheet: View {
         guard !uploadingRecording, let url = recorder.recordingURL, canRecord else { return }
         uploadingRecording = true
         voiceoverUploadError = nil
+        // KRI-1554: a recording too long for this format says so and names the limit; "try again" would fail the same way.
+        if let refusal = await Self.lengthRefusal(url, role: .voiceover, limit: mediaLimit(for: .voiceover)) {
+            uploadingRecording = false; voiceoverUploadError = refusal; return
+        }
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .voiceover, itemID: itemID, limit: mediaLimit(for: .voiceover))
         uploadingRecording = false
         if accepted { voiceoverUploadError = nil; recorder.discard(); advance() }
@@ -991,10 +995,18 @@ struct AttachmentSheet: View {
         uploadingSong = true
         songUploadError = nil
         // The song always uploads in full (never an analysis proxy): the server needs the bytes.
+        if let refusal = await Self.lengthRefusal(url, role: .song, limit: mediaLimit(for: .song)) {
+            uploadingSong = false; songUploadError = refusal; return
+        }
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .song, itemID: itemID, limit: mediaLimit(for: .song))
         uploadingSong = false
         if accepted { songUploadError = nil; songPreview.discard(); advance() }
         else { songUploadError = String(localized: "This song couldn’t be added. It’s still here, so try again.") }
+    }
+    /// The length refusal (naming the limit) for a recording this format cannot use, or nil.
+    private static func lengthRefusal(_ url: URL, role: CreationMediaRole, limit: CreationMediaLimit?) async -> String? {
+        do { try await CreationUploadError.checkLength(of: url, role: role, limit: limit); return nil }
+        catch { return error.localizedDescription }
     }
     private func removeAttached(_ attachment: CreationAttachedMedia) async {
         guard !removingMedia else { return }
