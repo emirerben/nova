@@ -366,3 +366,25 @@ def test_voiceover_without_windows_or_with_a_silent_bed_is_todays_recipe():
         recipe_digest(_voiceover(mix=1.0))
     )
     assert recipe_digest(_voiceover(windows=None)) == today
+
+
+# --- F13: an authored Save keeps the bed and re-lays its duck ---------------------------------
+
+
+def test_an_authored_save_keeps_the_bed_ducked_on_the_clips_it_lays_out():
+    from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
+    from tests.pipeline import test_authored_timeline as authored
+
+    job, variant, _plain = authored.fixture()
+    old = authored.binding("old")
+    previous = compile_phone_subtitled_plan(
+        (old,), caption_cues=[], music=_bed(), speech_source_windows={"old": _words((1.0, 2.0))}
+    )
+    variant["smart_music_treatment"] = dict(TREATMENT)
+    # The authored row plays the new take's source 2-5 at 0-3.
+    variant["speech_source_windows"] = {"old": [[1.0, 2.0]], "new": [[2.5, 3.5]]}
+    recipe = compile_phone_authored_timeline(job, variant, previous)
+    [bed] = [track for track in recipe.tracks if track.role == "music"]
+    assert bed.clips[0].source_asset_id == "music-song-1"
+    assert _windows(recipe) == [(0.5, 1.5)]
+    assert "speechDuck" in recipe.required_capabilities

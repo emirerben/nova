@@ -109,6 +109,14 @@ def voiceover_music_gain(voice_mix: float) -> float:
     return max(0.0, min(1.0 - mix, _VOICEOVER_MUSIC_BED_MAX_GAIN))
 
 
+def ducked_voiceover_bed(music_gain: float) -> tuple[float, float]:
+    """``(clip volume, speech duck gain)`` of a Voiceover bed that ducks under the voice
+    (KRI-1562): under speech it plays at ``music_gain``, today's one level; in the pauses it rises
+    by the speech duck, as far as the clip limit allows. One rule, shared with the authored Save."""
+    bed = min(2.0, music_gain / speech_duck_gain(DEFAULT_SPEECH_DUCK_DB))
+    return bed, music_gain / bed
+
+
 def _validated_source_audio_selection(
     source_audio_media_ids: tuple[str, ...] | list[str] | None,
     *,
@@ -518,11 +526,9 @@ def compile_phone_voiceover_montage_plan(
             if speech_source_windows is not None and music_gain > 0
             else []
         )
-        bed_gain = music_gain
-        if speech_windows:
-            # The pauses rise by the duck, as far as the clip limit allows; under speech the bed
-            # stays exactly today's level.
-            bed_gain = min(2.0, music_gain / speech_duck_gain(DEFAULT_SPEECH_DUCK_DB))
+        bed_gain, duck_gain = (
+            ducked_voiceover_bed(music_gain) if speech_windows else (music_gain, None)
+        )
         music_duration_s = max(total_duration_s, 0.1)
         # The cloud trims this bed hard at `-t`; the phone fades both ends
         # instead (KRI-139) -- a bed never starts or stops on a full sample.
@@ -550,7 +556,7 @@ def compile_phone_voiceover_montage_plan(
         audio = AudioMixRecipe(
             music_volume=music_gain,
             **(
-                {"speech_windows": speech_windows, "speech_duck_gain": music_gain / bed_gain}
+                {"speech_windows": speech_windows, "speech_duck_gain": duck_gain}
                 if speech_windows
                 else {}
             ),
