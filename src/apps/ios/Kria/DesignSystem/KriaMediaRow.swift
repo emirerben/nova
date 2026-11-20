@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit.UIGestureRecognizerSubclass
 
 struct KriaMenuAction: Identifiable {
     let id = UUID()
@@ -198,7 +199,6 @@ private struct KriaSwipeToDelete: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var offset: CGFloat = 0
     @State private var restingOffset: CGFloat = 0
-    @State private var axis: Axis?
     @State private var rowWidth: CGFloat = 0
     private let revealWidth: CGFloat = 96
     private let fullSwipeFraction: CGFloat = 0.6
@@ -224,26 +224,34 @@ private struct KriaSwipeToDelete: ViewModifier {
         }
         .background(GeometryReader { geometry in Color.clear.onAppear { rowWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in rowWidth = width } })
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .simultaneousGesture(drag, including: isEnabled ? .all : .none)
+        // A UIKit pan that only begins for a sideways drag. A SwiftUI DragGesture here, even a simultaneous one,
+        // kept the chat from scrolling when a vertical drag started on a media row (KRI-1550).
+        .gesture(KriaSidewaysSwipeRecognizer(isEnabled: isEnabled, handler: handle))
         .onChange(of: isEnabled) { _, enabled in if !enabled { settle(to: 0) } }
     }
 
-    private var drag: some Gesture {
-        DragGesture(minimumDistance: 12)
-            .onChanged { value in
-                if axis == nil { axis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical }
-                guard axis == .horizontal else { return }
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) { offset = min(0, max(-max(rowWidth, revealWidth), restingOffset + value.translation.width)) }
-            }
-            .onEnded { value in
-                defer { axis = nil }
-                guard axis == .horizontal else { return }
-                let predicted = restingOffset + value.predictedEndTranslation.width
-                if offset < -rowWidth * fullSwipeFraction || predicted < -rowWidth * 0.9 { commit() }
-                else { settle(to: offset < -revealWidth / 2 || predicted < -revealWidth ? -revealWidth : 0) }
-            }
+    private func handle(_ pan: UIPanGestureRecognizer) {
+        let travel = pan.translation(in: pan.view).x
+        switch pan.state {
+        case .began, .changed:
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { offset = min(0, max(-max(rowWidth, revealWidth), restingOffset + travel)) }
+        case .ended:
+            let predicted = restingOffset + travel + Self.flickTravel(velocity: pan.velocity(in: pan.view).x)
+            if offset < -rowWidth * fullSwipeFraction || predicted < -rowWidth * 0.9 { commit() }
+            else { settle(to: offset < -revealWidth / 2 || predicted < -revealWidth ? -revealWidth : 0) }
+        case .cancelled, .failed:
+            settle(to: restingOffset)
+        default:
+            break
+        }
+    }
+
+    /// How much further a flick at `velocity` (pt/s) would carry, decelerating like a scroll view.
+    private static func flickTravel(velocity: CGFloat) -> CGFloat {
+        let rate = UIScrollView.DecelerationRate.normal.rawValue
+        return velocity / 1000 * rate / (1 - rate)
     }
 
     private func settle(to target: CGFloat) {
@@ -255,5 +263,63 @@ private struct KriaSwipeToDelete: ViewModifier {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         action()
         settle(to: 0)
+    }
+}
+
+/// Pan recognizer that only begins for a mostly-sideways drag, so a vertical drag that starts on the row is never
+/// claimed and the enclosing scroll view scrolls as it would without it.
+private struct KriaSidewaysSwipeRecognizer: UIGestureRecognizerRepresentable {
+    let isEnabled: Bool
+    let handler: (UIPanGestureRecognizer) -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var isEnabled = true
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool { isEnabled }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> SidewaysPanGestureRecognizer {
+        let pan = SidewaysPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: SidewaysPanGestureRecognizer, context: Context) {
+        context.coordinator.isEnabled = isEnabled
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: SidewaysPanGestureRecognizer, context: Context) {
+        handler(recognizer)
+    }
+}
+
+/// A pan that fails as soon as the finger's travel is more vertical than sideways. The direction is read from the
+/// touches themselves: under SwiftUI, `gestureRecognizerShouldBegin` was asked with a zero translation (KRI-1550).
+private final class SidewaysPanGestureRecognizer: UIPanGestureRecognizer {
+    private var start: CGPoint?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if start == nil, let touch = touches.first { start = touch.location(in: view) }
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if state == .possible, let start, let touch = touches.first {
+            let point = touch.location(in: view)
+            let dx = abs(point.x - start.x), dy = abs(point.y - start.y)
+            if dy > 2, dy >= dx {
+                state = .failed
+                return
+            }
+        }
+        super.touchesMoved(touches, with: event)
+    }
+
+    override func reset() {
+        super.reset()
+        start = nil
     }
 }
