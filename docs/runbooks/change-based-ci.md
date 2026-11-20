@@ -454,6 +454,54 @@ are the 26 above plus 7, each read:
   never admitted its first frame on that runner. The same test passed on ten
   other Mac jobs within four hours, including the same branch.
 
+## When a nightly goes red (KRI-1549)
+
+The nightlies are the only runs of the `creation` and `screens` journey legs
+and of the full iPhone UI suite; a PR that selects the `full` UI group runs only
+smoke. From 2026-11-05 to 11-19 the `iOS` nightly was red 14 nights in a row and
+the `CI` nightly 10 of 14, and nobody was told.
+
+Each scheduled run of `ci.yml` and `ios.yml` now ends with a `nightly-alert`
+job (`scripts/ci/nightly-alert.py`, built-in `GITHUB_TOKEN`, no secret):
+
+- If any job of the run failed, was cancelled (a timeout is a cancel) or had not
+  finished, it opens one GitHub issue, **Nightly CI run is red** or **Nightly
+  iOS run is red**, labelled `nightly-red` and assigned to the repository owner,
+  or comments on that issue if it is already open. The text names the run's start
+  time (UTC) and commit, never "last night": scheduled runs start hours late.
+- It lists each red job with its failed step and the failed tests it reads from
+  the job log: the UI suite's `UI coverage mismatch` line, XCTest
+  `Test Case ... failed` lines with no later pass (a test that passed on retry
+  is flaky, not failing) and pytest `FAILED`/`ERROR` lines. A log it cannot read
+  is named as such; the jobs are still listed.
+- The next green scheduled run of the same workflow closes the issue with a
+  comment naming that run. Only the newest scheduled run speaks: re-running an
+  older night's jobs (which keeps the `schedule` event) changes nothing.
+- It runs on `schedule` only. PR, push and manual runs never open, update or
+  close the issue. A run of any branch but `main` uses its own title ("... (branch
+  <name>)") and no assignee, so a drill cannot touch main's issue.
+
+To change who is assigned, set the repository variable
+`NIGHTLY_ALERT_ASSIGNEES` (comma-separated GitHub logins). With the issue open:
+
+1. Open the failing tests' job from the issue and read the diagnostics artifact
+   (`ios-native-test-diagnostics-*`). File a Linear issue per failing test, or
+   fix it, as for any red `main` check.
+2. Merging the fix does not close the issue; the next green scheduled run does.
+   A manual `workflow_dispatch` run is a useful check but does not close it.
+
+To see what the alert would write for any finished run, without changing
+anything:
+
+```sh
+GITHUB_REPOSITORY=emirerben/nova python3 scripts/ci/nightly-alert.py --dry-run --run-id <run id>
+```
+
+The guard is `scripts/ci/test_nightly_alert.py`: it lists the ways the alert can
+fail and holds the job's `needs` (every other job, so it runs last), its
+schedule-only condition and its permissions. A new job in either workflow must
+be added to `nightly-alert`'s `needs`.
+
 ## Verification and rollback
 
 ```sh
