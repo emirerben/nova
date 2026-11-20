@@ -3,6 +3,21 @@ import UIKit
 
 @MainActor
 final class SplitScreenAcceptanceUITests: XCTestCase {
+    func testHoldAndDragFootageIntoEmptySplitPanel() throws {
+        let app = launch(reset: true)
+        let first = clip(1, in: app)
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        first.tap()
+        createSplit(panels: 2, in: app)
+        app.buttons["native-editor-split-done"].tap()
+        let gap = app.descendants(matching: .any)["native-editor-split-gap-1-0"].firstMatch
+        XCTAssertTrue(gap.waitForExistence(timeout: 5))
+        let start = first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: gap.frame.midY - first.frame.midY)))
+        let slots = try XCTUnwrap(try sections(app)["timeline_slots"] as? [[String: Any]])
+        XCTAssertEqual(slots.first { $0["split_section_id"] is String }?["split_panel_index"] as? Int, 1)
+    }
+
     func testCustomThreePanelLayoutSaveReopenAndFullscreenBoundary() throws {
         let app = launch(reset: true)
         let first = clip(1, in: app)
