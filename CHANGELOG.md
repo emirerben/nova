@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.48.0] - 2026-11-20
+
+### Changed
+- feat(kria): recipe contract for music ducked under speech (#2427) <!-- release-pr: 2427 -->
+
 ## [0.89.47.0] - 2026-11-20
 
 ### Changed
