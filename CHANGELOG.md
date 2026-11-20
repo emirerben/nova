@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.43.0] - 2026-11-20
+
+### Changed
+- KRI-1426 Benchmark native shot order with public archival footage (#2415) <!-- release-pr: 2415 -->
+
 ## [0.89.42.0] - 2026-11-20
 
 ### Changed
