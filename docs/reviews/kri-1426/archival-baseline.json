@@ -46,7 +46,7 @@
         "passed": true
       }
     ],
-    "sha256": "f29e79fe4a11f327dfbf0b8fec5a9ef7e735405913eaed8d6da3b6135c902ff3"
+    "sha256": "538b81d5da0d559c9243390a57bf44303012391c36c77ec3eb7259f6ac943db6"
   },
   "archive_garden": {
     "duration_s": 6.0,
@@ -116,7 +116,7 @@
         "passed": true
       }
     ],
-    "sha256": "50c072307aee5fd00060052df0ee610b36b60ee0643069f2ea6e66e40a4362d5"
+    "sha256": "ca66f0f35e082c6b128b4049ca40f91271653a2c7b09f6b834d2b31a3c723b46"
   },
   "archive_crowd": {
     "duration_s": 6.0,
@@ -186,7 +186,7 @@
         "passed": true
       }
     ],
-    "sha256": "4785f81c047d4374cbb4f62171ffc8f6bbf3c661b06bb2704a13d787449c3b2a"
+    "sha256": "9d9ad768856c6782837dd19cfedf5a2b241d5673def8daa93182de33ed468a3d"
   },
   "archive_wrong_arrival": {
     "duration_s": 4.0,
@@ -235,6 +235,6 @@
         "passed": false
       }
     ],
-    "sha256": "000909d38ed2fab110ae9a7480e63da05967f22b70a971f7c89ae63700fb3657"
+    "sha256": "778636fe5f7e3eeadbe03183e1565c52cc5323d5f146ff6138ddc8f04277e343"
   }
 }

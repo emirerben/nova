@@ -5,6 +5,7 @@ import hashlib
 import json
 import runpy
 import subprocess
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -30,7 +31,7 @@ def ffmpeg(*args):
     )
 
 
-def prepare(raw, out):
+def prepare(raw, out, download_sources=False):
     # The simulator fixture helper configures isolated local storage and the API import path.
     phone = runpy.run_path(str(HERE.parent / "ios/phone-photo-render-e2e.py"))
     from app.pipeline.guided_story import (
@@ -44,6 +45,24 @@ def prepare(raw, out):
     )
 
     out.mkdir(parents=True, exist_ok=False)
+    if download_sources:
+        raw = out / "sources"
+        raw.mkdir()
+        for name, source in FIXTURE["sources"].items():
+            request = urllib.request.Request(
+                source["url"],
+                headers={
+                    "User-Agent": "Nova-archival-bench/1.0 (https://github.com/emirerben/nova)"
+                },
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                data = response.read(1_000_001)
+            if (
+                len(data) > 1_000_000
+                or hashlib.sha256(data).hexdigest() != source["sha256"]
+            ):
+                raise ValueError(f"Unexpected download from Commons for {name}")
+            (raw / (name + ".ogv")).write_bytes(data)
     clips, bindings = {}, {}
     for name in FIXTURE["sources"]:
         file = out / (name + ".mp4")
@@ -220,6 +239,13 @@ if __name__ == "__main__":
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":
-        prepare(args.raw, args.output)
+        prepare(args.raw, args.output, download_sources=args.raw == Path("-"))
     else:
-        raise SystemExit(0 if score(args.raw, args.output) else 1)
+        raise SystemExit(
+            0
+            if score(
+                args.output / "sources" if args.raw == Path("-") else args.raw,
+                args.output,
+            )
+            else 1
+        )

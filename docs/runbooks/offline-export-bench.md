@@ -45,14 +45,14 @@ KRI-1426 still requires 25 real incident footage sets, their original requests, 
 
 Three authored requests in English, Turkish and German exercise the plain phone montage planner and exporter on six archival films. The fourth export deliberately reverses the two shots in the English request. The fixture includes the request, typed order, expected shot names, original Wikimedia Commons links, rights labels and source hashes. Each input is the first two seconds of a film, padded to portrait with its full picture visible.
 
-Download the six originals listed in `scripts/kria/archival-cases.json` into one directory as `<source key>.ogv`. The runner checks every hash before using its source. From a bootstrapped checkout:
+From a bootstrapped checkout, pass a dash to download the six pinned originals into the new output directory. For offline runs, replace the dash with a directory of cached originals named `<source key>.ogv`. The runner checks every hash before using its source.
 
 ```sh
-bash scripts/kria/run-archival-bench.sh "$SIMULATOR_UDID" "$RAW_DIRECTORY" /private/tmp/nova-archive-run
+bash scripts/kria/run-archival-bench.sh "$SIMULATOR_UDID" - /private/tmp/nova-archive-run
 ```
 
 The command saves the compiled plan, device recipe, native MP4, sampled source matches, run time and provider cost. It compares three frames in each requested two-second interval to all six originals. A passing sample needs both the expected nearest source and a mean absolute brightness error of at most 15 on a 0–255 scale. The reversed control must retain its duration and match the wrong source in all six samples. To rescore existing exports, run `python3 scripts/kria/archival_bench.py score "$RAW_DIRECTORY" "$OUTPUT_DIRECTORY"`.
 
 The planner receives authored order indices. This baseline measures shot order and duration from the typed brief through native export. Free-text interpretation, editorial ratings and performance on historical creator incidents remain unmeasured.
 
-The [recorded interim score sheet](../reviews/kri-1426/archival-baseline.json) covers Nova main at `781bd6701f` with the benchmark harness added. The simulator run took 51 seconds with cached build products and cost USD 0 in model calls. All 24 requested samples matched. All six samples from the reversed control matched the opposite shot, and both versions lasted four seconds.
+The [recorded interim score sheet](../reviews/kri-1426/archival-baseline.json) covers Nova main at `781bd6701f` with the benchmark harness added. The run downloaded all six originals and took 52 seconds with cached build products and cost USD 0 in model calls. All 24 requested samples matched. All six samples from the reversed control matched the opposite shot, and both versions lasted four seconds.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ $# -ne 3 ]]; then
-  echo "Usage: $0 SIMULATOR_UDID RAW_SOURCE_DIRECTORY NEW_OUTPUT_DIRECTORY" >&2
+  echo "Usage: $0 SIMULATOR_UDID RAW_SOURCE_DIRECTORY_OR_- NEW_OUTPUT_DIRECTORY" >&2
   exit 2
 fi
 
