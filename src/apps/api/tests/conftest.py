@@ -138,6 +138,45 @@ def exclusive_intent_review_ledger():
             engine.dispose()
 
 
+@pytest.fixture
+def exclusive_slide_post_delivery():
+    """Hold one cross-worker lock while a test owns the slide-post delivery state.
+
+    That state is every ``slide_post_generation_receipts`` and
+    ``slide_post_render_revisions`` row. On one xdist database it is shared, and the
+    delivery sweeps (``reconcile_generations``, ``reconcile_revisions``) act on every
+    pending row, so a sweep in one test settles the revision another test is about to
+    observe (``assert 'skip' == 'published'``), or claims it before that test's
+    kill-worker child can (KRI-1545).
+
+    xdist's default ``load`` mode hands tests out in large consecutive chunks, so the
+    tests of one file usually share a worker and never meet. Where a chunk ends moves
+    with every test added before it: with the file split 35/13 across two workers these
+    tests failed in 3 of 5 CI repeats (run 44651481740). A session-level advisory lock
+    on its own connection does not depend on the scheduler, and Postgres releases it if
+    the worker dies.
+    """
+
+    db_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    engine = create_engine(db_url, pool_pre_ping=True)
+    connection = None
+    try:
+        connection = engine.connect()
+        connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": 2026112001})
+    except OperationalError as exc:
+        if connection is not None:
+            connection.close()
+        engine.dispose()
+        pytest.skip(f"Postgres not reachable for the slide-post delivery lock: {exc!r}")
+    try:
+        yield
+    finally:
+        try:
+            connection.close()
+        finally:
+            engine.dispose()
+
+
 @pytest.fixture(autouse=True)
 def _fresh_client_request_context() -> None:
     """Start every test outside an HTTP request with no declared client protocol.

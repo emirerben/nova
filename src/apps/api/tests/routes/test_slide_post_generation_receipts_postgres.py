@@ -24,7 +24,9 @@ from tests.routes.test_slide_post_binding_save_postgres import (  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
-def _receipt_flags(monkeypatch):
+def _receipt_flags(monkeypatch, exclusive_slide_post_delivery):
+    """Also serializes every test here and in the delivery suite, which imports this
+    fixture: their sweeps act on every pending row (conftest, KRI-1545)."""
     from app.config import settings
 
     monkeypatch.setattr(settings, "slide_post_generation_recovery_enabled", True)
