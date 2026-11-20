@@ -8250,6 +8250,12 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
     return capabilities
 
 
+def _phone_talking_music_hidden(variant: dict) -> bool:
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return is_phone_subtitled_editor_variant(variant) and not talking_music_supported()
+
+
 def _phone_talking_music_available(variant: dict, *, subtitled_lanes: bool) -> bool:
     """KRI-1562: does this device variant's Save compile the creator's song? Only a phone Talking
     edit on the subtitled Save path (an authored one Saves through the authored compiler)."""
@@ -14694,6 +14700,9 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession, *, job:
             if isinstance(treatment, dict)
             else None
         )
+        if treatment_track is not None and _phone_talking_music_hidden(variant):
+            # KRI-1562: the editor previews a phone Talking song only while its export plays one.
+            treatment_track = None
         if treatment_track is not None:
             variant["background_music"] = _background_music_response(
                 variant,

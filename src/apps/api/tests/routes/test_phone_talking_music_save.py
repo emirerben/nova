@@ -61,7 +61,7 @@ def _flag(monkeypatch, on: bool):
     monkeypatch.setattr(
         gj.settings,
         "phone_render_verified_features",
-        [*gj.settings.phone_render_verified_features, "musicBed", "speechDuck"],
+        [*gj.settings.phone_render_verified_features, "audioMix", "musicBed", "speechDuck"],
     )
 
 
@@ -231,6 +231,21 @@ def test_background_music_is_offered_only_where_a_save_compiles_it(
     assert _capability(job) is expected
 
 
+@pytest.mark.parametrize("archetype", ["narrated", "voiceover"])
+def test_no_other_device_archetype_is_offered_a_song(monkeypatch, archetype):
+    from tests.routes.test_phone_voiceover_editor_lanes import _enable, voiceover_job
+
+    monkeypatch.setattr(gj.settings, "smart_music_bed_enabled", True)
+    _enable(monkeypatch)
+    _flag(monkeypatch, True)
+    job, _variant_id = voiceover_job(archetype=archetype)
+    variant = job.assembly_plan["variants"][0]
+    variant["output_url"] = "https://signed.test/out.mp4"
+    base = gj._base_editor_capabilities(job, variant)["background_music"]
+    assert base is True  # the cloud map would offer it; the device Save cannot honour it
+    assert _capability(job) is False
+
+
 def test_an_offered_control_saves(monkeypatch):
     """The trap: advertised => a Save carrying it does not 422."""
     monkeypatch.setattr(gj.settings, "smart_music_bed_enabled", True)
@@ -258,9 +273,11 @@ def test_an_older_build_is_not_offered_the_song(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_status_carries_the_song_for_the_editor_preview(monkeypatch):
+@pytest.mark.parametrize("on", [True, False])
+async def test_status_carries_the_song_for_the_editor_preview_only_with_the_flag(monkeypatch, on):
     from unittest.mock import AsyncMock
 
+    _flag(monkeypatch, on)
     monkeypatch.setattr(
         "app.routes.music._preview_audio_url", lambda path: f"https://signed.test/{path}"
     )
@@ -281,6 +298,11 @@ async def test_status_carries_the_song_for_the_editor_preview(monkeypatch):
     db = SimpleNamespace(execute=AsyncMock(return_value=result))
     await gj._attach_music_previews([variant], db, job=SimpleNamespace())
     bed = variant["background_music"]
+    if not on:
+        # A rollback leaves the treatment on the row; the preview must not play a song the
+        # export no longer has.
+        assert bed is None
+        return
     assert (bed["track_id"], bed["start_s"], bed["end_s"], bed["gain_db"]) == (
         "song-1",
         10.0,
