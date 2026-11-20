@@ -95,7 +95,10 @@ export default function TermsPage() {
           </Eyebrow>
           <ul className="list-disc space-y-1.5 pl-4 text-[14px] leading-relaxed text-[#3f3f46]">
             <li>Your footage and your rendered videos are yours. We never sell them or use them to train our own models.</li>
-            <li>Your raw video and audio are sent to Google and OpenAI to power the editing — see §6.</li>
+            <li>
+              Google Gemini and OpenAI process media and related data for video editing. Anthropic (Claude) processes
+              edit requests and project context to suggest changes. See §6.
+            </li>
             <li>You&apos;re responsible for having the right to film and post everyone in your footage.</li>
             <li>Kria is free right now. That could change — we&apos;ll give you {CHANGE_NOTICE_DAYS} days&apos; notice first.</li>
             <li>
@@ -235,14 +238,21 @@ export default function TermsPage() {
         <Section
           n="6"
           title="AI Processing of Your Content"
-          summary="Your raw video and audio leave our servers to be processed by Google and OpenAI. We don't train our own models on it."
+          summary="Google Gemini and OpenAI process media and related data. Anthropic (Claude) processes edit requests and project context. We don't train our own models on your content."
         >
           <p>
             To generate transcripts, analysis, and edits, Kria transmits Your Content — including full, unedited
             video files and extracted audio — to third-party AI providers, principally Google (Gemini) and OpenAI
-            (Whisper transcription, caption correction). These providers process Your Content under their own terms
-            and, where applicable, data processing agreements; our full sub-processor list and what each one receives
-            is published in our{" "}
+            (Whisper transcription, caption correction).
+          </p>
+          <p>
+            When you use edit chat, Anthropic (Claude) receives your edit requests and relevant project context,
+            which may include chat history, timeline details, and transcript excerpts. Anthropic uses this
+            information to understand your requests and suggest changes.
+          </p>
+          <p>
+            These providers process Your Content under their own terms and, where applicable, data processing
+            agreements. Our full sub-processor list and what each one receives is published in our{" "}
             <Link href="/privacy" className="text-lime-700 underline underline-offset-2">
               Privacy Policy
             </Link>
@@ -251,9 +261,9 @@ export default function TermsPage() {
           <p>
             <strong>We do not use Your Content to train our own foundation models</strong>, and we instruct our
             processors not to use it to train theirs outside of the terms they separately publish for API customers.
-            A sampled fraction of de-identified system prompts and outputs may be sent to a secondary AI provider
-            (Anthropic) for internal quality evaluation; this is off by default and, when enabled, is not used to
-            identify you.
+            Separately from edit chat, a sample of de-identified system prompts and outputs may be sent to
+            Anthropic for internal quality evaluation. That separate use is off by default and, when enabled,
+            is not used to identify you.
           </p>
         </Section>
 
