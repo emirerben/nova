@@ -5459,6 +5459,65 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     """Bridge the sync worker to the (async-shaped) render-library catalog
     lookup for a montage-family phone job's matched music track.
 
+    Returns None when the decision has no matched track (no music bed
+    needed). Raises `UnsupportedPhonePlan` when the track can no longer be
+    published/served (`_pin_catalog_music`).
+    """
+    from app.pipeline.phone_recipe_shared import PhoneMusicBed  # noqa: PLC0415
+
+    track_id = decision.music_track_id
+    if not track_id:
+        return None
+    asset, duration_s = _pin_catalog_music(track_id)
+    return PhoneMusicBed(
+        catalog_id=track_id,
+        generation=asset.generation,
+        fingerprint=asset.fingerprint,
+        duration_s=duration_s,
+        start_s=float(decision.music_start_s or 0.0),
+        # `_mix_template_audio`'s song-variant path uses `audio_gain=1.0`
+        # (full replace, no ducking, no fade) -- mirror that exactly.
+        volume=1.0,
+    )
+
+
+def _talking_speech_source_windows(speakers: Sequence[tuple[Any, Sequence[Any]]]) -> dict:
+    """KRI-1562: each talking take's merged spoken spans, keyed by its recipe asset id."""
+    from app.pipeline.phone_recipe_shared import speech_spans_from_words  # noqa: PLC0415
+
+    return {binding.media_id: speech_spans_from_words(words) for binding, words in speakers}
+
+
+def _talking_music_bed(job_id: str) -> tuple[Any, dict[str, Any] | None]:
+    """KRI-1562: ``(PhoneMusicBed, treatment)`` for a phone Talking render, else ``(None, None)``.
+
+    Only a treatment already on the variant (the creator's choice) makes a bed (KRI-20). A song
+    that can no longer be served is dropped (traced) instead of failing the talk itself.
+    """
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import music_bed_from_treatment  # noqa: PLC0415
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    if not talking_music_supported(require_client=False):
+        return None, None
+    treatment = _persisted_music_treatment(job_id=job_id, variant_id="subtitled")
+    if treatment is None:
+        return None, None
+    try:
+        return music_bed_from_treatment(treatment, _pin_catalog_music), treatment
+    except (UnsupportedPhonePlan, ValueError, KeyError, TypeError) as exc:
+        record_pipeline_event(
+            "phone",
+            "talking_music_dropped",
+            {"track_id": str(treatment.get("track_id")), "reason": str(exc)[:200]},
+        )
+        return None, None
+
+
+def _pin_catalog_music(track_id: str, _path: str | None = None) -> tuple[Any, float | None]:
+    """Pin a library music track for a phone recipe: ``(LibraryRenderAsset, duration_s)``.
+
     `app.services.render_library.catalog_path` takes an `AsyncSession`; a
     Celery worker has no running event loop, so this re-validates the exact
     same publish/ready/path-prefix contract directly against a sync session
@@ -5466,18 +5525,13 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     the exact generation + fingerprint that
     `app.routes.device_render.download_device_asset` will independently
     recompute when the device fetches the asset — they must agree exactly.
-
-    Returns None when the decision has no matched track (no music bed
-    needed). Raises `UnsupportedPhonePlan` when the track can no longer be
-    published/served — a phone job must never bake in a stale music receipt.
+    The catalog row's path wins over any path the caller carries (``_path``, the
+    `phone_recipe_shared.MusicPin` shape). Raises `UnsupportedPhonePlan` when the
+    track can no longer be served: a phone job must never bake in a stale receipt.
     """
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
-    from app.pipeline.phone_recipe_shared import PhoneMusicBed  # noqa: PLC0415
     from app.services.render_library import inspect_library_asset  # noqa: PLC0415
 
-    track_id = decision.music_track_id
-    if not track_id:
-        return None
     with _sync_session() as db:
         track = db.get(MusicTrack, track_id)
         usable = bool(
@@ -5505,16 +5559,7 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     asset = inspect_library_asset(
         path, asset_id=f"music-{track_id}", catalog="music", catalog_id=track_id
     )
-    return PhoneMusicBed(
-        catalog_id=track_id,
-        generation=asset.generation,
-        fingerprint=asset.fingerprint,
-        duration_s=duration_s,
-        start_s=float(decision.music_start_s or 0.0),
-        # `_mix_template_audio`'s song-variant path uses `audio_gain=1.0`
-        # (full replace, no ducking, no fade) -- mirror that exactly.
-        volume=1.0,
-    )
+    return asset, duration_s
 
 
 def _resolve_phone_sound_effect(sfx: Any) -> Any:
@@ -6020,12 +6065,29 @@ def _run_phone_voiceover_montage_job(
             narration = _resolve_phone_voiceover_bed(
                 job_id, decision.extras.get("voiceover_gcs_path")
             )
+            from app.services.phone_rollout import (  # noqa: PLC0415
+                speech_duck_planned_for,
+                stamped_client_protocol,
+            )
+
+            # KRI-1562: the bed ducks under the voice by the Talking rule. This job has no word
+            # timings for the voiceover, so the whole recording counts as speech: the bed keeps
+            # today's level under the voice and only rises after it ends.
+            voice_windows = (
+                {f"voiceover-{narration.plan_item_id}": ((0.0, narration.duration_s),)}
+                if music is not None
+                and speech_duck_planned_for(
+                    stamped_client_protocol(all_candidates.get("creator_client_protocol"))
+                )
+                else None
+            )
             recipe = compile_phone_voiceover_montage_plan(
                 decision,
                 bindings,
                 music=music,
                 narration=narration,
                 target_lufs=settings.output_target_lufs,
+                speech_source_windows=voice_windows,
             )
             # KRI-527: the creator's corner text. The compiler owns the voice, music and
             # intro lanes; pins are added on top, and the variant row carries the same
@@ -6086,6 +6148,7 @@ def _run_phone_voiceover_montage_job(
                     narration=narration,
                     target_lufs=settings.output_target_lufs,
                     resolved_text_elements=rows,
+                    speech_source_windows=voice_windows,
                 )
 
     # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded against the
@@ -9371,6 +9434,7 @@ def _run_phone_subtitled_job(
         UnsupportedPhonePlan,
     )
     from app.pipeline.phone_list_labels import LIST_LABEL_FIELD  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import speech_source_windows_json  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import SPOKEN_TEXT_FIELD  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
@@ -10835,6 +10899,7 @@ def _run_phone_subtitled_job(
                     )
                     cut_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(cut_words, attach_words=True, budget=PHONE_CUE_BUDGET)
+                spoken_source_words = list(words)
                 if spoken_text_asks or list_label_asks:
                     # KRI-707: the SPOKEN words (never a requested caption language), cut.
                     timeline_words = remap_words(words, cut_plan)
@@ -11005,6 +11070,7 @@ def _run_phone_subtitled_job(
                     )
                     caption_words, detected_lang = ensured.words, ensured.language
                 cues = build_plain_cues(caption_words, attach_words=True, budget=PHONE_CUE_BUDGET)
+                spoken_source_words = list(transcript.words)
                 if spoken_text_asks or list_label_asks:
                     timeline_words = list(transcript.words)
                 if insert_asks:
@@ -11057,6 +11123,53 @@ def _run_phone_subtitled_job(
                         if multi_speaker_beats:
                             beat_words.extend(_beat_word(word, 0.0) for word in extra_words)
                     extra_offset_s += float(extra_binding.original.duration_s)
+            # KRI-1562: what each talking take says, in its own source seconds (never the caption
+            # lines, which a creator can delete), so a song under the edit ducks on the words
+            # wherever a cut, an insert or Range later puts them.
+            speech_source_windows: dict[str, Any] | None = None
+            talking_music_treatment: dict[str, Any] | None = None
+            talking_music_compile: dict[str, Any] = {}
+            if settings.talking_music_enabled:
+                speech_source_windows = _talking_speech_source_windows(
+                    [
+                        (binding, spoken_source_words),
+                        *(
+                            (
+                                extra_binding,
+                                extra_take_snapshots[extra_id].source_words()
+                                if extra_id in extra_take_snapshots
+                                else getattr(talking_transcripts.get(extra_id), "words", None)
+                                or [],
+                            )
+                            for extra_id, extra_binding in zip(
+                                extra_speaker_ids, extra_speaker_bindings, strict=True
+                            )
+                        ),
+                    ]
+                )
+                talking_bed, talking_music_treatment = _talking_music_bed(job_id)
+                if talking_bed is not None:
+                    talking_music_compile.update(
+                        music=talking_bed, speech_source_windows=speech_source_windows
+                    )
+
+            def _compile_talking(*args: Any, **kwargs: Any) -> Any:
+                """`compile_phone_subtitled_plan` with the creator's song while its section can
+                cover the video; one that can't is dropped (traced) and the talk still renders."""
+                if talking_music_compile:
+                    try:
+                        return compile_phone_subtitled_plan(
+                            *args, **kwargs, **talking_music_compile
+                        )
+                    except UnsupportedPhonePlan as exc:
+                        if exc.reason != "music_section_too_short":
+                            raise
+                        record_pipeline_event(
+                            "phone", "talking_music_dropped", {"reason": exc.reason}
+                        )
+                        talking_music_compile.clear()
+                return compile_phone_subtitled_plan(*args, **kwargs)
+
             # KRI-1015: the review says when the captions were translated -- the spoken language
             # (a language Nova names, never a whisper guess) when the final one differs from it.
             caption_translated_from = ""
@@ -11599,7 +11712,7 @@ def _run_phone_subtitled_job(
                 # Reserve the compiled caption lane before fitting titles and
                 # closing text. The final recipe reuses this resolved look.
                 reserved = _inserted(cues, (), None, cutaways)
-                compile_phone_subtitled_plan(
+                _compile_talking(
                     speaker_bindings,
                     caption_cues=reserved.cues,
                     caption_style=caption_style,
@@ -11679,7 +11792,7 @@ def _run_phone_subtitled_job(
                 moved = _inserted(
                     cues, title_rows + spoken_text_rows + closing_text_rows, None, cutaways
                 )
-                recipe = compile_phone_subtitled_plan(
+                recipe = _compile_talking(
                     speaker_bindings,
                     caption_cues=moved.cues,
                     caption_style=caption_style,
@@ -12544,7 +12657,7 @@ def _run_phone_subtitled_job(
                     for row, updated in zip(text_rows, styled, strict=True):
                         row.update(updated)
                     moved = _inserted(cues, text_rows, lanes, cutaways)
-                    return compile_phone_subtitled_plan(
+                    return _compile_talking(
                         speaker_bindings,
                         caption_cues=moved.cues,
                         caption_style=caption_style,
@@ -13169,6 +13282,11 @@ def _run_phone_subtitled_job(
             new_entry["caption_unclear"] = unclear_words_receipt  # KRI-849
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if speech_source_windows is not None:
+            new_entry["speech_source_windows"] = speech_source_windows_json(speech_source_windows)
+        if talking_music_compile:
+            # KRI-20: the creator's own choice, kept only when the recipe really plays it.
+            new_entry["smart_music_treatment"] = talking_music_treatment
         if engine_noise_receipt is not None:
             new_entry["engine_noise_reduction"] = engine_noise_receipt
         if processed_audio_receipt is not None:
