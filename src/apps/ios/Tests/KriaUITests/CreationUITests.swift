@@ -893,8 +893,22 @@ final class CreationUITests: XCTestCase {
             let bottom = min(plus.frame.minY, composer.frame.minY)
             return CGRect(x: 0, y: top, width: app.frame.width, height: max(bottom - top, 0))
         }
-        func isInView(_ element: XCUIElement) -> Bool {
-            element.exists && element.frame.intersection(visibleTranscript()).height >= 16
+        // Whether a text that `matches` is drawn at least 16 pt inside that strip, read from one snapshot of the screen.
+        // Separate queries for the text, the header and the composer took 4.4 s on the CI runner right after Send, while
+        // the chat was still scrolling to the new turn: their frames came from different moments, and one check
+        // outlasted the whole 3 s wait (KRI-1550, run 44764112232). `within`: only texts under that container.
+        func textInView(within container: String? = nil, _ matches: (XCUIElementSnapshot) -> Bool) -> Bool {
+            guard let screen = try? app.snapshot() else { return false }
+            func nodes(_ node: XCUIElementSnapshot) -> [XCUIElementSnapshot] { [node] + node.children.flatMap(nodes) }
+            let all = nodes(screen)
+            guard let header = all.first(where: { $0.identifier == "workspace-menu-toggle" }),
+                  let attach = all.first(where: { $0.identifier == "chat-attach" }),
+                  let field = all.first(where: { [.textField, .textView].contains($0.elementType) && $0.label == "Message Kria" })
+            else { return false }
+            let top = header.frame.maxY
+            let strip = CGRect(x: 0, y: top, width: screen.frame.width, height: max(min(attach.frame.minY, field.frame.minY) - top, 0))
+            let scope = container.flatMap { name in all.first { $0.label == name } }.map(nodes) ?? all
+            return scope.contains { $0.elementType == .staticText && matches($0) && $0.frame.intersection(strip).height >= 16 }
         }
         let send = app.buttons["chat-send-message"]
         XCTAssertTrue(eventually(timeout: 10) { send.isEnabled })
@@ -903,15 +917,15 @@ final class CreationUITests: XCTestCase {
         // While the turn is still on its way (the fixture answers four seconds late), the sent prompt is drawn
         // inside the visible chat.
         let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "word by word")).firstMatch
-        XCTAssertTrue(eventually(timeout: 3) { isInView(sent) },
+        // 5 s: the app was busy for 3.3 s after the tap on the CI runner before the first check could start.
+        XCTAssertTrue(eventually(timeout: 5) { textInView { $0.label.contains("word by word") } },
                       "the sent prompt is in the visible chat: \(sent.exists ? "\(sent.frame)" : "not drawn") vs \(visibleTranscript())\n\(app.debugDescription)")
         snapshot("2-after-send")
         // And once Kria's reply has landed, the chat is still drawn, with the keyboard still up.
         let reply = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'direction I'")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 30), "Kria's reply arrived\n\(app.debugDescription)")
         // The chat follows the reply's end, so its opening line may have scrolled up: any of the transcript's text counts.
-        let transcriptText = app.otherElements["Conversation history"].descendants(matching: .staticText)
-        XCTAssertTrue(eventually(timeout: 5) { transcriptText.allElementsBoundByIndex.contains(where: isInView) },
+        XCTAssertTrue(eventually(timeout: 5) { textInView(within: "Conversation history") { _ in true } },
                       "the transcript is drawn in the visible chat \(visibleTranscript())\n\(app.debugDescription)")
         XCTAssertTrue(app.keyboards.firstMatch.exists)
         snapshot("3-after-reply")
