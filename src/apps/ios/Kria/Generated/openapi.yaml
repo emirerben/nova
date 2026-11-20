@@ -166,7 +166,7 @@
         "properties": {
           "duration_s": {
             "exclusiveMinimum": true,
-            "maximum": 1800,
+            "maximum": 1800.0,
             "minimum": 0,
             "title": "Duration S",
             "type": "number"
@@ -9255,7 +9255,7 @@
           },
           "duration_s": {
             "exclusiveMinimum": true,
-            "maximum": 1800,
+            "maximum": 1800.0,
             "minimum": 0,
             "title": "Duration S",
             "type": "number"
