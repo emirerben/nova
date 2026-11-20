@@ -7441,8 +7441,13 @@ def _clamp_phone_editor_capabilities(
     shape: Any = None,
     subtitled_text: bool = False,
     guided_sfx: bool = False,
+    background_music: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
+
+    ``background_music`` (KRI-1562): a phone Talking variant whose Save compiles the creator's
+    song (`talking_music_supported`) keeps the song controls; every other device Save would
+    refuse the section or drop the song, so it is closed.
 
     ``guided_sfx`` (KRI-608): a guided / montage device variant with the guided-SFX
     rollout on and a canonical v2 revision keeps `sfx` (only) open; its Save
@@ -7642,6 +7647,8 @@ def _clamp_phone_editor_capabilities(
             "source_registration": True,
         }
         clamped["visual_block_kinds"] = ["media"]
+    if "background_music" in clamped:
+        clamped["background_music"] = clamped["background_music"] is True and background_music
     return clamped
 
 
@@ -8222,6 +8229,9 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             shape=shape,
             subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
             guided_sfx=_phone_guided_sfx_available(job, variant),
+            background_music=_phone_talking_music_available(
+                variant, subtitled_lanes=subtitled_lanes
+            ),
             source_crop=(
                 "sourceCrop" in settings.phone_render_verified_features
                 and (
@@ -8238,6 +8248,18 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             ),
         )
     return capabilities
+
+
+def _phone_talking_music_available(variant: dict, *, subtitled_lanes: bool) -> bool:
+    """KRI-1562: does this device variant's Save compile the creator's song? Only a phone Talking
+    edit on the subtitled Save path (an authored one Saves through the authored compiler)."""
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return (
+        subtitled_lanes
+        and variant.get("editor_timeline_mode") != "authored"
+        and talking_music_supported()
+    )
 
 
 def _phone_authored_media_available(job: Job, variant: dict) -> bool:
