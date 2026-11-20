@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.37.0] - 2026-11-20
+
+### Changed
+- ci: schedule the nightlies early so they land in the UK night (KRI-1552) (#2407) <!-- release-pr: 2407 -->
+
 ## [0.89.36.0] - 2026-11-20
 
 ### Changed
