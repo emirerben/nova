@@ -3,9 +3,21 @@ name: Beat health check
 # External dead-man's switch for the Celery Beat → light-machine maintenance
 # lane. GET /health/beat returns 200 while a Beat-scheduled task has succeeded
 # within BEAT_HEARTBEAT_STALE_AFTER_MIN (default 10 min — config.py is
-# authoritative), 503 once the lane is stale. Detection latency is staleness
-# threshold + cron interval (+ GitHub cron slip), so ~25-45 min worst case —
-# change the threshold or the cron consciously together.
+# authoritative), 503 once the lane is stale.
+#
+# HOW OFTEN THIS REALLY RUNS (KRI-1553)
+# ======================================
+# The 15-minute cron below is a request, not a promise. GitHub ran it 3 times
+# on 2026-11-19 (01:53, 10:01, 18:59 UTC), so on the schedule alone a dead lane
+# goes unseen for about 9 hours, not the 25-45 minutes this header used to
+# claim. The check therefore also runs whenever a CI run or a deploy finishes:
+# 52-78 CI runs and about 24 deploys a day in November 2026. While anyone is
+# pushing, detection is the staleness threshold plus the time to the next
+# finished run, usually well under an hour.
+#
+# What that does NOT cover: a stretch with no pushes. 2026-11-18 17:10 to 11-19
+# 05:10 UTC had one CI run in 12 hours. Only a monitor outside GitHub closes
+# that gap; until one exists, a quiet night still means up to about 9 hours.
 # This MUST live outside the app: any check that is itself Beat-scheduled
 # shares Beat's exact blind spot (app/services/beat_heartbeat.py has the full
 # rationale). The 2026-08-02 incident this closes: the light machine OOM
@@ -13,13 +25,25 @@ name: Beat health check
 # days — the endpoint existed, but no external pinger was ever wired up.
 # See agents/DECISIONS.md (2026-08-04).
 #
-# On failure GitHub emails the workflow's last committer. Note: GitHub
-# disables cron workflows after 60 days without repo activity — a red run
-# after reactivating the repo may just need a manual re-enable.
+# On failure GitHub emails: for a scheduled run, the user who last edited the
+# cron line; for a run that followed CI or a deploy, whoever started that run
+# (so a collaborator's pull request can send the email to the collaborator —
+# the owner gets one as soon as a run of their own finishes, and while the
+# lane is stale every run is red). Note: GitHub disables cron workflows after
+# 60 days without repo activity — a red run after reactivating the repo may
+# just need a manual re-enable.
 
 on:
   schedule:
     - cron: "*/15 * * * *"
+  # `workflow_run` matches these by workflow name and only fires from the copy
+  # of this file on main. It also fires for pull requests from forks, which is
+  # safe only because this job has no token, no checkout and no secret, and
+  # never puts text from the triggering run into the shell
+  # (scripts/ci/test_beat_health_workflow.py).
+  workflow_run:
+    workflows: ["CI", "Fly Deploy"]
+    types: [completed]
   workflow_dispatch:
 
 # This job needs zero token permissions: no checkout, no API calls, only an

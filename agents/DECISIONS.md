@@ -4070,3 +4070,11 @@ entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STR
 **Gap:** this compensates for a delay we do not control and that has been growing. It is a tuned value, not a fix. An exact schedule needs a trigger outside GitHub's scheduler calling `workflow_dispatch`, which means a GitHub token stored in another system. The same delay makes the 15-minute beat health check run about 3 times a day (KRI-1553).
 **Reversal condition:** a week of iOS nightlies starting before 22:00 or after 05:00 UTC: move both times together. Rule and command in `docs/runbooks/change-based-ci.md`.
 **Guards:** `test_the_two_nightlies_are_scheduled_an_hour_apart_ci_first` and the schedule assertion beside it in `scripts/ios/tests/test_workflow_policy.py`.
+
+## [2026-11-20] The Beat health check also runs after every CI run and deploy (KRI-1553)
+
+**Context:** `beat-health.yml` is the outside dead-man's switch for the Celery Beat lane (2026-08-04). Its 15-minute GitHub schedule ran 3 times on 2026-11-19; every scheduled workflow in this repo starts 7-9 hours late and most runs of a frequent one are dropped. Others report the same in 2026; GitHub documents schedules as best-effort. A dead lane (every later render stays queued) could go unseen for about 9 hours.
+**Decision:** the workflow also runs on `workflow_run` when `CI` or `Fly Deploy` completes (52-78 and about 24 runs a day), the pattern `deploy-drift.yml` already uses. It needs no credential. The schedule stays as the check for a quiet day.
+**Gap:** nothing runs when nobody pushes (one CI run in 12 hours on the night of 2026-11-18). The real fix is a monitor outside GitHub polling `/health/beat`; the API keeps two machines running, so polling costs nothing extra. Not built: it needs an account and an alert address that only the owner can set up.
+**Why not a GitHub token in Celery Beat or Fly:** a Beat-driven check of Beat shares its blind spot, and the health check needs no GitHub call at all. For exact nightly times a token would work, but that is prod code, a Fly secret and a deploy for a problem the earlier schedule (KRI-1552) may already solve; decide after a week of real start times.
+**Guards:** `scripts/ci/test_beat_health_workflow.py` (the followed workflow names match the real ones; the job has no token, checkout, secret or interpolated text).
