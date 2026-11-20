@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.28.0] - 2026-11-19
+
+### Changed
+- test(ios): un-stale five nightly UI tests outdated by #2346 and #2347, and fix two test races (KRI-1538) (#2401) <!-- release-pr: 2401 -->
+
 ## [0.89.27.0] - 2026-11-19
 
 ### Changed
