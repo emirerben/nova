@@ -19,8 +19,25 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
+  # Selection starts at once; the self-tests it used to wait for run beside the
+  # suites in ci-selftests and fail the required `lint` check (KRI-1534).
   changes:
     uses: ./.github/workflows/ci-changes.yml
+    with:
+      selftest: false
+
+  # The CI scripts' own tests (scripts/ci/test_*.py). No `needs` and no `if`,
+  # so no selection and no upstream failure can skip them.
+  ci-selftests:
+    runs-on: ubuntu-latest
+    # Slowest green run of this step 5.3 min (2026-11-19, inside `changes`).
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test CI selection and required-check contracts
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
 
   lint-suites:
     needs: changes
@@ -49,7 +66,7 @@ jobs:
   # its timeout. PR request evidence is checked only by pr-evidence.yml.
   lint:
     if: always()
-    needs: [changes, lint-suites]
+    needs: [changes, lint-suites, ci-selftests]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
