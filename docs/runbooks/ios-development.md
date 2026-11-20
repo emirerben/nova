@@ -1155,9 +1155,11 @@ and the smoke UI tripwire. Only a successful main push dispatches TestFlight.
 Running release lanes are never cancelled by a newer merge; the latest pending
 commit follows. A release no longer retains three Macs for a full regression.
 
-The complete UI suite runs at 03:23 UTC nightly and on manual iOS dispatch. Full
-fixture-backed native journeys run at 02:23 UTC nightly and on manual CI
-dispatch. Both are reportable regression checks and never dispatch TestFlight.
+The complete UI suite runs nightly and on manual iOS dispatch. Full
+fixture-backed native journeys run nightly and on manual CI dispatch. The
+schedules are written as 18:23 and 17:23 UTC because GitHub starts them hours
+late; `docs/runbooks/change-based-ci.md` has the real start times and the
+re-tune rule. Both are reportable regression checks and never dispatch TestFlight.
 PRs retain affected unit/UI/journey coverage across a `unit` leg plus at most
 three UI legs (`ui_tests.PR_MAX_SHARDS`) that compile from the shared cache; see
 [change-based CI](change-based-ci.md).

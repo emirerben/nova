@@ -4062,3 +4062,11 @@ entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STR
 **Gap:** the timings are a snapshot. A new heavy file weighs 0.5 s until someone refreshes them, so the shards drift apart; `test_real_suite_shards_carry_about_the_same_measured_time` checks the packing, not the freshness.
 **Reversal condition:** timeouts or new cross-test races on unrelated PRs that trace to the layout. Set `SHARD_COUNT = 2` and the matrix to `[0, 1]`; the packing works for any count.
 **Guards:** `scripts/ci/test_api_tests.py` (failure modes listed in its docstring), `scripts/ci/test_api_test_timings.py`.
+
+## [2026-11-20] Nightly schedules are written about 9 hours early so the runs land in the UK night (KRI-1552)
+
+**Context:** the nightly `CI` and `iOS` runs were scheduled for 02:23 and 03:23 UTC. GitHub started them at 09:05-10:49 and 10:39-12:04 UTC (2026-11-14 to 11-19), in the working day, where they compete with pull requests for the 5 Macs and report a failure in the afternoon. The delay was about 5 hours in mid-October and about 6.5 at the end of October.
+**Decision:** `ci.yml` runs at 17:23 UTC and `ios.yml` at 18:23 UTC. With today's delay they start at about 00:00-02:00 and 01:30-03:00 UTC; with no delay they start in the evening. CI stays one hour ahead of iOS.
+**Gap:** this compensates for a delay we do not control and that has been growing. It is a tuned value, not a fix. An exact schedule needs a trigger outside GitHub's scheduler calling `workflow_dispatch`, which means a GitHub token stored in another system. The same delay makes the 15-minute beat health check run about 3 times a day (KRI-1553).
+**Reversal condition:** a week of iOS nightlies starting before 22:00 or after 05:00 UTC: move both times together. Rule and command in `docs/runbooks/change-based-ci.md`.
+**Guards:** `test_the_two_nightlies_are_scheduled_an_hour_apart_ci_first` and the schedule assertion beside it in `scripts/ios/tests/test_workflow_policy.py`.
