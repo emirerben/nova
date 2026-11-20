@@ -156,9 +156,10 @@ async def test_confirmed_account_erasure_cascades_library_and_owns_both_storage_
 
 
 @pytest.mark.asyncio
-async def test_account_erasure_with_rendered_job_clips(owned_source, monkeypatch):
+@pytest.mark.parametrize("linked", [False, True])
+async def test_account_erasure_with_rendered_job_clips(owned_source, monkeypatch, linked):
     """A saved clip must not leave the owner undeletable through the real route."""
-    from app.models import Job, JobClip
+    from app.models import ContentPlan, Job, JobClip, Persona, PlanItem
 
     owner_id, _, job_id, path = owned_source
     clip_id = uuid.uuid4()
@@ -178,6 +179,16 @@ async def test_account_erasure_with_rendered_job_clips(owned_source, monkeypatch
                 video_path=f"{owner_id}/{job_id}/clip.mp4",
             )
         )
+        if linked:
+            persona = Persona(user_id=owner_id)
+            db.add(persona)
+            db.flush()
+            plan = ContentPlan(user_id=owner_id, persona_id=persona.id)
+            db.add(plan)
+            db.flush()
+            db.add(
+                PlanItem(content_plan_id=plan.id, position=0, idea="Fixture", current_job_id=job_id)
+            )
         db.commit()
     key = Fernet.generate_key().decode()
     monkeypatch.setattr(me.settings, "token_encryption_key", key)
@@ -197,6 +208,7 @@ async def test_account_erasure_with_rendered_job_clips(owned_source, monkeypatch
             assert db.get(JobClip, clip_id) is None
     finally:
         with sync_session() as db:
+            db.execute(delete(ContentPlan).where(ContentPlan.user_id == owner_id))
             db.execute(delete(JobClip).where(JobClip.id == clip_id))
             db.execute(delete(Job).where(Job.id == job_id))
             db.execute(delete(JobStorageDeletion).where(JobStorageDeletion.job_id == job_id))

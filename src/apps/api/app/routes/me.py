@@ -3650,6 +3650,17 @@ async def confirm_account_deletion(
         .where(Job.id.in_(job_uuid_ids), Job.content_plan_item_id.is_not(None))
         .values(content_plan_item_id=None)
     )
+    # The forward plan-item reference also uses NO ACTION. Plans were locked
+    # before jobs, so only sever links within this owner's captured plans.
+    if locked_plan_ids:
+        await db.execute(
+            update(PlanItem)
+            .where(
+                PlanItem.content_plan_id.in_(locked_plan_ids),
+                PlanItem.current_job_id.in_(job_uuid_ids),
+            )
+            .values(current_job_id=None)
+        )
     # 2. Revoke + clear TikTok connection, delete only snapshotted rows.
     # Target-bound deletes are intentional: if a concurrent writer commits a
     # new no-CASCADE child after these snapshots, DELETE users.id must fail its
