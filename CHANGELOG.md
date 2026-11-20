@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.41.0] - 2026-11-20
+
+### Changed
+- Exclude archived songs from automatic music selection (#2411) <!-- release-pr: 2411 -->
+
 ## [0.89.40.0] - 2026-11-20
 
 ### Changed
