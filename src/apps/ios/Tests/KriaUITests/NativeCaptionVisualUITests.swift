@@ -2,6 +2,12 @@ import XCTest
 
 @MainActor
 final class NativeCaptionVisualUITests: XCTestCase {
+    /// Polls until `condition` holds; a timeout is the assertion failure.
+    private func waitUntil(_ what: String, timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line, _ condition: @escaping () -> Bool) {
+        let met = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [met], timeout: timeout), .completed, what, file: file, line: line)
+    }
+
     func testCaptionSizePositionScopesAndGestureChoice() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-talking-captions", "-ui-testing-editor-live-preview", "-ui-testing-editor-caption-style-scope"]
@@ -326,16 +332,19 @@ final class NativeCaptionVisualUITests: XCTestCase {
         XCTAssertTrue(visible.waitForExistence(timeout: 5))
         XCTAssertTrue(highlight.exists)
         capture("11-captions-edit")
+        // A switch edit commits after the tap returns, and the app can report idle first: on the hosted
+        // simulator the row was still there 0.7 s after the tap (KRI-1538, run 44612415554). Wait for each
+        // state instead of reading it at once.
+        let highlightColor = app.descendants(matching: .any)["native-editor-caption-highlight-color"]
         if highlight.value as? String == "0" { highlight.tap() }
-        XCTAssertEqual(highlight.value as? String, "1")
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-caption-highlight-color"].waitForExistence(timeout: 3),
-                      "highlight color shows while highlighting is on")
+        waitUntil("highlighting turns on") { highlight.value as? String == "1" }
+        XCTAssertTrue(highlightColor.waitForExistence(timeout: 3), "highlight color shows while highlighting is on")
         capture("11b-captions-edit-highlight-on")
         highlight.tap()
-        XCTAssertFalse(app.descendants(matching: .any)["native-editor-caption-highlight-color"].exists)
+        waitUntil("highlight color goes when highlighting is off") { !highlightColor.exists }
         visible.tap()
-        XCTAssertEqual(visible.value as? String, "0")
-        XCTAssertFalse(highlight.isEnabled)
+        waitUntil("captions turn off") { visible.value as? String == "0" }
+        waitUntil("highlighting is disabled while captions are off") { !highlight.isEnabled }
         capture("11c-captions-edit-hidden")
         visible.tap()
         app.buttons["native-editor-captions-tab-Style"].tap()

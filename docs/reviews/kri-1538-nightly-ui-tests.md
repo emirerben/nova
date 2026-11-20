@@ -98,22 +98,45 @@ equal polls. Each poll reads two frames and costs about 2 s on a normal night an
 2026-11-18, when one wait got a single poll. The default timeout is 15 s. On that night's first attempt
 the move-back drag also did not register; no screenshot survives, so that part is unexplained.
 
-## 6. Caption switches: a tap that sometimes does nothing (not fixed here)
+## 6. Caption switches: reading the switch before the edit lands, and a rare lost tap
 
-`NativeCaptionVisualUITests.swift:330`-`338` on 2026-11-18, and 1 failure in 3 on the verification run.
+`NativeCaptionVisualUITests.swift:330`-`338` on 2026-11-18, and 1 failure in 3 on the first verification run.
 
-The test reads each switch right after tapping it, which is a race of its own. But with every read
-replaced by a 10 s wait, the test still failed 2 of 6 attempts on the CI runner (run 44621577976): the
-first tap on "Highlight spoken word" was synthesized and the switch never changed, 4.2 to 4.6 s after the
-panel opened in passing and failing attempts alike. A second tap later in the same attempt worked. It does
-not reproduce locally (20 of 20 pass, Xcode 27.2). Whether the switch was disabled, not hittable, or the
-app refused the edit is not known yet, so this change leaves the test alone; a wait would only make the
-failure slower.
+Failure modes:
+
+1. The test reads each switch right after tapping it. The edit commits after the tap returns, and the app
+   can report idle first: on the hosted simulator the highlight colour row was still there 0.7 s after the
+   tap that removes it (run 44612415554).
+2. The switch is disabled or not hittable when tapped.
+3. The layout is still moving and the tap lands elsewhere.
+4. App: the tap reaches the switch and the app refuses or overwrites the edit.
+5. The tap reaches the system switch and the switch does not toggle.
+
+Mode 1 is fixed here: every read after a tap is a wait of up to 10 s (`waitUntil`). That alone left 2
+failures in 6 attempts on the CI runner (run 44621577976), so the first tap was instrumented twice on a
+throwaway branch:
+
+- Run 44632125239 read the switch from the test before and after the tap: enabled, hittable and at the same
+  frame every time, 6 of 6 passed. Rules out modes 2 and 3. (The extra reads delayed the tap by several
+  seconds, so the 6 passes say little.)
+- Run 44644147636 logged from inside the app (touches the window receives, the switch's binding,
+  `setCaptionAppearance`, `transactDocument`, document changes), 18 attempts, 17 passed. In the failing
+  attempt the touch began and ended on the switch's own view (`_UILiquidLensView`, 44 ms apart, not
+  cancelled), the row was enabled and had not moved for 3 s, and the switch's binding was never called.
+  The app refused nothing. That is mode 5, and rules out mode 4. A 17 s later tap on the same switch worked.
+
+Across that run 72 touches reached a caption switch and 71 toggled it; the lost one was neither the
+shortest (30 to 44 ms touches toggled) nor different in position. It did not reproduce locally in 41
+attempts (Xcode 27.2), 15 of them under CPU load. The cause inside the system switch is not known.
+
+The test does not tap again when a tap is lost: a second tap would also hide a first tap that the app
+ignores. With the waits, the test failed 3 of 24 attempts on the CI runner; the nightly gives each test
+three.
 
 ## Before and after
 
 CI Xcode 26.3, one `macos-15` runner, `-test-iterations 3`, no retry-on-failure, so a pass is 3 of 3.
-Run 44612415554 had fixes 1 to 5; the caption test is unchanged.
+Run 44612415554 had fixes 1 to 5; the caption test was unchanged in it.
 
 | Test | Nightly 11-18 and 11-19 | Run 44612415554 |
 | --- | --- | --- |
@@ -123,14 +146,16 @@ Run 44612415554 had fixes 1 to 5; the caption test is unchanged.
 | Review sheet (4) | fail 3/3, fail 2 of 3 | 3 of 3 pass |
 | Review sheet sibling, undo all | fail 1 of 2 on two nights | 3 of 3 pass |
 | Long-press text timing (5) | fail 3/3, pass | 3 of 3 pass |
-| Caption switches (6), unchanged | fail 3/3, pass | 2 of 3 pass |
+| Caption switches (6), unchanged in that run | fail 3/3, pass | 2 of 3 pass |
+| Caption switches (6), with the waits | | 4 of 6 pass (run 44621577976), 17 of 18 pass (run 44644147636) |
 
 Local, Xcode 27.2 on an iPhone 17 Pro simulator: tests 1 to 5 and the sibling passed once each.
 
 ## What this does not fix
 
-- The caption switch test (section 6). It fails about one attempt in three on the CI runner, so with the
-  nightly's three attempts it will still turn a shard red now and then.
+- The lost tap on a caption switch (section 6, mode 5). About one attempt in eight still fails on the CI
+  runner; all three of a night's attempts failing should be rare. If it recurs on all three, the next
+  step is a UIKit-level look at the switch on the CI simulator's iOS version, not a retry in the test.
 - The selection gap above. The tests will go stale again the same way unless a red nightly reaches
   someone, or pull requests that select `full` run more than smoke.
 - 24 other UI assertions still compare a frame with exactly 44, 11 of them in `CreationUITests.swift`. Any
