@@ -238,7 +238,10 @@ private struct KriaSwipeToDelete: ViewModifier {
             transaction.disablesAnimations = true
             withTransaction(transaction) { offset = min(0, max(-max(rowWidth, revealWidth), restingOffset + travel)) }
         case .ended:
-            let predicted = restingOffset + travel + Self.flickTravel(velocity: pan.velocity(in: pan.view).x)
+            // UIKit keeps reporting the last movement's speed after the finger has stopped, so a swipe held still
+            // before it lifts is not a flick.
+            let moving = (pan as? SidewaysPanGestureRecognizer)?.movedRecently ?? true
+            let predicted = restingOffset + travel + (moving ? Self.flickTravel(velocity: pan.velocity(in: pan.view).x) : 0)
             if offset < -rowWidth * fullSwipeFraction || predicted < -rowWidth * 0.9 { commit() }
             else { settle(to: offset < -revealWidth / 2 || predicted < -revealWidth ? -revealWidth : 0) }
         case .cancelled, .failed:
@@ -300,6 +303,9 @@ private struct KriaSidewaysSwipeRecognizer: UIGestureRecognizerRepresentable {
 /// touches themselves: under SwiftUI, `gestureRecognizerShouldBegin` was asked with a zero translation (KRI-1550).
 private final class SidewaysPanGestureRecognizer: UIPanGestureRecognizer {
     private var start: CGPoint?
+    private var lastMove: CFTimeInterval = 0
+    /// The finger moved within the last 0.1 s.
+    var movedRecently: Bool { CACurrentMediaTime() - lastMove < 0.1 }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         if start == nil, let touch = touches.first { start = touch.location(in: view) }
@@ -307,6 +313,7 @@ private final class SidewaysPanGestureRecognizer: UIPanGestureRecognizer {
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        lastMove = CACurrentMediaTime()
         if state == .possible, let start, let touch = touches.first {
             let point = touch.location(in: view)
             let dx = abs(point.x - start.x), dy = abs(point.y - start.y)
