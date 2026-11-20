@@ -230,6 +230,7 @@ from app.services.phone_speaker_background import (
 )
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
+from app.services.source_length_policy import max_duration_s
 from app.services.suggestions.commit_readiness import (
     MARK_NEEDED,
     REQUIREMENTS_NOT_READY,
@@ -8051,7 +8052,11 @@ _PHONE_GATE_MESSAGES_TR = {
         "klipleri kaldır (ya da bir klip ekle) ve tekrar dene. Yedek bir düzenleme "
         "oluşturulmadı."
     ),
-    "subtitled_clip_too_long": _TALKING_CLIP_TOO_LONG_TR,
+    # Formatted like `PHONE_GATE_MESSAGES` reads it; `_phone_gate_refusal_copy` fills the template
+    # itself so the reply follows the policy's current limit.
+    "subtitled_clip_too_long": _TALKING_CLIP_TOO_LONG_TR.format(
+        limit_minutes=max_duration_s("talking_clip") / 60
+    ),
     "self_narration_multi_clip": (
         "Birden fazla klip üzerinde anlatım iPhone'da henüz yok. Bir seslendirme kaydet ya da "
         "kameraya konuşma için tek klip kullan."
