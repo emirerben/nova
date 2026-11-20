@@ -48,6 +48,7 @@ GUARDED = (
     "app/services/speech_cleanup_preflight.py",
     "app/tasks/content_plan_build.py",
     "app/tasks/generative_build.py",
+    "app/tasks/kria_runtime.py",
     "app/tasks/speech_cleanup_analysis.py",
 )
 

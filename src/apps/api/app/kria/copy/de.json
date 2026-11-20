@@ -1323,7 +1323,7 @@
     "There’s no edit running right now. Your latest project state is saved.": "Gerade läuft kein Edit. Dein letzter Projektstand ist gespeichert.",
     "These words need at least {exc_minimum_duration_s:g}s of reading time. May I use a longer video, or would you like to shorten the text? Nothing was changed.": "Diese Wörter brauchen mindestens {exc_minimum_duration_s:g} s Lesezeit. Darf ich ein längeres Video nehmen, oder möchtest du den Text kürzen? Es wurde nichts geändert.",
     "This approval expired. Ask Kria to prepare it again.": "Diese Freigabe ist abgelaufen. Bitte Kria, sie nochmal vorzubereiten.",
-    "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under 5 minutes) and try again. No fallback edit was rendered.": "Dieser Clip ist zu lang für ein Video auf deinem iPhone, in dem du in die Kamera sprichst. Nimm einen kürzeren Clip (unter 5 Minuten) und versuch es nochmal. Es wurde kein Ersatz-Edit erstellt.",
+    "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under {limit_minutes:g} minutes) and try again. No fallback edit was rendered.": "Dieser Clip ist zu lang für ein Video auf deinem iPhone, in dem du in die Kamera sprichst. Nimm einen kürzeren Clip (unter {limit_minutes:g} Minuten) und versuch es nochmal. Es wurde kein Ersatz-Edit erstellt.",
     "This day vlog edit cuts your footage down; a Talking edit keeps the whole take.": "Dieser Tagesvlog-Edit kürzt dein Material; ein Talking-Edit behält den ganzen Take.",
     "This draft doesn't end on that video": "Dieser Entwurf endet nicht mit diesem Video",
     "This draft doesn't end on the photo you asked for": "Dieser Entwurf endet nicht mit dem Foto, das du wolltest",

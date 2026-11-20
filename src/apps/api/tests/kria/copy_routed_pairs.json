@@ -2360,6 +2360,11 @@
    "app/kria/landscape_fit_ask.py",
    "; the other {middle} keep the middle of the picture",
    "; diğer {middle} tanesinde görüntünün ortası korunuyor"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under {limit_minutes:g} minutes) and try again. No fallback edit was rendered.",
+   "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
   ]
  ],
  "retired": [
@@ -2772,6 +2777,11 @@
    "app/kria/landscape_fit_ask.py",
    "I'll crop the sideways clips to fill the vertical frame, keeping faces in it, and check it on the finished video",
    "Yatay klipleri dikey ekranı dolduracak şekilde kırpacağım, yüzleri kadrajda tutacağım ve bitmiş videoda kontrol edeceğim"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under 5 minutes) and try again. No fallback edit was rendered.",
+   "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
   ]
  ]
 }
