@@ -2007,6 +2007,7 @@ struct NativeMiniStrip: View {
     @State private var verticalPanOrigin: CGFloat?
     @State private var laneScrollOffset: CGFloat = 0
     @State private var footageRows = NativeSplitScreenRows(document: EditorDocument())
+    @State private var showsSplitDropError = false
     @State private var endingGap: NativeSplitGap?
     @State private var splitGaps: [NativeSplitGap] = []
     @State private var didCacheItems = false
@@ -2230,6 +2231,11 @@ struct NativeMiniStrip: View {
             // cancellation, and this must never leave the timeline scrolling
             // with no finger attached.
             if phase != .active { endAutoScroll(); cancelClipReorder() }
+        }
+        .alert("This clip won’t fit here.", isPresented: $showsSplitDropError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Shorten a clip or choose another spot.")
         }
         .confirmationDialog("Remove empty ending", isPresented: Binding(
             get: { endingGap != nil }, set: { if !$0 { endingGap = nil } }
@@ -3477,8 +3483,11 @@ struct NativeMiniStrip: View {
            let section = session.document.splitScreenSections.first(where: { $0.id == slot.splitSectionID }) {
             let row = footageRows.row(slotID: member.slotID) + Int((drag.verticalTravel / (filmstripHeight + rowGap)).rounded())
             if let panel = (0..<section.panelCount).first(where: { footageRows.row(panel: $0, count: section.panelCount) == row }) {
-                session.dropSplitClip(member.id, panel: panel, travel: drag.travel)
-                refreshItems()
+                if session.dropSplitClip(member.id, panel: panel, travel: drag.travel) {
+                    refreshItems()
+                } else {
+                    showsSplitDropError = true
+                }
             }
             return
         }

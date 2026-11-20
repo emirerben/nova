@@ -6,6 +6,8 @@ On an iPhone 17 Pro simulator running iOS 26.5, removing the empty ending shorte
 
 On the original editor, holding a clip and dragging it into an empty panel left it in panel 0. The regression assertion expected panel 1 and failed. On the updated editor the same gesture moved it into panel 1. Dropping onto occupied footage exchanged both slot identities between panels. An ordinary clip still reordered with one undo step, and a quick horizontal swipe still sought through the timeline.
 
+The unequal-length replay holds a three-second top clip over a two-second bottom clip. With the next bottom clip at three seconds, the swap preserved every slot field except the two panel indices, and one Undo restored the full timeline. With the neighbor at two seconds, the original editor silently rejected the overlap. The updated editor displayed “This clip won’t fit here.” Dismissing the alert left the full timeline unchanged and Undo disabled.
+
 The vertical-scroll check started over the footage row, moved the row up, then swiped down from inside the timeline and recovered its original screen position. During investigation a return swipe opened the text inspector. Recording vertical travel as a pan prevented the release from selecting the block.
 
 The divider UI check sampled pixels on both sides of the moved divider while the gesture was held. The opt-in simulator benchmark completed all 80 layout updates without a timeout. That check observes the composition's layout. It does not measure physical display latency.

@@ -33809,6 +33809,22 @@
         }
       }
     },
+    "Shorten a clip or choose another spot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kürze einen Clip oder wähle eine andere Stelle."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bir klibi kısalt veya başka bir yer seç."
+          }
+        }
+      }
+    },
     "Shorten the longest prompt to start." : {
       "localizations" : {
         "de" : {
@@ -41264,6 +41280,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu nesne, render yeteneği kullanılabilir olana kadar salt okunur."
+          }
+        }
+      }
+    },
+    "This clip won’t fit here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Clip passt hier nicht hin."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu klip buraya sığmıyor."
           }
         }
       }
