@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.44.0] - 2026-11-20
+
+### Changed
+- KRI-1430 Preserve full clip moments and speech in Main Creator pilot (#2416) <!-- release-pr: 2416 -->
+
 ## [0.89.43.0] - 2026-11-20
 
 ### Changed
