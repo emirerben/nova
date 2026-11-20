@@ -116,8 +116,8 @@ attempt and on every other night. Stability is below.
 ## Caption switch (KRI-1538 section 6, mode 5)
 
 No nightly has run since the waits (#2404) merged on 11-20, so there is no new nightly evidence. The CI
-simulator is iOS 26.2 (Xcode 26.3); local runs here are iOS 26.5 (Xcode 26.6). The verification run below
-includes the test ten times to measure the lost-tap rate with the waits in place. No retry was added.
+simulator is iOS 26.2 (Xcode 26.3); local runs here are iOS 26.5 (Xcode 26.6). In ten CI attempts with the
+waits in place it lost one tap (below), the rate KRI-1538 measured. No retry was added.
 
 ## Verification
 
@@ -137,4 +137,28 @@ Self-review found that UIKit keeps the last movement's speed after the finger st
 still before release could still count as a flick and delete; the flick now counts only if the finger moved
 in the last 0.1 s, and the swipe tests pass again after that change.
 
-CI runs of the four tests and the caption test, ten attempts each on the CI Xcode: in the PR.
+After the snapshot change below, the long-prompt test passed 2 of 3 locally; the second attempt stopped in
+XCTest's own event synthesis ("Timed out while synthesizing event", 57 s, during a scroll-up drag) while the
+Mac's load average was 21 from other builds, and the next attempt took 992 s. Not counted either way.
+
+CI, one `macos-15` runner, Xcode 26.3, iOS 26.2 simulator, `-test-iterations 10`, no retry-on-failure,
+from a throwaway branch with a one-job workflow (run 44764112232, this branch before the review fix):
+
+| Test | Passed |
+| --- | --- |
+| `testGalleryPickIsReadFromPhotosAndReachesUpload` | 10 of 10 |
+| `testSendingALongPromptWithTheKeyboardUpAfterFifteenUploadsKeepsTheChatOnScreen` | 9 of 10 |
+| `testDraggingToTheEdgeAutoScrollsTheStrip` | 10 of 10 |
+| `testNewlyReadyAssetBecomesASlideWithoutTapping` | 10 of 10 |
+| `NativeCaptionVisualUITests.testCaptionAndVisualPaperScreens` (unchanged) | 9 of 10 |
+
+The long-prompt miss (iteration 2) was the "sent prompt is in the visible chat" check right after Send:
+the app was busy for 3.3 s after the tap, then the first check, five separate queries for the sent text, the
+header and the composer, took 4.4 s while the chat was still scrolling to the new turn. Its frames came from
+different moments and it outlasted its 3 s wait; the frames read just after put the prompt 62 pt inside the
+visible chat. Each check now reads one snapshot of the screen and the wait is 5 s. A second run of that test
+alone is in the PR.
+
+The caption miss (iteration 5) is KRI-1538 section 6 mode 5 again: the second tap on the highlight switch, the
+one that turns it off, and the colour row was still there 10 s later. One in ten with the waits in place, the
+rate KRI-1538 measured. No retry was added; the next step stays as written there.
