@@ -1443,7 +1443,9 @@ enum KriaClientProtocolContract {
     /// 52 (two-language captions): draws a smaller translated caption line on its own editor track (cue `translation`,
     /// `caption_meta.translation`), moves and styles it apart from the spoken line, and keeps both on Save. The server offers
     /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
-    static let version = 52
+    /// 53 (music under speech): a Talking or Voiceover recipe may carry `audio.speech_windows` with a music-role audio track; the
+    /// device ducks that track under those windows. Needs `speechDuck`.
+    static let version = 53
     static let header = "X-Kria-Client-Protocol"
 }
 
