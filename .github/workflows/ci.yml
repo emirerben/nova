@@ -254,7 +254,7 @@ jobs:
       # (test_api_tests.py fails otherwise).
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0, 1, 2]
     services:
       postgres:
         image: postgres:16-alpine
@@ -341,6 +341,17 @@ jobs:
           WAITLIST_ADMIN_SECRET: test-admin-secret
           ALLOWED_ORIGINS: '["http://localhost:3000"]'
         run: python3 scripts/ci/api-tests.py "${{ matrix.shard }}"
+      # Per-test times; scripts/ci/api-test-timings.py turns a few runs of
+      # these into the weights the shards are packed by.
+      - name: Keep per-test times
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-junit-${{ github.run_id }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: src/apps/api/test-results/api-junit.xml
+          retention-days: 3
+          if-no-files-found: ignore
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.
   # An affected source without a mapped fixture fails here, on a cheap Ubuntu

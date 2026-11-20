@@ -3,20 +3,29 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import json
 import subprocess
 import sys
+from pathlib import Path
 
+# Three shards, packed by measured file time (KRI-1544). Four shards split by
+# file position were tried on 2026-11-19 (#2389) and reverted the same day:
+# position put test_phone_text_fit_never_fails.py beside the carousel renders
+# and other CPU-heavy tests, and its 40-cue case went from 24-41 s to 53-60 s
+# against this runner's 60 s timeout, failing an unrelated PR. Before raising
+# the count, run the old and the new layout side by side for several repeats
+# and compare every slow test against the timeout (change-based-ci.md).
+# test_api_tests.py keeps ci.yml's matrix equal to this count.
+SHARD_COUNT = 3
 
-# Two shards. Four were tried on 2026-11-19 (#2389) and reverted the same day:
-# round-robin put test_phone_text_fit_never_fails.py in a shard with the
-# carousel renders and other CPU-heavy tests, and its 40-cue case went from
-# 24-41 s to 53-60 s against this runner's 60 s timeout, failing an unrelated
-# PR. The slowest job only got 3-4 minutes faster. Raise the count again only
-# with shards balanced on measured per-file time, and check the slowest tests
-# against the timeout over several runs first. test_api_tests.py keeps
-# ci.yml's matrix equal to this count, so a shard can never be left out.
-SHARD_COUNT = 2
+# Seconds per test file, measured in CI (scripts/ci/api-test-timings.py writes
+# it). Only the heavy files are listed; any other file weighs DEFAULT_SECONDS.
+TIMINGS = Path(__file__).resolve().with_name("api-test-timings.json")
+DEFAULT_SECONDS = 0.5
+# A weight above this is a broken measurement, not a test file.
+MAX_SECONDS = 3600
+# Relative to src/apps/api, where pytest runs.
+JUNIT = "test-results/api-junit.xml"
 
 
 def test_files(api_root: Path) -> list[Path]:
@@ -30,14 +39,66 @@ def test_files(api_root: Path) -> list[Path]:
     )
 
 
-def shard_files(api_root: Path, shard: int, shard_count: int = SHARD_COUNT) -> list[Path]:
-    """Partition sorted test files by round-robin position, failing closed on bad input."""
+def file_seconds(timings: Path = TIMINGS) -> dict[str, float]:
+    """Measured seconds by posix path. Anything unusable is dropped, so a bad
+    timings file can only make the shards uneven, never lose a test file."""
+    try:
+        files = json.loads(timings.read_text())["files"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    if not isinstance(files, dict):
+        return {}
+    # The finite range rejects NaN/infinity and bounds integers before conversion.
+    return {
+        path: float(seconds)
+        for path, seconds in files.items()
+        if isinstance(path, str)
+        and isinstance(seconds, (int, float))
+        and not isinstance(seconds, bool)
+        and 0 < seconds <= MAX_SECONDS
+    }
+
+
+def partition(
+    files: list[Path], seconds: dict[str, float], shard_count: int
+) -> list[list[Path]]:
+    """Pack files longest first into the lightest shard.
+
+    Every shard job computes this on its own runner, so it must depend on
+    nothing but its arguments: weights are whole milliseconds and every tie
+    is broken by path or shard number. Each shard is returned in path order,
+    because pytest collects in argument order and xdist hands tests out in
+    collection order; heaviest-first would start every worker on the heaviest
+    files together.
+    """
+    weights = {
+        path: round(seconds.get(path.as_posix(), DEFAULT_SECONDS) * 1000)
+        for path in files
+    }
+    shards: list[list[Path]] = [[] for _ in range(shard_count)]
+    loads = [0] * shard_count
+    for path in sorted(files, key=lambda path: (-weights[path], path.as_posix())):
+        lightest = min(range(shard_count), key=lambda index: (loads[index], index))
+        shards[lightest].append(path)
+        loads[lightest] += weights[path]
+    return [sorted(shard) for shard in shards]
+
+
+def shard_files(
+    api_root: Path,
+    shard: int,
+    shard_count: int = SHARD_COUNT,
+    timings: Path = TIMINGS,
+) -> list[Path]:
+    """One shard of the suite, failing closed on bad input."""
     if shard_count != SHARD_COUNT:
         raise ValueError(f"shard count must be {SHARD_COUNT}, got {shard_count}")
     if not 0 <= shard < shard_count:
         raise ValueError(f"shard must be in [0, {shard_count - 1}], got {shard}")
 
-    selected = test_files(api_root)[shard::shard_count]
+    selected = partition(test_files(api_root), file_seconds(timings), shard_count)[
+        shard
+    ]
     if not selected:
         raise ValueError(f"API test shard {shard} selected no test files")
     return selected
@@ -54,6 +115,8 @@ def pytest_command(selected: list[Path]) -> list[str]:
         "auto",
         "--timeout=60",
         "--durations=20",
+        # Per-test times for scripts/ci/api-test-timings.py; ci.yml uploads it.
+        f"--junitxml={JUNIT}",
     ]
 
 
@@ -69,7 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     api_root = Path(__file__).resolve().parents[2] / "src/apps/api"
     selected = shard_files(api_root, shard)
     print(f"API test shard {shard}/{SHARD_COUNT}: {len(selected)} files")
-    return subprocess.run(pytest_command(selected), cwd=api_root, check=False).returncode
+    return subprocess.run(
+        pytest_command(selected), cwd=api_root, check=False
+    ).returncode
 
 
 if __name__ == "__main__":

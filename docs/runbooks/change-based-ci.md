@@ -98,15 +98,62 @@ avoid dependency installation, PostgreSQL/Redis services, five web workers and
 macOS runners. Superseded PR and portable main CI runs are cancelled; a running main iOS
 release lane is never cancelled. Nightly/manual regressions have separate concurrency groups.
 
-API tests run as two deterministic round-robin shards over the
-complete non-quality test-file set; every shard feeds the same stable `test-api`
-gate, so sharding changes wall-clock scheduling without reducing coverage. The
-count lives in `scripts/ci/api-tests.py` (`SHARD_COUNT`) and the workflow matrix
-must list exactly those shards. Four shards were tried on 2026-11-19 and
-reverted the same day: the slowest job got only 3 to 4 minutes faster, and one
-shard concentrated CPU-heavy render tests so that a 24-41 second test ran for
-53-60 seconds against the 60-second per-test timeout. More shards need a
-partition balanced on measured per-file time, checked over several runs.
+API tests run as three shards over the complete non-quality test-file set
+(KRI-1544); every shard feeds the same stable `test-api` gate, so sharding
+changes wall-clock scheduling without reducing coverage. The count lives in
+`scripts/ci/api-tests.py` (`SHARD_COUNT`) and the workflow matrix must list
+exactly those shards.
+
+Files are packed by measured time, longest first into the lightest shard, from
+`scripts/ci/api-test-timings.json` (files of 5 s and more; any other file weighs
+0.5 s). A missing or malformed timings file only makes the shards uneven; every
+file still runs once. Each shard hands pytest its files in path order, never in
+packing order: xdist's `load` mode gives each worker a run of consecutive tests,
+which tends to keep CPU-heavy neighbours in `tests/pipeline/` on the same
+worker, one after another, without guaranteeing it.
+
+To refresh the timings (a few runs' worth is enough; each shard attempts to
+upload its junit report as `api-junit-<run-id>-<shard>-<attempt>` for 3 days).
+These uploads are diagnostic and do not affect the required test result.
+Keep the artifact directories: when merging reports from retries, the timing
+tool takes the highest available attempt separately for each run and shard.
+
+```sh
+gh run download <run id> -p 'api-junit-*' -D /tmp/api-junit
+python3 scripts/ci/api-test-timings.py /tmp/api-junit "run <id>, <date>"
+```
+
+Measured on 2026-11-20 on throwaway branches, API job only, five repeats per
+arm (runs 44651481740, 44658565495, 44664494076):
+
+| Layout | Slowest shard job, median | Tests above 45 s (of 60 s) | Other failures |
+| --- | --- | --- | --- |
+| two shards by file position (before) | 24.6 min | 2 samples | none |
+| three packed, `load` mode | 16.2 min | 1 | slide-post delivery tests in 3 of 5 repeats (KRI-1545) |
+| three packed, `--dist loadfile` | not adopted | 5, one test at a median of 53 s | none |
+| three packed, `load` mode, KRI-1545 lock (adopted) | 18.3 min | 2 | none |
+
+What that taught:
+
+- A layout change moves where xdist's chunks end, so tests of one file that
+  share database rows can start running beside each other. The slide-post
+  delivery tests did; they now hold a cross-worker advisory lock
+  (`exclusive_slide_post_delivery` in `tests/conftest.py`). A test that sweeps a
+  whole table needs such a lock.
+- `--dist loadfile` removes that race but spreads the CPU-heavy files over all
+  four workers at once, and slow tests get slower. It failed the bar below.
+- Four shards by file position were tried on 2026-11-19 (#2389) and reverted
+  the same day: a 24-41 second test ran for 53-60 seconds against the
+  60-second per-test timeout.
+
+Before changing the count, the packing or the xdist mode, run the old and the
+new layout side by side on a throwaway branch (the API job alone, at least five
+repeats per arm, per-test times from the junit reports) and require:
+
+1. no failure that the old layout does not have;
+2. among tests that reach 20 s in either arm and set no timeout of their own,
+   no sample at 60 s and no more samples above 45 s than the old layout.
+
 The `iPhone validation` matrix has a `unit` leg (build, unit tests, selected UI
 subset, named-unit gate) plus `creation` and `screens` legs that compile from
 the same cache and split the fixture-driven journeys by measured duration. The
