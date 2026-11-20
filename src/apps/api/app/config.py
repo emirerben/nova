@@ -1268,6 +1268,14 @@ class Settings(BaseSettings):
     # restart. Rollback: the flag false + restart, never a code revert.
     color_moments_enabled: bool = False
     color_moments_min_client_protocol: int = 48
+    # KRI-1562: the creator's chosen song under a phone Talking edit, ducked wherever speech is
+    # heard (a Voiceover edit's matched bed follows the same duck). Default off: Talking edits
+    # carry no music, the editor offers none and Voiceover beds keep one level. Serving also needs
+    # `speechDuck` + `musicBed` + `audioMix` in PHONE_RENDER_VERIFIED_FEATURES and a build at
+    # SPEECH_DUCK_PROTOCOL (53); an older build is told to update (426 `speech_duck`). Apply: fly
+    # secret TALKING_MUSIC_ENABLED=true (api + worker) + restart. Rollback: the flag false +
+    # restart; a later Save of a Talking edit then drops its bed.
+    talking_music_enabled: bool = False
     # KRI-1384: chat "undo that" is offered only to app builds declaring
     # `X-Kria-Client-Protocol` >= this. An older editor keeps a staged chat lane that a newer
     # draft head puts back to the saved value, so its undo would say done and change nothing.

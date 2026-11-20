@@ -193,13 +193,12 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — default `true`; `false` + worker restart = `normalize_orientation` no-op.
 - `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults `true`. **WARNING: `false` re-introduces the stacked-text bug — emergency rollback ONLY**, full narrative + apply command in agents/DECISIONS.md "Kill-switch incidents". Guard: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`.
-- `TIKTOK_DEEP_ANALYSIS_ENABLED` — default `true`; `false` ⇒ no TikTok analysis in persona/plan/hook prompts (byte-identical). Apply: fly secret + restart.
-- `PLAN_SYNC_DISPATCH_ENABLED` — default `true`. Generate mints the Job in-request (`dispatch_item_render_for`: FOR-UPDATE lock; duplicate ⇒ 200; publish-fail ⇒ `processing_failed`). `false` ⇒ legacy `.delay()`+409. plans/014; apply: fly secret + restart.
-- `NARRATIVE_CLIP_ORDER_ENABLED` — default `true`. Plan-item edits follow the filming guide's shot order (`content_plan_build._narrative_clip_order`), read at render time. `false` ⇒ greedy matching. Apply: fly secret + restart.
+- `TIKTOK_DEEP_ANALYSIS_ENABLED` — default `true`; `false` ⇒ no TikTok analysis in persona/plan/hook prompts. Apply: fly secret + restart.
+- `PLAN_SYNC_DISPATCH_ENABLED` — default `true`: Generate mints the Job in-request; `false` ⇒ legacy `.delay()`+409. plans/014; detail: DECISIONS.md "CLAUDE.md flag detail".
+- `NARRATIVE_CLIP_ORDER_ENABLED` — default `true`: plan-item edits follow the filming guide's shot order; `false` ⇒ greedy matching. Detail: DECISIONS.md "CLAUDE.md flag detail".
 - `EDITORIAL_SEQUENCE_ENABLED` — default `true`; `false` ⇒ legacy static cluster, byte-identical. Guard: `tests/tasks/test_generative_build_sequence.py`. Apply: fly secret + restart. Detail: DECISIONS.md "CLAUDE.md flag detail".
-- `SMART_MUSIC_BED_ENABLED` — default `true`. Kill switch for the v2 music bed; off = no new treatments, reburns skip it.
+- `SMART_MUSIC_BED_ENABLED` / `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` — default `true`: v2 bed kill switch; KRI-20 creator-chosen only. `TALKING_MUSIC_ENABLED` — default **`false`** (KRI-1562): that song under phone Talking/Voiceover, ducked under speech; needs `speechDuck`+`musicBed`+`audioMix` verified, protocol 53. Guard: `test_talking_music_bed.py`.
 - `SPEECH_EXCERPT_MONTAGE_ENABLED` — default `true`; false = legacy. `docs/pipelines/speech-excerpt-montage.md`
-- `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` — default `true` (KRI-20). Bed resolver only returns a creator-selected treatment; never auto-matches. `false` = pre-fix.
 - `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED` — default **`false`**; gate SFX/overlay lane routes (404 off). **Dual-flag trap:** `NEXT_PUBLIC_` twins; web on + API off ⇒ saves 404. Fly first, then Vercel. Detail: DECISIONS.md "CLAUDE.md flag detail".
 - `MEDIA_OVERLAY_ALPHA_ENABLED` — defaults **`false`**. When true, transparent image pip cards keep alpha; off is byte-identical JPEG flatten. Apply: fly secret + worker restart.
 - `FULLSCREEN_CUTAWAYS_ENABLED` — default **`false`**; AI fullscreen branch. Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED`: **Fly first, then Vercel**. Rollback = `MEDIA_OVERLAYS_ENABLED`. Guards: `tests/test_overlay_fullscreen_rules.py`, `tests/test_media_overlay_command.py`; plans/009.

@@ -1575,6 +1575,10 @@
       "source": "default",
       "value": false
     },
+    "talking_music_enabled": {
+      "source": "default",
+      "value": false
+    },
     "text_animation_ask_enabled": {
       "source": "default",
       "value": true
