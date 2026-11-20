@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.32.0] - 2026-11-20
+
+### Fixed
+- fix(kria): Cusco T2 "list 1": cleanup cuts the ~1 s pauses whisper's stretched stamps hid; the hum pause stays (KRI-1512) (#2376) <!-- release-pr: 2376 -->
+
 ## [0.89.31.0] - 2026-11-20
 
 ### Changed
