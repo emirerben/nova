@@ -1397,6 +1397,33 @@ def color_moments_client_supported(*, require_client: bool | None = None) -> boo
     return protocol is not None and protocol >= settings.color_moments_min_client_protocol
 
 
+def recipe_has_speech_duck(recipe: Any) -> bool:
+    """Does this recipe ask the device to duck its music bed under speech (KRI-1562)?"""
+    return bool(getattr(getattr(recipe, "audio", None), "speech_windows", None))
+
+
+def speech_duck_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build duck music under ``audio.speech_windows``?
+
+    At least ``SPEECH_DUCK_PROTOCOL`` (53). An older build ignores the windows and would play
+    the music at full level over the creator's voice. ``require_client`` follows
+    `color_moments_client_supported` (a worker has no app build; the device-render poll
+    answers 426 instead).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPEECH_DUCK_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= SPEECH_DUCK_PROTOCOL
+
+
 def color_moments_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may Kria add colour moments to a phone edit right now".
 
