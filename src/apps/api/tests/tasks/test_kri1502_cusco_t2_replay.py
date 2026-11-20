@@ -88,10 +88,19 @@ def _pcm(*, voiced: list[tuple[float, float]] | None = None, noise_spans: tuple 
 
 
 def _analysis(
-    monkeypatch, *, late_words: bool, words=None, pcm: np.ndarray | None = None
+    monkeypatch,
+    *,
+    late_words: bool,
+    words=None,
+    pcm: np.ndarray | None = None,
+    stretched_words: bool = False,
 ) -> SpeechCleanupAnalysisResult:
-    """The real cleanup analysis on the recorded take, as prod's preflight ran it."""
+    """The real cleanup analysis on the recorded take, as prod's preflight ran it.
+
+    ``stretched_words`` (KRI-1512) stays off here: these tests pin the late-word move alone;
+    `test_kri1512_cusco_t2_pauses_replay.py` pins what the stretched-word step adds."""
     monkeypatch.setattr(settings, "speech_cleanup_late_words_enabled", late_words)
+    monkeypatch.setattr(settings, "speech_cleanup_stretched_words_enabled", stretched_words)
     samples = _pcm() if pcm is None else pcm
     return analyze_speech_cleanup(
         SpeechCleanupAnalysisInput(
@@ -352,7 +361,12 @@ def _faces(_path, anchors, **_kwargs):
 
 
 def _render(
-    monkeypatch, *, late_words: bool, caption_request: str = "tr", hinted=None
+    monkeypatch,
+    *,
+    late_words: bool,
+    caption_request: str = "tr",
+    hinted=None,
+    stretched_words: bool = False,
 ) -> tuple[dict, SpeechCleanupAnalysisResult]:
     """The phone Talking worker on the cleaned take, as the approved draft ran it.
 
@@ -360,7 +374,7 @@ def _render(
     with that hint; ``hinted`` is what that pass hears."""
     apply_prod_profile(monkeypatch)
     clear_request_context()
-    result = _analysis(monkeypatch, late_words=late_words)
+    result = _analysis(monkeypatch, late_words=late_words, stretched_words=stretched_words)
     job, snapshot, _session, binding = _setup_subtitled(
         monkeypatch, duration_s=DURATION_S, transcript_words=hinted
     )

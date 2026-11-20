@@ -30,6 +30,8 @@ from app.services.speech_cleanup_identity import (
 # token (silence_cut._sentence_initial_head_carve).
 # v10 (KRI-1506): a run of words stamped into the pause after its voice moves back onto that
 # voice before planning (late_word_realign.py, speech_cleanup_analysis._late_words_realigned).
+# v11 (KRI-1512): a word's head stretched back over the pause before it is trimmed to the pause
+# end, and the late-word move also takes a run whose first word starts on the voice.
 #
 # Two cohorts key off different things, and a bump moves only one of them. The
 # mixed-gap shadow/apply bucket below is salted with a FIXED literal over an
@@ -38,7 +40,7 @@ from app.services.speech_cleanup_identity import (
 # current_detector_policy() and therefore this constant - bumping it re-rolls
 # preflight membership (measured: 1979 of 2000 synthetic sources change
 # bucket), so a canary comparison must not be carried across the deploy.
-DETECTOR_VERSION = "mixed-gap-v10-late-words"
+DETECTOR_VERSION = "mixed-gap-v11-stretched-words"
 _MAX_ASR_SPANS = 128
 _MAX_SILENCE_SPANS = 128
 _MAX_LEXICAL_SPANS = 32

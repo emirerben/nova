@@ -99,6 +99,8 @@ Pauses of about 1 s are still kept in T2 (voice-band, after the fix): 5.55–6.5
 stamp shape (a head stretched across a mid-sentence pause, a phrase stretched over one, a
 sentence-head carve missed by 18 ms), not this one. `SPEECH_CLEANUP_LONG_PAUSES_ENABLED` (off in
 prod) would cut only the 9.25–10.30 s one on top of this fix. They are a follow-up.
+Follow-up KRI-1512 cuts three of them (5.55–6.55, 9.25–10.30 and 37.40–38.50 s) and keeps
+1.35–2.10 s on purpose: `docs/reviews/kri-1512-stretched-words-failure-modes.md`.
 
 The "Done" receipt for a label still does not check the label's time against the audio
 (KRI-1506's third expectation); with the words on their voice the T2 receipt is now true.
