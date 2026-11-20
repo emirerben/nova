@@ -162,6 +162,7 @@ from app.services.single_hero_policy import (
     _build_single_hero_recipe,
     _single_hero_order,
 )
+from app.services.source_length_policy import exceeds, limit_phrase, max_duration_s
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_outcome import (
     # Moved to the service so device-export completion writes the same receipt.
@@ -9375,7 +9376,6 @@ def _run_phone_subtitled_job(
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
         _LANDSCAPE_STORY_CANVAS,
-        MAX_CLIP_DURATION_S,
         SFX_DUCK_RECEIPT_FIELD,
         PhoneCutaway,
         compile_phone_subtitled_plan,
@@ -9987,7 +9987,7 @@ def _run_phone_subtitled_job(
                                 or ending_binding.original.height is None
                             ):
                                 ending_reason = "not_a_video"
-                            elif float(ending_binding.original.duration_s) > MAX_CLIP_DURATION_S:
+                            elif exceeds(float(ending_binding.original.duration_s), "talking_clip"):
                                 ending_reason = "too_long"
                             elif _ending_over_length_limit(
                                 snapshot,
@@ -10164,9 +10164,10 @@ def _run_phone_subtitled_job(
                 return sounding
 
             probe = probe_video(clip_path)
-            if float(probe.duration_s) > MAX_CLIP_DURATION_S:
+            if exceeds(float(probe.duration_s), "talking_clip"):
                 raise UnsupportedPhonePlan(
-                    "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
+                    f"subtitled clips are capped at {limit_phrase(max_duration_s('talking_clip'))} "
+                    "-- trim the clip and re-upload"
                 )
             # KRI-653: a silent take must never reach the speech cut (job c283f1dd cut a
             # 192 s dead-mic take to 3 s over hallucinated words). Declared AND self-narrated.
@@ -37665,14 +37666,15 @@ def _render_subtitled_variant(
 
         with _stage_timer("asset_probe"):
             probe = probe_video(clip_path)
-        # Cap sized to the CAPTION-TASK budget, not just whisper's 25MB (~13 min):
-        # every Apply/re-transcribe re-encodes the full clip at preset=fast inside a
-        # soft_time_limit=600 task (~realtime on the 4-vCPU worker). A longer clip
-        # renders once, then every caption edit times out forever. 5 min also stays
-        # aligned with the sub-60s product target. Fail fast with an actionable reason.
-        if float(probe.duration_s) > 300.0:
+        # The Talking clip limit (`source_length_policy`) is also sized to the CAPTION-TASK
+        # budget, not just whisper's 25MB (~13 min): every Apply/re-transcribe re-encodes the
+        # full clip at preset=fast inside a soft_time_limit=600 task (~realtime on the 4-vCPU
+        # worker). A longer clip renders once, then every caption edit times out forever. Fail
+        # fast with an actionable reason.
+        if exceeds(float(probe.duration_s), "talking_clip"):
             raise ValueError(
-                "subtitled clips are capped at 5 minutes — trim the clip and re-upload"
+                f"subtitled clips are capped at {limit_phrase(max_duration_s('talking_clip'))} "
+                "— trim the clip and re-upload"
             )
         if active_snapshot is not None:
             try:

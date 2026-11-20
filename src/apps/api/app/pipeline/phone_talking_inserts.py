@@ -19,9 +19,10 @@ timeline (the first speaker's seconds with no insert counted). Three pure steps 
    about a clip) is never moved earlier, never into the middle of its sentence and never next
    to another clip: it waits half the silence after the sentence (at most 0.2 s) so his last
    word is not clipped, and two clips about one part play at one instant, in order. A clip
-   is refused only when it cannot physically play: missing, not a video, over five minutes,
-   already the take, or past the engine's `MAX_INSERTS`. One that would take the finished video
-   past the device's limit (`fit_inserts`) is left out, last ones first, and named.
+   is refused only when it cannot physically play: missing, not a video, over the Talking clip
+   limit (`source_length_policy`), already the take, or past the engine's `MAX_INSERTS`. One
+   that would take the finished video past the device's limit (`fit_inserts`) is left out, last
+   ones first, and named.
 2. `warp_for_inserts` moves everything expressed on the take timeline (captions, text rows,
    cards, effects, cutaways) onto the final timeline: whatever starts at or after an insert
    moves later by its length, and a window that spans the point is split around it, so
@@ -49,12 +50,12 @@ from app.pipeline.phone_subtitled_plan import (
 )
 from app.pipeline.phone_talking_cutaways import HOOK_FREE_S, TAIL_FREE_S
 from app.services.phone_sources import PhoneSourceBinding
+from app.services.source_length_policy import exceeds
 
 __all__ = [
     "HOOK_FREE_S",
     "PHONE_INSERT_CLIPS_FIELD",
     "MAX_INSERTS",
-    "MAX_INSERT_S",
     "MIN_GAP_S",
     "TAIL_FREE_S",
     "DROP_OVER_DEVICE_BUDGET",
@@ -75,8 +76,6 @@ __all__ = [
 # The variant receipt of what the worker placed (`{"placed": [...], "dropped": [...]}`).
 PHONE_INSERT_CLIPS_FIELD = "phone_insert_clips"
 MAX_INSERTS = MAX_INSERT_CLIPS
-# The engine's clip length limit (a Talking clip is at most five minutes), not a taste limit.
-MAX_INSERT_S = 300.0
 # Default spacing when the creator named no position: two clips closer than this are one stop.
 MIN_GAP_S = 2.0
 _EPS = 1e-6
@@ -235,7 +234,8 @@ def place_inserts(
         if original.width is None or original.height is None:
             out.append(refuse(ask, "not_a_video"))
             continue
-        if float(original.duration_s) > MAX_INSERT_S:
+        # The engine's Talking clip limit (`source_length_policy`), not a taste limit.
+        if exceeds(float(original.duration_s), "talking_clip"):
             out.append(refuse(ask, "too_long"))
             continue
         explicit = ask.basis != "topic"

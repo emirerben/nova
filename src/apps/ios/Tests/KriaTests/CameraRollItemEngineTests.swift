@@ -119,9 +119,11 @@ final class CameraRollItemStateTests: XCTestCase {
             XCTAssertEqual(CameraRollPreflight.checkFile(kind: "image", pathExtension: ext, byteCount: 10), .unsupportedType, ext)
         }
         XCTAssertNil(CameraRollPreflight.checkFile(kind: "video", pathExtension: "mov", byteCount: 5_000_000_000))
-        XCTAssertNil(CameraRollPreflight.checkMetadata(kind: "video", duration: 30 * 60))
-        XCTAssertEqual(CameraRollPreflight.checkMetadata(kind: "video", duration: 30 * 60 + 1), .tooLong)
-        XCTAssertNil(CameraRollPreflight.checkMetadata(kind: "image", duration: 0))
+        XCTAssertNil(CameraRollPreflight.checkMetadata(kind: "video", duration: 30 * 60, maximumVideoSeconds: 30 * 60))
+        XCTAssertEqual(CameraRollPreflight.checkMetadata(kind: "video", duration: 30 * 60 + 1, maximumVideoSeconds: 30 * 60), .tooLong)
+        XCTAssertNil(CameraRollPreflight.checkMetadata(kind: "image", duration: 0, maximumVideoSeconds: 30 * 60))
+        // KRI-1554: the limit is the server's; before it has said, the phone refuses nothing on length.
+        XCTAssertNil(CameraRollPreflight.checkMetadata(kind: "video", duration: 40 * 60, maximumVideoSeconds: nil))
     }
 
     func testExportAndUploadErrorsMapToTheRightClass() {
@@ -154,6 +156,8 @@ final class CameraRollUploadLoopTests: XCTestCase {
         let made = makeAsset()
         let loop = CameraRollUploadLoop(
             exportTimeout: timeout,
+            // The library limit as the server's `/capabilities` states it (KRI-1554).
+            maximumVideoSeconds: 30 * 60,
             export: export ?? { item in try await Task.sleep(for: .milliseconds(5)); return try makeFile("\(item.id).jpg") },
             upload: { url, _, progress in
                 await gauge.enter()

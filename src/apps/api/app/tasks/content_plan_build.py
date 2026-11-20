@@ -56,6 +56,7 @@ from app.services.slide_post_generation_receipts import (
     lookup_receipt,
     record_publication,
 )
+from app.services.source_length_policy import exceeds, limit_phrase, max_duration_s
 from app.services.tiktok_style_observations import effective_persona_style
 from app.worker import celery_app
 
@@ -883,7 +884,8 @@ _PHONE_GATE_MESSAGES_STORED: dict[str, tuple[str, str]] = {
     "subtitled_clip_too_long": (
         "phone_format_unavailable",
         "This clip is too long for talking-to-camera on your iPhone. Use a shorter "
-        "clip (under 5 minutes) and try again. No fallback edit was rendered.",
+        f"clip (under {limit_phrase(max_duration_s('talking_clip'))}) and try again. "
+        "No fallback edit was rendered.",
     ),
     # KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
     # clips has no phone compiler (`talking_head` isn't phone-supported).
@@ -2467,10 +2469,6 @@ def _dispatch_item_render(
                     raise ValueError("phone rendering does not yet support voiceover edits")
             phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
             if phone_subtitled_eligible and phone_sources:
-                from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
-                    _MAX_CLIP_DURATION_S as _SUBTITLED_MAX_CLIP_S,
-                )
-
                 # KRI-719: a multi-clip declared Talking item checks EVERY
                 # source (any over-cap clip dooms the render); anything else
                 # keeps the first-source-only check byte-identical.
@@ -2482,7 +2480,7 @@ def _dispatch_item_render(
                 for _source in _checked_sources:
                     _original = getattr(_source, "original", None)
                     _duration = getattr(_original, "duration_s", None)
-                    if isinstance(_duration, int | float) and _duration > _SUBTITLED_MAX_CLIP_S:
+                    if isinstance(_duration, int | float) and exceeds(_duration, "talking_clip"):
                         # Deterministic compiler reject otherwise: fail closed
                         # before minting a Job that can never render.
                         phone_gate = "subtitled_clip_too_long"

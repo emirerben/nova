@@ -39,11 +39,15 @@ class MediaSize(_RecipeModel):
     height: float = Field(gt=0)
 
 
+# The longest media asset a recipe describes; a compiler leaves a longer asset's duration unset.
+MAX_ASSET_DURATION_S = 1800
+
+
 class MediaAsset(_RecipeModel):
     id: str = Field(min_length=1, max_length=160)
     relative_path: str = Field(min_length=1, max_length=1024)
     fingerprint: AssetFingerprint | None = None
-    duration: float | None = Field(default=None, gt=0, le=1800)
+    duration: float | None = Field(default=None, gt=0, le=MAX_ASSET_DURATION_S)
     natural_size: MediaSize | None = None
     frame_rate: float | None = Field(default=None, gt=0, le=240)
     orientation_degrees: int = Field(default=0, ge=-360, le=360)

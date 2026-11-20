@@ -402,7 +402,11 @@ struct CameraRollEvent: Identifiable {
         if !jobs.isEmpty {
             let owner = originals.owner
             let api = api
-            await engine.upload(jobs, loop: .live(api: api, providers: providers), pollingCollectionID: pollableCollectionID) { [weak self] id, asset in
+            // KRI-1554: the library length limit is the server's (`media.clips.max_duration_s`); a cached read.
+            let maximumVideoSeconds = (try? await api.creationCapabilities())?
+                .media?[CreationMediaRole.clip.capabilityKey]?.durationLimit(isImage: false)
+            CameraRollPreflight.remember(maximumVideoSeconds: maximumVideoSeconds)
+            await engine.upload(jobs, loop: .live(api: api, providers: providers, maximumVideoSeconds: maximumVideoSeconds), pollingCollectionID: pollableCollectionID) { [weak self] id, asset in
                 guard let self, currentOwner == owner else { throw SourceAssetError.invalidBinding }
                 collection.bind(asset, to: id)
                 persist()

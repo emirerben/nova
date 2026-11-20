@@ -53,7 +53,6 @@ from app.pipeline.phone_subtitled_plan import (
 from app.pipeline.phone_talking_inserts import (
     ADJUSTED_JOINED,
     ADJUSTED_TAKE_END,
-    MAX_INSERT_S,
     MAX_INSERTS,
     MIN_GAP_S,
     OVERRODE_HOOK,
@@ -70,6 +69,7 @@ from app.pipeline.phone_talking_inserts import (
     shift_time,
     warp_for_inserts,
 )
+from app.services.source_length_policy import max_duration_s
 from tests.pipeline.test_phone_subtitled_plan import _binding, _resolved_sfx
 
 
@@ -202,7 +202,7 @@ def test_a_seventy_second_clip_is_played_not_refused():
 
 
 def test_only_a_clip_over_the_engines_five_minutes_is_refused():
-    long = {"talk": _binding("talk", duration_s=MAX_INSERT_S + 1)}
+    long = {"talk": _binding("talk", duration_s=max_duration_s("talking_clip") + 1)}
     (placed,) = _place([_ask(at_s=10.0)], bindings=long)
     assert (placed.insert, placed.reason) == (None, "too_long")
 

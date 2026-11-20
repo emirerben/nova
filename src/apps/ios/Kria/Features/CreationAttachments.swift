@@ -175,7 +175,11 @@ struct AttachmentSheet: View {
 
     private var itemID: String? { thread?.activePlanItemID }
     private var pollsVisuals: Bool { capabilities?.visualsEnabled == true || usesVisualPoolOnly }
-    private var limit: CreationMediaLimit? { capabilities?.media?[role.capabilityKey] }
+    private var limit: CreationMediaLimit? { mediaLimit(for: role) }
+    /// The server's limits for `mediaRole`, with this project's format's own length limit (KRI-1554).
+    private func mediaLimit(for mediaRole: CreationMediaRole) -> CreationMediaLimit? {
+        capabilities?.mediaLimit(for: mediaRole, format: resolvedFormat)
+    }
     private var media: [CreationAttachedMedia] { CreationAttachedMedia.parse(thread?.state ?? [:]) }
     private func maximum(for mediaRole: CreationMediaRole) -> Int {
         switch mediaRole {
@@ -473,7 +477,7 @@ struct AttachmentSheet: View {
     private var footageStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: String(localized: "Add footage"), subtitle: FootageStageCopy.attachmentSubtitle(talking: isTalkingToCamera, maximumClipCount: maximumClipCount))
-            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: capabilities?.media?["clips"], destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
+            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximumClipCount, attachedClipCount: existing(for: .clip), attachedMediaIDs: attachedMediaIDs(for: .clip), role: .clip, itemID: itemID, limit: mediaLimit(for: .clip), destination: uploadDestination(for: .clip), onPickerFilled: nil, onSelectionCompleted: advanceAfterFootageSelection, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true,
                               controls: .tiles(record: auth.localStorageIdentity == nil ? nil : { openCamera(withScript: false) }),
                               launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
                 .id(AttachmentStep.footage)
@@ -571,7 +575,7 @@ struct AttachmentSheet: View {
         model.uploads.dismissFailure(id: take.intakeID)
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files,
             consentGiven: true, purpose: .analysisProxy, role: .clip, itemID: itemID,
-            limit: capabilities?.media?["clips"], recordID: take.intakeID, replacesMediaID: replaceTarget?.mediaID)
+            limit: mediaLimit(for: .clip), recordID: take.intakeID, replacesMediaID: replaceTarget?.mediaID)
         return accepted ? .queued : .failed(model.uploads.failures.first(where: { $0.id == take.intakeID })?.message ?? String(localized: "Couldn’t add this take. Your recording is saved; try again."))
     }
 
@@ -595,7 +599,7 @@ struct AttachmentSheet: View {
         model.uploads.dismissFailure(id: reference.id)
         let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true,
             purpose: uploadDestination(for: .visual) == .phone ? .analysisProxy : .cloudRenderSource,
-            role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], recordID: reference.id)
+            role: .visual, itemID: itemID, limit: mediaLimit(for: .visual), recordID: reference.id)
         guard accepted else {
             return .failed(model.uploads.failures.first(where: { $0.id == reference.id })?.message ?? String(localized: "Add it again from your media."))
         }
@@ -680,7 +684,7 @@ struct AttachmentSheet: View {
             }
             // The audio importer behind the Upload tile. It draws no controls, but it does show what went wrong
             // (an unsupported or oversized file, a failed attach) right here.
-            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"], destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true, controls: .hidden, launchSource: $voiceoverPickerLaunch)
+            FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .voiceover), attachedClipCount: existing(for: .voiceover), attachedMediaIDs: attachedMediaIDs(for: .voiceover), role: .voiceover, itemID: itemID, limit: mediaLimit(for: .voiceover), destination: uploadDestination(for: .voiceover), onAudioFileSelected: recorder.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true, controls: .hidden, launchSource: $voiceoverPickerLaunch)
             if let recorderError = recorder.error { Text(recorderError).kriaType(.label).foregroundStyle(KriaColor.failureText) }
             if (recorder.hasRecording || recorder.isRecording), let warning = voiceoverWarning {
                 VoiceoverDurationWarning(message: warning, addFootage: { step = .footage })
@@ -773,7 +777,7 @@ struct AttachmentSheet: View {
             }
             if pool == nil, error == nil { HStack(spacing: 8) { KriaSpinner(size: 16); Text(usesVisualPoolOnly ? SlideMediaCopy.loading : String(localized: "Loading overlays…")).kriaType(.label).foregroundStyle(KriaColor.mutedInk) } }
             if pool != nil {
-                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true,
+                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: mediaLimit(for: .visual), destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true,
                                   controls: .tiles(record: nil, third: capabilitiesLoaded && capabilities?.generatedImages == true && itemID != nil
                                     ? KriaSourceOption(id: "generate", symbol: "sparkles", title: String(localized: "Generate"), caption: String(localized: "Make with AI"), identifier: "generate-image") {
                                         openOverlaySet()
@@ -818,7 +822,7 @@ struct AttachmentSheet: View {
                     if songPreview.isImporting {
                         ProgressView("Opening song…")
                     } else {
-                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .song), attachedClipCount: existing(for: .song), attachedMediaIDs: attachedMediaIDs(for: .song), role: .song, itemID: itemID, limit: capabilities?.songLimit, destination: uploadDestination(for: .song), onAudioFileSelected: songPreview.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .song), attachedClipCount: existing(for: .song), attachedMediaIDs: attachedMediaIDs(for: .song), role: .song, itemID: itemID, limit: mediaLimit(for: .song), destination: uploadDestination(for: .song), onAudioFileSelected: songPreview.importFile, showsHeading: false, libraryEnabled: capabilities?.mediaLibrary == true)
                     }
                     Button(hasSongOrPendingSong ? String(localized: "Continue") : String(localized: "Skip, no song")) { advance() }
                         .buttonStyle(KriaButtonStyle(role: hasSongOrPendingSong ? .primary : .tertiary, size: hasSongOrPendingSong ? .large : .medium, fullWidth: hasSongOrPendingSong))
@@ -977,7 +981,7 @@ struct AttachmentSheet: View {
         guard !uploadingRecording, let url = recorder.recordingURL, canRecord else { return }
         uploadingRecording = true
         voiceoverUploadError = nil
-        let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .voiceover, itemID: itemID, limit: capabilities?.media?["voiceover"])
+        let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .voiceover, itemID: itemID, limit: mediaLimit(for: .voiceover))
         uploadingRecording = false
         if accepted { voiceoverUploadError = nil; recorder.discard(); advance() }
         else { voiceoverUploadError = String(localized: "This voiceover couldn’t be added. Your recording is still here—try again.") }
@@ -987,7 +991,7 @@ struct AttachmentSheet: View {
         uploadingSong = true
         songUploadError = nil
         // The song always uploads in full (never an analysis proxy): the server needs the bytes.
-        let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .song, itemID: itemID, limit: capabilities?.songLimit)
+        let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .song, itemID: itemID, limit: mediaLimit(for: .song))
         uploadingSong = false
         if accepted { songUploadError = nil; songPreview.discard(); advance() }
         else { songUploadError = String(localized: "This song couldn’t be added. It’s still here, so try again.") }
