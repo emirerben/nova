@@ -3676,7 +3676,14 @@ async def confirm_account_deletion(
     await db.execute(delete(TikTokPublication).where(TikTokPublication.id.in_(publication_ids)))
     # 3. Remaining OAuth tokens (instagram/youtube — no revoke API wired yet).
     await db.execute(delete(OAuthToken).where(OAuthToken.id.in_([row.id for row in oauth_tokens])))
-    # 4. Jobs — cascades AgentRun + VideoFeedback automatically.
+    # 4. Clips have a NO ACTION job FK. Their paths are already captured in
+    # the durable storage manifests above, so erase them before their jobs.
+    await db.execute(
+        delete(JobClip).where(
+            JobClip.id.in_([clip.id for clips in clips_by_job.values() for clip in clips])
+        )
+    )
+    # Jobs cascade AgentRun + VideoFeedback automatically.
     await db.execute(delete(Job).where(Job.id.in_(job_uuid_ids)))
     # The direct pool owner FK is NO ACTION. Explicitly remove the captured
     # projections before owner/source cascades, which also avoids FK ordering
