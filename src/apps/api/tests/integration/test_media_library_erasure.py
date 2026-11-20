@@ -153,3 +153,63 @@ async def test_confirmed_account_erasure_cascades_library_and_owns_both_storage_
         assert outbox.next_attempt_at > datetime.now(UTC) + timedelta(hours=24)
         db.delete(outbox)
         db.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("linked", [False, True])
+async def test_account_erasure_with_rendered_job_clips(owned_source, monkeypatch, linked):
+    """A saved clip must not leave the owner undeletable through the real route."""
+    from app.models import ContentPlan, Job, JobClip, Persona, PlanItem
+
+    owner_id, _, job_id, path = owned_source
+    clip_id = uuid.uuid4()
+    with sync_session() as db:
+        db.add(Job(id=job_id, user_id=owner_id, raw_storage_path=path))
+        db.flush()
+        db.add(
+            JobClip(
+                id=clip_id,
+                job_id=job_id,
+                rank=1,
+                hook_score=1,
+                engagement_score=1,
+                combined_score=1,
+                start_s=0,
+                end_s=5,
+                video_path=f"{owner_id}/{job_id}/clip.mp4",
+            )
+        )
+        if linked:
+            persona = Persona(user_id=owner_id)
+            db.add(persona)
+            db.flush()
+            plan = ContentPlan(user_id=owner_id, persona_id=persona.id)
+            db.add(plan)
+            db.flush()
+            db.add(
+                PlanItem(content_plan_id=plan.id, position=0, idea="Fixture", current_job_id=job_id)
+            )
+        db.commit()
+    key = Fernet.generate_key().decode()
+    monkeypatch.setattr(me.settings, "token_encryption_key", key)
+    monkeypatch.setattr(me, "_delete_job_storage_after_commit", AsyncMock())
+    monkeypatch.setattr(account_lifecycle.purge_user_storage, "delay", lambda *_a: None)
+    token = Fernet(key.encode()).encrypt(str(owner_id).encode()).decode()
+    try:
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, owner_id)
+            response = await me.confirm_account_deletion(
+                me.DeleteConfirmBody(token=token), user, db
+            )
+        assert response.status_code == 204
+        with sync_session() as db:
+            assert db.get(User, owner_id) is None
+            assert db.get(Job, job_id) is None
+            assert db.get(JobClip, clip_id) is None
+    finally:
+        with sync_session() as db:
+            db.execute(delete(ContentPlan).where(ContentPlan.user_id == owner_id))
+            db.execute(delete(JobClip).where(JobClip.id == clip_id))
+            db.execute(delete(Job).where(Job.id == job_id))
+            db.execute(delete(JobStorageDeletion).where(JobStorageDeletion.job_id == job_id))
+            db.commit()
