@@ -159,22 +159,14 @@ def exclusive_slide_post_delivery():
 
     db_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
     engine = create_engine(db_url, pool_pre_ping=True)
-    connection = None
+    # Collection already handles an intentionally absent test DB. Once these tests
+    # are collected, failure to acquire their lock must fail rather than skip coverage.
     try:
-        connection = engine.connect()
-        connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": 2026112001})
-    except OperationalError as exc:
-        if connection is not None:
-            connection.close()
-        engine.dispose()
-        pytest.skip(f"Postgres not reachable for the slide-post delivery lock: {exc!r}")
-    try:
-        yield
+        with engine.connect() as connection:
+            connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": 2026112001})
+            yield
     finally:
-        try:
-            connection.close()
-        finally:
-            engine.dispose()
+        engine.dispose()
 
 
 @pytest.fixture(autouse=True)
