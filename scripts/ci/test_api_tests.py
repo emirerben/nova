@@ -15,15 +15,16 @@ Ways the weight-packed shards can go wrong, written before the packing (KRI-1544
 8. pytest gets the files heaviest first, so xdist starts every worker on the
    heaviest renders at once (what pushed a test into its timeout in #2389).
 9. The workflow matrix and SHARD_COUNT disagree.
+10. A failed API job's existing artifact blocks a retry, or optional timing
+    upload failure turns passing tests red.
 """
 
 import importlib.util
 import json
-from pathlib import Path
 import re
 import tempfile
 import unittest
-
+from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().with_name("api-tests.py")
 spec = importlib.util.spec_from_file_location("api_tests", SCRIPT)
@@ -119,6 +120,7 @@ class ApiTestShardTests(unittest.TestCase):
             {"files": {heavy: float("nan")}},
             {"files": {heavy: float("inf")}},
             {"files": {heavy: 1e300}},
+            {"files": {heavy: 10**400}},
             {"files": {7: 3}},
         ):
             with self.subTest(payload=payload):
@@ -172,7 +174,7 @@ class ApiTestShardTests(unittest.TestCase):
         workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
         job = workflow[workflow.index("\n  test-api-suite:") :]
         job = job[: job.index("\n    steps:")]
-        matrix = re.search(r"^\s+shard: \[([0-9, ]+)\]$", job, re.M)
+        matrix = re.search(r"^\s+shard: \[([0-9, ]+)\]$", job, re.MULTILINE)
         self.assertIsNotNone(matrix, "test-api-suite must list its shards")
         self.assertEqual(
             [int(value) for value in matrix.group(1).split(",")],
@@ -188,7 +190,10 @@ class ApiTestShardTests(unittest.TestCase):
         shards = self.shards(api_root, timings=api_tests.TIMINGS)
         self.assert_complete(shards, api_root)
         loads = [
-            sum(seconds.get(path.as_posix(), api_tests.DEFAULT_SECONDS) for path in shard)
+            sum(
+                seconds.get(path.as_posix(), api_tests.DEFAULT_SECONDS)
+                for path in shard
+            )
             for shard in shards
         ]
         self.assertLessEqual(max(loads), 1.03 * sum(loads) / len(loads), loads)
@@ -196,6 +201,25 @@ class ApiTestShardTests(unittest.TestCase):
         # that still exists (refresh with scripts/ci/api-test-timings.py).
         existing = {path.as_posix() for path in api_tests.test_files(api_root)}
         self.assertGreater(len(set(seconds) & existing), 0.8 * len(seconds))
+
+    def test_junit_upload_is_attempt_scoped_and_does_not_gate_api_tests(self):
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
+        upload = re.search(
+            r"^      - name: Keep per-test times\n(?:^ {8,}[^\n]*\n)+",
+            workflow,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(upload, "test-api-suite must keep the timing report")
+        self.assertIn("        if: always()\n", upload.group())
+        self.assertIn("        continue-on-error: true\n", upload.group())
+        self.assertIn(
+            "          name: api-junit-${{ github.run_id }}-${{ matrix.shard }}-${{ github.run_attempt }}\n",
+            upload.group(),
+        )
+        suite_step = workflow.split(
+            "      - name: Run API test shard with timing reports\n", 1
+        )[1].split(upload.group(), 1)[0]
+        self.assertNotIn("continue-on-error", suite_step)
 
     def test_pytest_command_executes_each_selected_file_once(self):
         selected = api_tests.shard_files(self.api_root, 0)

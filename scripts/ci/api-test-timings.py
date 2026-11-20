@@ -4,7 +4,8 @@
     gh run download <run id> -p 'api-junit-*' -D /tmp/api-junit   # one or more runs
     python3 scripts/ci/api-test-timings.py /tmp/api-junit "run <id>, <date>"
 
-Each report covers one shard of one run. A file's weight is the middle value
+Keep the artifact directories when downloading. For each run and shard, use
+only the latest available attempt. A file's weight is the middle value
 of its per-report totals, so one slow runner does not set it. Only files at or
 above MIN_LISTED_SECONDS are written; api-tests.py weighs the rest at its
 default. Prints what each shard would carry with the new weights.
@@ -15,10 +16,11 @@ from __future__ import annotations
 import collections
 import importlib.util
 import json
-from pathlib import Path
+import re
 import statistics
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("api_tests", HERE / "api-tests.py")
@@ -27,6 +29,23 @@ assert spec.loader is not None
 spec.loader.exec_module(api_tests)
 
 MIN_LISTED_SECONDS = 5.0
+ARTIFACT_NAME = re.compile(r"api-junit-([0-9]+)-([0-9]+)-([0-9]+)")
+
+
+def latest_reports(reports: Path) -> list[Path]:
+    """Prefer the latest downloaded attempt per run/shard; keep legacy reports."""
+    chosen: dict[tuple[int, int], tuple[int, Path]] = {}
+    legacy = []
+    for report in sorted(reports.rglob("*.xml")):
+        match = ARTIFACT_NAME.fullmatch(report.parent.name)
+        if match is None:
+            legacy.append(report)
+            continue
+        run_id, shard, attempt = map(int, match.groups())
+        key = (run_id, shard)
+        if key not in chosen or attempt > chosen[key][0]:
+            chosen[key] = (attempt, report)
+    return sorted([*legacy, *(report for _, report in chosen.values())])
 
 
 def measure(reports: Path, files: list[Path]) -> tuple[dict[str, float], int]:
@@ -37,7 +56,7 @@ def measure(reports: Path, files: list[Path]) -> tuple[dict[str, float], int]:
     }
     totals: dict[str, list[float]] = collections.defaultdict(list)
     unowned = 0
-    for report in sorted(reports.rglob("*.xml")):
+    for report in latest_reports(reports):
         in_report: dict[str, float] = collections.defaultdict(float)
         for case in ET.parse(report).getroot().iter("testcase"):
             # junit gives `tests.pipeline.test_x.TestClass`: the owner is the

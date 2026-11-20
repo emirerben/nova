@@ -8,13 +8,15 @@ Ways it can go wrong, written before the script (KRI-1544):
 3. A file that a report does not mention gets a made-up weight.
 4. Light files flood the timings file.
 5. A report from another suite (no matching file) is counted.
+6. Failed or copied earlier attempts bias the median, or rerunning one shard
+   drops the other shards' earlier reports.
 """
 
 import importlib.util
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().with_name("api-test-timings.py")
 spec = importlib.util.spec_from_file_location("api_test_timings", SCRIPT)
@@ -74,6 +76,22 @@ class TimingsTests(unittest.TestCase):
         self.assertEqual(seconds["tests/pipeline/test_light.py"], 0.2)
         self.assertNotIn("tests/pipeline/test_unreported.py", seconds)
         self.assertEqual(unowned, 1)
+
+    def test_uses_latest_available_report_per_run_and_shard(self):
+        render = "tests.pipeline.test_render"
+        self.write("nested/api-junit-10-0-1/api-junit.xml", [(render, "test_a", 100)])
+        self.write("api-junit-10-0-2/api-junit.xml", [(render, "test_a", 12)])
+        self.write("api-junit-10-0-10/api-junit.xml", [(render, "test_a", 20)])
+        self.write("copy/api-junit-10-0-10/api-junit.xml", [(render, "test_a", 20)])
+        self.write("api-junit-10-1-1/api-junit.xml", [("tests.test_top", "test_b", 8)])
+        (self.root / "api-junit-10-1-2").mkdir()
+        self.write("api-junit-11-0-1/api-junit.xml", [(render, "test_a", 30)])
+        self.write("legacy/junit.xml", [(render, "test_a", 40)])
+
+        seconds, unowned = timings.measure(self.root, self.files)
+        self.assertEqual(seconds["tests/pipeline/test_render.py"], 30)
+        self.assertEqual(seconds["tests/test_top.py"], 8)
+        self.assertEqual(unowned, 0)
 
     def test_only_heavy_files_are_written_and_the_file_reads_back(self):
         payload = timings.payload(

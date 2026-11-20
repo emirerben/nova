@@ -109,11 +109,14 @@ Files are packed by measured time, longest first into the lightest shard, from
 0.5 s). A missing or malformed timings file only makes the shards uneven; every
 file still runs once. Each shard hands pytest its files in path order, never in
 packing order: xdist's `load` mode gives each worker a run of consecutive tests,
-which keeps the CPU-heavy neighbours in `tests/pipeline/` on one worker, one
-after another.
+which tends to keep CPU-heavy neighbours in `tests/pipeline/` on the same
+worker, one after another, without guaranteeing it.
 
-To refresh the timings (a few runs' worth is enough; each shard uploads its
-junit report as `api-junit-<shard>` for 3 days):
+To refresh the timings (a few runs' worth is enough; each shard attempts to
+upload its junit report as `api-junit-<run-id>-<shard>-<attempt>` for 3 days).
+These uploads are diagnostic and do not affect the required test result.
+Keep the artifact directories: when merging reports from retries, the timing
+tool takes the highest available attempt separately for each run and shard.
 
 ```sh
 gh run download <run id> -p 'api-junit-*' -D /tmp/api-junit

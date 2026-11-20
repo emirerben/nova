@@ -4,11 +4,9 @@
 from __future__ import annotations
 
 import json
-import math
-from pathlib import Path
 import subprocess
 import sys
-
+from pathlib import Path
 
 # Three shards, packed by measured file time (KRI-1544). Four shards split by
 # file position were tried on 2026-11-19 (#2389) and reverted the same day:
@@ -50,18 +48,20 @@ def file_seconds(timings: Path = TIMINGS) -> dict[str, float]:
         return {}
     if not isinstance(files, dict):
         return {}
+    # The finite range rejects NaN/infinity and bounds integers before conversion.
     return {
         path: float(seconds)
         for path, seconds in files.items()
         if isinstance(path, str)
         and isinstance(seconds, (int, float))
         and not isinstance(seconds, bool)
-        and math.isfinite(seconds)
         and 0 < seconds <= MAX_SECONDS
     }
 
 
-def partition(files: list[Path], seconds: dict[str, float], shard_count: int) -> list[list[Path]]:
+def partition(
+    files: list[Path], seconds: dict[str, float], shard_count: int
+) -> list[list[Path]]:
     """Pack files longest first into the lightest shard.
 
     Every shard job computes this on its own runner, so it must depend on
@@ -96,7 +96,9 @@ def shard_files(
     if not 0 <= shard < shard_count:
         raise ValueError(f"shard must be in [0, {shard_count - 1}], got {shard}")
 
-    selected = partition(test_files(api_root), file_seconds(timings), shard_count)[shard]
+    selected = partition(test_files(api_root), file_seconds(timings), shard_count)[
+        shard
+    ]
     if not selected:
         raise ValueError(f"API test shard {shard} selected no test files")
     return selected
@@ -130,7 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     api_root = Path(__file__).resolve().parents[2] / "src/apps/api"
     selected = shard_files(api_root, shard)
     print(f"API test shard {shard}/{SHARD_COUNT}: {len(selected)} files")
-    return subprocess.run(pytest_command(selected), cwd=api_root, check=False).returncode
+    return subprocess.run(
+        pytest_command(selected), cwd=api_root, check=False
+    ).returncode
 
 
 if __name__ == "__main__":

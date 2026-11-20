@@ -345,9 +345,10 @@ jobs:
       # these into the weights the shards are packed by.
       - name: Keep per-test times
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: api-junit-${{ matrix.shard }}
+          name: api-junit-${{ github.run_id }}-${{ matrix.shard }}-${{ github.run_attempt }}
           path: src/apps/api/test-results/api-junit.xml
           retention-days: 3
           if-no-files-found: ignore
