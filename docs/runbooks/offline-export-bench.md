@@ -40,3 +40,19 @@ src/apps/api/.venv/bin/python scripts/kria/score_offline_exports.py \
 Each dimension reports exact matches among paired ratings. A disagreement about applicability counts as a mismatch. A pair where both reviewers marked the dimension absent is excluded. Overall gate calculations use decisive human verdicts. A mixed grader verdict abstains. Unreviewed exports contribute zero samples. Agreement on these fixtures measures the comparison procedure only. KRI-1427 requires the actual grader and Emir to review at least twenty decided edits.
 
 KRI-1426 still requires 25 real incident footage sets, their original requests, a live planner run per case and scored finished edits. Plain montage, creator-song and chat-edit journeys have no rendered benchmark case in this suite. No case here measures request fulfillment, overclaims, or editorial improvement on real footage.
+
+## Compare independently rated edits
+
+Use an explicit list of evaluation-cleared final MP4s. The pack may contain any number of distinct exports. Prepare it once with the API Python and a new local directory.
+
+```sh
+src/apps/api/.venv/bin/python scripts/kria/calibrate_export_pack.py prepare review-pack evaluation-exports/*.mp4
+```
+
+The local inventory maps each filename to its SHA-256. Give the human reviewer and grader separate copies of their blank CSV. Each rates the same exports independently on the fifteen edit-feedback dimensions. Leave unreviewed cells empty. Put the completed `human.csv` and `grader.csv` back in the pack and run:
+
+```sh
+src/apps/api/.venv/bin/python scripts/kria/calibrate_export_pack.py compare review-pack > agreement.json
+```
+
+The command rechecks every file hash and reports the number of paired ratings per dimension, the weakest measured dimensions, and the existing overall agreement gate. It makes no model calls. A successful command means the comparison ran. Read `agreement_gate_passed` for its verdict. A pack filled with synthetic labels tests the calculation only.
