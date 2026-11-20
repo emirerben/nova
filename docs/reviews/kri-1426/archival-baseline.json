@@ -1,0 +1,240 @@
+{
+  "archive_arrival": {
+    "duration_s": 4.0,
+    "duration_ok": true,
+    "samples": [
+      {
+        "time_s": 0.25,
+        "expected": "anatolian",
+        "nearest": "anatolian",
+        "error": 2.95,
+        "passed": true
+      },
+      {
+        "time_s": 1.0,
+        "expected": "anatolian",
+        "nearest": "anatolian",
+        "error": 3.04,
+        "passed": true
+      },
+      {
+        "time_s": 1.75,
+        "expected": "anatolian",
+        "nearest": "anatolian",
+        "error": 3.13,
+        "passed": true
+      },
+      {
+        "time_s": 2.25,
+        "expected": "parliament",
+        "nearest": "parliament",
+        "error": 2.9,
+        "passed": true
+      },
+      {
+        "time_s": 3.0,
+        "expected": "parliament",
+        "nearest": "parliament",
+        "error": 3.07,
+        "passed": true
+      },
+      {
+        "time_s": 3.75,
+        "expected": "parliament",
+        "nearest": "parliament",
+        "error": 2.86,
+        "passed": true
+      }
+    ],
+    "sha256": "538b81d5da0d559c9243390a57bf44303012391c36c77ec3eb7259f6ac943db6"
+  },
+  "archive_garden": {
+    "duration_s": 6.0,
+    "duration_ok": true,
+    "samples": [
+      {
+        "time_s": 0.25,
+        "expected": "rose",
+        "nearest": "rose",
+        "error": 3.32,
+        "passed": true
+      },
+      {
+        "time_s": 1.0,
+        "expected": "rose",
+        "nearest": "rose",
+        "error": 3.41,
+        "passed": true
+      },
+      {
+        "time_s": 1.75,
+        "expected": "rose",
+        "nearest": "rose",
+        "error": 3.25,
+        "passed": true
+      },
+      {
+        "time_s": 2.25,
+        "expected": "farms",
+        "nearest": "farms",
+        "error": 2.93,
+        "passed": true
+      },
+      {
+        "time_s": 3.0,
+        "expected": "farms",
+        "nearest": "farms",
+        "error": 3.06,
+        "passed": true
+      },
+      {
+        "time_s": 3.75,
+        "expected": "farms",
+        "nearest": "farms",
+        "error": 3.1,
+        "passed": true
+      },
+      {
+        "time_s": 4.25,
+        "expected": "alphabet",
+        "nearest": "alphabet",
+        "error": 2.78,
+        "passed": true
+      },
+      {
+        "time_s": 5.0,
+        "expected": "alphabet",
+        "nearest": "alphabet",
+        "error": 2.69,
+        "passed": true
+      },
+      {
+        "time_s": 5.75,
+        "expected": "alphabet",
+        "nearest": "alphabet",
+        "error": 2.72,
+        "passed": true
+      }
+    ],
+    "sha256": "ca66f0f35e082c6b128b4049ca40f91271653a2c7b09f6b834d2b31a3c723b46"
+  },
+  "archive_crowd": {
+    "duration_s": 6.0,
+    "duration_ok": true,
+    "samples": [
+      {
+        "time_s": 0.25,
+        "expected": "revolutionaries",
+        "nearest": "revolutionaries",
+        "error": 2.99,
+        "passed": true
+      },
+      {
+        "time_s": 1.0,
+        "expected": "revolutionaries",
+        "nearest": "revolutionaries",
+        "error": 3.09,
+        "passed": true
+      },
+      {
+        "time_s": 1.75,
+        "expected": "revolutionaries",
+        "nearest": "revolutionaries",
+        "error": 3.08,
+        "passed": true
+      },
+      {
+        "time_s": 2.25,
+        "expected": "alphabet",
+        "nearest": "alphabet",
+        "error": 2.78,
+        "passed": true
+      },
+      {
+        "time_s": 3.0,
+        "expected": "alphabet",
+        "nearest": "alphabet",
+        "error": 2.69,
+        "passed": true
+      },
+      {
+        "time_s": 3.75,
+        "expected": "alphabet",
+        "nearest": "alphabet",
+        "error": 2.72,
+        "passed": true
+      },
+      {
+        "time_s": 4.25,
+        "expected": "anatolian",
+        "nearest": "anatolian",
+        "error": 2.95,
+        "passed": true
+      },
+      {
+        "time_s": 5.0,
+        "expected": "anatolian",
+        "nearest": "anatolian",
+        "error": 3.04,
+        "passed": true
+      },
+      {
+        "time_s": 5.75,
+        "expected": "anatolian",
+        "nearest": "anatolian",
+        "error": 3.13,
+        "passed": true
+      }
+    ],
+    "sha256": "9d9ad768856c6782837dd19cfedf5a2b241d5673def8daa93182de33ed468a3d"
+  },
+  "archive_wrong_arrival": {
+    "duration_s": 4.0,
+    "duration_ok": true,
+    "samples": [
+      {
+        "time_s": 0.25,
+        "expected": "anatolian",
+        "nearest": "parliament",
+        "error": 2.89,
+        "passed": false
+      },
+      {
+        "time_s": 1.0,
+        "expected": "anatolian",
+        "nearest": "parliament",
+        "error": 3.07,
+        "passed": false
+      },
+      {
+        "time_s": 1.75,
+        "expected": "anatolian",
+        "nearest": "parliament",
+        "error": 2.84,
+        "passed": false
+      },
+      {
+        "time_s": 2.25,
+        "expected": "parliament",
+        "nearest": "anatolian",
+        "error": 2.95,
+        "passed": false
+      },
+      {
+        "time_s": 3.0,
+        "expected": "parliament",
+        "nearest": "anatolian",
+        "error": 3.04,
+        "passed": false
+      },
+      {
+        "time_s": 3.75,
+        "expected": "parliament",
+        "nearest": "anatolian",
+        "error": 3.13,
+        "passed": false
+      }
+    ],
+    "sha256": "778636fe5f7e3eeadbe03183e1565c52cc5323d5f146ff6138ddc8f04277e343"
+  }
+}
