@@ -5525,12 +5525,14 @@ def _pin_catalog_music(track_id: str, _path: str | None = None) -> tuple[Any, fl
     the exact generation + fingerprint that
     `app.routes.device_render.download_device_asset` will independently
     recompute when the device fetches the asset — they must agree exactly.
-    The catalog row's path wins over any path the caller carries (``_path``, the
-    `phone_recipe_shared.MusicPin` shape). Raises `UnsupportedPhonePlan` when the
-    track can no longer be served: a phone job must never bake in a stale receipt.
+    Even a corrupt catalog row cannot grant a differently-prefixed path
+    (`render_library.inspect_music_track`). The catalog row's path wins over any
+    path the caller carries (``_path``, the `phone_recipe_shared.MusicPin` shape).
+    Raises `UnsupportedPhonePlan` when the track can no longer be served: a phone
+    job must never bake in a stale receipt.
     """
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
-    from app.services.render_library import inspect_library_asset  # noqa: PLC0415
+    from app.services.render_library import inspect_music_track  # noqa: PLC0415
 
     with _sync_session() as db:
         track = db.get(MusicTrack, track_id)
@@ -5548,18 +5550,7 @@ def _pin_catalog_music(track_id: str, _path: str | None = None) -> tuple[Any, fl
             )
         path = str(track.audio_gcs_path)
         duration_s = float(track.duration_s) if getattr(track, "duration_s", None) else None
-    # Even a corrupt catalog row cannot grant access to a differently-prefixed
-    # path — mirrors `render_library.catalog_path`'s exact check.
-    if (
-        not path.startswith(f"music/{track_id}/")
-        or any(part in {"", ".", ".."} for part in path.split("/"))
-        or "\\" in path
-    ):
-        raise ValueError("invalid render catalog path")
-    asset = inspect_library_asset(
-        path, asset_id=f"music-{track_id}", catalog="music", catalog_id=track_id
-    )
-    return asset, duration_s
+    return inspect_music_track(track_id, path), duration_s
 
 
 def _resolve_phone_sound_effect(sfx: Any) -> Any:
@@ -11125,7 +11116,8 @@ def _run_phone_subtitled_job(
                     extra_offset_s += float(extra_binding.original.duration_s)
             # KRI-1562: what each talking take says, in its own source seconds (never the caption
             # lines, which a creator can delete), so a song under the edit ducks on the words
-            # wherever a cut, an insert or Range later puts them.
+            # wherever a cut, an insert or Range later puts them. A song whose section can't cover
+            # the video refuses the render with `music_section_too_short` (never shortened).
             speech_source_windows: dict[str, Any] | None = None
             talking_music_treatment: dict[str, Any] | None = None
             talking_music_compile: dict[str, Any] = {}
@@ -11152,23 +11144,6 @@ def _run_phone_subtitled_job(
                     talking_music_compile.update(
                         music=talking_bed, speech_source_windows=speech_source_windows
                     )
-
-            def _compile_talking(*args: Any, **kwargs: Any) -> Any:
-                """`compile_phone_subtitled_plan` with the creator's song while its section can
-                cover the video; one that can't is dropped (traced) and the talk still renders."""
-                if talking_music_compile:
-                    try:
-                        return compile_phone_subtitled_plan(
-                            *args, **kwargs, **talking_music_compile
-                        )
-                    except UnsupportedPhonePlan as exc:
-                        if exc.reason != "music_section_too_short":
-                            raise
-                        record_pipeline_event(
-                            "phone", "talking_music_dropped", {"reason": exc.reason}
-                        )
-                        talking_music_compile.clear()
-                return compile_phone_subtitled_plan(*args, **kwargs)
 
             # KRI-1015: the review says when the captions were translated -- the spoken language
             # (a language Nova names, never a whisper guess) when the final one differs from it.
@@ -11712,7 +11687,7 @@ def _run_phone_subtitled_job(
                 # Reserve the compiled caption lane before fitting titles and
                 # closing text. The final recipe reuses this resolved look.
                 reserved = _inserted(cues, (), None, cutaways)
-                _compile_talking(
+                compile_phone_subtitled_plan(
                     speaker_bindings,
                     caption_cues=reserved.cues,
                     caption_style=caption_style,
@@ -11723,6 +11698,7 @@ def _run_phone_subtitled_job(
                     **extra_keep_compile,
                     **({"inserts": inserts} if inserts else {}),
                     **framed_compile,
+                    **talking_music_compile,
                 )
                 if settings.title_look_enabled and title_rows and protected_caption_avoid is None:
                     # Item 20: her title keeps clear of the captions as the recipe draws them.
@@ -11792,7 +11768,7 @@ def _run_phone_subtitled_job(
                 moved = _inserted(
                     cues, title_rows + spoken_text_rows + closing_text_rows, None, cutaways
                 )
-                recipe = _compile_talking(
+                recipe = compile_phone_subtitled_plan(
                     speaker_bindings,
                     caption_cues=moved.cues,
                     caption_style=caption_style,
@@ -11810,6 +11786,7 @@ def _run_phone_subtitled_job(
                     **({"inserts": inserts} if inserts else {}),
                     **_closing_card_compile(closing_card_spec),
                     **framed_compile,
+                    **talking_music_compile,
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -12657,7 +12634,7 @@ def _run_phone_subtitled_job(
                     for row, updated in zip(text_rows, styled, strict=True):
                         row.update(updated)
                     moved = _inserted(cues, text_rows, lanes, cutaways)
-                    return _compile_talking(
+                    return compile_phone_subtitled_plan(
                         speaker_bindings,
                         caption_cues=moved.cues,
                         caption_style=caption_style,
@@ -12676,6 +12653,7 @@ def _run_phone_subtitled_job(
                         **({"inserts": inserts} if inserts else {}),
                         **_closing_card_compile(closing_card_spec),
                         **framed_compile,
+                        **talking_music_compile,
                     )
 
                 if spoken_text_rows:

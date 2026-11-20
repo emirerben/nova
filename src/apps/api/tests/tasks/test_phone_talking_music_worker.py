@@ -7,7 +7,7 @@ in: the persisted treatment read (`_persisted_music_treatment`) and the catalog 
 Failure modes: F2 a bed without a persisted treatment (KRI-20); F11 windows from the
 transcript, not the captions; F14 a render that forgets the speech windows or the creator's
 choice on the variant; F1 flag off changes the render; F5 a section too short for the video
-fails the whole talk instead of dropping the song.
+must be refused in words, never shortened or exceeded.
 """
 
 from __future__ import annotations
@@ -88,11 +88,27 @@ def test_flag_off_renders_and_stores_exactly_what_it_did_before(monkeypatch):
     }
 
 
-def test_a_section_too_short_for_the_video_drops_the_song_not_the_talk(monkeypatch):
+def test_a_section_too_short_for_the_video_is_refused_never_cut_short(monkeypatch):
+    from unittest.mock import Mock
+
+    fail = Mock(return_value=True)
+    monkeypatch.setattr(gb, "_fail_job", fail)
+    monkeypatch.setattr(gb, "mark_failed_phase", Mock())
+    job, _snapshot, _session, _binding = _setup_subtitled(
+        monkeypatch, transcript_words=_words(*WORDS)
+    )
+    monkeypatch.setattr(gb.settings, "talking_music_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [*gb.settings.phone_render_verified_features, "musicBed", "speechDuck"],
+    )
     short = {**TREATMENT, "section_start_s": 10.0, "section_end_s": 10.05}
-    recipe, variant = _run(monkeypatch, flag=True, treatment=short)
-    assert not any(track.role == "music" for track in recipe.tracks)
-    assert "smart_music_treatment" not in variant
+    monkeypatch.setattr(gb, "_persisted_music_treatment", lambda **_: short)
+    monkeypatch.setattr(gb, "_pin_catalog_music", _pin)
+    gb._run_generative_job(str(job.id))
+    assert job.status != "awaiting_device"
+    assert "too short to play under this whole video" in str(fail.call_args)
 
 
 # --- F12: a Voiceover job's matched bed ducks only for an approving build at protocol 53 ---
