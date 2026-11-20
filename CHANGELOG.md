@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.36.0] - 2026-11-20
+
+### Changed
+- fix(ios): preview speech montages with account-aware branding (#2337) <!-- release-pr: 2337 -->
+
 ## [0.89.35.0] - 2026-11-20
 
 ### Changed
