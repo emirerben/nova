@@ -4052,3 +4052,13 @@ entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STR
 **Not done:** making the tests faster. They are off the critical path now, and `test_pr_evidence.py` needs real git repos for what it proves.
 **Reversal condition:** a PR merged with a red `ci-selftests` job, or suites acting on a wrong selection in a way that costs more than the 5 minutes.
 **Guards:** `scripts/ci/test_select_tests.py` (`SelfTestWiringTests`, `test_lint_gate_fails_unless_the_ci_self_tests_passed`).
+
+## [2026-11-20] API tests run as three shards packed by measured file time (KRI-1544)
+
+**Context:** on a PR that starts no Mac, the API suite sets the wait (about 27 of 32 minutes, run 44594847821). It ran as two shards split by file position. Four shards by position were tried on 2026-11-19 (#2389) and reverted the same day after a slow test reached its 60 s timeout on an unrelated PR.
+**Decision:** three shards. Files are packed longest first by seconds recorded in `scripts/ci/api-test-timings.json`; each shard passes its files to pytest in path order; xdist stays in its default `load` mode.
+**Evidence:** side-by-side runs on throwaway branches, five repeats per arm (44651481740, 44664494076): slowest shard job 24.6 min before, 18.3 min after (median); tests above 45 s: 2 samples before, 2 after; none at 60 s; no failure the old layout does not have.
+**Found on the way:** the first three-shard arm split `test_slide_post_delivery_postgres.py` across two workers and its tests raced (3 of 5 repeats). Fixed at the source with a cross-worker lock (KRI-1545) before this change. `--dist loadfile` was measured as the alternative and rejected: one test ran at a median of 53 s against 60 s.
+**Gap:** the timings are a snapshot. A new heavy file weighs 0.5 s until someone refreshes them, so the shards drift apart; `test_real_suite_shards_carry_about_the_same_measured_time` checks the packing, not the freshness.
+**Reversal condition:** timeouts or new cross-test races on unrelated PRs that trace to the layout. Set `SHARD_COUNT = 2` and the matrix to `[0, 1]`; the packing works for any count.
+**Guards:** `scripts/ci/test_api_tests.py` (failure modes listed in its docstring), `scripts/ci/test_api_test_timings.py`.
