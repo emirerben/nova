@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.38.0] - 2026-11-20
+
+### Changed
+- ci: run the Beat health check after every CI run and deploy, not only on GitHub's schedule (KRI-1553) (#2410) <!-- release-pr: 2410 -->
+
 ## [0.89.37.0] - 2026-11-20
 
 ### Changed
