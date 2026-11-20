@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.46.0] - 2026-11-20
+
+### Changed
+- Fix account erasure with saved job clips (KRI-55) (#2419) <!-- release-pr: 2419 -->
+
 ## [0.89.45.0] - 2026-11-20
 
 ### Changed
