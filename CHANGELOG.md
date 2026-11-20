@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.34.0] - 2026-11-20
+
+### Changed
+- test(ios): wait for caption switch edits instead of reading them right after the tap (KRI-1538) (#2404) <!-- release-pr: 2404 -->
+
 ## [0.89.33.0] - 2026-11-20
 
 ### Changed
