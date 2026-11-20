@@ -245,3 +245,25 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/ci/select-tests.py gate ios ios-tests
+
+  # KRI-1549: a red scheduled run opens one `nightly-red` issue naming the
+  # failed jobs and tests (or comments on the open one); the next green
+  # scheduled run closes it. `needs` lists every other job so this runs last;
+  # test_nightly_alert.py holds that and the schedule-only condition.
+  nightly-alert:
+    if: always() && github.event_name == 'schedule'
+    needs: [changes, ios-tests, build-and-test]
+    runs-on: ubuntu-latest
+    # Reads a few job logs and makes three or four API calls.
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open, update or close the nightly-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_ALERT_ASSIGNEES: ${{ vars.NIGHTLY_ALERT_ASSIGNEES || github.repository_owner }}
+        run: python3 scripts/ci/nightly-alert.py
