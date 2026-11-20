@@ -6229,6 +6229,13 @@ def _run_phone_voiceover_montage_job(
             "original_audio_level": float(recipe.audio.original_volume),
             "ok": False,
         }
+        if voice_windows is not None:
+            # KRI-1562: a later cut Save re-lays the bed's duck from these.
+            from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+                speech_source_windows_json,
+            )
+
+            new_entry["speech_source_windows"] = speech_source_windows_json(voice_windows)
         if timed_receipt is not None:
             from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
                 TIMED_CARD_RECEIPT_FIELD,

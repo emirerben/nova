@@ -828,6 +828,28 @@ def speech_windows_on_timeline(
     return [SpeechWindow(start=start, end=end) for start, end in merged]
 
 
+def with_speech_windows(
+    recipe: EditRecipeV2, source_windows: SpeechSourceWindows | None
+) -> EditRecipeV2:
+    """``recipe`` with its bed's speech windows re-laid on the clips it plays now (KRI-1562).
+
+    A patching Save (a Voiceover cut) moves, shortens or lengthens the clips the windows were
+    mapped from. ``None`` (the variant stored none) or no music-role track returns ``recipe``
+    itself, and so does a re-lay that changes nothing.
+    """
+    if source_windows is None or not any(track.role == "music" for track in recipe.tracks):
+        return recipe
+    windows = speech_windows_on_timeline(recipe.tracks, source_windows, recipe.audio.mute_windows)
+    if windows == recipe.audio.speech_windows:
+        return recipe
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        audio=recipe.audio.model_copy(update={"speech_windows": windows}),
+        required_capabilities=set(recipe.required_capabilities) - {"speechDuck"},
+    )
+    return EditRecipeV2(**fields)
+
+
 class PhoneNarrationBed(BaseModel):
     """A resolved, immutable voiceover receipt ready to compile into a phone
     recipe's narration audio track (KRI-132).

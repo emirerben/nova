@@ -54,6 +54,7 @@ from app.pipeline.phone_recipe_shared import (
     timeline_end_s,
     with_color_moments,
     with_drawings,
+    with_speech_windows,
 )
 from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
@@ -2493,6 +2494,10 @@ def _compile_voiceover_montage_editor_commit(
                 variant, previous.recipe, prep.get("landscape_fit_override")
             ),
             visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
+        )
+        # KRI-1562: a longer cut plays more of the voice; the bed must duck under it too.
+        recipe = with_speech_windows(
+            recipe, parse_speech_source_windows(variant.get("speech_source_windows"))
         )
     fit_override = prep.get("landscape_fit_override")
     if fit_override is not None:

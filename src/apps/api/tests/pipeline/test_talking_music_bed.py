@@ -388,3 +388,32 @@ def test_an_authored_save_keeps_the_bed_ducked_on_the_clips_it_lays_out():
     assert bed.clips[0].source_asset_id == "music-song-1"
     assert _windows(recipe) == [(0.5, 1.5)]
     assert "speechDuck" in recipe.required_capabilities
+
+
+# --- F17: a Voiceover cut Save that lengthens the voice ducks the bed under all of it -----------
+
+
+def test_a_longer_voiceover_cut_re_lays_the_duck_over_the_voice_it_regains(monkeypatch):
+    from app.config import settings
+    from app.pipeline.phone_recipe_shared import with_speech_windows
+    from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
+    from app.services.phone_voiceover_timeline import voiceover_ai_timeline
+    from tests.pipeline.test_phone_voiceover_cut import _VERIFIED
+
+    monkeypatch.setattr(settings, "phone_render_verified_features", [*_VERIFIED, "speechDuck"])
+    windows = {"voiceover-item-1": ((0.0, 20.0),)}
+    recipe = _voiceover(windows=windows)  # 11.4 s of video, so 11.4 s of a 20 s voice
+    _decision, bindings = voiceover_fixture()
+    pool = [binding.proxy_path for binding in bindings]
+    slots = voiceover_ai_timeline(recipe, list(bindings), pool)["slots"]
+    slots[-1]["duration_s"] += 4.0
+    longer = replace_voiceover_cut(
+        recipe, archetype="voiceover", slots=slots, bindings=bindings, pool=pool
+    )
+    voice = next(track for track in longer.tracks if track.id == "narration").clips[0]
+    voice_end = voice.timeline_start + voice.source_duration
+    assert voice_end == pytest.approx(15.4)
+    assert longer.audio.speech_windows[-1].end < voice_end - 1  # the pinned windows lag
+    relaid = with_speech_windows(longer, windows)
+    assert relaid.audio.speech_windows[-1].end == pytest.approx(voice_end)
+    assert with_speech_windows(recipe, windows) is recipe
