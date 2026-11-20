@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.42.0] - 2026-11-20
+
+### Changed
+- Disclose Anthropic edit chat and add iPhone support for release (#2412) <!-- release-pr: 2412 -->
+
 ## [0.89.41.0] - 2026-11-20
 
 ### Changed
