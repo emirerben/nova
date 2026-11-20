@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.31.0] - 2026-11-20
+
+### Changed
+- ci: run the CI scripts' own tests beside the suites, not in front of them (KRI-1543) (#2402) <!-- release-pr: 2402 -->
+
 ## [0.89.30.0] - 2026-11-20
 
 ### Changed
