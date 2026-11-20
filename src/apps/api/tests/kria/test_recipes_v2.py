@@ -345,8 +345,8 @@ def _speech_duck_status():
     return SimpleNamespace(request=SimpleNamespace(recipe=recipe))
 
 
-@pytest.mark.parametrize(("protocol", "allowed"), [(None, False), (52, False), (53, True)])
-def test_builds_below_protocol_53_are_told_to_update(protocol, allowed):
+@pytest.mark.parametrize(("delta", "allowed"), [(None, False), (-1, False), (0, True)])
+def test_builds_below_the_speech_duck_protocol_are_told_to_update(delta, allowed):
     from app.routes import device_render
     from app.services.client_protocol import (
         SPEECH_DUCK_PROTOCOL,
@@ -354,7 +354,7 @@ def test_builds_below_protocol_53_are_told_to_update(protocol, allowed):
         set_client_protocol,
     )
 
-    assert SPEECH_DUCK_PROTOCOL == 53
+    protocol = None if delta is None else SPEECH_DUCK_PROTOCOL + delta
     try:
         set_client_protocol(protocol)
         detail = device_render._client_update_detail(
@@ -368,7 +368,7 @@ def test_builds_below_protocol_53_are_told_to_update(protocol, allowed):
         assert detail == {
             "code": "client_update_required",
             "feature": "speech_duck",
-            "minimum_client_protocol": 53,
+            "minimum_client_protocol": SPEECH_DUCK_PROTOCOL,
         }
 
 
