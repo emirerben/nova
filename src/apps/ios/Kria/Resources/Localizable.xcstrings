@@ -30474,6 +30474,22 @@
         }
       }
     },
+    "Remove empty ending" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leeres Ende entfernen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Boş son kısmı kaldır"
+          }
+        }
+      }
+    },
     "Remove split" : {
       "localizations" : {
         "de" : {

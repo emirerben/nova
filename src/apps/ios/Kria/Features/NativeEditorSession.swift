@@ -136,6 +136,8 @@ enum EditorOpenIntent { case warm, open }
                 applyLiveSongVolume()
                 return
             }
+            if let section = pendingDividerLayout, sourcePreviewSettled, previewBuiltDocument == oldValue,
+               !splitDragRefusedInPlace, applyDividerPreview(section) { return }
             scheduleSourcePreviewUpdate()
         }
     }
@@ -1743,6 +1745,7 @@ enum EditorOpenIntent { case warm, open }
     private var timelinePinching = false
     private var activeTrim: ActiveTrim?
     private var transactionBaseline: EditorDocument?
+    private var pendingDividerLayout: EditorSplitScreenSection?
     private var splitDividerDrag: (sectionID: String, upper: Int, lower: Int, active: [Int], weights: [Double], ownsTransaction: Bool)?
     private var splitDragRefusedInPlace = false
     /// KRI-1419: adds still uploading, by placement id. Their slots are in the document under `clipIndex`, a provisional
@@ -4992,6 +4995,26 @@ enum EditorOpenIntent { case warm, open }
         }
         try Task.checkCancellation()
         return items.indices.map { (items[$0].key, results[$0] ?? .failure(CancellationError())) }
+    }
+
+    private func applyDividerPreview(_ section: EditorSplitScreenSection) -> Bool {
+        guard retainedPreview == nil, pendingText == nil, let preview = sourcePreview,
+              player?.currentItem === preview.preview.playerItem,
+              let index = preview.recipe.splitScreenSections.firstIndex(where: { $0.id == section.id }) else { return false }
+        let snapshot = preview.exportSnapshot()
+        var recipe = snapshot.recipe
+        recipe.splitScreenSections[index].panelWeights = section.panelWeights
+        sourcePreviewTask?.cancel()
+        sourcePreviewSequence += 1
+        let ticket = beginPreviewWork()
+        let program = NativeEditorRenderProgram(recipe: recipe, assetURLs: snapshot.assetURLs)
+        guard updatePreviewInPlace(preview, program: program, ticket: ticket) else { return false }
+        previewBuiltDocument = document
+        sourcePreviewSettledSequence = sourcePreviewSequence
+        previewDisplayTicket = ticket
+        previewWork.waitForFrame(ticket)
+        positionPreview(to: currentTime)
+        return true
     }
 
     private func scheduleSourcePreviewUpdate() {
@@ -12159,7 +12182,13 @@ extension NativeEditorSession {
               let index = document.splitScreenSections.firstIndex(where: { $0.id == drag.sectionID }) else { return }
         let weights = NativeSplitPanelLayout.draggedWeights(drag.weights, between: drag.upper, and: drag.lower, active: drag.active,
             gutter: document.splitScreenSections[index].gutter, deltaFraction: deltaFraction)
-        transactDocument(section: .timeline) { $0.splitScreenSections[index].panelWeights = weights }
+        guard weights != document.splitScreenSections[index].panelWeights else { return }
+        var section = document.splitScreenSections[index]
+        section.panelWeights = weights
+        pendingDividerLayout = section
+        document.splitScreenSections[index] = section
+        pendingDividerLayout = nil
+        refreshDirtyState()
     }
 
     func endSplitDividerDrag() {
@@ -12669,6 +12698,56 @@ extension NativeEditorSession {
         let target = delta < 0 ? first - 1 : last + 1
         guard document.clips.indices.contains(target) else { return }
         transactDocument(section: .timeline) { $0.clips = NativeEditorInteraction.reorderedSlots($0.clips, from: first, to: target) }
+    }
+
+    func occupiedSplitEnd(sectionID: String) -> Double? {
+        document.clips.filter { !$0.removed && $0.splitSectionID == sectionID }
+            .map { $0.splitOffsetS + ($0.durationS ?? 0) }.max()
+    }
+
+    func trimEmptySplitEnd(sectionID: String) {
+        guard canEditSplitScreen, let end = occupiedSplitEnd(sectionID: sectionID),
+              let index = document.splitScreenSections.firstIndex(where: { $0.id == sectionID }),
+              end < document.splitScreenSections[index].durationS else { return }
+        transactDocument(section: .timeline) { $0.splitScreenSections[index].durationS = end }
+    }
+
+    func dropSplitClip(_ clipID: UUID, panel: Int, travel: Double) {
+        guard canEditSplitScreen, let index = clipSlotIndex(clipID.uuidString) else { return }
+        let clip = document.clips[index]
+        guard let id = clip.splitSectionID, let sourcePanel = clip.splitPanelIndex, let duration = clip.durationS,
+              let section = document.splitScreenSections.first(where: { $0.id == id }),
+              (0..<section.panelCount).contains(panel) else { return }
+        let start = min(max(0, clip.splitOffsetS + travel), section.durationS - duration)
+        let center = start + duration / 2
+        let peers = document.clips.indices.filter {
+            $0 != index && !document.clips[$0].removed && document.clips[$0].splitSectionID == id && document.clips[$0].splitPanelIndex == panel
+        }
+        let target = peers.first {
+            let slot = document.clips[$0]
+            return slot.splitOffsetS <= center && center < slot.splitOffsetS + (slot.durationS ?? 0)
+        }
+        transactDocument(section: .timeline) { next in
+            var destination = start
+            if let target {
+                let other = next.clips[target]
+                let otherDuration = other.durationS ?? 0
+                destination = other.splitOffsetS
+                var otherStart = clip.splitOffsetS
+                if sourcePanel == panel {
+                    if destination > otherStart { destination += otherDuration - duration }
+                    else { otherStart += duration - otherDuration }
+                }
+                next.clips[target].setSplitMembership(sectionID: id, panelIndex: sourcePanel, offset: otherStart)
+            } else {
+                let left = peers.map { next.clips[$0] }.filter { $0.splitOffsetS < center }
+                    .map { $0.splitOffsetS + ($0.durationS ?? 0) }.max() ?? 0
+                let right = peers.map { next.clips[$0].splitOffsetS }.filter { $0 >= center }.min() ?? section.durationS
+                guard right - left >= duration - 0.000001 else { return }
+                destination = min(max(left, start), right - duration)
+            }
+            next.clips[index].setSplitMembership(sectionID: id, panelIndex: panel, offset: destination)
+        }
     }
 
     func moveSelectedSplitScreenClip(by delta: Int) {

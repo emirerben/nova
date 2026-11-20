@@ -907,6 +907,23 @@ enum NativeEditorUITestFixtures {
                         "editor_timeline_mode": .string("authored"),
                         "editor_capabilities": splitCapabilities
                      ])
+        var projectSavedSlots = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-empty-ending")
+        if projectSavedSlots {
+            var document = EditorDocument(snapshot: value.serverSnapshot)
+            let source = document.clips[0]
+            document.splitScreenSections = [.init(id: "split", durationS: 13.566667, panelCount: 3)]
+            let windows: [(panel: Int, start: Double, duration: Double)] = [
+                (0, 0, 10), (2, 0, 10), (1, 0, 14.0 / 3), (1, 14.0 / 3, 16.0 / 3)
+            ]
+            document.clips = windows.enumerated().map { index, window in
+                var slot = source
+                slot.id = id(1500 + index).uuidString
+                slot.durationS = window.duration
+                slot.setSplitMembership(sectionID: "split", panelIndex: window.panel, offset: window.start)
+                return slot
+            }
+            value.serverSnapshot = document.encodeSnapshot()
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-global-layers") {
             let label = text(1299, content: "GLOBAL", x: 0.5, y: 0.2)
             var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
@@ -937,22 +954,25 @@ enum NativeEditorUITestFixtures {
                let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
                 var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
                 var sections = payload["sections"]?.objectValue ?? [:]
+                projectSavedSlots = true
                 for (key, lane) in saved { sections[key] = lane }
                 payload["sections"] = .object(sections)
                 value.serverSnapshot["editor_payload"] = .object(payload)
-                let document = EditorDocument(snapshot: value.serverSnapshot)
-                let projection = NativeEditorInteraction.timelineProjection(
-                    slots: document.clips, carousel: document.carouselMoment, splitSections: document.splitScreenSections)
-                value.clips = projection.baseClipWindows.map { window in
-                    let slot = document.clips[window.sourceIndex]
-                    let clipID = slot.id.flatMap(UUID.init(uuidString:)) ?? clips.first { $0.slotID == slot.id }?.id ?? id(1200 + window.sourceIndex)
-                    let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? clipID
-                    return EditorClip(id: clipID, assetID: assetID, sourceClipIndex: slot.clipIndex,
-                        start: window.start, end: window.end, trimIn: slot.inS,
-                        trimOut: slot.raw["source_end_s"]?.numberValue ?? slot.inS + (slot.durationS ?? 0),
-                        sourceDuration: slot.raw["source_duration_s"]?.numberValue,
-                        muted: slot.raw["muted"] == .bool(true), slotID: slot.id)
-                }
+            }
+        }
+        if projectSavedSlots {
+            let document = EditorDocument(snapshot: value.serverSnapshot)
+            let projection = NativeEditorInteraction.timelineProjection(
+                slots: document.clips, carousel: document.carouselMoment, splitSections: document.splitScreenSections)
+            value.clips = projection.baseClipWindows.map { window in
+                let slot = document.clips[window.sourceIndex]
+                let clipID = slot.id.flatMap(UUID.init(uuidString:)) ?? clips.first { $0.slotID == slot.id }?.id ?? id(1200 + window.sourceIndex)
+                let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? clipID
+                return EditorClip(id: clipID, assetID: assetID, sourceClipIndex: slot.clipIndex,
+                    start: window.start, end: window.end, trimIn: slot.inS,
+                    trimOut: slot.raw["source_end_s"]?.numberValue ?? slot.inS + (slot.durationS ?? 0),
+                    sourceDuration: slot.raw["source_duration_s"]?.numberValue,
+                    muted: slot.raw["muted"] == .bool(true), slotID: slot.id)
             }
         }
         return value
