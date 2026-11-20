@@ -42,6 +42,37 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         XCTAssertEqual(try members(), before.mapValues { 1 - $0 })
     }
 
+    func testUnequalSwapUsesAvailableRoomAndUndoesInOneStep() throws {
+        let app = launch(reset: true, fixture: "-ui-testing-editor-split-swap-room")
+        let before = try dropTopClipOntoBottom(in: app)
+        var expected = try XCTUnwrap(before["timeline_slots"] as? [[String: Any]])
+        XCTAssertEqual(expected.count, 3)
+        expected[0]["split_panel_index"] = 1
+        expected[1]["split_panel_index"] = 0
+        XCTAssertEqual(try canonical(sections(app)["timeline_slots"]), try canonical(expected))
+        app.buttons["native-editor-undo"].tap()
+        XCTAssertEqual(try canonical(sections(app)), try canonical(before))
+    }
+
+    func testUnequalSwapBlockedByNeighborExplainsAndPreservesEdit() throws {
+        let app = launch(reset: true, fixture: "-ui-testing-editor-split-swap-blocked")
+        let before = try dropTopClipOntoBottom(in: app)
+        let alert = app.alerts["This clip won’t fit here."]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        alert.buttons["OK"].tap()
+        XCTAssertEqual(try canonical(sections(app)), try canonical(before))
+        XCTAssertFalse(app.buttons["native-editor-undo"].isEnabled)
+    }
+
+    private func dropTopClipOntoBottom(in app: XCUIApplication) throws -> [String: Any] {
+        let top = clip(1, in: app), bottom = clip(2, in: app)
+        XCTAssertTrue(top.waitForExistence(timeout: 30))
+        let before = try sections(app)
+        let start = top.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: bottom.frame.midY - top.frame.midY)))
+        return before
+    }
+
     func testRemoveEmptyEndingKeepsFootageAndCanBeUndone() throws {
         let app = launch(reset: true, emptyEnding: true)
         XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
@@ -377,11 +408,12 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
                        "Global text, green overlay and magenta drawing keep independently authored canvas positions")
     }
 
-    private func launch(reset: Bool, globalLayers: Bool = false, emptyEnding: Bool = false) -> XCUIApplication {
+    private func launch(reset: Bool, globalLayers: Bool = false, emptyEnding: Bool = false, fixture: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen",
             "-ui-testing-editor-split-persistence", "-ui-testing-editor-document-snapshot",
             "-ui-testing-editor-live-preview", "-ui-testing-editor-color-cuts"]
+        if let fixture { app.launchArguments.append(fixture) }
         if emptyEnding { app.launchArguments.append("-ui-testing-editor-split-empty-ending") }
         if globalLayers { app.launchArguments.append("-ui-testing-editor-split-global-layers") }
         if reset { app.launchArguments.append("-ui-testing-editor-split-persistence-reset") }

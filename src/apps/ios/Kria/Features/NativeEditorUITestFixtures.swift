@@ -907,14 +907,21 @@ enum NativeEditorUITestFixtures {
                         "editor_timeline_mode": .string("authored"),
                         "editor_capabilities": splitCapabilities
                      ])
-        var projectSavedSlots = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-empty-ending")
+        let arguments = ProcessInfo.processInfo.arguments
+        let swapFits = arguments.contains("-ui-testing-editor-split-swap-room")
+        let swapBlocked = arguments.contains("-ui-testing-editor-split-swap-blocked")
+        var projectSavedSlots = arguments.contains("-ui-testing-editor-split-empty-ending") || swapFits || swapBlocked
         if projectSavedSlots {
             var document = EditorDocument(snapshot: value.serverSnapshot)
             let source = document.clips[0]
-            document.splitScreenSections = [.init(id: "split", durationS: 13.566667, panelCount: 3)]
-            let windows: [(panel: Int, start: Double, duration: Double)] = [
-                (0, 0, 10), (2, 0, 10), (1, 0, 14.0 / 3), (1, 14.0 / 3, 16.0 / 3)
-            ]
+            let windows: [(panel: Int, start: Double, duration: Double)]
+            if swapFits || swapBlocked {
+                document.splitScreenSections = [.init(id: "split", durationS: 5, panelCount: 2)]
+                windows = [(0, 0, 3), (1, 0, 2), (1, swapFits ? 3 : 2, 2)]
+            } else {
+                document.splitScreenSections = [.init(id: "split", durationS: 13.566667, panelCount: 3)]
+                windows = [(0, 0, 10), (2, 0, 10), (1, 0, 14.0 / 3), (1, 14.0 / 3, 16.0 / 3)]
+            }
             document.clips = windows.enumerated().map { index, window in
                 var slot = source
                 slot.id = id(1500 + index).uuidString
