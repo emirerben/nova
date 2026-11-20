@@ -4,7 +4,11 @@ name: iOS
 # PR coverage shares one build with selected native journeys in CI.
 on:
   schedule:
-    - cron: "23 3 * * *"
+    # Nightly, for the UK night. GitHub starts this repo's scheduled runs 7 to 9
+    # hours after the time written here (2026-11: 03:23 UTC started at 10:39-12:04),
+    # so the time is set that much early. If the delay goes away the run starts in
+    # the evening. Re-tune rule: docs/runbooks/change-based-ci.md (KRI-1552).
+    - cron: "23 18 * * *"
   workflow_dispatch:
     inputs:
       benchmark_ui_group:

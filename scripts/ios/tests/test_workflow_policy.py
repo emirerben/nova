@@ -218,9 +218,17 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("github.ref == 'refs/heads/main'", release)
         self.assertIn("github.event_name != 'push'", full)
         self.assertIn("KRIA_IOS_UI_GROUPS: full", full)
-        self.assertIn('cron: "23 3 * * *"', self.workflow)
+        # 18:23 UTC, not night: GitHub starts this repo's schedules 7-9 hours
+        # late, so this is what makes the run land in the UK night (KRI-1552).
+        self.assertIn('cron: "23 18 * * *"', self.workflow)
         self.assertNotIn("Renew the UI build receipt", self.workflow)
         self.assertEqual(self.workflow.count("gh workflow run testflight.yml"), 1)
+
+    def test_the_two_nightlies_are_scheduled_an_hour_apart_ci_first(self):
+        # Together they can ask for 8 Macs against a limit of 5, so the journey
+        # nightly goes first and the UI nightly follows (KRI-1552).
+        self.assertIn('cron: "23 17 * * *"', CI_WORKFLOW.read_text())
+        self.assertIn('cron: "23 18 * * *"', self.workflow)
 
     def test_testflight_skips_a_commit_an_earlier_upload_already_contains(self):
         testflight = TESTFLIGHT_WORKFLOW.read_text()

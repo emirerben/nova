@@ -191,9 +191,26 @@ fixture bundle is downloaded and fails the leg unless `journey-offline` (and
 `journey-library`, when selected) succeeded, so the Linux journeys are no
 longer in front of the Mac queue. The stable `build-and-test` gate requires every leg and the contract
 job to pass when iOS is selected. Main uses one iOS build/unit/smoke lane and dispatches TestFlight after those checks
-pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
-native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither
-regression path dispatches TestFlight.
+pass. Full iOS regression runs nightly or on manual dispatch; full native
+journeys run nightly or on manual CI dispatch. Neither regression path
+dispatches TestFlight.
+
+The nightlies are meant to run in the UK night. GitHub starts this repo's
+scheduled runs hours after the time in the workflow, and the delay moves: about
+5 hours in mid-October 2026, 7 to 9 hours in mid-November. The schedules are
+therefore written early (KRI-1552): `ci.yml` at 17:23 UTC and `ios.yml` at
+18:23 UTC, which today start at about 00:00 to 02:00 and 01:30 to 03:00 UTC. The
+iOS nightly then runs for about two hours. To see when they really start:
+
+```sh
+gh api "repos/{owner}/{repo}/actions/workflows/ios.yml/runs?event=schedule&per_page=7" \
+  --jq '.workflow_runs[] | .created_at'
+```
+
+Re-tune both times together, keeping CI one hour ahead of iOS, when a week of
+iOS nightlies starts before 22:00 or after 05:00 UTC. The guard is
+`test_the_two_nightlies_are_scheduled_an_hour_apart_ci_first` in
+`scripts/ios/tests/test_workflow_policy.py`.
 
 Test registries are derived, not listed (KRI-1380). A journey API test declares
 `pytestmark = pytest.mark.journey("<journey-id>")` at module level (add

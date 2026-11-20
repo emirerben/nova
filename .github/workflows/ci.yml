@@ -5,7 +5,11 @@ name: CI
 # Required check names stay stable and validate intentional skips explicitly.
 on:
   schedule:
-    - cron: "23 2 * * *"
+    # Nightly, for the UK night. GitHub starts this repo's scheduled runs 7 to 9
+    # hours after the time written here (2026-11: 02:23 UTC started at 09:05-10:49),
+    # so the time is set that much early. If the delay goes away the run starts in
+    # the evening. Re-tune rule: docs/runbooks/change-based-ci.md (KRI-1552).
+    - cron: "23 17 * * *"
   workflow_dispatch:
   pull_request:
     branches: [main, dev]
