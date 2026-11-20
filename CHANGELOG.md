@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.29.0] - 2026-11-20
+
+### Changed
+- test(kria): score synthetic iPhone exports offline (#2400) <!-- release-pr: 2400 -->
+
 ## [0.89.28.0] - 2026-11-19
 
 ### Changed
