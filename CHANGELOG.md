@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.30.0] - 2026-11-20
+
+### Changed
+- fix(ios): make timeline trim handles easier to grab (#2397) <!-- release-pr: 2397 -->
+
 ## [0.89.29.0] - 2026-11-20
 
 ### Changed
