@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.33.0] - 2026-11-20
+
+### Changed
+- test(api): slide-post delivery tests hold a cross-worker lock (KRI-1545) (#2405) <!-- release-pr: 2405 -->
+
 ## [0.89.32.0] - 2026-11-20
 
 ### Fixed
