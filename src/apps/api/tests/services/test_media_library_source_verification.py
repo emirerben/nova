@@ -170,6 +170,28 @@ def test_audio_upload_requires_only_a_valid_audio_stream(monkeypatch, streams, d
     assert error.value.status_code == 422
 
 
+@pytest.mark.parametrize("content_type", ["audio/mp3", "audio/wave", "audio/webm", "audio/ogg"])
+def test_project_audio_can_be_registered_in_saved_uploads(monkeypatch, content_type):
+    body = b"project audio bytes"
+    payload = {
+        "kind": "audio",
+        "content_type": content_type,
+        "file_size_bytes": len(body),
+        "upload_contract": {"purpose": "cloud_render_source", "proxy": None},
+    }
+    _install_probe(
+        monkeypatch,
+        body,
+        {"format": {"duration": "10"}, "streams": [{"codec_type": "audio"}]},
+    )
+
+    proof = ingest.verified_source_metadata("song", "7", "audio", payload, legacy=True)
+
+    assert proof["content_type"] == content_type
+    assert proof["generation"] == "7"
+    assert proof["uploaded_sha256"] == hashlib.sha256(body).hexdigest()
+
+
 # Value card: protects=immutability of the verified storage generation; fails_when=object
 # metadata changes after bytes are downloaded and probed; why_new=proves the second metadata
 # read rejects a TOCTOU mutation; seam=none; no_claim=does not cover concurrent cloud writes.

@@ -67,15 +67,20 @@ def test_completion_does_no_media_work_and_replays_the_same_outbox(fixture, monk
 
     dispatch = MagicMock(side_effect=ConnectionError("broker unavailable"))
     monkeypatch.setattr(export_verification.verify_device_export, "apply_async", dispatch)
-    for _ in range(2):
+    for export_ms in (1200, 999):
         response = fixture.client.post(
             f"/me/jobs/{fixture.job.id}/device-render/complete",
             json=body(fixture, attempt),
-            headers={"X-Kria-Client-Protocol": "13"},
+            headers={
+                "X-Kria-Client-Protocol": "13",
+                "X-Kria-Device-Timing": f'{{"export_ms":{export_ms}}}',
+            },
         )
         assert response.status_code == 202, response.text
         assert response.json()["status"] == "checking"
-    pending = device_record(fixture.job, "first")["attempts"][attempt]["verification_task"]
+    reserved = device_record(fixture.job, "first")["attempts"][attempt]
+    assert reserved["device_timing"] == {"export_ms": 1200}
+    pending = reserved["verification_task"]
     assert pending["state"] == "queued"
     assert pending["runs"] == 0
     assert "output_url" not in fixture.job.assembly_plan["variants"][0]

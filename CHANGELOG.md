@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.29.0] - 2026-11-20
+
+### Changed
+- test(kria): score synthetic iPhone exports offline (#2400) <!-- release-pr: 2400 -->
+
+## [0.89.28.0] - 2026-11-19
+
+### Changed
+- test(ios): un-stale five nightly UI tests outdated by #2346 and #2347, and fix two test races (KRI-1538) (#2401) <!-- release-pr: 2401 -->
+
+## [0.89.27.0] - 2026-11-19
+
+### Changed
+- fix(ios): compile on Xcode 27.2 by naming the Task type in the slide paste handler (KRI-1542) (#2399) <!-- release-pr: 2399 -->
+
+## [0.89.26.0] - 2026-11-19
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-11-15 (#2366) <!-- release-pr: 2366 -->
+
+## [0.89.25.0] - 2026-11-19
+
+### Changed
+- test(kria): make the review-sweep test independent of leftover turns and Redis (#2274) <!-- release-pr: 2274 -->
+
+## [0.89.24.0] - 2026-11-19
+
+### Fixed
+- fix(kria): Cusco T2 "list 1": words stamped into a pause go back on their voice; a captions plan reads as planned (KRI-1506, KRI-1507, KRI-1508) (#2374) <!-- release-pr: 2374 -->
+
+## [0.89.23.0] - 2026-11-19
+
+### Changed
+- fix(ios): use the full upload gallery in Split Video (#2398) <!-- release-pr: 2398 -->
+
+## [0.89.22.0] - 2026-11-19
+
+### Changed
+- fix(kria): keep shot directions out of montage text (#2385) <!-- release-pr: 2385 -->
+
+## [0.89.21.0] - 2026-11-19
+
+### Changed
+- Use the same audio policy for song upload and attachment (#2384) <!-- release-pr: 2384 -->
+
+## [0.89.20.0] - 2026-11-19
+
+### Changed
+- fix(ios): let the chat text field handle caret drags (KRI-1279) (#2392) <!-- release-pr: 2392 -->
+
+## [0.89.19.0] - 2026-11-19
+
+### Changed
+- feat(ios): report phone render phase timings (KRI-1516) (#2391) <!-- release-pr: 2391 -->
+
+## [0.89.18.0] - 2026-11-19
+
+### Changed
+- chore(web): remove the web editor; keep landing, legal pages and admin (KRI-1398) (#2305) <!-- release-pr: 2305 -->
+
+## [0.89.17.0] - 2026-11-19
+
+### Changed
+- test(captions): ignore fontconfig cache noise in Arabic sweep test (KRI-1401) (#2301) <!-- release-pr: 2301 -->
+
+## [0.89.16.0] - 2026-11-19
+
+### Changed
+- fix(ci): back to two API shards; four pushed a 53-second test into its 60-second timeout (KRI-1539) (#2395) <!-- release-pr: 2395 -->
+
+## [0.89.15.0] - 2026-11-19
+
+### Changed
+- fix(ci): the CI_MAC_SELECTION rollback also undoes manifest and .env.example narrowing (KRI-1541) (#2394) <!-- release-pr: 2394 -->
+
 ## [0.89.14.0] - 2026-11-19
 
 ### Changed

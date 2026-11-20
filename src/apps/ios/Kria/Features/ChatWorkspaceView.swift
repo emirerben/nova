@@ -216,12 +216,12 @@ private final class DrawerGestureTracking {
     func reset() { previous = nil; latest = nil }
 
     /// Whether a touch began on something that keeps its own sideways drag: a horizontal scroller (a `ScrollView` or
-    /// a paging `TabView`) or the handles of an active text selection. Asking UIKit means a new row or field works
+    /// a paging `TabView`) or an active text input. Asking UIKit means a new row or field works
     /// without remembering to opt out.
     @MainActor static func startsOnOwnDrag(at point: CGPoint) -> Bool {
         let windows = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows }.flatMap { $0 }
         guard let window = windows.first(where: { $0.isKeyWindow }) else { return false }
-        if selectionHandlesContain(point, in: window) { return true }
+        if textInteractionContains(point, in: window) { return true }
         guard var view = window.hitTest(point, with: nil) else { return false }
         while true {
             if let scroll = view as? UIScrollView, scroll.isScrollEnabled,
@@ -233,19 +233,19 @@ private final class DrawerGestureTracking {
         }
     }
 
-    /// A selection's handles hang outside the text view, so a touch within a handle's reach of the field counts.
-    @MainActor private static func selectionHandlesContain(_ point: CGPoint, in window: UIWindow) -> Bool {
-        guard let input = selectingTextInput(in: window) else { return false }
-        return input.convert(input.bounds, to: window).insetBy(dx: -44, dy: -44).contains(point)
+    @MainActor private static func textInteractionContains(_ point: CGPoint, in window: UIWindow) -> Bool {
+        guard let input = focusedTextInput(in: window), let range = input.selectedTextRange else { return false }
+        let bounds = input.convert(input.bounds, to: window)
+        // Only selection handles extend beyond the text field.
+        return (range.isEmpty ? bounds : bounds.insetBy(dx: -44, dy: -44)).contains(point)
     }
 
-    @MainActor private static func selectingTextInput(in view: UIView) -> (UIView & UITextInput)? {
-        if view.isFirstResponder, let input = view as? (UIView & UITextInput),
-           let range = input.selectedTextRange, !range.isEmpty {
+    @MainActor private static func focusedTextInput(in view: UIView) -> (UIView & UITextInput)? {
+        if view.isFirstResponder, let input = view as? (UIView & UITextInput) {
             return input
         }
         for subview in view.subviews {
-            if let found = selectingTextInput(in: subview) { return found }
+            if let found = focusedTextInput(in: subview) { return found }
         }
         return nil
     }

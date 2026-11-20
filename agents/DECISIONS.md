@@ -4030,7 +4030,7 @@ entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STR
 **Also changed:** API fonts and the fixtures Swift tests open by path now select the iPhone unit suite. Before, a PR that changed only such a file did not run the Swift tests that read it.
 **Gap:** the input list is checked by a static scan of the iPhone tree (`test_every_repo_path_the_iphone_tree_names_is_a_declared_native_input`). A path assembled at run time from pieces is invisible to it. A PR that slips through is caught by `main`'s own iOS run after merge, not before.
 **Reversal condition:** a red `main` iOS run traced to a PR the rule gave no Mac. Add the path to `IOS_NATIVE_INPUTS`; if the cause is not a single path, turn the rule off.
-**Kill switch:** repository variable `CI_MAC_SELECTION=full`. No code change, takes effect on the next run.
+**Kill switch:** repository variable `CI_MAC_SELECTION=full`. No code change, takes effect on the next run. It also undoes the journey-manifest and `.env.example` narrowing of KRI-1541 (`selection_rollback` in `scripts/ci/select-tests.py`).
 **Guards:** `scripts/ci/test_select_tests.py` (`test_required_gates_accept_the_skipped_mac_and_reject_a_lost_one`, `test_the_rollback_variable_restores_a_mac_for_every_selected_pr`), `scripts/ci/test_ci_throughput.py` (`test_no_pr_mac_step_hands_python_output_to_the_iphone_tests`, `test_a_pr_gets_a_mac_only_when_an_iphone_input_changed`, `test_journey_gate_accepts_a_skipped_mac_only_when_no_iphone_input_changed`).
 
 ## [2026-11-19] A journey-manifest edit selects the rows it changed, not everything (KRI-1541)
@@ -4040,5 +4040,6 @@ entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STR
 **Kept fail-closed:** a removed row, a change outside `journeys`, duplicate or missing ids, a manifest that does not parse on either side, or a changed id the registry does not know selects everything, as before.
 **Evidence:** replay over the same 897 PR runs: 189 manifest edits touch only Linux rows, 139 a native row, 2 select everything. No Mac on 305 runs (34%) against 216 without this change; 33 Mac failures on those runs, all read, none caused by its PR. Detail: `docs/runbooks/change-based-ci.md`.
 **Gap:** a row edit can move a path from another journey to itself (longest-prefix match). The other journey's row is unchanged, so it is not selected by the edit; running it would not detect the lost path either.
-**Reversal condition:** a regression traced to a manifest edit whose changed rows did not select the journey that would have caught it. Make `manifest_edit` return `None` (everything is selected again).
+**Reversal condition:** a regression traced to a manifest edit whose changed rows did not select the journey that would have caught it.
+**Kill switch:** repository variable `CI_MAC_SELECTION=full` (shared with the Mac rule): every manifest edit and `.env.example` select everything again.
 **Guards:** `scripts/ci/test_select_tests.py` (`ManifestRowTests`, `test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac`, `test_a_native_journey_row_edit_keeps_its_mac_and_its_unit_tests`, `test_removing_a_journey_row_still_selects_everything`, `test_an_unreadable_manifest_still_selects_everything`).

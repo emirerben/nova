@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-08-research-21",
+  "version": "2026-11-15-research-22",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. CONTENT_PLAN_PROMPT_VERSION is a fingerprint of this file, so an edit needs no prompt-version bump.",
   "ideas": [
     {
@@ -430,6 +430,20 @@
         "engagement_rate": 0.034,
         "view_index": 3.7,
         "sampled_at": "2026-11-08"
+      }
+    },
+    {
+      "id": "market-stall-appearance-01",
+      "niche": "founder / product launch",
+      "pillar": "build process behind-the-scenes",
+      "idea": "document your brand's first (or next) day at a pop-up market or street stall — the setup, the opening moment, and the invitation for people nearby to come find you",
+      "hook_pattern": "first day at the [market name] 🔓",
+      "filming_context": "wide shot of the stall setup, then tight on the product display; capture the first-open energy — a padlock being removed, a sign going up, or the first customer approaching; short and energetic, 15-30s",
+      "source": "tiktok:@nermozdemir (2026-11)",
+      "performance": {
+        "engagement_rate": 0.042,
+        "view_index": 3.99,
+        "sampled_at": "2026-11-15"
       }
     }
   ]

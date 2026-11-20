@@ -79,6 +79,7 @@
         "src/apps/api/app/pipeline/transcribe.py",
         "src/apps/api/app/schemas/media_assets.py",
         "src/apps/api/app/routes/media_assets.py",
+        "src/apps/api/app/kria/media_sources.py",
         "src/apps/api/app/services/media_library_ingest.py",
         "src/apps/api/app/services/media_library_analysis.py",
         "src/apps/api/app/services/media_library_projections.py",

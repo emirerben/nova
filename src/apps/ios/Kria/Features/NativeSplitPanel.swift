@@ -1,5 +1,4 @@
 import KriaMediaEngine
-import Photos
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -479,9 +478,8 @@ private struct NativeSplitFillView: View {
 /// other import.
 struct NativeSplitMediaPicker: View {
     enum Tab: String { case gallery = "Gallery", saved = "Saved" }
-    private enum Pick: Hashable { case photo(String), saved(UUID) }
     private typealias Loader = @MainActor () async throws -> URL
-    private typealias Entry = (pick: Pick?, load: Loader)
+    private typealias Entry = (pick: UUID?, load: Loader)
     /// Whether the server opens the library. The tab row is drawn from the first frame and Saved waits for this, so the
     /// grid below never moves under a finger that is already on its way down.
     private enum Library { case checking, available, unavailable }
@@ -494,32 +492,27 @@ struct NativeSplitMediaPicker: View {
     let onAdd: @MainActor (URL) async -> Void
     @State private var tab = Tab.gallery
     @State private var library = Library.checking
-    @State private var adding: Pick?
+    @State private var adding: UUID?
     @State private var savedAssets: [SavedMediaAsset] = []
     @State private var savedLoaded = false
     @State private var savedError: String?
-    @State private var picked: [Pick] = []
+    @State private var picked: [UUID] = []
     @State private var busy = false
-    @State private var photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-    @State private var systemPicks: [PhotosPickerItem] = []
+    @State private var showsGallery = false
+    @State private var galleryPicks: [PhotosPickerItem] = []
+    @State private var fallbackPicks: [PhotosPickerItem] = []
     @State private var showsSystemPicker = false
 
     private var api: any KriaAPIClient { model.uploads.libraryAPI }
     private var working: Bool { busy || session.isAddingClip }
+    private var photoSelectionLimit: Int {
+        multi ? max(0, NativeEditorSession.maxTimelineClips - session.document.clips.count - picked.count) : 1
+    }
     private var hasLibrary: Bool {
         #if DEBUG
         if NativeSplitPickerFixture.isActive { return true }
         #endif
         return api.mediaLibraryOwner != nil
-    }
-    private var addingPhotoID: String? {
-        if case .photo(let id) = adding { return id }
-        return nil
-    }
-    private var pickedPhotoIDs: [String] {
-        var ids: [String] = []
-        for pick in picked { if case .photo(let id) = pick { ids.append(id) } }
-        return ids
     }
 
     var body: some View {
@@ -558,60 +551,50 @@ struct NativeSplitMediaPicker: View {
         }
         .onAppear { session.addClipAlertSuppressed = true }
         .onDisappear { session.addClipAlertSuppressed = false }
-        .task { await requestPhotosIfNeeded() }
         .task { await checkSaved() }
         .task(id: tab) { if tab == .saved { await loadSaved() } }
     }
 
     // MARK: Gallery
 
-    @ViewBuilder private var gallery: some View {
-        #if DEBUG
-        if NativeSplitPickerFixture.isActive {
-            NativeSplitPickerFixtureGrid(disabled: working, adding: addingPhotoID) { id in choose(.photo(id)) }
-        } else {
-            photoGallery
+    private var gallery: some View {
+        Button {
+            Task {
+                galleryPicks = []
+                if await LibraryPhotosPickerSheet.hasFullAccess() { showsGallery = true }
+                else { showsSystemPicker = true }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if working { KriaSpinner(size: 18) } else { Image(systemName: "photo.on.rectangle.angled") }
+                Text(working ? String(localized: "Adding…") : String(localized: "Choose from Photos"))
+            }
+            .frame(maxWidth: .infinity)
         }
-        #else
-        photoGallery
-        #endif
-    }
-
-    @ViewBuilder private var photoGallery: some View {
-        if photoStatus == .authorized || photoStatus == .limited {
-            NativeSplitPhotoGrid(picked: pickedPhotoIDs, showsPicks: multi, disabled: working, adding: addingPhotoID) { id in
-                choose(.photo(id))
+        .buttonStyle(KriaButtonStyle(role: .secondary, size: .large, fullWidth: true))
+        .disabled(working || photoSelectionLimit == 0)
+        .accessibilityIdentifier("native-editor-split-system-picker")
+        .sheet(isPresented: $showsGallery) {
+            LibraryPhotosPickerSheet(
+                heading: String(localized: "Choose photos and videos"), offersSaved: false,
+                selection: $galleryPicks, limit: photoSelectionLimit, filter: .any(of: [.videos, .images]),
+                kinds: [.images, .videos], onRecord: nil, onSwitch: nil, cancel: { showsGallery = false }
+            ) { _ in
+                showsGallery = false
+                addPhotos(galleryPicks)
             }
-        } else {
-            // No library access: the system picker still works without it.
-            Button { showsSystemPicker = true } label: {
-                HStack(spacing: 8) {
-                    if working { KriaSpinner(size: 18) } else { Image(systemName: "photo.on.rectangle.angled") }
-                    Text(working ? String(localized: "Adding…") : String(localized: "Choose from Photos"))
-                }
-                    .kriaType(.button).foregroundStyle(KriaColor.ink)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-                    .background(KriaColor.fill, in: Capsule())
-            }
-            .photosPicker(isPresented: $showsSystemPicker, selection: $systemPicks, maxSelectionCount: multi ? 10 : 1,
-                          selectionBehavior: .ordered, matching: .any(of: [.videos, .images]))
-            .disabled(working)
-            .accessibilityIdentifier("native-editor-split-system-picker")
-            .onChange(of: systemPicks) { _, items in
-                guard !items.isEmpty else { return }
-                systemPicks = []
-                add(items.map { (nil, loader(for: $0)) })
-            }
+        }
+        .photosPicker(isPresented: $showsSystemPicker, selection: $fallbackPicks, maxSelectionCount: max(1, photoSelectionLimit),
+                      selectionBehavior: .ordered, matching: .any(of: [.videos, .images]))
+        .onChange(of: fallbackPicks) { _, items in
+            guard !items.isEmpty else { return }
+            fallbackPicks = []
+            addPhotos(items)
         }
     }
 
-    private func requestPhotosIfNeeded() async {
-        guard photoStatus == .notDetermined else { return }
-        #if DEBUG
-        // A permission alert would swallow the UI tests' taps.
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") { return }
-        #endif
-        photoStatus = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+    private func addPhotos(_ items: [PhotosPickerItem]) {
+        add(picked.map { ($0, loader(for: $0)) } + items.map { (nil, loader(for: $0)) })
     }
 
     // MARK: Saved
@@ -629,8 +612,8 @@ struct NativeSplitMediaPicker: View {
         } else {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 4), spacing: 4) {
                 ForEach(savedAssets) { asset in
-                    let number = picked.firstIndex(of: .saved(asset.id)).map { $0 + 1 }
-                    Button { choose(.saved(asset.id)) } label: {
+                    let number = picked.firstIndex(of: asset.id).map { $0 + 1 }
+                    Button { choose(asset.id) } label: {
                         Color.clear
                             .aspectRatio(1, contentMode: .fit)
                             .overlay { SavedUploadThumbnail(asset: asset, owner: api.mediaLibraryOwner, api: api, size: nil) }
@@ -642,7 +625,7 @@ struct NativeSplitMediaPicker: View {
                     .accessibilityLabel(asset.displayName)
                     .accessibilityAddTraits(number != nil ? .isSelected : [])
                     .accessibilityIdentifier("native-editor-split-saved-tile-\(asset.id)")
-                    .nativeSplitAdding(adding == .saved(asset.id), identifier: "native-editor-split-adding-saved-\(asset.id)")
+                    .nativeSplitAdding(adding == asset.id, identifier: "native-editor-split-adding-saved-\(asset.id)")
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             }
@@ -702,25 +685,17 @@ struct NativeSplitMediaPicker: View {
         }
     }
 
-    private func loader(for pick: Pick) -> Loader {
-        switch pick {
-        case .photo(let id):
-            #if DEBUG
-            if NativeSplitPickerFixture.isActive { return { try await NativeSplitPickerFixture.read() } }
-            #endif
-            return { try await PhotosLibraryAssetExporter().exportFile(localIdentifier: id) }
-        case .saved(let id):
-            let api = api
-            let asset = savedAssets.first { $0.id == id }
-            return {
-                guard let asset else { throw AddClipSourceUnreadable() }
-                return try await Self.file(for: asset, api: api)
-            }
+    private func loader(for id: UUID) -> Loader {
+        let api = api
+        let asset = savedAssets.first { $0.id == id }
+        return {
+            guard let asset else { throw AddClipSourceUnreadable() }
+            return try await Self.file(for: asset, api: api)
         }
     }
 
     /// Single mode adds on the first tap. Multi mode numbers the picks and waits for Add.
-    private func choose(_ pick: Pick) {
+    private func choose(_ pick: UUID) {
         guard !working else { return }
         if !multi {
             add([(pick, loader(for: pick))])
@@ -751,85 +726,6 @@ struct NativeSplitMediaPicker: View {
                 if session.addClipError != nil { return }
             }
             onFinished()
-        }
-    }
-}
-
-/// The newest photos and videos on the iPhone as a plain grid inside the panel's own scroll view.
-private struct NativeSplitPhotoGrid: View {
-    let picked: [String]
-    let showsPicks: Bool
-    let disabled: Bool
-    let adding: String?
-    let onTap: (String) -> Void
-    @State private var assets: PHFetchResult<PHAsset>?
-    @State private var loader = GalleryThumbnailLoader()
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 4)
-
-    var body: some View {
-        Group {
-            if let assets, assets.count > 0 {
-                LazyVGrid(columns: columns, spacing: 4) {
-                    ForEach(0..<assets.count, id: \.self) { index in tile(assets.object(at: index), index: index) }
-                }
-            } else if assets != nil {
-                Text("No photos or videos in Photos yet.").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
-                    .frame(maxWidth: .infinity)
-            } else {
-                ProgressView().frame(maxWidth: .infinity)
-            }
-        }
-        .task { load() }
-    }
-
-    private func load() {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        options.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
-        options.fetchLimit = 200
-        assets = PHAsset.fetchAssets(with: options)
-    }
-
-    @ViewBuilder private func tile(_ asset: PHAsset, index: Int) -> some View {
-        let id = asset.localIdentifier
-        let number = picked.firstIndex(of: id).map { $0 + 1 }
-        let isVideo = asset.mediaType == .video
-        Button { onTap(id) } label: {
-            Color.clear
-                .aspectRatio(1, contentMode: .fit)
-                .overlay { GalleryThumbnail(asset: asset, loader: loader) }
-                .clipped()
-                .modifier(Chrome(showsPicks: showsPicks, number: number, duration: isVideo ? asset.duration : nil))
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .accessibilityLabel(isVideo ? String(localized: "Video, \(GalleryTileChrome.duration(asset.duration))") : String(localized: "Photo"))
-        .accessibilityAddTraits(number != nil ? .isSelected : [])
-        .accessibilityIdentifier("native-editor-split-gallery-tile-\(index)")
-        .nativeSplitAdding(adding == id, identifier: "native-editor-split-adding-\(index)")
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    /// Multi mode wears the shared pick ring and number; a tap-to-fill grid only shows a video's length.
-    private struct Chrome: ViewModifier {
-        let showsPicks: Bool
-        let number: Int?
-        let duration: TimeInterval?
-
-        func body(content: Content) -> some View {
-            if showsPicks {
-                content.modifier(GalleryTileChrome(number: number, duration: duration))
-            } else {
-                content.overlay(alignment: .bottomTrailing) {
-                    if let duration {
-                        Text(GalleryTileChrome.duration(duration))
-                            .font(KriaFont.body(11).weight(.semibold)).foregroundStyle(Color.white)
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(KriaColor.ink.opacity(0.7), in: Capsule())
-                            .padding(4)
-                    }
-                }
-            }
         }
     }
 }

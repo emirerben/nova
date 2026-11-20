@@ -652,12 +652,8 @@ export default function KriaEditStory({ mode = "scroll" }: { mode?: KriaEditStor
           </div>
         </div>
 
-        <Link href="/plan" className={styles.cta}>
-          Create a video
-        </Link>
-
         <p className={styles.legalLinks}>
-          By signing in, you agree to Kria&apos;s{" "}
+          Read Kria&apos;s{" "}
           <Link href="/terms">Terms of Service</Link> and{" "}
           <Link href="/privacy">Privacy Policy</Link>.
         </p>

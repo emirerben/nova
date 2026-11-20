@@ -2826,7 +2826,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
     /// XCUITest time to observe the new layout: the row relation must satisfy
     /// `holds` on two consecutive polls. A timeout means the items really do
     /// still overlap in time (test geometry), not a stale layout.
-    private func waitForStableRowRelation(_ text: XCUIElement, _ second: XCUIElement, timeout: TimeInterval = 5, holds: @escaping (CGFloat) -> Bool) {
+    /// Each poll reads two frames and costs 2-3 s on the hosted simulator, so 5 s fitted one poll on a slow
+    /// night and the wait could not see two equal ones (KRI-1538, run 44299097913).
+    private func waitForStableRowRelation(_ text: XCUIElement, _ second: XCUIElement, timeout: TimeInterval = 15, holds: @escaping (CGFloat) -> Bool) {
         var previousDelta: CGFloat?
         let stable = NSPredicate { _, _ in
             let delta = text.frame.midY - second.frame.midY

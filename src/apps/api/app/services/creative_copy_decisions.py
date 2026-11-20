@@ -11,7 +11,7 @@ import hashlib
 import json
 import unicodedata
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -61,6 +61,28 @@ def creator_quoted(text: str, creator_texts: Iterable[str]) -> bool:
         if any(f"{open_}{wanted}{close}" in haystack for open_, close in _QUOTE_PAIRS):
             return True
     return False
+
+
+def positional_labels_grounded(
+    labels: Sequence[str], creator_texts: Iterable[str], *, clip_literals: Iterable[str] = ()
+) -> bool:
+    """Authorize a whole positional list. Dropping one entry would shift later labels."""
+    sources = tuple(creator_texts)
+    literals = {normalize_copy(value) for value in clip_literals}
+    if all(normalize_copy(label) in literals or creator_quoted(label, sources) for label in labels):
+        return True
+    if len(labels) < 2:
+        return False
+
+    # Preserve explicit legacy lists such as "with a small day label (DAY 1, DAY 2)".
+    listed = ", ".join(normalize_copy(label) for label in labels)
+    return any(
+        any(
+            f"{cue} ({listed})" in normalize_copy(source)
+            for cue in ("label", "labels", "etiket", "etiketler")
+        )
+        for source in sources
+    )
 
 
 def media_digest(media_snapshot: Mapping[str, Any] | None) -> str:

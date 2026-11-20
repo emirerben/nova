@@ -4089,7 +4089,8 @@ enum EditorOpenIntent { case warm, open }
                 itemID = "fixture-gameday-item"; variantKey = "guided_story"; jobID = projectID
                 rendersOnDevice = true; guidedRevisionNumber = 3
                 previewVariant = ["resolved_archetype": .string("guided_story"), "editor_capabilities": .object([
-                    "phone_editor_media": .object(["enabled": .bool(true), "source_registration": .bool(true)])])]
+                    "phone_editor_media": .object(["enabled": .bool(true), "source_registration": .bool(true),
+                                                  "visual_kinds": .array([.string("image")])])])]
             }
             let project = BackgroundUploadCoordinator.projectDirectory(projectID)
             let store = SourceAssetStore(project: project)

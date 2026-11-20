@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { assertSuccess, interactionPaths, partition } from './web-tests.mjs';
+import { assertSuccess, groups, interactionPaths, partition } from './web-tests.mjs';
 
 test('partition covers discovery exactly once, including new tests', () => {
   const discovered = [...interactionPaths, 'src/lib/__tests__/new.test.ts', 'src/__tests__/other.test.tsx'];
   const split = partition(discovered);
-  assert.equal(Object.keys(split).length, 5);
+  assert.equal(Object.keys(split).length, Object.keys(groups).length + 1);
   assert.deepEqual(Object.values(split).flat().sort(), discovered.sort());
   assert.equal(new Set(Object.values(split).flat()).size, discovered.length);
 });
