@@ -1399,7 +1399,7 @@ def color_moments_client_supported(*, require_client: bool | None = None) -> boo
 
 def recipe_has_speech_duck(recipe: Any) -> bool:
     """Does this recipe ask the device to duck its music bed under speech (KRI-1562)?"""
-    return bool(recipe.audio.speech_windows)
+    return bool(getattr(getattr(recipe, "audio", None), "speech_windows", None))
 
 
 def speech_duck_client_supported(*, require_client: bool | None = None) -> bool:
