@@ -15,25 +15,29 @@ from instead of copy-pasting again.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.kria.clip_tilt import MAX_ZOOM, MIN_ZOOM
 from app.kria.clip_tilt_row import parse_row_tilt
 from app.kria.portable_drawing import compile_drawing_layers
 from app.kria.recipes import (
+    MAX_SPEECH_WINDOWS,
     AssetFingerprint,
+    AudioMuteWindow,
     Canvas,
     ClipBackdrop,
     MediaAsset,
     MediaSize,
     MediaTransform,
+    SpeechWindow,
     TimelineClip,
+    TimelineTrack,
 )
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import RenderAssetManifest, RenderFingerprint
+from app.kria.render_assets import LibraryRenderAsset, RenderAssetManifest, RenderFingerprint
 
 # Mirrors `phone_guided_plan._EXPORT_SAFETY_MARGIN_S` -- see that module's
 # docstring for the full AVFoundation-boundary rationale. Never fit a refit
@@ -581,6 +585,247 @@ class PhoneMusicBed(BaseModel):
     duration_s: float | None = Field(default=None, gt=0, le=1800)
     start_s: float = Field(default=0.0, ge=0)
     volume: float = Field(default=1.0, ge=0, le=2)
+    # KRI-1562: the creator's chosen part of the song (`smart_music_treatment`), looped to
+    # cover the video like the cloud bed. None plays once from `start_s` (the montage writers).
+    end_s: float | None = Field(default=None, gt=0)
+    # KRI-1562: the gain (0-1) the bed drops to while someone is heard speaking.
+    speech_duck_gain: float | None = Field(default=None, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _section_forward(self) -> PhoneMusicBed:
+        if self.end_s is not None and self.end_s <= self.start_s:
+            raise ValueError("music section must end after it starts")
+        return self
+
+
+# Mirrors `MusicBedTreatment.speech_duck_db`: how far a bed drops under speech by default.
+DEFAULT_SPEECH_DUCK_DB = -12.0
+MUSIC_TRACK_ID = "music"
+# Mirrors `TimelineTrack.clips`' max_length.
+MAX_TRACK_CLIPS = 100
+# A loop remainder shorter than this is not worth an audio clip of its own.
+_MIN_MUSIC_CLIP_S = 0.05
+
+
+def speech_duck_gain(duck_db: float) -> float:
+    """The 0-1 gain of a ``duck_db`` speech duck, clamped like the cloud bed's (-30..0 dB)."""
+    return round(10 ** (min(0.0, max(-30.0, float(duck_db))) / 20), 6)
+
+
+MusicPin = Callable[[str, str], tuple[LibraryRenderAsset, float | None]]
+
+
+def music_bed_from_treatment(treatment: object, pin: MusicPin) -> PhoneMusicBed | None:
+    """The creator's chosen song (a variant's ``smart_music_treatment``) as a phone bed.
+
+    The one resolver every phone Talking compile uses (KRI-1562); no treatment, no bed
+    (KRI-20). ``pin(track_id, src_gcs_path)`` returns the pinned library asset and the track's
+    length: the worker re-reads the catalog and hashes the file, a Save reuses the previous
+    recipe's receipt. Gap level and duck come from the treatment's dB values.
+    """
+    if not isinstance(treatment, Mapping):
+        return None
+    from app.pipeline.sound_effects import MusicBedTreatment  # noqa: PLC0415
+
+    chosen = MusicBedTreatment.from_value(dict(treatment))
+    asset, duration_s = pin(chosen.track_id, chosen.src_gcs_path)
+    return PhoneMusicBed(
+        catalog_id=chosen.track_id,
+        generation=asset.generation,
+        fingerprint=asset.fingerprint,
+        duration_s=duration_s,
+        start_s=chosen.section_start_s,
+        end_s=chosen.section_end_s,
+        volume=round(10 ** (chosen.gain_db / 20), 6),
+        speech_duck_gain=speech_duck_gain(chosen.speech_duck_db),
+    )
+
+
+def compile_music_bed_track(
+    music: PhoneMusicBed,
+    *,
+    timeline_end_s: float,
+    assets: dict[str, Any],
+    manifest: dict[str, Any],
+) -> TimelineTrack:
+    """The bed as a ``role="music"`` audio track covering ``[0, timeline_end_s]``.
+
+    The section ``start_s..end_s`` repeats whole, back to back (the cloud loops it the same
+    way); the bed fades in on its first clip and out on its last. A section too short to
+    cover the video in `MAX_TRACK_CLIPS` repeats is refused rather than cut short.
+    """
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+
+    asset = LibraryRenderAsset(
+        id=f"music-{music.catalog_id}",
+        catalog="music",
+        catalog_id=music.catalog_id,
+        generation=music.generation,
+        fingerprint=music.fingerprint,
+    )
+    section_end = music.end_s if music.end_s is not None else music.start_s + timeline_end_s
+    if music.duration_s is not None:
+        section_end = min(section_end, music.duration_s - EXPORT_SAFETY_MARGIN_S)
+    section_s = section_end - music.start_s
+    if section_s < 0.1 or timeline_end_s / section_s > MAX_TRACK_CLIPS:
+        raise UnsupportedPhonePlan(
+            "the chosen part of the song is too short to play under this whole video",
+            capability="musicBed",
+            reason="music_section_too_short",
+            lane="music",
+        )
+    clips: list[TimelineClip] = []
+    at = 0.0
+    while timeline_end_s - at >= _MIN_MUSIC_CLIP_S:
+        length = min(section_s, timeline_end_s - at)
+        clips.append(
+            TimelineClip(
+                id=f"music-{len(clips)}",
+                source_asset_id=asset.id,
+                source_start=music.start_s,
+                source_duration=length,
+                timeline_start=at,
+                rate=1.0,
+                volume=music.volume,
+            )
+        )
+        at += length
+    clips[0] = clips[0].model_copy(update={"audio_fade_in": audio_fade(clips[0].source_duration)})
+    clips[-1] = clips[-1].model_copy(
+        update={"audio_fade_out": audio_fade(clips[-1].source_duration)}
+    )
+    manifest[asset.id] = asset
+    assets[asset.id] = MediaAsset(
+        id=asset.id,
+        relative_path=asset.id,
+        fingerprint=AssetFingerprint(
+            hex=music.fingerprint.sha256, byte_count=music.fingerprint.byte_count
+        ),
+        duration=music.duration_s,
+    )
+    return TimelineTrack(id=MUSIC_TRACK_ID, kind="audio", clips=clips, role="music")
+
+
+# Word gaps shorter than this still read as one sentence: an effect or a music swell between
+# two quick words would land on speech.
+SPEECH_WORD_BRIDGE_S = 0.25
+
+# Merged spoken spans per recipe asset id, in that asset's OWN source seconds (KRI-1562).
+# Speech belongs to the source media: the compilers map it through whatever clips they lay out.
+SpeechSourceWindows = Mapping[str, tuple[tuple[float, float], ...]]
+
+
+def merge_speech_spans(spans: Iterable[tuple[float, float]]) -> tuple[tuple[float, float], ...]:
+    """Sorted spans with every gap shorter than `SPEECH_WORD_BRIDGE_S` closed."""
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(spans):
+        if merged and start - merged[-1][1] < SPEECH_WORD_BRIDGE_S:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return tuple(merged)
+
+
+def speech_spans_from_words(words: Iterable[Any]) -> tuple[tuple[float, float], ...]:
+    """Merged spoken spans of transcript words (anything with ``start_s``/``end_s``)."""
+    return merge_speech_spans(
+        (float(word.start_s), float(word.end_s))
+        for word in words
+        if 0 <= float(word.start_s) < float(word.end_s)
+    )
+
+
+def speech_source_windows_json(windows: SpeechSourceWindows) -> dict[str, list[list[float]]]:
+    return {asset_id: [[start, end] for start, end in spans] for asset_id, spans in windows.items()}
+
+
+def parse_speech_source_windows(raw: object) -> SpeechSourceWindows | None:
+    """A variant's persisted ``speech_source_windows``; None when it never had any (legacy).
+
+    ``{}`` is a known answer (nobody speaks), distinct from None. Malformed spans are skipped.
+    """
+    if not isinstance(raw, Mapping):
+        return None
+    parsed: dict[str, tuple[tuple[float, float], ...]] = {}
+    for asset_id, spans in raw.items():
+        if not isinstance(asset_id, str) or not isinstance(spans, list):
+            continue
+        parsed[asset_id] = tuple(
+            (float(span[0]), float(span[1]))
+            for span in spans
+            if isinstance(span, list)
+            and len(span) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in span)
+            and 0 <= span[0] < span[1]
+        )
+    return parsed
+
+
+def _without(
+    span: tuple[float, float], holes: Iterable[tuple[float, float]]
+) -> list[tuple[float, float]]:
+    pieces = [span]
+    for hole_start, hole_end in holes:
+        pieces = [
+            piece
+            for start, end in pieces
+            for piece in ((start, min(end, hole_start)), (max(start, hole_end), end))
+            if piece[1] > piece[0]
+        ]
+    return pieces
+
+
+def speech_windows_on_timeline(
+    tracks: Iterable[TimelineTrack],
+    source_windows: SpeechSourceWindows,
+    mute_windows: Sequence[AudioMuteWindow] = (),
+    *,
+    timeline_spans: Iterable[tuple[float, float]] = (),
+) -> list[SpeechWindow]:
+    """Where the finished timeline carries speech, for the music bed to duck under (KRI-1562).
+
+    Every heard clip (volume above 0, never the music track itself) whose asset has
+    ``source_windows`` contributes those windows, cut to the source span it plays and moved to
+    where it plays, at its rate. A mute window takes speech out only of the clips it names.
+    ``timeline_spans`` are spans already on the timeline (a legacy variant's caption words).
+    Then rounded, bridge-merged, and capped at `MAX_SPEECH_WINDOWS` by closing the smallest
+    gaps. Reads the clips the compiler laid out, so cuts, Range, inserts and extra speakers
+    follow with no case of their own.
+    """
+    spans = list(timeline_spans)
+    for track in tracks:
+        if track.role == "music":
+            continue
+        for clip in track.clips:
+            windows = source_windows.get(clip.source_asset_id)
+            if not windows or clip.volume <= 0:
+                continue
+            source_end = clip.source_start + clip.source_duration
+            muted = [(w.start, w.end) for w in mute_windows if clip.id in w.clip_ids]
+            for start, end in windows:
+                start, end = max(start, clip.source_start), min(end, source_end)
+                if end <= start:
+                    continue
+                heard = (
+                    clip.timeline_start + (start - clip.source_start) / clip.rate,
+                    clip.timeline_start + (end - clip.source_start) / clip.rate,
+                )
+                spans.extend(_without(heard, muted))
+    # Rounded before merging so two windows can never touch after rounding.
+    rounded = ((round(start, 6), round(end, 6)) for start, end in spans)
+    merged = list(merge_speech_spans(span for span in rounded if span[1] > span[0]))
+    excess = len(merged) - MAX_SPEECH_WINDOWS
+    if excess > 0:
+        by_gap = sorted(range(len(merged) - 1), key=lambda i: (merged[i + 1][0] - merged[i][1], i))
+        bridged = set(by_gap[:excess])
+        capped = [merged[0]]
+        for index in range(1, len(merged)):
+            if index - 1 in bridged:
+                capped[-1] = (capped[-1][0], merged[index][1])
+            else:
+                capped.append(merged[index])
+        merged = capped
+    return [SpeechWindow(start=start, end=end) for start, end in merged]
 
 
 class PhoneNarrationBed(BaseModel):

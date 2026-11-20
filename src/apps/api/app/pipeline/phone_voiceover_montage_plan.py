@@ -47,15 +47,19 @@ from app.pipeline.canvas import canvas_for_orientation
 from app.pipeline.generative_decision import GenerativeVariantDecision
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
+    DEFAULT_SPEECH_DUCK_DB,
     EXPORT_SAFETY_MARGIN_S,
     PhoneMusicBed,
     PhoneNarrationBed,
+    SpeechSourceWindows,
     audio_fade,
     clip_tilt_fields,
     display_dims,
     fit_transform,
     refit_source_window,
     register_backdrop_visuals,
+    speech_duck_gain,
+    speech_windows_on_timeline,
 )
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
@@ -147,8 +151,14 @@ def compile_phone_voiceover_montage_plan(
     visuals: tuple[PhoneVisualBinding, ...] = (),
     timed_cards: tuple[SubtitledOverlayCard, ...] = (),
     clip_tilts: Mapping[str, Any] | None = None,
+    speech_source_windows: SpeechSourceWindows | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the general contract.
+
+    `speech_source_windows` (KRI-1562, keyed by the narration asset id): the matched-track bed
+    ducks under the narration's spoken windows instead of sitting at one level. Under speech it
+    plays at today's `voiceover_music_gain`; in the pauses it rises by the speech duck. ``None``
+    (or a silent bed) is byte-identical to before.
 
     `clip_tilts` (KRI-1136) maps a clip id (``step-<n>-<clip id>``) to its tilt row value; a
     clip with none compiles upright, byte-identical to before.
@@ -437,6 +447,40 @@ def compile_phone_voiceover_montage_plan(
 
     tracks = [TimelineTrack(id="montage", kind="video", clips=clips)]
     audio = AudioMixRecipe()
+    # Cap to the same window the decide phase sized the footage montage
+    # to (`voiceover_target_s` = min(footage, voice, the short-form
+    # ceiling) -- see `_decide_generative_variant`), further bounded by
+    # what this recipe's own assembled steps actually total. The cloud
+    # additionally hard-trims the WHOLE rendered output to this window
+    # (`-t` in `_mix_user_voiceover`); on the phone the video timeline is
+    # already ~this long by construction (the slots were sized to it),
+    # so only the audio needs the defensive cap -- a real mismatch would
+    # leave trailing silence rather than a truncated video, a known,
+    # accepted phone/cloud difference (see docs/runbooks/phone-rendering.md).
+    narration_duration_s = max(
+        0.1,
+        min(
+            float(extras.get("voiceover_target_s") or narration.duration_s),
+            max(total_duration_s, 0.1),
+        ),
+    )
+    narration_track = TimelineTrack(
+        id="narration",
+        kind="audio",
+        clips=[
+            TimelineClip(
+                id="narration-voice",
+                source_asset_id=f"voiceover-{narration.plan_item_id}",
+                source_start=0.0,
+                source_duration=narration_duration_s,
+                timeline_start=0.0,
+                rate=1.0,
+                volume=1.0,
+                # `_mix_user_voiceover`: `afade=t=out:st=<end-0.5>:d=0.5`.
+                audio_fade_out=audio_fade(narration_duration_s),
+            )
+        ],
+    )
     # Voice-prominence slider (`_VOICEOVER_ONLY_DEFAULT_MIX`/`_VOICEOVER_MUSIC
     # _DEFAULT_MIX` in generative_build.py pick the default; a user override
     # rides `decision.mix` unchanged).
@@ -469,6 +513,16 @@ def compile_phone_voiceover_montage_plan(
         # footage audio in at all -- mirror that rather than inventing new
         # defaults.
         music_gain = voiceover_music_gain(voice_mix)
+        speech_windows = (
+            speech_windows_on_timeline([narration_track], speech_source_windows)
+            if speech_source_windows is not None and music_gain > 0
+            else []
+        )
+        bed_gain = music_gain
+        if speech_windows:
+            # The pauses rise by the duck, as far as the clip limit allows; under speech the bed
+            # stays exactly today's level.
+            bed_gain = min(2.0, music_gain / speech_duck_gain(DEFAULT_SPEECH_DUCK_DB))
         music_duration_s = max(total_duration_s, 0.1)
         # The cloud trims this bed hard at `-t`; the phone fades both ends
         # instead (KRI-139) -- a bed never starts or stops on a full sample.
@@ -485,14 +539,22 @@ def compile_phone_voiceover_montage_plan(
                         source_duration=music_duration_s,
                         timeline_start=0.0,
                         rate=1.0,
-                        volume=music_gain,
+                        volume=bed_gain,
                         audio_fade_in=music_fade_s,
                         audio_fade_out=music_fade_s,
                     )
                 ],
+                role="music" if speech_windows else None,
             )
         )
-        audio = AudioMixRecipe(music_volume=music_gain)
+        audio = AudioMixRecipe(
+            music_volume=music_gain,
+            **(
+                {"speech_windows": speech_windows, "speech_duck_gain": music_gain / bed_gain}
+                if speech_windows
+                else {}
+            ),
+        )
 
     narration_asset = VoiceoverRenderAsset(
         id=f"voiceover-{narration.plan_item_id}",
@@ -509,42 +571,7 @@ def compile_phone_voiceover_montage_plan(
         ),
         duration=narration.duration_s,
     )
-    # Cap to the same window the decide phase sized the footage montage
-    # to (`voiceover_target_s` = min(footage, voice, the short-form
-    # ceiling) -- see `_decide_generative_variant`), further bounded by
-    # what this recipe's own assembled steps actually total. The cloud
-    # additionally hard-trims the WHOLE rendered output to this window
-    # (`-t` in `_mix_user_voiceover`); on the phone the video timeline is
-    # already ~this long by construction (the slots were sized to it),
-    # so only the audio needs the defensive cap -- a real mismatch would
-    # leave trailing silence rather than a truncated video, a known,
-    # accepted phone/cloud difference (see docs/runbooks/phone-rendering.md).
-    narration_duration_s = max(
-        0.1,
-        min(
-            float(extras.get("voiceover_target_s") or narration.duration_s),
-            max(total_duration_s, 0.1),
-        ),
-    )
-    tracks.append(
-        TimelineTrack(
-            id="narration",
-            kind="audio",
-            clips=[
-                TimelineClip(
-                    id="narration-voice",
-                    source_asset_id=narration_asset.id,
-                    source_start=0.0,
-                    source_duration=narration_duration_s,
-                    timeline_start=0.0,
-                    rate=1.0,
-                    volume=1.0,
-                    # `_mix_user_voiceover`: `afade=t=out:st=<end-0.5>:d=0.5`.
-                    audio_fade_out=audio_fade(narration_duration_s),
-                )
-            ],
-        )
-    )
+    tracks.append(narration_track)
     # No matched-track bed: the clips' own audio is the bed, attenuated
     # by `1 - mix` (mix=1.0, the default, fully ducks it -- the voice is
     # the whole track, matching `_mix_user_voiceover`'s `mix >= 0.999`
