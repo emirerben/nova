@@ -19,9 +19,11 @@ from typing import Any
 
 import structlog
 
+from app.agents.model_registry import SONNET
+
 log = structlog.get_logger()
 
-JUDGE_MODEL = "claude-sonnet-4-6"
+JUDGE_MODEL = SONNET
 DEFAULT_PASS_THRESHOLD = 3.5
 DEFAULT_MAX_TOKENS = 800
 
