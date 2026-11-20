@@ -13,6 +13,7 @@ must be refused in words, never shortened or exceeded.
 from __future__ import annotations
 
 from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
+from app.services.client_protocol import SPEECH_DUCK_PROTOCOL
 from app.services.device_render import device_status
 from app.tasks import generative_build as gb
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled, _words
@@ -138,14 +139,14 @@ def _voiceover_recipe(monkeypatch, *, protocol: int | None):
 
 
 def test_a_voiceover_bed_ducks_for_a_build_at_protocol_53(monkeypatch):
-    recipe = _voiceover_recipe(monkeypatch, protocol=53)
+    recipe = _voiceover_recipe(monkeypatch, protocol=SPEECH_DUCK_PROTOCOL)
     bed = next(track for track in recipe.tracks if track.id == "music")
     assert bed.role == "music"
     assert recipe.audio.speech_windows and "speechDuck" in recipe.required_capabilities
 
 
 def test_an_older_build_keeps_todays_one_level_voiceover_bed(monkeypatch):
-    for protocol in (52, None):
+    for protocol in (SPEECH_DUCK_PROTOCOL - 1, None):
         recipe = _voiceover_recipe(monkeypatch, protocol=protocol)
         bed = next(track for track in recipe.tracks if track.id == "music")
         assert bed.role is None

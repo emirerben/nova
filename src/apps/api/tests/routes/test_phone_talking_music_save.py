@@ -27,7 +27,11 @@ from fastapi import HTTPException
 
 from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.routes import generative_jobs as gj
-from app.services.client_protocol import clear_request_context, set_client_protocol
+from app.services.client_protocol import (
+    SPEECH_DUCK_PROTOCOL,
+    clear_request_context,
+    set_client_protocol,
+)
 from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
 from app.services.device_render import device_record, device_status
 from tests.routes.test_phone_subtitled_editor_commit import _sfx_payload, phone_job
@@ -153,18 +157,18 @@ def test_removing_the_song_takes_it_out_of_the_recipe(monkeypatch):
 def test_an_older_build_is_told_to_update_unless_it_removes_the_song(monkeypatch):
     job = _job(monkeypatch)
     _hashes(monkeypatch)
-    set_client_protocol(52)
+    set_client_protocol(SPEECH_DUCK_PROTOCOL - 1)
     with pytest.raises(HTTPException) as refused:
         _add_song(job)
     assert refused.value.status_code == 426
     assert refused.value.detail == {
         "code": "client_update_required",
         "feature": "speech_duck",
-        "minimum_client_protocol": 53,
+        "minimum_client_protocol": SPEECH_DUCK_PROTOCOL,
     }
-    set_client_protocol(53)
+    set_client_protocol(SPEECH_DUCK_PROTOCOL)
     _add_song(job)
-    set_client_protocol(52)
+    set_client_protocol(SPEECH_DUCK_PROTOCOL - 1)
     with pytest.raises(HTTPException) as caption_save:
         _save(job, sound_effects=[_sfx_payload(at_s=4.0)])
     assert caption_save.value.status_code == 426
@@ -244,9 +248,9 @@ def test_an_offered_control_saves(monkeypatch):
 def test_an_older_build_is_not_offered_the_song(monkeypatch):
     monkeypatch.setattr(gj.settings, "smart_music_bed_enabled", True)
     job = _job(monkeypatch)
-    set_client_protocol(52)
+    set_client_protocol(SPEECH_DUCK_PROTOCOL - 1)
     assert _capability(job) is False
-    set_client_protocol(53)
+    set_client_protocol(SPEECH_DUCK_PROTOCOL)
     assert _capability(job) is True
 
 
