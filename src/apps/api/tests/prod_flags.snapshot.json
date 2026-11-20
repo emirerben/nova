@@ -777,6 +777,10 @@
       "source": "default",
       "value": true
     },
+    "main_creator_full_clip_evidence_enabled": {
+      "source": "default",
+      "value": false
+    },
     "main_creator_model": {
       "source": "job-data:main-creator-sol-2026-11-14",
       "value": "gpt-6.1-sol"
