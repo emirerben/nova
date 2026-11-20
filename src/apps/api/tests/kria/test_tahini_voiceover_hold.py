@@ -161,8 +161,16 @@ def _rows(report: dict) -> dict[str, tuple[str, str | None]]:
     return {r["requirement_id"]: (r["disposition"], r["reason"]) for r in report["requirements"]}
 
 
+# Rows main has changed since the run on purpose, by another PR: KRI-1515 (#2377) judges
+# "Use every uploaded file." (select {all}) against the clips the plan holds, so a plan that uses
+# all 12 now reads it as executable instead of "I can't check this before the video is made".
+CHANGED_ON_MAIN_SINCE_THE_RUN: dict[str, tuple[str, str | None]] = {"r2": ("executable", None)}
+
+
 def _prod_rows() -> dict[str, tuple[str, str | None]]:
-    return {r["requirement_id"]: (r["disposition"], r["reason"]) for r in FIXTURE["hold"]["rows"]}
+    """Prod's rows on that turn, with the rows main has changed since (above) as main says now."""
+    rows = {r["requirement_id"]: (r["disposition"], r["reason"]) for r in FIXTURE["hold"]["rows"]}
+    return {**rows, **CHANGED_ON_MAIN_SINCE_THE_RUN}
 
 
 def _req(rid: str, kind: str, description: str, **facts) -> BriefRequirement:
