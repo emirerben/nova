@@ -311,7 +311,7 @@ final class CreationUITests: XCTestCase {
             XCTAssertTrue(count.waitForExistence(timeout: 5))
             let decision = app.buttons["text-learning-\(action)-learning-position"]
             scrollIntoView(decision, in: app)
-            XCTAssertGreaterThanOrEqual(decision.frame.height, 44)
+            assertTouchTarget(decision.frame.height)
             XCTAssertLessThan(decision.frame.maxY, app.textFields["Message Kria"].frame.minY)
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "Finished-edit chat suggestion before \(action)"
@@ -633,11 +633,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tile0 = app.buttons["gallery-tile-0"], tile1 = app.buttons["gallery-tile-1"], tile2 = app.buttons["gallery-tile-2"]
-        XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tile0, timeout: 50), app.debugDescription)
         XCTAssertTrue(tile2.exists)
         let count = app.staticTexts["gallery-count"]
         // The gallery leads with a Record cell and a Files switch; Add stays disabled until something is picked.
@@ -654,10 +652,12 @@ final class CreationUITests: XCTestCase {
             )
         XCTAssertTrue(eventually { count.label.hasPrefix("3 of") }, count.label)
         XCTAssertEqual(tile1.value as? String, "Selected, 2")
-        // A slide that starts on a selected tile deselects.
+        // A slide that starts on a selected tile deselects. It moves off at once, as a finger does, and ends one tile
+        // away, still within the first tile's tap reach: that used to end in a tap that put the first tile back
+        // (KRI-1550, every time from a 0.05 s press; at 0.1 s only now and then, on a busy runner).
         tile1.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(
-                forDuration: 0.1,
+                forDuration: 0.05,
                 thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
                 withVelocity: .slow,
                 thenHoldForDuration: 0.1
@@ -707,11 +707,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tile0 = app.buttons["gallery-tile-0"]
-        XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tile0, timeout: 50), app.debugDescription)
         let count = app.staticTexts["gallery-count"]
         tile0.tap()
         XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
@@ -763,11 +761,9 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(photos.waitForExistence(timeout: 5), "Upload asks where from")
         XCTAssertTrue(app.buttons["upload-source-files"].exists)
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tile0 = app.buttons["gallery-tile-0"]
-        XCTAssertTrue(tile0.waitForExistence(timeout: 40), "choosing Photos in the tray presents the gallery at once\n\(app.debugDescription)")
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tile0, timeout: 50), "choosing Photos in the tray presents the gallery at once\n\(app.debugDescription)")
         let count = app.staticTexts["gallery-count"]
         tile0.tap()
         XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
@@ -842,9 +838,8 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 5))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: app.buttons["gallery-tile-0"], timeout: 50), app.debugDescription)
         let count = app.staticTexts["gallery-count"]
         for index in 0..<picks {
             let tile = app.buttons["gallery-tile-\(index)"]
@@ -954,11 +949,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let done = app.buttons["photos-picker-done"]
-        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: done, timeout: 20))
         // Add stays disabled until something is picked, so leaving with nothing is Cancel.
         XCTAssertFalse(done.isEnabled)
         app.buttons["gallery-cancel"].tap()
@@ -1054,11 +1047,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tiles = (0..<3).map { app.buttons["gallery-tile-\($0)"] }
-        XCTAssertTrue(tiles[0].waitForExistence(timeout: 40), app.debugDescription)
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tiles[0], timeout: 50), app.debugDescription)
         let count = app.staticTexts["gallery-count"]
         XCTAssertTrue(eventually { count.label.hasPrefix("0 of 10") }, count.label)
         for (index, tile) in tiles.enumerated() {
@@ -1130,10 +1121,9 @@ final class CreationUITests: XCTestCase {
         if offered {
             let blackBars = app.buttons["video-shape-fit-fit"]
             XCTAssertTrue(vertical.isSelected && blackBars.isSelected, "\(runtime): seeded from the server default (Vertical + Black bars)", file: file, line: line)
-            // The picker sits inside the approval card at a fractional y, so a 44 pt row can read
-            // 43.99999999999994 (KRI-1538); the app still asks for minHeight 44.
-            XCTAssertGreaterThanOrEqual(vertical.frame.height, 43.9, "44pt touch target", file: file, line: line)
-            XCTAssertGreaterThanOrEqual(app.buttons["video-shape-orientation-landscape"].frame.height, 43.9, file: file, line: line)
+            // The picker sits inside the approval card at a fractional y (KRI-1538); the app asks for minHeight 44.
+            assertTouchTarget(vertical.frame.height, "Vertical", file: file, line: line)
+            assertTouchTarget(app.buttons["video-shape-orientation-landscape"].frame.height, file: file, line: line)
             XCTAssertEqual(vertical.label, "Video shape: Vertical 9:16", file: file, line: line)
             let capture = XCTAttachment(screenshot: app.screenshot())
             capture.name = "video-shape-confirm-\(runtime)"
@@ -1258,7 +1248,7 @@ final class CreationUITests: XCTestCase {
 
         let mic = app.buttons["chat-dictate"]
         XCTAssertTrue(mic.waitForExistence(timeout: 10), "The mic appears once the server advertises voice_dictation")
-        XCTAssertGreaterThanOrEqual(mic.frame.height, 44)
+        assertTouchTarget(mic.frame.height)
         let composer = app.textFields["Message Kria"]
         mic.tap()
 
@@ -1931,7 +1921,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(second.label, "About 0.8 seconds")
         XCTAssertEqual(third.label, "About 0.5 seconds")
         XCTAssertEqual(other.label, "Type my own")
-        for chip in [first, second, third, other] { XCTAssertGreaterThanOrEqual(chip.frame.height, 44, chip.identifier) }
+        for chip in [first, second, third, other] { assertTouchTarget(chip.frame.height, chip.identifier) }
         // The prose above the chips is unchanged (old builds rely on it).
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: The clips are about 1.3 seconds each")).firstMatch.exists)
         attachScreenshot(app, "reply-option-chips")
@@ -2121,8 +2111,8 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(chronological.exists)
         XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport, Each sport plays as one block., recommended")
         XCTAssertEqual(chronological.label, "Keep it strictly chronological; sports may interleave")
-        XCTAssertGreaterThanOrEqual(grouped.frame.height, 44)
-        XCTAssertGreaterThanOrEqual(chronological.frame.height, 44)
+        assertTouchTarget(grouped.frame.height)
+        assertTouchTarget(chronological.frame.height)
         attachScreenshot(app, "choice-question-blocks")
         grouped.tap()
         // Answered: the "You chose" capsule is the one place the choice shows. The echoed bubble carries the same
@@ -2412,7 +2402,7 @@ final class CreationUITests: XCTestCase {
             let chip = app.buttons["Use suggestion: \(suggestion)"]
             XCTAssertTrue(chip.waitForExistence(timeout: 5))
             XCTAssertTrue(chip.isHittable)
-            XCTAssertGreaterThanOrEqual(chip.frame.height, 44)
+            assertTouchTarget(chip.frame.height)
             chip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy)).tap()
             let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", suggestion), object: composer)
             XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 3), .completed, "Edge tap on '\(suggestion)' was ignored")
@@ -2464,8 +2454,8 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria decide")
         XCTAssertLessThan(defaultEdit.frame.minX, hook.frame.minX + 1, "Chip #1 stays first")
         for chip in [defaultEdit, hook, app.buttons["Add captions"], app.buttons["Add sound effects"]] {
-            // The chips scroll with the transcript, so a fractional y can round a 44 pt chip to 43.99999.
-            XCTAssertGreaterThanOrEqual(chip.frame.height, 43.5)
+            // The chips scroll with the transcript, so they sit at a fractional y.
+            assertTouchTarget(chip.frame.height, chip.label)
         }
         // A chip is a real send, not a fill of the composer: the message is the chip's `message`, not its label.
         defaultEdit.tap()
@@ -2629,7 +2619,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "0.04")).firstMatch.exists, "no price anywhere")
         XCTAssertFalse(app.buttons["suggestion-card-0-dismiss"].exists, "a chip has no dismiss button")
         XCTAssertFalse(app.buttons["suggestion-chip-0"].exists, "cards replace the chip row")
-        for index in 0..<5 { XCTAssertGreaterThanOrEqual(app.buttons["suggestion-card-\(index)"].frame.height, 44, "chip \(index) is a 44 pt target") }
+        for index in 0..<5 { assertTouchTarget(app.buttons["suggestion-card-\(index)"].frame.height, "chip \(index) is a 44 pt target") }
         keepScreenshot(app, "Suggestion chips in the chat's ready stage")
 
         guard let composer = editorConversationComposer(in: app) else { return }
@@ -2764,7 +2754,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(hook.waitForExistence(timeout: 30))
         XCTAssertTrue(hook.label.contains("Şu manzarayı kaçırıyordum neredeyse, ışıklar yanınca ıslak taşlar parladı"))
         XCTAssertTrue(hook.label.contains("İlk saniyeye bir kanca ekle"))
-        XCTAssertGreaterThanOrEqual(hook.frame.height, 44)
+        assertTouchTarget(hook.frame.height)
         keepScreenshot(app, "Turkish hook chip at accessibility text size")
         XCTAssertTrue(eventually(timeout: 10) { hook.isHittable })
         hook.tap()
@@ -2968,7 +2958,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Making your video"].waitForExistence(timeout: 10))
         let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
-        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+        assertTouchTarget(stop.frame.height)
         XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists, "no Review CTA while sections are still being decided")
         XCTAssertFalse(app.buttons["Create this video"].exists || app.staticTexts["Create this video"].exists, "Create already happened")
         XCTAssertTrue(eventually(timeout: 20) { self.planBlockValue(app, "title") == "deciding" || self.planBlockValue(app, "title").hasPrefix("decided") })
@@ -3167,7 +3157,7 @@ final class CreationUITests: XCTestCase {
         let app = launchLivePlanFeed(reduceMotion: true)
         let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 30))
-        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+        assertTouchTarget(stop.frame.height)
         XCTAssertTrue(eventually(timeout: 20) { self.planBlockValue(app, "title") != "" })
         stop.tap()
         XCTAssertTrue(eventually(timeout: 20) { !app.otherElements["plan-feed"].exists }, "a stopped render leaves the feed")
@@ -3590,7 +3580,7 @@ final class CreationUITests: XCTestCase {
         } else if mode == "offline" {
             let retry = app.buttons["chat-retry-message"]
             XCTAssertTrue(retry.waitForExistence(timeout: 15))
-            XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            assertTouchTarget(retry.frame.height)
             XCTAssertNotEqual(composer.value as? String, "Keep my first clip")
             assertSubmissionStatusVisible(in: app, composer: composer)
             attach(app, "Unconfirmed message keyboard open")
@@ -3626,6 +3616,19 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+    }
+
+    /// Waits for `element` and answers the Photos access prompt (Allow Full Access) whenever it shows meanwhile. The
+    /// prompt can come long after the Photos tap: on the CI simulator it appeared about 18 s later (nightly
+    /// 2026-11-15, run 43707825608), after a fixed 10 s wait for it had given up, and then covered the gallery for
+    /// the rest of the wait (KRI-1550). Picked by position: the alert is in the simulator's language.
+    private func waitAnsweringPhotosAccess(for element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let prompt = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        return eventually(timeout: timeout) {
+            if element.exists { return true }
+            if prompt.exists, prompt.buttons.count == 3 { prompt.buttons.element(boundBy: 1).tap() }
+            return false
+        }
     }
 
     /// Re-checks `condition` until it holds or `timeout` passes. XCTWaiter polls an
