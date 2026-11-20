@@ -763,6 +763,7 @@ class GateTests(unittest.TestCase):
 
     def test_lint_gate_fails_unless_the_ci_self_tests_passed(self):
         """The self-tests run beside the suites, so this gate is what stops a red one."""
+        self.fail("RED CONTROL for KRI-1543: this self-test is broken on purpose")
         needs = {
             "changes": {"result": "success", "outputs": {"api": "false"}},
             "lint-suites": {"result": "skipped"},
