@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.47.0] - 2026-11-20
+
+### Changed
+- ci: open one issue when a nightly CI or iOS run goes red (KRI-1549) (#2424) <!-- release-pr: 2424 -->
+
 ## [0.89.46.0] - 2026-11-20
 
 ### Changed
