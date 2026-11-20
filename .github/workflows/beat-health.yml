@@ -16,8 +16,12 @@ name: Beat health check
 # finished run, usually well under an hour.
 #
 # What that does NOT cover: a stretch with no pushes. 2026-11-18 17:10 to 11-19
-# 05:10 UTC had one CI run in 12 hours. Only a monitor outside GitHub closes
-# that gap; until one exists, a quiet night still means up to about 9 hours.
+# 05:10 UTC had one CI run in 12 hours. A monitor outside GitHub closes that
+# gap: the Claude Code routine "Nova Beat health watch" checks this endpoint
+# every hour, starts a stopped `light` machine once, and messages the owner on
+# Slack (agents/DECISIONS.md, 2026-11-20, has what it may do and where its
+# token lives). This workflow stays as the second line, and as the record of
+# when the lane was last seen healthy.
 # This MUST live outside the app: any check that is itself Beat-scheduled
 # shares Beat's exact blind spot (app/services/beat_heartbeat.py has the full
 # rationale). The 2026-08-02 incident this closes: the light machine OOM
