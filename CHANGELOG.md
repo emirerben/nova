@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.45.0] - 2026-11-20
+
+### Changed
+- Verify and sync the Kria App Review demo login (#2418) <!-- release-pr: 2418 -->
+
 ## [0.89.44.0] - 2026-11-20
 
 ### Changed
