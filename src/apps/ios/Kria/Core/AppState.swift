@@ -21,7 +21,7 @@ enum ProfileFetchState: Equatable, Sendable {
 
 @MainActor final class AuthStore: ObservableObject {
     private static let invalidatedSessionKey = "kria.mobile-session.invalidated"
-    private static let aiConsentVersion = "current1"
+    private static let aiConsentVersion = "current2"
     @Published private(set) var isSignedIn = false
     @Published private(set) var displayName: String?
     // email/linkedProviders/profileState are in-memory only — refetched from

@@ -101,7 +101,7 @@ struct AIConsentView: View {
                             .font(KriaFont.body(15))
                             .lineSpacing(4)
                             .foregroundStyle(KriaColor.ink)
-                        Text("Your messages and selected media, including faces, voices, and transcripts, are sent to Google Gemini and OpenAI for analysis, transcription, and editing. Kria stores your projects and finished videos in your account.")
+                        Text("Your messages and selected media, including faces, voices, and transcripts, are sent to Google Gemini and OpenAI for analysis, transcription, and editing. Anthropic (Claude) receives your edit requests and project context to suggest changes. Kria stores your projects and finished videos in your account.")
                             .font(KriaFont.body(15))
                             .lineSpacing(4)
                             .foregroundStyle(KriaColor.ink)
@@ -116,7 +116,7 @@ struct AIConsentView: View {
                             .buttonStyle(LegalLinkStyle())
                     }
                     .signInEntrance(.promise, appeared: appeared, reduceMotion: effectiveReduceMotion)
-                    Toggle("I agree to share my messages and selected media with Google Gemini and OpenAI for AI editing", isOn: $consent)
+                    Toggle("I agree to the AI data sharing described above with Google, OpenAI, and Anthropic", isOn: $consent)
                         .tint(KriaColor.sky)
                         .padding(.vertical, 14)
                         .padding(.horizontal, 16)

@@ -18014,18 +18014,18 @@
         }
       }
     },
-    "I agree to share my messages and selected media with Google Gemini and OpenAI for AI editing" : {
+    "I agree to the AI data sharing described above with Google, OpenAI, and Anthropic" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ich stimme zu, meine Nachrichten und ausgewählten Medien für die KI-Bearbeitung mit Google Gemini und OpenAI zu teilen"
+            "value" : "Ich stimme der oben beschriebenen Datenweitergabe an Google, OpenAI und Anthropic für die KI-Bearbeitung zu"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yapay zekâ düzenlemesi için mesajlarımı ve seçtiğim medyaları Google Gemini ve OpenAI ile paylaşmayı kabul ediyorum"
+            "value" : "Yapay zekâ ile düzenleme için verilerimin yukarıda açıklandığı şekilde Google, OpenAI ve Anthropic ile paylaşılmasını kabul ediyorum"
           }
         }
       }
@@ -48207,18 +48207,18 @@
         }
       }
     },
-    "Your messages and selected media, including faces, voices, and transcripts, are sent to Google Gemini and OpenAI for analysis, transcription, and editing. Kria stores your projects and finished videos in your account." : {
+    "Your messages and selected media, including faces, voices, and transcripts, are sent to Google Gemini and OpenAI for analysis, transcription, and editing. Anthropic (Claude) receives your edit requests and project context to suggest changes. Kria stores your projects and finished videos in your account." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deine Nachrichten und ausgewählten Medien, einschließlich Gesichtern, Stimmen und Transkripten, werden zur Analyse, Transkription und Bearbeitung an Google Gemini und OpenAI gesendet. Kria speichert deine Projekte und fertigen Videos in deinem Konto."
+            "value" : "Deine Nachrichten und ausgewählten Medien, einschließlich Gesichtern, Stimmen und Transkripten, werden zur Analyse, Transkription und Bearbeitung an Google Gemini und OpenAI gesendet. Anthropic (Claude) erhält deine Bearbeitungswünsche und Projektinformationen, um Änderungen vorzuschlagen. Kria speichert deine Projekte und fertigen Videos in deinem Konto."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mesajların ve seçtiğin medyalar (yüzler, sesler ve metin dökümleri dahil) analiz, yazıya dökme ve düzenleme için Google Gemini ve OpenAI'a gönderilir. Kria projelerini ve tamamlanan videolarını hesabında saklar."
+            "value" : "Mesajların ve seçtiğin medyalar (yüzler, sesler ve metin dökümleri dahil) analiz, yazıya dökme ve düzenleme için Google Gemini ve OpenAI'a gönderilir. Anthropic (Claude), değişiklik önermek için düzenleme isteklerini ve proje bilgilerini alır. Kria projelerini ve tamamlanan videolarını hesabında saklar."
           }
         }
       }
