@@ -35,6 +35,7 @@ MAX_LOGS = 10
 RUNBOOK = "docs/runbooks/change-based-ci.md#when-a-nightly-goes-red-kri-1549"
 
 TIMESTAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", re.M)
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # scripts/ios/ui_tests.py verify_results: the UI suite's own verdict.
 COVERAGE = re.compile(
     r"UI coverage mismatch: missing=\[(.*?)\], not passed=\[(.*?)\], unexpected=\[(.*?)\]"
@@ -85,7 +86,7 @@ def red_jobs(jobs, self_name):
 
 def failed_tests(log):
     """Tests a job log shows failing; a test that later passed was only flaky."""
-    text = TIMESTAMP.sub("", log)
+    text = TIMESTAMP.sub("", ANSI.sub("", log.lstrip("\ufeff")))
     names, seen = [], set()
 
     def add(name, note=""):
@@ -115,9 +116,21 @@ def failed_tests(log):
     return names
 
 
+def read_log(gh, repo, job_id):
+    path = f"repos/{repo}/actions/jobs/{job_id}/logs"
+    try:
+        return gh(["api", path])
+    except subprocess.CalledProcessError as error:
+        # Newer gh (the runner's, 2026-11-20 drill) refuses to print a response
+        # with terminal escape sequences, and every runner log has colour codes.
+        if "--allow-escape-sequences" not in (error.stderr or ""):
+            raise
+        return gh(["api", "--allow-escape-sequences", path])
+
+
 def job_tests(gh, repo, job):
     try:
-        return failed_tests(gh(["api", f"repos/{repo}/actions/jobs/{job['id']}/logs"])), None
+        return failed_tests(read_log(gh, repo, job["id"])), None
     except (subprocess.CalledProcessError, OSError) as error:
         detail = (getattr(error, "stderr", "") or str(error)).strip().splitlines()
         return [], detail[-1] if detail else "unknown error"

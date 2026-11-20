@@ -29,9 +29,14 @@ written before the code:
 13. Assigning a person fails (an organisation owner, a removed collaborator)
     and so no issue is created at all.
 14. A re-run attempt is judged by an earlier attempt's jobs.
+15. The runner's gh refuses to print a log that holds terminal colour codes
+    (every runner log does), so no test is ever named. Found by the first
+    drill on 2026-11-20; the local gh printed the same logs.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import re
@@ -99,7 +104,8 @@ def run(name="iOS", branch="main", attempt=1):
 class FakeGh:
     """Answers the gh calls nightly-alert.py makes and records the writes."""
 
-    def __init__(self, jobs, issues=(), logs=None, run_json=None, assign_fails=False):
+    def __init__(self, jobs, issues=(), logs=None, run_json=None, assign_fails=False, escape_guard=False):
+        self.escape_guard = escape_guard
         self.jobs = jobs
         self.issues = list(issues)
         self.logs = logs or {}
@@ -125,6 +131,12 @@ class FakeGh:
                 log = self.logs.get(int(match.group(1)))
                 if log is None:
                     raise subprocess.CalledProcessError(1, args, "", "HTTP 410: logs expired")
+                if self.escape_guard and "\x1b[" in log and "--allow-escape-sequences" not in args:
+                    raise subprocess.CalledProcessError(
+                        1, args, "",
+                        "the response contains terminal escape sequences; "
+                        "pass --allow-escape-sequences to output it anyway\n",
+                    )
                 return log
             raise AssertionError(f"unexpected api call {path}")
         if args[:2] == ["issue", "list"]:
@@ -149,7 +161,8 @@ def alert(fake, env=None, argv=()):
         "NIGHTLY_ALERT_ASSIGNEES": "emirerben",
     }
     base.update(env or {})
-    return nightly_alert.main(list(argv), env=base, gh=fake)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        return nightly_alert.main(list(argv), env=base, gh=fake)
 
 
 RED_IOS = [
@@ -218,6 +231,18 @@ class FailedTestTests(unittest.TestCase):
         self.assertEqual(
             nightly_alert.failed_tests(log),
             ["KriaUITests/A/testGone (did not run)", "KriaUITests/B/testExtra (ran but was not selected)"],
+        )
+
+    def test_colour_codes_and_the_logs_byte_order_mark_do_not_hide_a_test(self):  # 15
+        log = (
+            "\ufeff2026-11-20T15:01:20.6Z Current runner version: '2.338.2'\n"
+            "2026-11-20T15:01:35.2Z \x1b[36;1mecho \"Test Case '-[KriaUITests.DrillUITests testInTheScript]' failed\"\x1b[0m\n"
+            "2026-11-20T15:01:36.0Z Test Case '-[KriaUITests.DrillUITests testDeliberatelyRed]' failed (0.1 seconds).\n"
+            "2026-11-20T15:01:36.1Z \x1b[31mTest Case '-[KriaUITests.DrillUITests testColoured]' failed (0.1 seconds).\x1b[0m\n"
+        )
+        self.assertEqual(
+            nightly_alert.failed_tests(log),
+            ["KriaUITests/DrillUITests/testDeliberatelyRed", "KriaUITests/DrillUITests/testColoured"],
         )
 
     def test_pytest_failures_and_errors_are_named(self):  # 9
@@ -291,6 +316,14 @@ class IssueTests(unittest.TestCase):
         (_, body), = fake.write(["issue", "create"])
         self.assertIn("ios-tests (native, macos-15, 2/5)", body)
         self.assertIn("log could not be read", body)
+
+    def test_a_gh_that_refuses_colour_codes_is_asked_again_to_print_the_log(self):  # 15
+        coloured = "2026-11-20T15:01:35.2Z ##[group]Run \x1b[36;1mbash verify.sh\x1b[0m\n" + UI_SHARD_LOG
+        fake = FakeGh(RED_IOS, logs={2: coloured}, escape_guard=True)
+        alert(fake)
+        (_, body), = fake.write(["issue", "create"])
+        self.assertIn("testCleanUpSpeechApprovalShowsTheRenderStageAndKeepsTheConversationInView", body)
+        self.assertNotIn("escape sequences", body)
 
     def test_an_assignee_github_refuses_does_not_stop_the_issue(self):  # 13
         fake = FakeGh(RED_IOS, logs={2: UI_SHARD_LOG}, assign_fails=True)
