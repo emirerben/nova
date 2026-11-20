@@ -314,7 +314,8 @@ def _compute_generative_matchable(t: MusicTrack) -> bool:
     is the right observability signal.
     """
     return (
-        t.analysis_status == "ready"
+        t.archived_at is None
+        and t.analysis_status == "ready"
         and t.ai_labels is not None
         and t.label_version == CURRENT_LABEL_VERSION
         and t.best_sections is not None
@@ -419,7 +420,8 @@ def _to_list_item(
     # therefore omits the rank-1-section deep validity that _to_response does;
     # it means "eligible by version + presence," which is the right list signal.
     matchable = (
-        t.analysis_status == "ready"
+        t.archived_at is None
+        and t.analysis_status == "ready"
         and has_ai_labels
         and t.label_version == CURRENT_LABEL_VERSION
         and has_best_sections
