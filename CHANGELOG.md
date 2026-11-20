@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.39.0] - 2026-11-20
+
+### Changed
+- docs(ci): record the hourly Beat health routine beside the workflow it backs up (KRI-1553) (#2414) <!-- release-pr: 2414 -->
+
 ## [0.89.38.0] - 2026-11-20
 
 ### Changed
