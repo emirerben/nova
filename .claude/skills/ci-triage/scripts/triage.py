@@ -63,7 +63,7 @@ LOG_RULES: list[tuple[str, str]] = [
 
 # Gate jobs pass only when these upstream jobs pass (scripts/ci/select-tests.py gate).
 GATES: dict[str, str] = {
-    "lint": r"^lint-suites",
+    "lint": r"^lint-suites|^ci-selftests",
     "test-api": r"^api \(\d\)|^journey|creator-contract-replay|shared-motion-runtime",
     "build-and-test": r"^journey|ios-contracts|^ios-tests",
     "PR iPhone gate": r"^journey|ios-contracts|^ios-tests",
@@ -71,6 +71,11 @@ GATES: dict[str, str] = {
 
 # (check-name regex, workflow-name regex, command). First match wins.
 RULES: list[tuple[str, str, str]] = [
+    (
+        r"^ci-selftests",
+        r"",
+        "python3 -m unittest discover -s scripts/ci -p 'test_*.py'",
+    ),
     (r"^lint", r"^CI$", API + "ruff check . && ruff format --check ."),
     (r"^api \((\d)\)", r"", API + "python3 ../../../scripts/ci/api-tests.py {0}"),
     (r"^test-api", r"^CI$", "make test-api"),

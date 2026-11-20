@@ -41,11 +41,33 @@ cases when adding a new subsystem or cross-subsystem dependency.
 ## Detection and required checks
 
 `.github/workflows/ci-changes.yml` is reused by CI and iOS. Each call checks out
-full history, runs the selector's offline regression tests, and compares the PR
-head with the merge base of its event base/head SHAs. Tests still execute on the
+full history and compares the PR head with the merge base of its event base/head
+SHAs. Tests still execute on the
 normal GitHub merge checkout. The diff uses NUL delimiters, has no API file-count
 limit and disables rename detection so both old and new paths are considered.
 No fork tokens or PR-supplied shell interpolation are needed.
+
+### Where the CI scripts' own tests run (KRI-1543)
+
+`python3 -m unittest discover -s scripts/ci -p 'test_*.py'` covers selection,
+the gates, the registries and PR evidence. It takes about 5 minutes on a hosted
+runner (17 to 20 s on 2026-11-12; `test_pr_evidence.py` alone is now 135 s
+locally, `test_select_tests.py` 49 s).
+
+- `ci.yml` calls the selector with `selftest: false` and runs the tests in the
+  `ci-selftests` job, beside the suites. That job has no `needs` and no `if`.
+  The required `lint` gate needs it and fails unless its result is `success`
+  (`select-tests.py gate lint lint-suites`), on every event. Suites therefore
+  start about 5 minutes earlier, and a red self-test still blocks the merge.
+- `ios.yml` (main pushes, nightly, manual) keeps the default: the tests run
+  inside the selector job, before selection.
+- A new caller of `ci-changes.yml` gets the default. Passing `selftest: false`
+  without a `ci-selftests` job that `lint` needs fails
+  `SelfTestWiringTests` in `scripts/ci/test_select_tests.py`.
+
+What changed in behaviour: with a broken selector, `ci.yml` suites now start and
+`lint` goes red afterwards; before, nothing started. To undo, revert the pull
+request that made the change.
 
 Before selecting suites for a PR to `main`, the selector job runs the existing
 release-metadata ownership guard. Manual release version or changelog edits stop

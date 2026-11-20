@@ -755,10 +755,105 @@ class GateTests(unittest.TestCase):
             needs = {
                 "changes": {"result": "success", "outputs": {"web": web, "api": api}},
                 "lint-suites": {"result": result},
+                "ci-selftests": {"result": "success"},
             }
             ci.gate(needs, "lint", "lint-suites")
         with self.assertRaises(ValueError):
             ci.gate(self.needs("false", "skipped"), "lint", "suite")
+
+    def test_lint_gate_fails_unless_the_ci_self_tests_passed(self):
+        """The self-tests run beside the suites, so this gate is what stops a red one."""
+        needs = {
+            "changes": {"result": "success", "outputs": {"api": "false"}},
+            "lint-suites": {"result": "skipped"},
+            "ci-selftests": {"result": "success"},
+        }
+        ci.gate(needs, "lint", "lint-suites")
+        for result in ("failure", "cancelled", "skipped", "", None):
+            with self.subTest(result=result), self.assertRaises(ValueError):
+                ci.gate(
+                    {**needs, "ci-selftests": {"result": result}}, "lint", "lint-suites"
+                )
+        lost = {name: need for name, need in needs.items() if name != "ci-selftests"}
+        with self.assertRaises(ValueError):
+            ci.gate(lost, "lint", "lint-suites")
+
+
+SELF_TESTS = "python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v"
+WORKFLOWS = SCRIPT.parents[2] / ".github/workflows"
+
+
+def workflow_jobs(text):
+    """Each top-level job of a workflow, by name, as its own text."""
+    jobs, name = {}, None
+    for line in text.split("\njobs:\n", 1)[1].splitlines():
+        match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
+        if match:
+            name = match.group(1)
+            jobs[name] = []
+        elif name:
+            jobs[name].append(line)
+    return {name: "\n".join(lines) for name, lines in jobs.items()}
+
+
+def job_key(job, key):
+    """A job-level key's value (four-space indent), or None."""
+    match = re.search(rf"^    {key}:[ ]*(.*)$", job, re.M)
+    return match.group(1) if match else None
+
+
+class SelfTestWiringTests(unittest.TestCase):
+    """Where `scripts/ci/test_*.py` runs in CI, and what a red run stops.
+
+    The ways this can go wrong, written before the wiring changed:
+    1. A caller turns the selector's own run off and nothing else runs them.
+    2. The job that runs them can be skipped (an `if:`, or a `needs:` whose
+       failure skips it), so a red selector goes unnoticed.
+    3. They run, fail, and no required check looks at the result.
+    4. A new caller of the selector workflow silently loses them.
+    """
+
+    def callers(self):
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            text = path.read_text()
+            for name, job in workflow_jobs(text).items() if "\njobs:\n" in text else ():
+                if job_key(job, "uses") == "./.github/workflows/ci-changes.yml":
+                    yield path.name, text, job
+
+    def test_the_selector_workflow_runs_them_first_unless_its_caller_takes_over(self):
+        text = (WORKFLOWS / "ci-changes.yml").read_text()
+        declared = text.split("    inputs:\n", 1)[1].split("    outputs:\n", 1)[0]
+        self.assertRegex(declared, r"      selftest:\n(        .*\n)*        default: true\n")
+        select = workflow_jobs(text)["select"]
+        step = select.split("      - name: Test CI selection", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("        if: inputs.selftest\n", step)
+        self.assertIn(f"        run: {SELF_TESTS}\n", step)
+        self.assertLess(
+            select.index("Test CI selection"), select.index("Select affected suites")
+        )
+
+    def test_every_caller_either_keeps_them_in_front_or_requires_its_own_job(self):
+        seen = {}
+        for name, text, call in self.callers():
+            off = re.search(r"^      selftest: false$", call, re.M) is not None
+            seen[name] = off
+            if not off:
+                self.assertNotIn("selftest:", call, name)
+                continue
+            jobs = workflow_jobs(text)
+            job = jobs["ci-selftests"]
+            self.assertIn(f"        run: {SELF_TESTS}\n", job + "\n", name)
+            # Nothing may skip it: no condition, and no upstream job to fail.
+            self.assertIsNone(job_key(job, "if"), name)
+            self.assertIsNone(job_key(job, "needs"), name)
+            self.assertNotIn("continue-on-error", job, name)
+            self.assertIn("fetch-depth: 0", job, name)
+            # The required `lint` check reads its result on every event.
+            lint = jobs["lint"]
+            self.assertEqual(job_key(lint, "if"), "always()", name)
+            self.assertIn("ci-selftests", job_key(lint, "needs"), name)
+            self.assertIn("select-tests.py gate lint lint-suites", lint, name)
+        self.assertEqual(seen, {"ci.yml": True, "ios.yml": False})
 
 
 class AutomaticUpdateMappingTests(unittest.TestCase):
@@ -912,14 +1007,8 @@ class GitDiffTests(unittest.TestCase):
             (False, "not_applicable", ""),
         )
         self.assertFalse(ci.native_validation("pull_request", suites, False))
-        workflow = (SCRIPT.parents[2] / ".github/workflows/ci-changes.yml").read_text()
-        self.assertIn(
-            "python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v", workflow
-        )
-        self.assertLess(
-            workflow.index("Test CI selection"),
-            workflow.index("Select affected suites"),
-        )
+        # Nothing the selector can pick runs for this diff, so the self-tests
+        # have to run where no selection reaches: SelfTestWiringTests.
 
     def test_audited_chat_workspace_tests_keep_full_native_units_without_exports(self):
         path = "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift"

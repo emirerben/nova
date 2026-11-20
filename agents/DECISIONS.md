@@ -3986,3 +3986,12 @@ over a mid-sentence pause (T2 keeps four), a follow-up.
 **Reversal condition:** a regression traced to a manifest edit whose changed rows did not select the journey that would have caught it.
 **Kill switch:** repository variable `CI_MAC_SELECTION=full` (shared with the Mac rule): every manifest edit and `.env.example` select everything again.
 **Guards:** `scripts/ci/test_select_tests.py` (`ManifestRowTests`, `test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac`, `test_a_native_journey_row_edit_keeps_its_mac_and_its_unit_tests`, `test_removing_a_journey_row_still_selects_everything`, `test_an_unreadable_manifest_still_selects_everything`).
+
+## [2026-11-20] The CI scripts' own tests run beside the suites, not in front of them (KRI-1543)
+
+**Context:** the selector job ran `scripts/ci/test_*.py` before selecting, and every CI job waits for the selector. The step took 17 to 20 s on 2026-11-12 and 282 to 319 s on 2026-11-19 (`test_pr_evidence.py`, 60 tests that each build a git repo, is 135 s locally; this train's manifest tests added to `test_select_tests.py`). On a PR with no Mac that was 3.7 of 32 minutes (run 44594847821).
+**Decision:** `ci.yml` passes `selftest: false` to `ci-changes.yml` and runs the tests in a top-level `ci-selftests` job with no `needs` and no `if`. The required `lint` gate lists it in `needs` and fails unless it succeeded. `ios.yml` keeps the tests in front of selection.
+**Trade:** a PR that breaks the selector now starts its suites and turns `lint` red about 5 minutes in; before, nothing started. The merge is blocked either way, because `lint` is required on every PR.
+**Not done:** making the tests faster. They are off the critical path now, and `test_pr_evidence.py` needs real git repos for what it proves.
+**Reversal condition:** a PR merged with a red `ci-selftests` job, or suites acting on a wrong selection in a way that costs more than the 5 minutes.
+**Guards:** `scripts/ci/test_select_tests.py` (`SelfTestWiringTests`, `test_lint_gate_fails_unless_the_ci_self_tests_passed`).

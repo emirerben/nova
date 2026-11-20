@@ -785,10 +785,20 @@ def gate(needs, suite, job, event="pull_request"):
         }
     elif suite == "ios" and job == "journey":
         required_needs = {"changes", "journey", "ios-contracts"}
+    elif suite == "lint":
+        # ci.yml runs the CI self-tests beside the suites, not before selection,
+        # so this required gate is where a red self-test stops the PR.
+        required_needs = {"changes", job, "ci-selftests"}
     else:
         required_needs = {"changes", job}
     if set(needs) != required_needs or needs["changes"].get("result") != "success":
         raise ValueError("CI selection failed or required job results are missing")
+    if suite == "lint" and needs["ci-selftests"].get("result") != "success":
+        raise ValueError(
+            unexpected_result(
+                "ci self-tests", "success", needs["ci-selftests"].get("result")
+            )
+        )
     outputs = needs["changes"].get("outputs", {})
     selected = outputs.get(suite)
     if suite == "ios":
