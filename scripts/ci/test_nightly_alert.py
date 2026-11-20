@@ -32,6 +32,8 @@ written before the code:
 15. The runner's gh refuses to print a log that holds terminal colour codes
     (every runner log does), so no test is ever named. Found by the first
     drill on 2026-11-20; the local gh printed the same logs.
+16. Someone re-runs an older nightly: its green attempt closes the issue (or
+    its red one comments) although a newer nightly has already run.
 """
 
 import contextlib
@@ -93,6 +95,7 @@ def run(name="iOS", branch="main", attempt=1):
     return {
         "name": name,
         "event": "schedule",
+        "workflow_id": 55,
         "head_branch": branch,
         "head_sha": "333a2a7118266c82b8d968e1cfa92a1e75b28665",
         "run_attempt": attempt,
@@ -104,8 +107,9 @@ def run(name="iOS", branch="main", attempt=1):
 class FakeGh:
     """Answers the gh calls nightly-alert.py makes and records the writes."""
 
-    def __init__(self, jobs, issues=(), logs=None, run_json=None, assign_fails=False, escape_guard=False):
+    def __init__(self, jobs, issues=(), logs=None, run_json=None, assign_fails=False, escape_guard=False, newest_run=7):
         self.escape_guard = escape_guard
+        self.newest_run = newest_run
         self.jobs = jobs
         self.issues = list(issues)
         self.logs = logs or {}
@@ -122,6 +126,9 @@ class FakeGh:
                 return json.dumps({"default_branch": "main"})
             if path == f"repos/{REPO}/actions/runs/7":
                 return json.dumps(self.run_json)
+            if path.startswith(f"repos/{REPO}/actions/workflows/55/runs?"):
+                self.newest_query = path
+                return json.dumps({"workflow_runs": [{"id": self.newest_run}]})
             match = re.fullmatch(rf"repos/{REPO}/actions/runs/7/attempts/(\d+)/jobs\?per_page=100&page=(\d+)", path)
             if match:
                 jobs = self.jobs if match.group(2) == "1" else []
@@ -202,6 +209,16 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(fake.write(["issue", "close"]), [])
         (args, body), = fake.write(["issue", "comment"])
         self.assertIn("late-job", body)
+
+    def test_a_re_run_of_an_older_nightly_leaves_the_issue_alone(self):  # 16
+        fake = FakeGh(GREEN_IOS, issues=[OPEN_IOS], newest_run=8)
+        alert(fake)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("event=schedule", fake.newest_query)
+        self.assertIn("branch=main", fake.newest_query)
+        fake = FakeGh(RED_IOS, issues=[OPEN_IOS], newest_run=8)
+        alert(fake)
+        self.assertEqual(fake.writes, [])
 
     def test_the_jobs_of_this_attempt_decide_a_re_run(self):  # 14
         fake = FakeGh(GREEN_IOS, run_json=run(attempt=2))

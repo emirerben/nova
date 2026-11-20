@@ -475,7 +475,8 @@ job (`scripts/ci/nightly-alert.py`, built-in `GITHUB_TOKEN`, no secret):
   is flaky, not failing) and pytest `FAILED`/`ERROR` lines. A log it cannot read
   is named as such; the jobs are still listed.
 - The next green scheduled run of the same workflow closes the issue with a
-  comment naming that run.
+  comment naming that run. Only the newest scheduled run speaks: re-running an
+  older night's jobs (which keeps the `schedule` event) changes nothing.
 - It runs on `schedule` only. PR, push and manual runs never open, update or
   close the issue. A run of any branch but `main` uses its own title ("... (branch
   <name>)") and no assignee, so a drill cannot touch main's issue.

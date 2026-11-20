@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 LABEL = "nightly-red"
 GREEN = {"success", "skipped", "neutral"}
@@ -172,6 +173,8 @@ def report(run, repo, red, unfinished, tests, cap=MAX_TESTS_PER_JOB):
             lines.append(f"  - `{name}`")
         if len(names) > cap:
             lines.append(f"  - … and {len(names) - cap} more in the job log")
+    for job in red[MAX_LOGS:]:
+        lines.append(f"  - (log of `{job['name']}` not read: only the first {MAX_LOGS} red jobs are read)")
     for job in unfinished:
         lines.append(
             f"- `{job['name']}`: had not finished when this check ran "
@@ -200,6 +203,15 @@ def main(argv, env=os.environ, gh=run_gh):
     repo = env["GITHUB_REPOSITORY"]
     run_id = args.run_id or env["GITHUB_RUN_ID"]
     run = api(gh, f"repos/{repo}/actions/runs/{run_id}")
+    # A re-run of an older night must not close or comment on the issue that a
+    # newer night already reported: only the newest run of this kind speaks.
+    # (--run-id previews any finished run, so it skips this.)
+    query = urllib.parse.urlencode({"event": run["event"], "branch": run["head_branch"], "per_page": 1})
+    newest = api(gh, f"repos/{repo}/actions/workflows/{run['workflow_id']}/runs?{query}")["workflow_runs"]
+    if not args.run_id and newest and newest[0]["id"] != int(run_id):
+        print(f"Run {run_id} is not the newest {run['event']} run of {run['name']} "
+              f"(that is {newest[0]['id']}); it reports nothing.")
+        return
     attempt = args.attempt or (None if args.run_id else env.get("GITHUB_RUN_ATTEMPT")) or run["run_attempt"]
     run["run_attempt"] = int(attempt)
     jobs = fetch_jobs(gh, repo, run_id, attempt)

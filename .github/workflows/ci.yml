@@ -1534,6 +1534,8 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Open, update or close the nightly-red issue
         env:
           GH_TOKEN: ${{ github.token }}
