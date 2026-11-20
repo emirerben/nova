@@ -3929,3 +3929,60 @@ Reversal condition. If "cleanup clipped the start of my sentence" traces to a
 **Gap:** server copy written before any model reads a message (a Steer-now stop line, an instant status reply) is in the stored language. A copilot-only turn (no Main Creator, no brief extractor first) replies in the stored language; the deferred extraction then stores the language it read for the next turn.
 **Kill switch:** `KRIA_REPLY_LANGUAGE_ENABLED=false`: no line in the prompt, the field is ignored, nothing is stored.
 **Guards:** `tests/kria/test_model_owned_reply_language.py`, `tests/kria/test_model_owned_reply_language_postgres.py`.
+
+## [2026-11-17] Cleanup moves words stamped into the pause after their voice (KRI-1506/1507, job 887f89d6)
+
+Context. Cusco DJI T2 "list 1": the speaker says "Kilitli sistemler", pauses ~1.9 s, then
+"yıkılmayı zorlaştırıyor". whisper-1 stamped "Kilitli sistemler" 13.96–15.24 s, wholly inside the
+pause (silence 13.384–15.288 s); the words' voice (12.306–13.384 s) had no word. The label and
+caption came 1.6 s late, the pause looked like speech so cleanup kept it (2.05 s, the take's
+longest), and rule 2 proposed the real words as an acoustic filler (only the KRI-1017 voice guard
+kept them). Rule 0 cannot help: it never carves a whole token, by design.
+
+Decision. Before planning, the preflight analysis moves such a run onto the wordless voice
+(`app/pipeline/late_word_realign.py`, called from `speech_cleanup_analysis._late_words_realigned`)
+and stores the moved words, so the cut, the captions and the list labels all read them. Every
+condition must hold: the words each lie >= 90% in ONE silence span >= `TOKEN_SILENCE_MIN_S` and
+form one run; the next word is not stamped in that pause too; the island (the sound between the
+last pause >= 0.25 s and this one) has no earlier word in it (0.1 s slack); its length is within
+2x of the run's stamps and holds the run's syllables at <= `SQUEEZE_MAX_SYLLABLES_PER_S`; and the
+KRI-1017 voicing detector hears >= 30% voicing in the island and <= 0.05 s under the stamps. The
+run maps linearly onto the island, never before the previous word's end. `DETECTOR_VERSION` →
+`mixed-gap-v10-late-words`; switch `SPEECH_CLEANUP_LATE_WORDS_ENABLED` (default on, in the policy
+fingerprint).
+
+Why it is safe enough. Two detectors that do not share a signal (silencedetect's level spans and
+the periodicity-based voicing detector) must both say the stamps are dead air and the island is a
+voice; quiet speech under the stamps is voiced and refuses the move. Moving words never cuts
+anything itself; the voice guard still judges every cut. The mirror shape (words stamped BEFORE
+their voice) has not been seen and is not moved.
+
+Evidence. T2 replayed on the real clip: "Kilitli" 13.96 → 12.31 s (voice-band truth 12.30 s), the
+pause cut to 0.39 s, every other cut unchanged; label 2 at 11.27 s in the cut take where the audio
+has "kilitli" at about 11.25 s. No move on 12 recorded word/silence fixtures or on the Cusco T3,
+Çiğdem S2 and S4 kit runs. Guards: `tests/tasks/test_kri1502_cusco_t2_replay.py`,
+`tests/pipeline/test_late_word_realign.py`. Failure modes:
+`docs/reviews/kri-1502-late-words-failure-modes.md`. Not covered: ~1 s pauses whose stamps stretch
+over a mid-sentence pause (T2 keeps four), a follow-up.
+
+## [2026-11-19] A pull request starts a Mac only when it changes an iPhone input (KRI-1534)
+
+**Context:** a Mac ran on 256 of 277 merged PRs (92%) in 2026-11-05..19, and the Mac was the last required check to finish on most of them (median 51.5 min to the last required check with a Mac, 26.5 without). 135 of 153 PRs that touched no iOS file still got one, because an API path selected `ios` (contract prefixes, `app/kria/`) or a journey flagged `needs_native`. On a PR only the `unit` leg runs, and no step of it hands the offline fixture bundle to a test (only the nightly-only `creation` and `screens` legs set `TEST_RUNNER_KRIA_E2E_DIR`), so for those PRs the Mac repeated what `main` had already built and tested. The account has five concurrent Macs.
+**Decision:** on `pull_request`, `native_validation` is true only when the diff changes a declared iPhone input (`IOS_NATIVE_INPUTS`), a CI policy path, or a path the selector cannot classify (`ios_native`). `ios` keeps its meaning, so the Linux `ios-contracts` job and the `build-and-test` gate still cover API contract changes. Nightly, manual and push-to-`main` runs are unchanged.
+**Evidence:** `scripts/ci/native-inputs-backtest.py` over 897 PR runs: the rule starts no Mac on 216 (24%); a Mac ran to an end on 151 of those and 26 failed, none caused by its PR (24 were one test-build break inherited from `main`, 1 a unit test `main` failed the same evening, 1 a Linux journey failure reported by the Mac's wait step). Detail: `docs/runbooks/change-based-ci.md`.
+**Also changed:** API fonts and the fixtures Swift tests open by path now select the iPhone unit suite. Before, a PR that changed only such a file did not run the Swift tests that read it.
+**Gap:** the input list is checked by a static scan of the iPhone tree (`test_every_repo_path_the_iphone_tree_names_is_a_declared_native_input`). A path assembled at run time from pieces is invisible to it. A PR that slips through is caught by `main`'s own iOS run after merge, not before.
+**Reversal condition:** a red `main` iOS run traced to a PR the rule gave no Mac. Add the path to `IOS_NATIVE_INPUTS`; if the cause is not a single path, turn the rule off.
+**Kill switch:** repository variable `CI_MAC_SELECTION=full`. No code change, takes effect on the next run. It also undoes the journey-manifest and `.env.example` narrowing of KRI-1541 (`selection_rollback` in `scripts/ci/select-tests.py`).
+**Guards:** `scripts/ci/test_select_tests.py` (`test_required_gates_accept_the_skipped_mac_and_reject_a_lost_one`, `test_the_rollback_variable_restores_a_mac_for_every_selected_pr`), `scripts/ci/test_ci_throughput.py` (`test_no_pr_mac_step_hands_python_output_to_the_iphone_tests`, `test_a_pr_gets_a_mac_only_when_an_iphone_input_changed`, `test_journey_gate_accepts_a_skipped_mac_only_when_no_iphone_input_changed`).
+
+## [2026-11-19] A journey-manifest edit selects the rows it changed, not everything (KRI-1541)
+
+**Context:** `scripts/ci/journey-manifest.json` is CI policy, so any edit of it selected every suite, a Mac and all 179 journeys ("a change to either must execute the gate it could otherwise weaken"). It is edited in 37% of PR runs (330 of 897 in 2026-11-05..19), mostly to add or extend one row.
+**Decision:** the selector compares the manifest at the merge base and at the PR head row by row. Added or changed rows select those journeys and the API suite; a changed row that is native on either side also selects the iPhone unit suite and a Mac. `.env.example` selects the API suite. The policy property is kept: every row whose definition changed executes, and unchanged rows are identical on both sides.
+**Kept fail-closed:** a removed row, a change outside `journeys`, duplicate or missing ids, a manifest that does not parse on either side, or a changed id the registry does not know selects everything, as before.
+**Evidence:** replay over the same 897 PR runs: 189 manifest edits touch only Linux rows, 139 a native row, 2 select everything. No Mac on 305 runs (34%) against 216 without this change; 33 Mac failures on those runs, all read, none caused by its PR. Detail: `docs/runbooks/change-based-ci.md`.
+**Gap:** a row edit can move a path from another journey to itself (longest-prefix match). The other journey's row is unchanged, so it is not selected by the edit; running it would not detect the lost path either.
+**Reversal condition:** a regression traced to a manifest edit whose changed rows did not select the journey that would have caught it.
+**Kill switch:** repository variable `CI_MAC_SELECTION=full` (shared with the Mac rule): every manifest edit and `.env.example` select everything again.
+**Guards:** `scripts/ci/test_select_tests.py` (`ManifestRowTests`, `test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac`, `test_a_native_journey_row_edit_keeps_its_mac_and_its_unit_tests`, `test_removing_a_journey_row_still_selects_everything`, `test_an_unreadable_manifest_still_selects_everything`).

@@ -53,10 +53,11 @@ from app.kria.api_schemas import (
     ThreadDeltaOut,
 )
 from app.kria.brief import CreativeBrief
-from app.kria.device_render import DeviceRenderCapabilities
+from app.kria.device_render import DeviceRenderCapabilities, WatermarkExemption
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.language import is_status_question
 from app.kria.media_sources import (
+    PROJECT_AUDIO_CONTENT_TYPES,
     PROXY_MEDIA_PREFIX,
     AnalysisProxyDescriptor,
     ClipCapture,
@@ -104,7 +105,6 @@ from app.models import (
     User,
 )
 from app.routes import creator_agent
-from app.routes.music_jobs import _SLOT_UPLOAD_AUDIO_CT
 from app.routes.plan_items import (
     _ALLOWED_CONTENT_TYPES,
     _IMAGE_CONTENT_TYPES,
@@ -238,7 +238,7 @@ _MEDIA_TYPES = frozenset(
         *_ALLOWED_CONTENT_TYPES,
         *_IMAGE_CONTENT_TYPES,
         "audio/x-m4a",
-        *_SLOT_UPLOAD_AUDIO_CT,
+        *PROJECT_AUDIO_CONTENT_TYPES,
     }
 )
 _MEDIA_EXTENSIONS = {
@@ -1050,7 +1050,7 @@ def _media_capabilities(
             "current": 1 if item.voiceover_gcs_path else 0,
             "max": 1,
             "max_file_bytes": _MAX_VOICEOVER_BYTES,
-            "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+            "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
         },
         # Only once a song is attached, so every existing consumer of this
         # projection is untouched for items without one.
@@ -1060,7 +1060,7 @@ def _media_capabilities(
                     "current": 1,
                     "max": 1,
                     "max_file_bytes": _MAX_VOICEOVER_BYTES,
-                    "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                    "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
                 }
             }
             if getattr(item, "song_gcs_path", None)
@@ -4251,9 +4251,14 @@ async def capabilities(
         "idea_example_feedback": bool(settings.creator_editorial_taste_for(user.id)),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
+            watermark_exemption=(
+                WatermarkExemption.for_account(user.id)
+                if native_client and settings.phone_watermark_exempt_for(user.id)
+                else None
+            ),
             recipe_versions=[2] if phone_enabled else [],
             verified_features=(settings.phone_render_verified_features if phone_enabled else []),
-        ).model_dump(),
+        ).model_dump(exclude_none=True),
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),
@@ -4347,14 +4352,14 @@ async def capabilities(
             "voiceover": {
                 "max": 1,
                 "max_file_bytes": _MAX_VOICEOVER_BYTES,
-                "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
             },
             **(
                 {
                     "song": {
                         "max": 1,
                         "max_file_bytes": _MAX_VOICEOVER_BYTES,
-                        "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                        "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
                     }
                 }
                 if song_available
@@ -6936,7 +6941,7 @@ async def _verify_registered_uploads(
             str(metadata.content_type or media.content_type or "").split(";", 1)[0].lower()
         )
         kind_allowed = (media.kind == "video" and content_type in _ALLOWED_CONTENT_TYPES) or (
-            media.kind == "audio" and content_type in _SLOT_UPLOAD_AUDIO_CT
+            media.kind == "audio" and content_type in PROJECT_AUDIO_CONTENT_TYPES
         )
         kind_limit = _MAX_BYTES_PER_FILE if media.kind == "video" else _MAX_VOICEOVER_BYTES
         if metadata.size <= 0 or metadata.size > kind_limit or not kind_allowed:

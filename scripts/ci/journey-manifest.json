@@ -79,6 +79,7 @@
         "src/apps/api/app/pipeline/transcribe.py",
         "src/apps/api/app/schemas/media_assets.py",
         "src/apps/api/app/routes/media_assets.py",
+        "src/apps/api/app/kria/media_sources.py",
         "src/apps/api/app/services/media_library_ingest.py",
         "src/apps/api/app/services/media_library_analysis.py",
         "src/apps/api/app/services/media_library_projections.py",
@@ -562,11 +563,15 @@
     {
       "id": "kri-1027-vertical-fill",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri1027_m1_vertical_fill_replay.py tests/pipeline/test_kri1027_montage_vertical_framing.py tests/kria/test_landscape_fit_ask.py tests/services/test_render_shape_chat_ask.py tests/pipeline/test_phone_guided_fit.py",
+      "api_tests": "tests/kria/test_kri1027_m1_vertical_fill_replay.py tests/pipeline/test_kri1027_montage_vertical_framing.py tests/kria/test_landscape_fit_ask.py tests/services/test_render_shape_chat_ask.py tests/pipeline/test_phone_guided_fit.py tests/pipeline/test_kri1514_montage_person_fill.py tests/pipeline/test_subject_matte.py",
       "paths": [
         "src/apps/api/app/kria/landscape_fit_ask.py",
         "src/apps/api/app/pipeline/phone_montage_framing.py",
+        "src/apps/api/app/pipeline/phone_person_window.py",
+        "src/apps/api/app/pipeline/subject_matte.py",
         "src/apps/api/tests/fixtures/kri1027_m1_vertical_fill.json",
+        "src/apps/api/tests/fixtures/kri1514_cusco_t5_person_fill.json",
+        "src/apps/api/tests/pipeline/test_kri1514_montage_person_fill.py",
         "src/apps/api/tests/kria/test_kri1027_m1_vertical_fill_replay.py",
         "src/apps/api/tests/kria/test_landscape_fit_ask.py",
         "src/apps/api/tests/pipeline/test_kri1027_montage_vertical_framing.py",
@@ -697,9 +702,11 @@
     {
       "id": "kri-994-review-receipts",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri994_review_receipts.py tests/tasks/test_montage_render_ready_review.py tests/kria/test_brief_montage_render_asks.py tests/kria/test_creative_brief.py",
+      "api_tests": "tests/kria/test_kri994_review_receipts.py tests/tasks/test_montage_render_ready_review.py tests/kria/test_brief_montage_render_asks.py tests/kria/test_creative_brief.py tests/kria/test_kri1515_montage_sentence_once.py",
       "paths": [
         "src/apps/api/app/kria/select_asks.py",
+        "src/apps/api/tests/fixtures/kri1515_cusco_t5_review.json",
+        "src/apps/api/tests/kria/test_kri1515_montage_sentence_once.py",
         "src/apps/api/tests/fixtures/kri994_don_julio_m2_review.json",
         "src/apps/api/tests/kria/test_kri994_review_receipts.py"
       ]
@@ -759,7 +766,7 @@
     {
       "id": "kri-653-silent-take",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py",
+      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/pipeline/test_late_word_realign.py tests/tasks/test_kri1502_cusco_t2_replay.py",
       "paths": [
         "src/apps/api/app/pipeline/silence_cut.py",
         "src/apps/api/app/services/clip_speech.py",
@@ -772,7 +779,11 @@
         "src/apps/api/app/pipeline/speech_voice_guard.py",
         "src/apps/api/tests/pipeline/test_voice_guard_cleanup_e2e.py",
         "src/apps/api/tests/pipeline/test_kri1017_maximo2_replay.py",
-        "src/apps/api/tests/fixtures/kri1017_maximo2_cleanup.json"
+        "src/apps/api/tests/fixtures/kri1017_maximo2_cleanup.json",
+        "src/apps/api/app/pipeline/late_word_realign.py",
+        "src/apps/api/tests/pipeline/test_late_word_realign.py",
+        "src/apps/api/tests/tasks/test_kri1502_cusco_t2_replay.py",
+        "src/apps/api/tests/fixtures/kri1502_cusco_t2/incident.json"
       ]
     },
     {
@@ -2275,6 +2286,14 @@
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/tests/fixtures/kri839_cafe_t2/t2_01_words.json"
+      ]
+    },
+    {
+      "id": "kri-1510-1511-cusco-t3-stickers",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1510_unsaid_planned_trigger.py tests/pipeline/test_kri1511_cut_keeps_sticker_hold.py tests/tasks/test_kri1511_sticker_hold_worker.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1511_cusco_t3/sticker1.json"
       ]
     },
     {

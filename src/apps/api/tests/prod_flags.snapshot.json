@@ -293,6 +293,10 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "cut_keeps_sticker_hold_enabled": {
+      "source": "default",
+      "value": true
+    },
     "described_popin_names_enabled": {
       "source": "default",
       "value": true
@@ -845,6 +849,10 @@
       "source": "default",
       "value": 20
     },
+    "montage_person_fill_enabled": {
+      "source": "default",
+      "value": true
+    },
     "motion_scenes_enabled": {
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
@@ -1203,6 +1211,10 @@
       "source": "default",
       "value": true
     },
+    "phone_watermark_exempt_user_ids": {
+      "source": "default",
+      "value": []
+    },
     "plan_item_advisor_enabled": {
       "source": "default",
       "value": true
@@ -1467,6 +1479,10 @@
       "source": "default",
       "value": true
     },
+    "speech_cleanup_late_words_enabled": {
+      "source": "default",
+      "value": true
+    },
     "speech_cleanup_long_pauses_enabled": {
       "source": "default",
       "value": false
@@ -1562,6 +1578,10 @@
     "talking_card_strip_enabled": {
       "source": "default",
       "value": false
+    },
+    "talking_fit_caption_geometry_enabled": {
+      "source": "default",
+      "value": true
     },
     "talking_head_route_follows_prompt_enabled": {
       "source": "default",
@@ -1680,6 +1700,10 @@
       "value": false
     },
     "unsaid_cue_report_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "unsaid_planned_cue_report_enabled": {
       "source": "default",
       "value": true
     },

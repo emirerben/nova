@@ -57,8 +57,19 @@ private struct ResolvedExportFile {
 /// route once, hands the result to Photos or the share sheet, and always
 /// removes any temporary copy it made.
 @MainActor protocol NativeEditorExportSource: AnyObject {
+    func prepareVideoDownloadRoute(deviceLocalFile: URL?) async throws -> NativeEditorVideoDownloadRoute
+    func exportSavedRecipe(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute
     func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo
+}
+
+extension NativeEditorExportSource {
+    func prepareVideoDownloadRoute(deviceLocalFile: URL?) async throws -> NativeEditorVideoDownloadRoute {
+        try videoDownloadRoute(deviceLocalFile: deviceLocalFile)
+    }
+    func exportSavedRecipe(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
+        throw NativeEditorVideoDownloadError.unavailable
+    }
 }
 
 @MainActor final class NativeEditorExporter: ObservableObject {
@@ -121,14 +132,20 @@ private struct ResolvedExportFile {
         dismissTask?.cancel()
         phase = .preparing
         do {
-            switch try session.videoDownloadRoute(deviceLocalFile: deviceLocalFile) {
-            case .sourcePreview:
+            let route = try await session.prepareVideoDownloadRoute(deviceLocalFile: deviceLocalFile)
+            switch route {
+            case .sourcePreview, .savedRecipe:
                 let runner = ContinuedProcessingExport(scheduler: scheduler, isForeground: isForeground)
                 let exported = try await runner.run(origin: origin, title: String(localized: "Preparing your video"), subtitle: String(localized: "Exporting the current preview"), operation: { progress in
-                    try await session.exportDisplayedSourcePreview(progress: { fraction in
+                    let report: @Sendable (Double) -> Void = { fraction in
                         guard fraction.isFinite, (0...1).contains(fraction) else { return }
                         Task { @MainActor in progress(Int64(fraction * 1000), 1000) }
-                    })
+                    }
+                    return if route == .savedRecipe {
+                        try await session.exportSavedRecipe(progress: report)
+                    } else {
+                        try await session.exportDisplayedSourcePreview(progress: report)
+                    }
                 }, discard: { exported in
                     try? FileManager.default.removeItem(at: exported.cleanupURL)
                 })

@@ -270,6 +270,20 @@ def _burn_frame(ass_path: Path, at_s: float, out_png: Path, *, trace: bool = Fal
     return result.stderr.decode(errors="replace")
 
 
+# Fontconfig prints these while another process refreshes the system font
+# cache (parallel xdist workers). They are cache housekeeping, not render errors.
+_FONTCONFIG_CACHE_NOISE = ("Unable to revert mtime:",)
+
+
+def _render_errors(stderr: str) -> list[str]:
+    """ffmpeg error-level lines, minus fontconfig cache housekeeping."""
+    return [
+        line
+        for line in stderr.splitlines()
+        if line.strip() and not line.startswith(_FONTCONFIG_CACHE_NOISE)
+    ]
+
+
 def _fallback_lines(log: str) -> list[str]:
     """libass log lines that mean a letter was drawn from a face outside the bundle."""
     bad = []
@@ -340,7 +354,7 @@ def test_libass_word_highlight_sweeps_right_to_left_for_arabic(tmp_path):
     ass_path = tmp_path / "pop.ass"
     generate_word_pop_ass([cue], str(ass_path), font_name="TikTok Sans", margin_v=384)
     first = _burn_frame(ass_path, 0.2, tmp_path / "first.png")
-    assert first == ""
+    assert not _render_errors(first), first
     _burn_frame(ass_path, 1.7, tmp_path / "last.png")
     line = _ink(tmp_path / "first.png", _is_text)
     first_word = _ink(tmp_path / "first.png", _is_lime)

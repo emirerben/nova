@@ -115,6 +115,20 @@ def mock_storage(fixture, monkeypatch):
     return signed_calls
 
 
+def test_watermark_exemption_is_response_only_and_account_scoped(fixture, monkeypatch):
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    monkeypatch.setattr(settings, "phone_watermark_exempt_user_ids", [fixture.user.id])
+    response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
+    assert response.status_code == 200
+    grant = response.json()["request"]["watermark_exemption"]
+    assert grant == {"owner_hash": hashlib.sha256(str(fixture.user.id).encode()).hexdigest()}
+    assert "watermark_exemption" not in device_status(fixture.job, "first").request.model_dump()
+    monkeypatch.setattr(settings, "phone_watermark_exempt_user_ids", [uuid.uuid4()])
+    response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
+    assert response.status_code == 200
+    assert "watermark_exemption" not in response.json()["request"]
+
+
 def test_foreign_job_is_filtered_before_recipe_lookup(fixture):
     fixture.db.execute.side_effect = [scalar(None), scalar(None)]
     response = fixture.client.get(f"/me/jobs/{fixture.job.id}/device-render?variant_id=first")
@@ -223,6 +237,71 @@ def test_verified_publication_attaches_cleanup_and_reconciles_lost_response(fixt
         ).status_code
         == 409
     )
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        (None, {}),
+        ("not JSON", {}),
+        ('{"export_ms": true}', {}),
+        ('{"upload_ms": -1}', {}),
+        ('{"upload_ms": 999999999}', {}),
+        ('{"export_ms": 1200, "path": "private"}', {}),
+        (
+            '{"device_elapsed_ms":8500,"export_ms":1200,"upload_ms":420,"last_suspension_ms":5000}',
+            {
+                "device_elapsed_ms": 8500,
+                "export_ms": 1200,
+                "upload_ms": 420,
+                "last_suspension_ms": 5000,
+            },
+        ),
+    ],
+)
+def test_completed_device_timing_is_advisory_and_attempt_bound(
+    fixture, monkeypatch, header, expected
+):
+    from app.routes.admin_jobs import _render_timing_breakdown
+
+    stale, _ = prepared(fixture)
+    attempt, _ = prepared(fixture)
+    mock_storage(fixture, monkeypatch)
+    monkeypatch.setattr(routes, "_verify_export", MagicMock(return_value=None))
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    fixture.job.created_at = datetime.now(UTC)
+    fixture.job.started_at = None
+    fixture.job.phase_log = []
+    endpoint = f"/me/jobs/{fixture.job.id}/device-render/complete"
+    headers = {"X-Kria-Device-Timing": header} if header is not None else {}
+    response = fixture.client.post(endpoint, json=body(fixture, attempt), headers=headers)
+    assert response.status_code == 200, response.text
+
+    replacement = {"X-Kria-Device-Timing": '{"export_ms":999}'}
+    assert (
+        fixture.client.post(endpoint, json=body(fixture, stale), headers=replacement).status_code
+        == 409
+    )
+    assert (
+        fixture.client.post(endpoint, json=body(fixture, attempt), headers=replacement).status_code
+        == 200
+    )
+    attempts = device_record(fixture.job, "first")["attempts"]
+    assert "device_timing" not in attempts[stale]
+    assert attempts[attempt].get("device_timing", {}) == expected
+    stages = _render_timing_breakdown(fixture.job, []).stages
+    assert {
+        stage.name: stage.elapsed_ms for stage in stages if stage.source == "device_reported"
+    } == {
+        f"device_{name.removeprefix('device_').removesuffix('_ms')}": value
+        for name, value in expected.items()
+    }
 
 
 @pytest.mark.parametrize("change", ["epoch", "item"])

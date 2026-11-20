@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
 from app.config import settings
-from app.kria.media_sources import MediaUploadContract
+from app.kria.media_sources import PROJECT_AUDIO_CONTENT_TYPES, MediaUploadContract
 from app.models import (
     MediaAsset,
     MediaAssetReference,
@@ -89,6 +89,8 @@ def validate_upload_request(payload: dict, *, legacy: bool = False) -> MediaUplo
     supported = _ALLOWED.get(kind, set()) | (
         {"video/quicktime", "video/webm"} if legacy and kind == "video" else set()
     )
+    if legacy and kind == "audio":
+        supported = PROJECT_AUDIO_CONTENT_TYPES
     if payload["content_type"] not in supported:
         raise HTTPException(422, "Unsupported media type")
     limit = 4 * 1024**3 if legacy and kind == "video" else _BYTE_LIMIT[kind]

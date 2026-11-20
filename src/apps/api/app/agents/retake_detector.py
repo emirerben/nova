@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.agents._runtime import Agent, AgentSpec, ModelClient, RunContext, SchemaError
 from app.agents.music_matcher import _sanitize_text
 from app.pipeline.prompt_loader import load_prompt
+from app.text_fold import loose_text
 
 log = structlog.get_logger()
 
@@ -169,6 +170,66 @@ def normalize_retake_spans(raw_entries: Sequence[Any], n_words: int) -> list[Ret
     return merged
 
 
+# KRI-1518: an auto-applied span must be re-said right after it, in words that stay. The kept
+# take restarts the same delivery, so its opening shares words with the abandoned one ("At
+# kilometer 30… sorry. At kilometer 32"); a span that nothing re-says is real content, however
+# the model labelled it ("… altınlar, hepsini Armada Española" after all three deliveries of
+# one phrase were flagged).
+_REDELIVERY_OPENING_WORDS = 4
+_REDELIVERY_MIN_SHARED = 2
+_STEM_CHARS = 5
+# Short words ("I", "a", "at", "ve", "bir", "the") are shared by most neighbouring sentences:
+# they may help reach the count, but one shared word must have at least this many letters.
+_MEANINGFUL_LETTERS = 4
+
+
+def _word_stem(text: str) -> str:
+    """Case-, mark- and suffix-insensitive form of one spoken word ("" for punctuation).
+
+    Turkish capitals and marks fold to plain letters ("İŞTE" → "iste", "ı" → "i") and the
+    first ``_STEM_CHARS`` letters stand for the word, so "Cusco" and "Cusco'ya" match."""
+    letters = "".join(ch for ch in loose_text(text) if ch.isalnum())
+    return letters[:_STEM_CHARS]
+
+
+def spans_with_kept_redelivery(
+    spans: Sequence[RetakeSpan], words: Sequence[IndexedWord]
+) -> list[RetakeSpan]:
+    """Keep only spans whose content the speaker says again in the words that stay.
+
+    For each span, the first ``_REDELIVERY_OPENING_WORDS`` words AFTER it that no span cuts
+    are its re-delivery's opening; at least ``_REDELIVERY_MIN_SHARED`` of them (or every word
+    of a shorter span) must also be words of the span, and at least one of the shared words
+    must have ``_MEANINGFUL_LETTERS`` letters or more. Another cut span never counts as the
+    re-delivery, and a later recap is out of reach. Spans are expected normalized (sorted,
+    merged, in range)."""
+    cut = {i for span in spans for i in range(span.start_word, span.end_word + 1)}
+    kept: list[RetakeSpan] = []
+    for span in spans:
+        said = {
+            stem
+            for i in range(span.start_word, span.end_word + 1)
+            if (stem := _word_stem(words[i].text))
+        }
+        opening: list[str] = []
+        for i in range(span.end_word + 1, len(words)):
+            if i in cut:
+                continue
+            stem = _word_stem(words[i].text)
+            if stem:
+                opening.append(stem)
+            if len(opening) == _REDELIVERY_OPENING_WORDS:
+                break
+        shared = said & set(opening)
+        if (
+            said
+            and len(shared) >= min(_REDELIVERY_MIN_SHARED, len(said))
+            and any(len(stem) >= _MEANINGFUL_LETTERS for stem in shared)
+        ):
+            kept.append(span)
+    return kept
+
+
 def retake_structural_failures(retakes: Sequence[RetakeSpan], n_words: int) -> list[str]:
     """Every structural invariant a parsed output must satisfy, as
     human-readable failure strings (empty list = pass).
@@ -272,16 +333,25 @@ class RetakeDetectorAgent(Agent[RetakeDetectorInput, RetakeDetectorOutput]):
         if not isinstance(review_raw, list):
             raise SchemaError("retake_detector: 'review_candidates' is missing or not a list")
 
-        spans = normalize_retake_spans(retakes_raw, len(input.words))
+        normalized = normalize_retake_spans(retakes_raw, len(input.words))
         review_candidates = normalize_retake_spans(review_raw, len(input.words))[:3]
         review_candidates = [
             span
             for span in review_candidates
             if not any(
                 span.start_word <= automatic.end_word and automatic.start_word <= span.end_word
-                for automatic in spans
+                for automatic in normalized
             )
         ]
+        # KRI-1518: only auto-applied spans are cut, so only they need a kept re-delivery;
+        # review candidates are asked, never cut.
+        spans = spans_with_kept_redelivery(normalized, input.words)
+        if len(spans) < len(normalized):
+            log.info(
+                "retake_detector_spans_not_re_said",
+                spans=[(s.start_word, s.end_word) for s in normalized if s not in spans],
+                n_words=len(input.words),
+            )
         dropped = len(retakes_raw) - len(spans)
         if dropped > 0:
             # Dropping is the designed conservative behavior, not an error —

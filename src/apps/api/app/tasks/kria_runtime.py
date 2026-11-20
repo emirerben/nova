@@ -60,6 +60,7 @@ from app.kria.brief_checks import (
     plan_facts_from_phone_variant,
     plan_facts_from_rendered_montage,
     plan_facts_from_strategy,
+    render_promise_ids,
     reply_and_lead_from_receipts,
     reply_from_receipts,
     requirements_to_check_at_draft,
@@ -3547,6 +3548,9 @@ def _complete_draft_turn(
                             receipts,
                             summary=arguments.summary,
                             notices=draft_notices,
+                            # KRI-1508: the Talking captions plan reads as the promise
+                            # approval readiness already takes it for, never "Partly".
+                            planned_ids=render_promise_ids(answered, receipts, facts),
                             # Outside readiness a route decline follows the planner's
                             # summary instead of replacing it (registry on).
                             declines_after_summary=route_name is not None
@@ -3989,7 +3993,14 @@ def _complete_draft_turn(
                 planned.policy_notices,
             )
             kept = (
-                reply_from_receipts(brief, kept_receipts, notices=kept_notices) if checked else ""
+                reply_from_receipts(
+                    brief,
+                    kept_receipts,
+                    notices=kept_notices,
+                    planned_ids=render_promise_ids(checked, kept_receipts, facts),
+                )
+                if checked
+                else ""
             )
             reply_text = "\n".join(
                 part
@@ -8995,6 +9006,22 @@ def _phone_source_video_count(job: Any) -> int | None:
     )
 
 
+def _montage_media_use(binding: Any, job: Any, variant: Mapping[str, Any]) -> dict[str, Any]:
+    """KRI-1515: the clips the creator approved (the binding's media snapshot, else the job's
+    clip list) against every media id the finished timeline plays; {} when unknown."""
+    from app.kria.brief_checks import media_use_facts  # noqa: PLC0415
+
+    snapshot = getattr(binding, "media_snapshot", None) or {}
+    paths = snapshot.get("clip_paths") or (job.all_candidates or {}).get("clip_paths") or []
+    attached = [str(path).rsplit("/", 1)[-1] for path in paths if path]
+    used = [
+        row.get("media_id")
+        for row in variant.get("story_timeline") or []
+        if isinstance(row, Mapping) and row.get("media_id")
+    ]
+    return media_use_facts(attached, used)
+
+
 def _cleanup_note_retake_cut_possible(contract: object) -> bool:
     """Could this render's speech cleanup have cut a restarted sentence (KRI-1176)?
 
@@ -9142,6 +9169,8 @@ def _approved_generation_requirements_review(
         facts = dataclasses.replace(
             facts,
             exclusions=exclusion_facts((job.all_candidates or {}).get("creator_strategy"), brief),
+            # KRI-1515: "use all these clips" against the clips the creator approved.
+            **_montage_media_use(binding, job, variant),
         )
         finished = {f.requirement_id for f in facts.exclusions} | {
             req.id for req in live.values() if only_video_ask(req)

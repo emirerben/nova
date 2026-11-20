@@ -9783,6 +9783,8 @@ def _run_phone_subtitled_job(
     # strategy carried no beats/closing at all), byte-identical.
     beat_receipt: dict | None = None
     beat_cards: list = []
+    # KRI-1511: the beat cards held for a set time from their word (see `remap_lanes_for_cut`).
+    beat_held_card_ids: frozenset[str] = frozenset()
     beat_sfx_requests: list = []
     beat_media_ids: frozenset[str] = frozenset()
     # KRI-514: which beat card holds the closing photo, so the closing text
@@ -10598,6 +10600,14 @@ def _run_phone_subtitled_job(
             # Everything placed against the face (title, closing text, cards) maps
             # it through the same crop the recipe draws.
             framed_fit = "fill" if speaker_position_x is not None else landscape_fit
+            # KRI-1525: the caption look is chosen below (face band / protected text) before the
+            # plan is compiled; tell caption styling now how each take will be drawn, so a
+            # letterboxed take's faces and background are sampled where the phone draws them.
+            from app.services.phone_text_styling import (  # noqa: PLC0415
+                register_generation_speaker_fit,
+            )
+
+            register_generation_speaker_fit(framed_fit)
             face_box_to_canvas = (
                 _phone_face_box_mapper(binding, speaker_position_x, **text_canvas)
                 if speaker_position_x is not None
@@ -10783,6 +10793,19 @@ def _run_phone_subtitled_job(
                 caption_words, detected_lang = _requested_language_caption_words(
                     words, detected_lang
                 )
+                if words_snapshot is not None:
+                    # KRI-1506: a second (hinted) pass can stamp the words the analysis moved
+                    # into the same pause again, and the plan cuts that pause: they follow the
+                    # move instead of dropping out of the captions. The analysis's own words
+                    # are already on their voice (a no-op).
+                    from app.pipeline.late_word_realign import (  # noqa: PLC0415
+                        follow_late_runs,
+                        recorded_late_runs,
+                    )
+
+                    caption_words = follow_late_runs(
+                        caption_words, recorded_late_runs(words_snapshot)
+                    )
                 # Raw float mapping, no frame grid: the phone recipe plays
                 # each keep segment at its exact float offsets.
                 cut_words = [
@@ -11967,6 +11990,7 @@ def _run_phone_subtitled_job(
                             }
                         else:
                             beat_cards = list(grounded_beats.cards)
+                            beat_held_card_ids = grounded_beats.held_card_ids
                             beat_sfx_requests = list(grounded_beats.sound_effects)
                             beat_media_ids = frozenset(card.media_id for card in beat_cards)
                             beat_receipt = grounded_beats.receipt
@@ -12452,7 +12476,18 @@ def _run_phone_subtitled_job(
                         if lanes.background is not None
                         else frozenset()
                     )
-                    lanes, cut_dropped_card_ids = remap_lanes_for_cut(lanes, cut_plan)
+                    lanes, cut_dropped_card_ids = remap_lanes_for_cut(
+                        lanes,
+                        cut_plan,
+                        # KRI-1511: a sticker keeps its time on screen through a pause cut.
+                        held_card_ids=(
+                            beat_held_card_ids
+                            if settings.cut_keeps_sticker_hold_enabled
+                            else frozenset()
+                        ),
+                        # A marked object's window the longer sticker must not run into.
+                        hold_stops_s=[float(r.start_s) for r in protected_card_regions],
+                    )
                     for dropped_media_id in sorted(cut_dropped_card_ids & window_media_ids):
                         lane_drops.append(
                             {
@@ -37518,6 +37553,19 @@ def _render_subtitled_variant(
         )
         return retranscribed if retranscribed.words else None
 
+    def _follow_late_words(words: list) -> list:
+        """KRI-1506: a re-transcription's words stamped into a pause the preflight analysis
+        proved wordless follow its move onto the voice (`late_word_realign.follow_late_runs`),
+        so the cut never drops them from the captions. Legacy (non-preflight) cuts: as is."""
+        if active_snapshot is None:
+            return words
+        from app.pipeline.late_word_realign import (  # noqa: PLC0415
+            follow_late_runs,
+            recorded_late_runs,
+        )
+
+        return follow_late_runs(words, recorded_late_runs(active_snapshot))
+
     def _resolve_verbatim_caption_language(detected: str, *, words: list) -> tuple[str, list]:
         """Resolve the caption language for an already-extracted verbatim word list
         (silence-cut / checked-uncut), honoring an explicit creator override.
@@ -38003,6 +38051,7 @@ def _render_subtitled_variant(
                 detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                     sc_language, words=sc_words
                 )
+                resolved_sc_words = _follow_late_words(resolved_sc_words)
                 caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
                 ensured = _ensure_cloud_caption_words(
                     detected_lang, caption_words, spoken=sc_language
@@ -38291,6 +38340,7 @@ def _render_subtitled_variant(
             detected_lang, resolved_sc_words = _resolve_verbatim_caption_language(
                 sc_language, words=sc_words
             )
+            resolved_sc_words = _follow_late_words(resolved_sc_words)
             caption_words = _cut_caption_words(resolved_sc_words, sc_plan, sc_grid)
             ensured = _ensure_cloud_caption_words(detected_lang, caption_words, spoken=sc_language)
             detected_lang, caption_words = ensured.language, ensured.words

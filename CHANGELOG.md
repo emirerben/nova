@@ -2,6 +2,131 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.27.0] - 2026-11-19
+
+### Changed
+- fix(ios): compile on Xcode 27.2 by naming the Task type in the slide paste handler (KRI-1542) (#2399) <!-- release-pr: 2399 -->
+
+## [0.89.26.0] - 2026-11-19
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-11-15 (#2366) <!-- release-pr: 2366 -->
+
+## [0.89.25.0] - 2026-11-19
+
+### Changed
+- test(kria): make the review-sweep test independent of leftover turns and Redis (#2274) <!-- release-pr: 2274 -->
+
+## [0.89.24.0] - 2026-11-19
+
+### Fixed
+- fix(kria): Cusco T2 "list 1": words stamped into a pause go back on their voice; a captions plan reads as planned (KRI-1506, KRI-1507, KRI-1508) (#2374) <!-- release-pr: 2374 -->
+
+## [0.89.23.0] - 2026-11-19
+
+### Changed
+- fix(ios): use the full upload gallery in Split Video (#2398) <!-- release-pr: 2398 -->
+
+## [0.89.22.0] - 2026-11-19
+
+### Changed
+- fix(kria): keep shot directions out of montage text (#2385) <!-- release-pr: 2385 -->
+
+## [0.89.21.0] - 2026-11-19
+
+### Changed
+- Use the same audio policy for song upload and attachment (#2384) <!-- release-pr: 2384 -->
+
+## [0.89.20.0] - 2026-11-19
+
+### Changed
+- fix(ios): let the chat text field handle caret drags (KRI-1279) (#2392) <!-- release-pr: 2392 -->
+
+## [0.89.19.0] - 2026-11-19
+
+### Changed
+- feat(ios): report phone render phase timings (KRI-1516) (#2391) <!-- release-pr: 2391 -->
+
+## [0.89.18.0] - 2026-11-19
+
+### Changed
+- chore(web): remove the web editor; keep landing, legal pages and admin (KRI-1398) (#2305) <!-- release-pr: 2305 -->
+
+## [0.89.17.0] - 2026-11-19
+
+### Changed
+- test(captions): ignore fontconfig cache noise in Arabic sweep test (KRI-1401) (#2301) <!-- release-pr: 2301 -->
+
+## [0.89.16.0] - 2026-11-19
+
+### Changed
+- fix(ci): back to two API shards; four pushed a 53-second test into its 60-second timeout (KRI-1539) (#2395) <!-- release-pr: 2395 -->
+
+## [0.89.15.0] - 2026-11-19
+
+### Changed
+- fix(ci): the CI_MAC_SELECTION rollback also undoes manifest and .env.example narrowing (KRI-1541) (#2394) <!-- release-pr: 2394 -->
+
+## [0.89.14.0] - 2026-11-19
+
+### Changed
+- fix(kria): Talking captions measure a letterboxed take where the phone draws it (KRI-1525) (#2379) <!-- release-pr: 2379 -->
+
+## [0.89.13.0] - 2026-11-19
+
+### Changed
+- fix(kria): crop follows the person in no-face sideways clips; say a split sentence once (KRI-1514, KRI-1515) (#2377) <!-- release-pr: 2377 -->
+
+## [0.89.12.0] - 2026-11-19
+
+### Changed
+- fix(kria): Cusco T3 stickers: draft names an unsaid trigger before approval; pause cuts keep sticker holds (KRI-1510, KRI-1511) (#2375) <!-- release-pr: 2375 -->
+
+## [0.89.11.0] - 2026-11-19
+
+### Fixed
+- fix(cleanup): cut a restarted sentence only when it is said again in what stays (KRI-1518) (#2378) <!-- release-pr: 2378 -->
+
+## [0.89.10.0] - 2026-11-19
+
+### Changed
+- feat(ci): a journey-manifest edit selects the rows it changed, not everything (KRI-1541) (#2393) <!-- release-pr: 2393 -->
+
+## [0.89.9.0] - 2026-11-19
+
+### Changed
+- feat(ci): a pull request starts a Mac only when it changes an iPhone input (KRI-1540) (#2390) <!-- release-pr: 2390 -->
+
+## [0.89.8.0] - 2026-11-19
+
+### Changed
+- chore(ci): run the API tests as four shards instead of two (KRI-1539) (#2389) <!-- release-pr: 2389 -->
+
+## [0.89.7.0] - 2026-11-19
+
+### Changed
+- feat(ci): shadow the Mac-only-when-an-iPhone-input-changed rule (KRI-1536) (#2388) <!-- release-pr: 2388 -->
+
+## [0.89.6.0] - 2026-11-19
+
+### Changed
+- chore(ci): PRs skip the 172-second slide-post trim proof unless slide-post or render code changed (KRI-1537) (#2387) <!-- release-pr: 2387 -->
+
+## [0.89.5.0] - 2026-11-19
+
+### Changed
+- chore(ci): repeatable CI baseline for Mac-minutes and required-check wait (KRI-1535) (#2386) <!-- release-pr: 2386 -->
+
+## [0.89.4.0] - 2026-11-18
+
+### Changed
+- feat(ios): account-only watermark exemptions (KRI-1533) (#2383) <!-- release-pr: 2383 -->
+
+## [0.89.3.0] - 2026-11-18
+
+### Fixed
+- fix(ios): removed media stays in chat; swipe a chat media row to delete it (KRI-1454) (#2351) <!-- release-pr: 2351 -->
+
 ## [0.89.2.0] - 2026-11-17
 
 ### Changed

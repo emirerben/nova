@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -786,3 +788,59 @@ def test_q2_unsaid_cue_switch_off_holds_exactly_as_prod_did(q1_prod, monkeypatch
         "needs_choice",
         "No pop-in for what’s hot this week.",
     )
+
+
+# --- KRI-1510: Cusco T3 (prod 2026-11-16, thread b6bf01c5): a PLANNED sticker on a word ------
+# never said. The planner put the llama sticker on "lama" (the kit's trap) and the draft said
+# "Done"; only the finished video said "I never heard lama in your voice". Now the draft says
+# so and stays approvable; the three stickers on words she says stay "met".
+_T3 = json.loads(
+    (Path(__file__).parents[1] / "fixtures" / "kri1511_cusco_t3" / "sticker1.json").read_text(
+        encoding="utf-8"
+    )
+)
+T3_ROWS = [
+    _r(row["id"], row["kind"], row["description"], facts=row["facts"])
+    for row in _T3["requirements"]
+    if row["id"] in ("r1", "r2", "r3", "r4")
+]
+T3_BEATS = [
+    {**{k: beat[k] for k in ("beat_id", "trigger", "occurrence", "visual_role")}, "visual_id": v}
+    for beat, v in zip(_T3["beats"], RUN3_VISUALS, strict=False)
+]
+
+
+def _assess_t3() -> dict:
+    return assess_readiness(
+        CreativeBrief(version=1, requirements=T3_ROWS),
+        {**Q1_STRATEGY, "reaction_beats": T3_BEATS},
+        media={
+            "clip_paths": [TAKE],
+            "clip_assignments": [
+                {"kind": "video", "media_id": TAKE, "analysis": {"transcript": _T3["transcript"]}}
+            ],
+        },
+        manifest=_manifest(*RUN3_VISUALS),
+        creator_id=CREATOR,
+        protected_regions=[],
+        protected_marks=True,
+    )
+
+
+def test_t3_a_planned_sticker_on_a_word_never_said_is_reported_and_approvable(q1_prod):
+    report = _assess_t3()
+    rows = {row["requirement_id"]: row for row in report["requirements"]}
+    assert (rows["r4"]["disposition"], rows["r4"]["reason"]) == (
+        "unverified",
+        "You don't say “lama” in your take, so nothing is shown for it",
+    )
+    assert [rows[rid]["disposition"] for rid in ("r1", "r2", "r3")] == ["executable"] * 3
+    assert report["ready"] is True
+
+
+def test_t3_switch_off_says_done_as_prod_did(q1_prod, monkeypatch):
+    monkeypatch.setattr(settings, "unsaid_planned_cue_report_enabled", False)
+    report = _assess_t3()
+    rows = {row["requirement_id"]: row for row in report["requirements"]}
+    assert rows["r4"]["disposition"] == "executable"
+    assert report["ready"] is True

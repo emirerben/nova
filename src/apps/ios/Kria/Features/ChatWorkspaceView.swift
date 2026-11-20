@@ -216,12 +216,12 @@ private final class DrawerGestureTracking {
     func reset() { previous = nil; latest = nil }
 
     /// Whether a touch began on something that keeps its own sideways drag: a horizontal scroller (a `ScrollView` or
-    /// a paging `TabView`) or the handles of an active text selection. Asking UIKit means a new row or field works
+    /// a paging `TabView`) or an active text input. Asking UIKit means a new row or field works
     /// without remembering to opt out.
     @MainActor static func startsOnOwnDrag(at point: CGPoint) -> Bool {
         let windows = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows }.flatMap { $0 }
         guard let window = windows.first(where: { $0.isKeyWindow }) else { return false }
-        if selectionHandlesContain(point, in: window) { return true }
+        if textInteractionContains(point, in: window) { return true }
         guard var view = window.hitTest(point, with: nil) else { return false }
         while true {
             if let scroll = view as? UIScrollView, scroll.isScrollEnabled,
@@ -233,19 +233,19 @@ private final class DrawerGestureTracking {
         }
     }
 
-    /// A selection's handles hang outside the text view, so a touch within a handle's reach of the field counts.
-    @MainActor private static func selectionHandlesContain(_ point: CGPoint, in window: UIWindow) -> Bool {
-        guard let input = selectingTextInput(in: window) else { return false }
-        return input.convert(input.bounds, to: window).insetBy(dx: -44, dy: -44).contains(point)
+    @MainActor private static func textInteractionContains(_ point: CGPoint, in window: UIWindow) -> Bool {
+        guard let input = focusedTextInput(in: window), let range = input.selectedTextRange else { return false }
+        let bounds = input.convert(input.bounds, to: window)
+        // Only selection handles extend beyond the text field.
+        return (range.isEmpty ? bounds : bounds.insetBy(dx: -44, dy: -44)).contains(point)
     }
 
-    @MainActor private static func selectingTextInput(in view: UIView) -> (UIView & UITextInput)? {
-        if view.isFirstResponder, let input = view as? (UIView & UITextInput),
-           let range = input.selectedTextRange, !range.isEmpty {
+    @MainActor private static func focusedTextInput(in view: UIView) -> (UIView & UITextInput)? {
+        if view.isFirstResponder, let input = view as? (UIView & UITextInput) {
             return input
         }
         for subview in view.subviews {
-            if let found = selectingTextInput(in: subview) { return found }
+            if let found = focusedTextInput(in: subview) { return found }
         }
         return nil
     }
@@ -581,6 +581,9 @@ private struct CreationWorkspaceView: View {
     @State private var isChoosingFormat = false
     @State private var formatResolveFailed = false
     @State private var threadState: [String: JSONValue] = [:]
+    /// Files the creator swiped away that the server has not confirmed yet; their rows are already gone.
+    @State private var removingMediaIDs: Set<String> = []
+    @State private var mediaRemovalError: String?
     /// KRI-693: the plan item's Visuals, read only while a clip picker offers Visuals (`asset-…`) candidates.
     @State private var clipPoolVisuals: [CreationVisual] = []
     @State private var afterSequence = -1
@@ -1385,12 +1388,18 @@ private struct CreationWorkspaceView: View {
         }
         ForEach(timelineRows) { row in
             if let index = row.mediaIndex {
-                mediaReceipt(row.entry, index: index)
-                    .padding(.top, row.joinsMediaAbove ? ChatConversationSpacing.mediaStrip - ChatConversationSpacing.row : 0)
+                if !isBeingRemoved(row.entry, index: index) {
+                    mediaReceipt(row.entry, index: index)
+                        .padding(.top, row.joinsMediaAbove ? ChatConversationSpacing.mediaStrip - ChatConversationSpacing.row : 0)
+                }
             } else {
                 timelineRow(row.entry)
                     .transition(Self.rowTransition(for: row.entry, reduceMotion: reduceMotion))
             }
+        }
+        if let mediaRemovalError {
+            Text(mediaRemovalError).kriaType(.label).foregroundStyle(KriaColor.failureText)
+                .accessibilityIdentifier("chat-media-remove-error")
         }
         if currentProject.status == .ready {
             FinishedEditSuggestionsView(api: model.api, refreshToken: "\(currentProject.serverRevision):\(finishedEditSuggestionRefresh)") {
@@ -1778,6 +1787,31 @@ private struct CreationWorkspaceView: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Uploaded \(attachment.displayName)")
                 .accessibilityIdentifier("chat-media-\(attachment.id)")
+                .kriaSwipeToDelete(label: "Remove \(attachment.displayName)", identifier: "chat-media-remove-\(attachment.id)",
+                                   isEnabled: workspaceStage != .rendering) { removeMedia(attachment.id) }
+                .excludesDrawerGestureWhen(workspaceStage != .rendering)
+            }
+        }
+    }
+
+    private func isBeingRemoved(_ entry: ChatTimelineEntry, index: Int) -> Bool {
+        guard !removingMediaIDs.isEmpty, case .media(let event) = entry.content else { return false }
+        let received = CreationAttachedMedia.parse(event.payload ?? [:])
+        return received.indices.contains(index) && removingMediaIDs.contains(received[index].id)
+    }
+
+    /// The row goes at once; the server's removal then arrives as an event and keeps it gone. A refusal brings it back.
+    private func removeMedia(_ mediaID: String) {
+        mediaRemovalError = nil
+        removingMediaIDs.insert(mediaID)
+        Task {
+            let outcome = await model.uploads.remove(mediaID: mediaID, projectID: project.id)
+            if case .refused(let message) = outcome {
+                mediaRemovalError = message
+                removingMediaIDs.remove(mediaID)
+            } else {
+                await refreshNow()
+                removingMediaIDs.remove(mediaID)
             }
         }
     }
