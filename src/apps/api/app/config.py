@@ -2891,6 +2891,8 @@ class Settings(BaseSettings):
     # capability with its own kill switch.
     # New plans only; persisted legacy narrated jobs retain their renderer.
     creator_prompt_fidelity_enabled: bool = False
+    # Include full stored clip moments and speech in the planner input (KRI-1430).
+    main_creator_full_clip_evidence_enabled: bool = False
     main_creator_agent_enabled: bool = False
     main_creator_agent_execution_enabled: bool = False
     main_creator_agent_review_enabled: bool = False
