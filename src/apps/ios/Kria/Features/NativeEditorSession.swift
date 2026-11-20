@@ -4412,6 +4412,8 @@ enum EditorOpenIntent { case warm, open }
 
     func prepareSourcePreview() async {
         guard let api, let jobID, let variantKey else { return }
+        let branding = exportBranding
+        let owner = api.mediaLibraryOwner
         #if DEBUG
         sourcePreviewBuildCountForTesting += 1
         #endif
@@ -4464,7 +4466,41 @@ enum EditorOpenIntent { case warm, open }
             let resolver = sourceResolver ?? NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID), jobID: jobID)
             sourceResolver = resolver
             guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.baselineConflict }
+            guard branding == exportBranding, owner == api.mediaLibraryOwner else { return }
             originalsRecoveryPool = pool
+            if rendersOnDevice, previewVariant["resolved_archetype"] == .string("speech_montage"),
+               document == rawBaseline, !hasUnsavedChanges, chatStagedDocument == nil {
+                // The published recipe owns the picture cuts and speech mix. Rebuilding from
+                // editor slots would lose the audio that plays under other footage.
+                let status = try await api.deviceRender(jobID: jobID, variantID: variantKey)
+                guard branding == exportBranding, owner == api.mediaLibraryOwner,
+                      workTicket == currentPreviewWork, !Task.isCancelled else { return }
+                guard status.phase == "published" else { throw APIError.baselineConflict }
+                let request = try Self.currentDeviceRecipeRequest(
+                    status, jobID: jobID, variantID: variantKey, generation: generation)
+                let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
+                let assets = AuthorizedDeviceSourceResolver(
+                    api: api, request: request, originals: SourceAssetStore(project: project),
+                    library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory)))
+                let urls = try await assets.resolve(for: request.recipe)
+                guard branding == exportBranding, owner == api.mediaLibraryOwner,
+                      workTicket == currentPreviewWork, !Task.isCancelled else { return }
+                let preview = try await LivePreviewComposition(recipe: request.recipe, assetURLs: urls, branding: branding)
+                guard branding == exportBranding, owner == api.mediaLibraryOwner,
+                      workTicket == currentPreviewWork, !Task.isCancelled, document == rawBaseline,
+                      !hasUnsavedChanges, chatStagedDocument == nil else { return }
+                sourcePreview = preview
+                liveSongVolumeActive = false
+                previewBuiltDocument = rawBaseline
+                serverBaseline = (rawBaseline, rawBaseline)
+                installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: request.recipe))
+                sourcePreviewState = .ready
+                sourcePreviewSettledSequence = sequence
+                previewWork.waitForFrame(workTicket)
+                positionPreview(to: currentTime)
+                startPendingPlaybackIfPossible()
+                return
+            }
             let sources: [Int: ResolvedEditorSource]
             var phoneTalkingIndices: [Int]?
             var phoneTalkingCutaways: [NativePhoneTalkingSource.Cutaway] = []
@@ -4589,7 +4625,8 @@ enum EditorOpenIntent { case warm, open }
                 serverBaseline = (rawBaseline, hydratedBaseline)
             }
         } catch {
-            guard sequence == sourcePreviewSequence, !Task.isCancelled else { return }
+            guard branding == exportBranding, owner == api.mediaLibraryOwner,
+                  sequence == sourcePreviewSequence, !Task.isCancelled else { return }
             #if DEBUG
             NativePreviewDiagnostics.failure("preview-failure", error: error)
             #endif
