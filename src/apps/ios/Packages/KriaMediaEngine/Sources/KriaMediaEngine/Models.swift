@@ -319,6 +319,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         }
         if audio.narrationAssetID != nil { result.insert(.narrationAudio) }
         if audio.duckOriginalDuringMusic || audio.duckMusicDuringSpeech { result.insert(.audioDucking) }
+        if !audio.speechWindows.isEmpty, tracks.contains(where: { $0.role == .music && !$0.clips.isEmpty }) { result.insert(.speechDuck) }
         return result
     }
 
@@ -406,10 +407,16 @@ public struct MediaAsset: Codable, Equatable, Sendable, Identifiable {
 public struct MediaSize: Codable, Equatable, Sendable { public var width: Double; public var height: Double; public init(width: Double, height: Double) { self.width = width; self.height = height } }
 public struct AssetFingerprint: Codable, Equatable, Hashable, Sendable { public var algorithm: String; public var hex: String; public var byteCount: Int64; public init(algorithm: String = "sha256", hex: String, byteCount: Int64) { self.algorithm = algorithm; self.hex = hex; self.byteCount = byteCount } }
 
+/// What an audio-kind track is for, when the engine treats it differently from other audio.
+public enum TimelineTrackRole: String, Codable, Sendable { case music }
+
 public struct TimelineTrack: Codable, Equatable, Sendable, Identifiable {
     public enum Kind: String, Codable, Sendable { case video, overlay, audio }
     public var id: String; public var kind: Kind; public var clips: [TimelineClip]
-    public init(id: String, kind: Kind, clips: [TimelineClip] = []) { self.id = id; self.kind = kind; self.clips = clips }
+    /// KRI-1562: a `.music` audio track ducks under `AudioMixRecipe.speechWindows`. Nil is omitted on encode,
+    /// so every recipe without a music-role track renders and round-trips byte-identically.
+    public var role: TimelineTrackRole?
+    public init(id: String, kind: Kind, clips: [TimelineClip] = [], role: TimelineTrackRole? = nil) { self.id = id; self.kind = kind; self.clips = clips; self.role = role }
 }
 
 public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
@@ -522,6 +529,11 @@ public enum TextAnimation: String, Codable, Sendable {
     }
 }
 
+public struct SpeechWindow: Codable, Equatable, Sendable {
+    public var start: TimeInterval; public var end: TimeInterval
+    public init(start: TimeInterval, end: TimeInterval) { self.start = start; self.end = end }
+}
+
 public struct AudioMixRecipe: Codable, Equatable, Sendable {
     public var musicAssetID: String?; public var musicVolume: Double; public var originalVolume: Double
     public var fadeIn: TimeInterval; public var fadeOut: TimeInterval; public var duckOriginalDuringMusic: Bool
@@ -540,7 +552,13 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     /// decodes to false, and false is omitted on encode, so every existing recipe
     /// renders byte-identically. Gated by the `audioDucking` capability.
     public var duckMusicDuringSpeech: Bool = false
-    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows, narrationAssetID = "narrationAssetId", targetLUFS = "targetLufs", duckMusicDuringSpeech }
+    /// KRI-1562: timeline spans where someone is speaking, sorted and non-overlapping. The server computes them from
+    /// the transcript, so a Talking edit's voice (the video clip's own audio) can duck the `.music` track without
+    /// being an audio-kind clip. Empty is omitted on encode. Gated by the `speechDuck` capability.
+    public var speechWindows: [SpeechWindow] = []
+    /// Gain the music falls to inside a speech window. Nil is `AudioDuckEnvelope.speech`'s default, 0.3.
+    public var speechDuckGain: Double?
+    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows, narrationAssetID = "narrationAssetId", targetLUFS = "targetLufs", duckMusicDuringSpeech, speechWindows, speechDuckGain }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         musicAssetID = try c.decodeIfPresent(String.self, forKey: .musicAssetID)
@@ -551,6 +569,8 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         narrationAssetID = try c.decodeIfPresent(String.self, forKey: .narrationAssetID)
         targetLUFS = try c.decodeIfPresent(Double.self, forKey: .targetLUFS)
         duckMusicDuringSpeech = try c.decodeIfPresent(Bool.self, forKey: .duckMusicDuringSpeech) ?? false
+        speechWindows = try c.decodeIfPresent([SpeechWindow].self, forKey: .speechWindows) ?? []
+        speechDuckGain = try c.decodeIfPresent(Double.self, forKey: .speechDuckGain)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -562,8 +582,10 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         try c.encodeIfPresent(narrationAssetID, forKey: .narrationAssetID)
         try c.encodeIfPresent(targetLUFS, forKey: .targetLUFS)
         if duckMusicDuringSpeech { try c.encode(true, forKey: .duckMusicDuringSpeech) }
+        if !speechWindows.isEmpty { try c.encode(speechWindows, forKey: .speechWindows) }
+        try c.encodeIfPresent(speechDuckGain, forKey: .speechDuckGain)
     }
-    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = [], narrationAssetID: String? = nil, targetLUFS: Double? = nil, duckMusicDuringSpeech: Bool = false) { self.duckMusicDuringSpeech = duckMusicDuringSpeech; self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows; self.narrationAssetID = narrationAssetID; self.targetLUFS = targetLUFS }
+    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = [], narrationAssetID: String? = nil, targetLUFS: Double? = nil, duckMusicDuringSpeech: Bool = false, speechWindows: [SpeechWindow] = [], speechDuckGain: Double? = nil) { self.duckMusicDuringSpeech = duckMusicDuringSpeech; self.speechWindows = speechWindows; self.speechDuckGain = speechDuckGain; self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows; self.narrationAssetID = narrationAssetID; self.targetLUFS = targetLUFS }
     public static let `default` = AudioMixRecipe()
 }
 
@@ -594,7 +616,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
          speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse, splitBlankPanel,
-         colorMoments
+         colorMoments, speechDuck
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
