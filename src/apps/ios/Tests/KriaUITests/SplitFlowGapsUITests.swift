@@ -157,6 +157,7 @@ final class SplitFlowGapsUITests: XCTestCase {
         selectClip(topNumber, in: app)
         let topClip = clip(topNumber, in: app)
         let fullLength = try filled.number(filled.row(topFirst), "duration_s")
+        scrub(by: 1, pixelsPerSecond: topClip.frame.width / CGFloat(fullLength), in: app)
         drag(app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch, by: -1 * topClip.frame.width / CGFloat(fullLength))
         openSplitTool(app)
         panelControl("native-editor-split-add-0", in: app).tap()
