@@ -2927,12 +2927,16 @@ struct NativeMiniStrip: View {
         for (_, clip) in visibleClips(playheadX: playheadX) {
             let frame = clipFrame(clip, playheadX: playheadX)
             let hitWidth = max(44, frame.width)
-            let hitFrame = CGRect(
+            var hitFrame = CGRect(
                 x: frame.midX - hitWidth / 2,
                 y: filmstripOriginY + frame.minY,
                 width: hitWidth,
                 height: filmstripHeight
             )
+            if session.selectedClipID == clip.id {
+                let leading = NativeTrimHandleGeometry.selected(edge: .leading, blockWidth: hitWidth)
+                hitFrame = hitFrame.insetBy(dx: leading.originX, dy: 0)
+            }
             frames.append(hitFrame)
         }
         for gap in visibleSplitGaps(playheadX: playheadX) where gap.canAdd {
@@ -3694,7 +3698,6 @@ private struct NativeTimelineBar: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(isSelected ? KriaColor.sky : .clear, lineWidth: isSelected ? 2 : 0)
             }
-            .offset(x: (hitWidth - frame.width) / 2)
             .allowsHitTesting(false)
 
             Button(action: onSelect) {
@@ -3747,30 +3750,32 @@ private struct NativeTimelineBar: View {
             )
 
             if canTrim && isSelected {
+                let leading = NativeTrimHandleGeometry.selected(edge: .leading, blockWidth: frame.width)
+                let trailing = NativeTrimHandleGeometry.selected(edge: .trailing, blockWidth: frame.width)
                 NativeTrimHandle(
                     edge: .leading,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: -min(44, hitWidth / 3) / 2 + 6,
-                    touchWidth: min(44, hitWidth / 3),
+                    visualOffset: leading.capsuleOffset,
+                    touchWidth: leading.touchWidth,
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
-                .offset(x: -(hitWidth - min(44, hitWidth / 3)) / 2)
+                .offset(x: leading.originX + leading.touchWidth / 2 - frame.width / 2)
                 NativeTrimHandle(
                     edge: .trailing,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: min(44, hitWidth / 3) / 2 - 6,
-                    touchWidth: min(44, hitWidth / 3),
+                    visualOffset: trailing.capsuleOffset,
+                    touchWidth: trailing.touchWidth,
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
-                .offset(x: (hitWidth - min(44, hitWidth / 3)) / 2)
+                .offset(x: trailing.originX + trailing.touchWidth / 2 - frame.width / 2)
             }
         }
         .frame(width: hitWidth, height: 44)
@@ -3918,7 +3923,7 @@ private struct NativeClipSurface: View {
             } else if showsEndHandle {
                 // A narrow block keeps its middle for selecting and reordering it: only this much of the handle's
                 // touch surface lies over the block, the rest hangs past its end.
-                let end = NativeTrimHandleGeometry.unselectedEnd(blockWidth: max(44, frame.width), insideWidth: min(44, max(14, frame.width * 0.3)))
+                let end = NativeTrimHandleGeometry.unselectedEnd(blockWidth: max(44, frame.width), insideWidth: min(NativeTrimHandleGeometry.target / 2, max(14, frame.width * 0.3)))
                 NativeTrimHandle(
                     edge: .trailing,
                     height: frame.height,
@@ -4123,7 +4128,8 @@ struct NativeTrimHandleGeometry: Equatable {
     static let target: CGFloat = 44
 
     static func selected(edge: NativeTrimEdge, blockWidth: CGFloat) -> NativeTrimHandleGeometry {
-        let inside = min(target, blockWidth / 2)
+        // Keep both sides of the grip easy to catch and leave the middle available for moving the block.
+        let inside = min(target / 2, blockWidth / 3)
         switch edge {
         case .leading:
             return .init(touchWidth: target, originX: inside - target, capsuleOffset: target / 2 - inside)

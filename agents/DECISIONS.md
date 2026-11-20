@@ -3930,6 +3930,40 @@ Reversal condition. If "cleanup clipped the start of my sentence" traces to a
 **Kill switch:** `KRIA_REPLY_LANGUAGE_ENABLED=false`: no line in the prompt, the field is ignored, nothing is stored.
 **Guards:** `tests/kria/test_model_owned_reply_language.py`, `tests/kria/test_model_owned_reply_language_postgres.py`.
 
+## [2026-11-17] Cleanup moves words stamped into the pause after their voice (KRI-1506/1507, job 887f89d6)
+
+Context. Cusco DJI T2 "list 1": the speaker says "Kilitli sistemler", pauses ~1.9 s, then
+"yıkılmayı zorlaştırıyor". whisper-1 stamped "Kilitli sistemler" 13.96–15.24 s, wholly inside the
+pause (silence 13.384–15.288 s); the words' voice (12.306–13.384 s) had no word. The label and
+caption came 1.6 s late, the pause looked like speech so cleanup kept it (2.05 s, the take's
+longest), and rule 2 proposed the real words as an acoustic filler (only the KRI-1017 voice guard
+kept them). Rule 0 cannot help: it never carves a whole token, by design.
+
+Decision. Before planning, the preflight analysis moves such a run onto the wordless voice
+(`app/pipeline/late_word_realign.py`, called from `speech_cleanup_analysis._late_words_realigned`)
+and stores the moved words, so the cut, the captions and the list labels all read them. Every
+condition must hold: the words each lie >= 90% in ONE silence span >= `TOKEN_SILENCE_MIN_S` and
+form one run; the next word is not stamped in that pause too; the island (the sound between the
+last pause >= 0.25 s and this one) has no earlier word in it (0.1 s slack); its length is within
+2x of the run's stamps and holds the run's syllables at <= `SQUEEZE_MAX_SYLLABLES_PER_S`; and the
+KRI-1017 voicing detector hears >= 30% voicing in the island and <= 0.05 s under the stamps. The
+run maps linearly onto the island, never before the previous word's end. `DETECTOR_VERSION` →
+`mixed-gap-v10-late-words`; switch `SPEECH_CLEANUP_LATE_WORDS_ENABLED` (default on, in the policy
+fingerprint).
+
+Why it is safe enough. Two detectors that do not share a signal (silencedetect's level spans and
+the periodicity-based voicing detector) must both say the stamps are dead air and the island is a
+voice; quiet speech under the stamps is voiced and refuses the move. Moving words never cuts
+anything itself; the voice guard still judges every cut. The mirror shape (words stamped BEFORE
+their voice) has not been seen and is not moved.
+
+Evidence. T2 replayed on the real clip: "Kilitli" 13.96 → 12.31 s (voice-band truth 12.30 s), the
+pause cut to 0.39 s, every other cut unchanged; label 2 at 11.27 s in the cut take where the audio
+has "kilitli" at about 11.25 s. No move on 12 recorded word/silence fixtures or on the Cusco T3,
+Çiğdem S2 and S4 kit runs. Guards: `tests/tasks/test_kri1502_cusco_t2_replay.py`,
+`tests/pipeline/test_late_word_realign.py`. Failure modes:
+`docs/reviews/kri-1502-late-words-failure-modes.md`. Not covered: ~1 s pauses whose stamps stretch
+over a mid-sentence pause (T2 keeps four), a follow-up.
 
 ## [2026-11-19] A pull request starts a Mac only when it changes an iPhone input (KRI-1534)
 
@@ -3952,3 +3986,12 @@ Reversal condition. If "cleanup clipped the start of my sentence" traces to a
 **Reversal condition:** a regression traced to a manifest edit whose changed rows did not select the journey that would have caught it.
 **Kill switch:** repository variable `CI_MAC_SELECTION=full` (shared with the Mac rule): every manifest edit and `.env.example` select everything again.
 **Guards:** `scripts/ci/test_select_tests.py` (`ManifestRowTests`, `test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac`, `test_a_native_journey_row_edit_keeps_its_mac_and_its_unit_tests`, `test_removing_a_journey_row_still_selects_everything`, `test_an_unreadable_manifest_still_selects_everything`).
+
+## [2026-11-20] The CI scripts' own tests run beside the suites, not in front of them (KRI-1543)
+
+**Context:** the selector job ran `scripts/ci/test_*.py` before selecting, and every CI job waits for the selector. The step took 17 to 20 s on 2026-11-12 and 282 to 319 s on 2026-11-19 (`test_pr_evidence.py`, 60 tests that each build a git repo, is 135 s locally; this train's manifest tests added to `test_select_tests.py`). On a PR with no Mac that was 3.7 of 32 minutes (run 44594847821).
+**Decision:** `ci.yml` passes `selftest: false` to `ci-changes.yml` and runs the tests in a top-level `ci-selftests` job with no `needs` and no `if`. The required `lint` gate lists it in `needs` and fails unless it succeeded. `ios.yml` keeps the tests in front of selection.
+**Trade:** a PR that breaks the selector now starts its suites and turns `lint` red about 5 minutes in; before, nothing started. The merge is blocked either way, because `lint` is required on every PR.
+**Not done:** making the tests faster. They are off the critical path now, and `test_pr_evidence.py` needs real git repos for what it proves.
+**Reversal condition:** a PR merged with a red `ci-selftests` job, or suites acting on a wrong selection in a way that costs more than the 5 minutes.
+**Guards:** `scripts/ci/test_select_tests.py` (`SelfTestWiringTests`, `test_lint_gate_fails_unless_the_ci_self_tests_passed`).

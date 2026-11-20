@@ -11,7 +11,7 @@ import UIKit
 // - Extending to the whole video leaves ordinary clips behind or reorders them.
 // - Remove split keeps another panel than the one chosen.
 // - The preview draws an Add footage ghost over an empty panel (the picker and the timeline gap are the ways in).
-// - The picker's Saved tab appears late and pushes the grid down under the finger, or adding inserts a row above it.
+// - The Saved tab appears late and moves the Photos button, or Split uses a separate, truncated gallery.
 // - A timeline gap is drawn over footage, missing where a panel is free, or does not open the add flow.
 // Every assertion reads the persisted document, not only what is on screen.
 @MainActor
@@ -157,6 +157,7 @@ final class SplitFlowGapsUITests: XCTestCase {
         selectClip(topNumber, in: app)
         let topClip = clip(topNumber, in: app)
         let fullLength = try filled.number(filled.row(topFirst), "duration_s")
+        scrub(by: 1, pixelsPerSecond: topClip.frame.width / CGFloat(fullLength), in: app)
         drag(app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch, by: -1 * topClip.frame.width / CGFloat(fullLength))
         openSplitTool(app)
         panelControl("native-editor-split-add-0", in: app).tap()
@@ -363,46 +364,63 @@ final class SplitFlowGapsUITests: XCTestCase {
         attach(app, "Empty panels without ghosts")
     }
 
-    func testSavedTabIsDrawnFromTheFirstFrameSoTheGridNeverMovesUnderTheFinger() throws {
+    func testSavedTabAvailabilityKeepsThePhotosButtonInPlace() throws {
         let app = launch(["-ui-testing-editor-split-screen", "-ui-testing-editor-split-picker"], libraryDelay: 12)
         createSplit(panels: 3, scope: .clip, in: app)
-        let tile = app.buttons["native-editor-split-gallery-tile-0"]
-        XCTAssertTrue(tile.waitForExistence(timeout: 10))
-        let before = tile.frame
+        let choose = app.buttons["native-editor-split-system-picker"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 10))
+        let before = choose.frame
         attach(app, "Picker before the library answers")
 
         let saved = app.buttons["native-editor-split-tab-saved"]
         XCTAssertTrue(saved.exists && !saved.isEnabled,
-                      "The tab row is drawn before the library check answers, with Saved waiting, not inserted above the grid after it")
-        XCTAssertEqual(tile.frame.minY, before.minY, accuracy: 0.5)
+                      "The tab row is drawn before the library check answers, with Saved waiting, not inserted above Photos after it")
+        XCTAssertEqual(choose.frame.minY, before.minY, accuracy: 0.5)
 
-        // A finger already heading for where Saved will be must never land on a photo.
+        // A finger already heading for where Saved will be must never open Photos.
         let aimY = saved.exists ? saved.frame.midY : before.minY + 25
         let aim = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.width * 0.75, dy: aimY))
         aim.tap()
-        XCTAssertTrue(tile.isEnabled, "That tap started no add")
+        XCTAssertTrue(choose.isEnabled, "Photos is still available")
 
         XCTAssertTrue(waitEnabled(saved, timeout: 30), "Saved turns on once the library answers")
-        XCTAssertEqual(tile.frame.minY, before.minY, accuracy: 0.5, "Nothing moved when Saved turned on")
+        XCTAssertEqual(choose.frame.minY, before.minY, accuracy: 0.5, "Nothing moved when Saved turned on")
         attach(app, "Picker after the library answers")
     }
 
-    func testAddingShowsOnTheTappedTileInsteadOfInsertingARowAboveTheGrid() throws {
-        let app = launch(["-ui-testing-editor-split-screen", "-ui-testing-editor-split-picker"], libraryDelay: 0)
+    func testSplitImportsFromTheUploadGallery() throws {
+        XCUIApplication().resetAuthorizationStatus(for: .photos)
+        let app = launch(["-ui-testing-editor-split-screen", "-ui-testing-editor-gameday-add",
+                          "-ui-testing-editor-split-import", "-ui-testing-editor-split-persistence-reset"])
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "current=true"),
+                                              object: app.staticTexts["gameday-fixture-state"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
         createSplit(panels: 3, scope: .clip, in: app)
-        let tile = app.buttons["native-editor-split-gallery-tile-1"]
-        XCTAssertTrue(tile.waitForExistence(timeout: 10))
-        let saved = app.buttons["native-editor-split-tab-saved"]
-        XCTAssertTrue(saved.waitForExistence(timeout: 10))
-        XCTAssertTrue(waitEnabled(saved, timeout: 10), "Let the library answer so the layout is settled")
-        let first = app.buttons["native-editor-split-gallery-tile-0"]
-        let before = first.frame
+        let choose = panelControl("native-editor-split-system-picker", in: app)
+        choose.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 5) { permission.buttons.element(boundBy: 1).tap() }
+
+        let done = app.buttons["photos-picker-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        XCTAssertFalse(done.isEnabled)
+        app.buttons["gallery-cancel"].tap()
+        XCTAssertTrue(try snapshot(app).members(1).isEmpty)
+        choose.tap()
+        let index = ProcessInfo.processInfo.environment["KRIA_SPLIT_PHOTO_INDEX"].flatMap(Int.init) ?? 0
+        let tile = app.buttons["gallery-tile-\(index)"]
+        let grid = app.descendants(matching: .any)["gallery-grid"].firstMatch
+        XCTAssertTrue(grid.waitForExistence(timeout: 10))
+        for _ in 0..<30 {
+            if tile.exists && tile.isHittable { break }
+            grid.swipeUp()
+        }
+        XCTAssertTrue(tile.isHittable, "Photos item \(index + 1) is reachable")
+        attach(app, "Split gallery at item \(index + 1)")
         tile.tap()
-        let adding = app.descendants(matching: .any)["native-editor-split-adding-1"].firstMatch
-        XCTAssertTrue(adding.waitForExistence(timeout: 3), "The tapped tile shows its own progress")
-        XCTAssertEqual(first.frame.minY, before.minY, accuracy: 0.5, "No row is inserted above the grid")
-        XCTAssertTrue(tile.frame.insetBy(dx: -1, dy: -1).contains(adding.frame), "The spinner sits inside the tile, clear of the edge fade")
-        attach(app, "Tile mid-add")
+        done.tap()
+        XCTAssertTrue(app.staticTexts["Add to Bottom"].waitForExistence(timeout: 20))
+        XCTAssertEqual(try snapshot(app).members(1).count, 1)
     }
 
     func testGapInAPanelLaneOpensTheAddFlow() throws {

@@ -30,7 +30,9 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import settings
+from app.pipeline.audio_pcm import decode_pcm_f32
 from app.pipeline.caption_language import crosscheck_detected_language, infer_language_from_text
+from app.pipeline.late_word_realign import find_late_runs, realign_late_words
 from app.pipeline.silence_cut import (
     REASON_RETAKE,
     SILENCE_CUT_VERBATIM_PROMPT,
@@ -42,7 +44,7 @@ from app.pipeline.silence_cut import (
     squeezed_filler_indices,
 )
 from app.pipeline.speech_cleanup_alignment import AlignerUnavailable, align_words
-from app.pipeline.speech_voice_guard import apply_voice_guard
+from app.pipeline.speech_voice_guard import apply_voice_guard, quiet_floor_db, voiced_runs
 from app.pipeline.transcribe import TranscribeError, Transcript, Word
 from app.services import mixed_language_transcript
 from app.services.mixed_language_transcript import (
@@ -1087,6 +1089,47 @@ _NUMBER_WORDS = {
 }  # fmt: skip
 
 
+def _late_words_realigned(
+    words: tuple[SpeechCleanupTimedWord, ...],
+    silences: Sequence[Any],
+    *,
+    audio_path: str,
+    duration_s: float,
+    load_pcm: Callable[[str], np.ndarray],
+) -> tuple[tuple[SpeechCleanupTimedWord, ...], list[dict[str, Any]]]:
+    """``words`` with each confirmed late-stamped run moved onto its voice (KRI-1506).
+
+    The take is decoded only when a run matches the shape; a decode fault moves nothing.
+    Returns the content-safe receipt of every moved run (empty when nothing moved).
+    """
+
+    triples = [(word.text, word.start_s, word.end_s) for word in words]
+    spans = [(float(span[0]), float(span[1])) for span in silences]
+    if not find_late_runs(triples, spans, duration_s):
+        return words, []
+    try:
+        samples = load_pcm(audio_path)
+    except (subprocess.SubprocessError, OSError):
+        return words, []
+    if samples.size == 0:
+        return words, []
+    floor_db = quiet_floor_db(samples)
+
+    def voicing(lo_s: float, hi_s: float) -> float:
+        return sum(hi - lo for lo, hi in voiced_runs(samples, lo_s, hi_s, floor_db=floor_db))
+
+    times, runs = realign_late_words(triples, spans, duration_s, voicing=voicing)
+    if not runs:
+        return words, []
+    moved = tuple(
+        word
+        if (word.start_s, word.end_s) == (start, end)
+        else word.model_copy(update={"start_s": start, "end_s": end})
+        for word, (start, end) in zip(words, times, strict=True)
+    )
+    return moved, [run.to_diagnostic() for run in runs]
+
+
 def _filler_aligned_words(
     words: tuple[SpeechCleanupTimedWord, ...],
     *,
@@ -1495,7 +1538,27 @@ def analyze_speech_cleanup(
     silence_status = str(_value(silence_result, "status") or "parse_failed")
     if silence_status not in _SILENCE_DETECTION_STATUSES:
         silence_status = "parse_failed"
+    silences = tuple(_value(silence_result, "spans") or ())
     language = str(_value(transcript, "language") or "")[:32]
+    # The take is decoded once: the late-word check and the voice guard read the same samples.
+    decoded: dict[str, np.ndarray] = {}
+
+    def load_pcm(path: str) -> np.ndarray:
+        if path not in decoded:
+            decoded[path] = (pcm_loader or decode_pcm_f32)(path)
+        return decoded[path]
+
+    late_words: list[dict[str, Any]] = []
+    if settings.speech_cleanup_late_words_enabled and silence_status == "ok":
+        # KRI-1506: words whisper stamped into a pause go back onto their voice before anything
+        # reads them: the cut plan, and the stored words the captions and list labels follow.
+        words, late_words = _late_words_realigned(
+            words,
+            silences,
+            audio_path=analysis_input.local_media_path,
+            duration_s=analysis_input.duration_s,
+            load_pcm=load_pcm,
+        )
     filler_report: dict[str, Any] | None = None
     if analysis_input.filler_check:
         words, filler_report = _filler_aligned_words(
@@ -1504,7 +1567,6 @@ def analyze_speech_cleanup(
             duration_s=analysis_input.duration_s,
             language=language,
         )
-    silences = tuple(_value(silence_result, "spans") or ())
     # Çiğdem S2: "okay, we're recording" opening the take is a production slate, not speech;
     # it is cut like an abandoned take (same snapping, voice-guard exemption, receipts).
     # It is a retake-kind cut, so it stays behind the same consent fence (both retake switches).
@@ -1584,7 +1646,7 @@ def analyze_speech_cleanup(
         words=words,
         retake_spans=(*analysis_input.retake_spans, *detected_retakes),
         forced=forced,
-        pcm_loader=pcm_loader,
+        pcm_loader=load_pcm,
     )
 
     if filler_report is not None:
@@ -1617,6 +1679,8 @@ def analyze_speech_cleanup(
         diagnostics["voice_guard"] = voice_guard_report
     if filler_report is not None:
         diagnostics["filler_check"] = filler_report
+    if late_words:
+        diagnostics["late_words"] = late_words
     return SpeechCleanupAnalysisResult(
         source_fingerprint=analysis_input.source_fingerprint,
         detector_version=analysis_input.detector_version,

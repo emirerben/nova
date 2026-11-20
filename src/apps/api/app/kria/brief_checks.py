@@ -21,7 +21,7 @@ import functools
 import math
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -14981,6 +14981,30 @@ def talking_caption_promise(req: BriefRequirement, facts: PlanFacts) -> str | No
     return _with_caption_words(req, facts, look).full_reason
 
 
+def render_promise_ids(
+    requirements: Iterable[BriefRequirement],
+    receipts: Iterable[RequirementReceipt],
+    facts: PlanFacts,
+) -> frozenset[str]:
+    """KRI-1508: the asks whose `partial` receipt is exactly the Talking captions plan.
+
+    Approval readiness already reads that plan as a render promise (`talking_caption_promise`,
+    KRI-1405); the reply needs the plan's facts to tell it from a real shortfall, so the caller
+    that has them passes these ids on (``planned_ids``). A captions ask Nova can't fully do (a
+    language it can't caption, spellings still to write, sentence lines for a word-by-word ask)
+    has another reason and stays "Partly".
+    """
+    by_id = {req.id: req for req in requirements}
+    return frozenset(
+        receipt.requirement_id
+        for receipt in receipts
+        if receipt.status == "partial"
+        and receipt.full_reason
+        and (req := by_id.get(receipt.requirement_id)) is not None
+        and receipt.full_reason == talking_caption_promise(req, facts)
+    )
+
+
 def _plans_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
     """A phone Talking draft's captions ask about language or spelling (KRI-793)."""
     return (
@@ -18080,8 +18104,8 @@ def _label(status: str) -> str:
     return say(en=_LABEL[status], tr=_LABEL_TR[status])
 
 
-def _receipt_label(receipt: RequirementReceipt) -> str:
-    if _planned_at_render(receipt):
+def _receipt_label(receipt: RequirementReceipt, planned_ids: Collection[str] = ()) -> str:
+    if _planned_at_render(receipt, planned_ids):
         return _planned_label()
     return _label(receipt.status)
 
@@ -18094,16 +18118,20 @@ _PLANNED_LABEL = "Will do at render"
 _PLANNED_LABEL_TR = "Videoda yapılacak"
 
 
-def _planned_at_render(receipt: RequirementReceipt) -> bool:
+def _planned_at_render(receipt: RequirementReceipt, planned_ids: Collection[str] = ()) -> bool:
     """KRI-1285: a `partial` receipt that only states what the render will do.
 
     Its reason is entirely `RENDER_PROMISE_REASONS` texts (English or Turkish twin, joined by
-    "; ") or the pinned spoken-text plan. It is a plan Kria carries out, not a shortfall, so the
-    reply lists it as planned and it never opens "Not everything you asked for made it in".
+    "; ") or the pinned spoken-text plan, or the caller judged it a promise against the plan
+    (``planned_ids``, `render_promise_ids`: the Talking captions plan, KRI-1508). It is a plan
+    Kria carries out, not a shortfall, so the reply lists it as planned and it never opens "Not
+    everything you asked for made it in".
     """
     reason = receipt.full_reason
     if receipt.status != "partial" or not reason:
         return False
+    if receipt.requirement_id in planned_ids:
+        return True
     pinned = reason_in_every_language(_TALKING_SPOKEN_TEXT_PINNED)
 
     def only(rest: str) -> bool:
@@ -18432,6 +18460,7 @@ def _receipt_reply_rows(
     judged: Sequence[RequirementReceipt],
     by_id: Mapping[str, BriefRequirement],
     guess_lines: Sequence[str],
+    planned_ids: Collection[str] = (),
 ) -> list[ReplyRow]:
     """`reply_and_lead_from_receipts`'s lines as rows: each outcome and each judged receipt in
     its parts (an ask with its own quoted text can fold with its twins; a reason can go), the
@@ -18452,7 +18481,7 @@ def _receipt_reply_rows(
     for receipt in judged:
         req = by_id[receipt.requirement_id]
         folds = bool(req.literal and req.description)
-        label = _receipt_label(receipt)
+        label = _receipt_label(receipt, planned_ids)
         rows.append(
             ReplyRow(
                 head=f"{label}: {req.description if folds else req.text()}",
@@ -18544,6 +18573,7 @@ def reply_from_receipts(
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
     declines_after_summary: bool = False,
+    planned_ids: Collection[str] = (),
 ) -> str:
     """The creator-facing reply text alone; see ``reply_and_lead_from_receipts``."""
     return reply_and_lead_from_receipts(
@@ -18553,6 +18583,7 @@ def reply_from_receipts(
         notices=notices,
         outcomes=outcomes,
         declines_after_summary=declines_after_summary,
+        planned_ids=planned_ids,
     )[0]
 
 
@@ -18564,6 +18595,7 @@ def reply_and_lead_from_receipts(
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
     declines_after_summary: bool = False,
+    planned_ids: Collection[str] = (),
 ) -> tuple[str, str]:
     """Compose the creator-facing reply from receipts only, and its one-line lead.
 
@@ -18588,6 +18620,9 @@ def reply_and_lead_from_receipts(
     decline (`route_disclosure.with_route_declines`, "I can't animate ... yet") is a limit of
     the route said before approval, not a miss of the plan, so on its own it never replaces
     the summary: its line is listed after it, like a met one.
+
+    ``planned_ids`` (KRI-1508): asks the caller judged render promises against the plan's facts
+    (`render_promise_ids`); each reads "Will do at render" and is never a miss.
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
@@ -18601,7 +18636,7 @@ def reply_and_lead_from_receipts(
         r
         for r in judged
         if r.status != "met"
-        and not _planned_at_render(r)
+        and not _planned_at_render(r, planned_ids)
         and not (
             declines_after_summary
             and r.status == "not_possible"
@@ -18624,7 +18659,7 @@ def reply_and_lead_from_receipts(
             line += f" ({_outcome_reason(str(row['reason'])).rstrip('.')})"
         lines.append(line)
     for receipt in judged:
-        line = f"{_receipt_label(receipt)}: {by_id[receipt.requirement_id].text()}"
+        line = f"{_receipt_label(receipt, planned_ids)}: {by_id[receipt.requirement_id].text()}"
         if receipt.reason:
             line += f" ({_loc(receipt.reason).rstrip('.')})"
         lines.append(line)
@@ -18656,7 +18691,9 @@ def reply_and_lead_from_receipts(
         text = "\n".join(part for part in (body, header, "\n".join(look_lines)) if part)
         if notices:
             text += "\n" + " ".join(notices)
-        lead = _reply_lead(judged, outcomes, notices, look_only=not (failed or misses))
+        lead = _reply_lead(
+            judged, outcomes, notices, look_only=not (failed or misses), planned_ids=planned_ids
+        )
     elif failed or misses:
         text = (
             say(
@@ -18667,7 +18704,7 @@ def reply_and_lead_from_receipts(
         )
         if notices:
             text += "\n" + " ".join(notices)
-        lead = _reply_lead(judged, outcomes, notices)
+        lead = _reply_lead(judged, outcomes, notices, planned_ids=planned_ids)
     else:
         text = "\n".join(part for part in ((summary or "").strip(), body) if part)
     if len(text) > MAX_REPLY_CHARS and body:
@@ -18678,7 +18715,9 @@ def reply_and_lead_from_receipts(
             # When those rows (or the lines around them) alone fill the chat, this text gets
             # the shortening below: the reply never runs past MAX_REPLY_CHARS.
             prefix, suffix = text.rsplit(body, 1)
-            rows = _receipt_reply_rows(outcomes, judged, by_id, lines[-1:] if guesses else [])
+            rows = _receipt_reply_rows(
+                outcomes, judged, by_id, lines[-1:] if guesses else [], planned_ids
+            )
             room = MAX_REPLY_CHARS - len(prefix) - len(suffix)
             fitted = prefix + "\n".join(fit_reply_rows(rows, room)) + suffix
             if len(fitted) <= MAX_REPLY_CHARS:
@@ -18687,7 +18726,9 @@ def reply_and_lead_from_receipts(
         # Keep every requested action/status visible when its labels fit. A long
         # explanation must not consume the final action's display budget. Stored
         # receipt reasons remain complete; ellipses mark shortened display only.
-        labels = [f"{_receipt_label(r)}: {by_id[r.requirement_id].text()}" for r in judged]
+        labels = [
+            f"{_receipt_label(r, planned_ids)}: {by_id[r.requirement_id].text()}" for r in judged
+        ]
         prefix, suffix = text.rsplit(body, 1)
         label_body = "\n".join(f"- {line}" for line in labels)
         available = MAX_REPLY_CHARS - len(prefix + label_body + suffix + "\n…")
@@ -18746,6 +18787,7 @@ def _reply_lead(
     notices: Sequence[str],
     *,
     look_only: bool = False,
+    planned_ids: Collection[str] = (),
 ) -> str:
     """The lead of a reply that replaced the model's summary (KRI-1262).
 
@@ -18758,7 +18800,7 @@ def _reply_lead(
         if str(row.get("status") or "") in _LABEL and row.get("name")
     ]
     # KRI-1285: a plan the render carries out is neither done nor partly done yet.
-    statuses = [r.status for r in judged if not _planned_at_render(r)] + rows
+    statuses = [r.status for r in judged if not _planned_at_render(r, planned_ids)] + rows
     failed = statuses.count("not_possible")
     if look_only:
         lead = say(en="Have a look at these in the video.", tr="Bunlara videoda bir göz at.")
@@ -18805,6 +18847,7 @@ __all__ = [
     "requirements_to_check_at_draft",
     "outcome_lead",
     "reply_and_lead_from_receipts",
+    "render_promise_ids",
     "PlanFacts",
     "build_receipts",
     "check_requirement",
