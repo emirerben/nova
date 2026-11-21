@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.66.0] - 2026-11-21
+
+### Changed
+- ci(api): check formatting in CI with the pinned ruff (KRI-1534) (#2446) <!-- release-pr: 2446 -->
+
 ## [0.89.65.0] - 2026-11-21
 
 ### Changed
