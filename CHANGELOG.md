@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.74.0] - 2026-11-21
+
+### Changed
+- fix(kria): the brief extractor routes informative text about a public subject to the typed research fact (#2454) <!-- release-pr: 2454 -->
+
 ## [0.89.73.0] - 2026-11-21
 
 ### Changed
