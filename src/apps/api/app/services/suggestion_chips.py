@@ -259,9 +259,11 @@ _COPY: dict[ChipKind, dict[str, tuple[str, str]]] = {
         "en": ("Let Kria decide", MEDIA_ONLY_MESSAGE),
         "tr": ("İlk versiyonu Kria kessin", MEDIA_ONLY_MESSAGE),
     },
+    # KRI-1560: the chip carries no words; its message asks for titles, which arrive as one
+    # question built from what the creator said (`app.services.opening_titles`).
     ChipKind.HOOK: {
-        "en": ("Add a hook to the opening", "Add a hook that matches the video"),
-        "tr": ("Açılışa bir hook ekle", "Videoya uyan bir hook ekle"),
+        "en": ("Find an opening title", "Find an opening title for my video"),
+        "tr": ("Açılış başlığı bul", "Videom için bir açılış başlığı bul"),
     },
     ChipKind.CAPTIONS: {
         "en": ("Add captions", "Add captions"),

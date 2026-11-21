@@ -17,7 +17,7 @@ import re
 import time
 import unicodedata
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
@@ -249,6 +249,7 @@ from app.services.creative_copy_decisions import (
     chat_button_language,
     creator_quoted,
     fold_creative_copy,
+    latest_open_creative_question,
     localize_question,
     media_digest,
     positional_labels_grounded,
@@ -292,6 +293,7 @@ from app.services.music_genre import (
     genre_record,
     music_genre_notice,
 )
+from app.services.opening_titles import item_talk_sentences
 from app.services.song_order import (
     build_song_order_question,
     fold_song_orders,
@@ -3140,6 +3142,8 @@ class _CreatorInputs:
     # to this turn's brief reading (`render_unrecorded_request`). A delegation the reading
     # declares covers exactly these lines and the current message, nothing else.
     delegation_read_ids: tuple[str, ...] = ()
+    # KRI-1560: what the creator said in her clips, as numbered sentences, for opening titles.
+    talk: tuple = ()
 
 
 async def _unrecorded_creator_lines(
@@ -3397,6 +3401,8 @@ async def _load_creator_inputs(
         ),
         **extra,
     )
+    # KRI-1560: read before the rollback below expires ``item``.
+    talk = tuple(item_talk_sentences(item))
     # Do not pin an async DB connection or block the event loop that renews the
     # durable turn lease while the synchronous model client is in flight.
     await db.rollback()
@@ -3409,6 +3415,7 @@ async def _load_creator_inputs(
         creative_copy_digest=creative_copy_digest,
         raw_creator_request=raw_creator_request,
         delegation_read_ids=delegation_read_ids,
+        talk=talk,
     )
 
 
@@ -3882,7 +3889,7 @@ async def _plan_creator_answer(
                 "text": text if decision.status == "creator_supplied" else None,
                 "dependency_digest": inputs.creative_copy_digest,
             }
-    creative_turn = _creative_copy_turn(
+    creative_turn = await _copy_question_turn(
         decision,
         inputs=inputs,
         creator_request=user_message,
@@ -5023,7 +5030,7 @@ async def _plan_creator_action(
                 )
             grounded = grounded or quoted
             if value and not (state and state.approved == value) and not (authored or grounded):
-                copy_turn = _creative_copy_turn(
+                copy_turn = await _copy_question_turn(
                     CreativeCopyDecision(target=target, status="candidate", proposed_text=value),
                     inputs=inputs,
                     creator_request=user_message,
@@ -5755,6 +5762,215 @@ async def _plan_creator_action(
         policy_notices=policy_notices,
         policy_omitted_texts=policy_omitted_texts,
     )
+
+
+async def _title_options_turn(
+    *,
+    talk: Sequence[Any],
+    digest: str,
+    request: str,
+    manifest: Any,
+    language: str | None = None,
+) -> PlannedKriaTurn | None:
+    """`_title_options_plan` as a turn of ``manifest``."""
+    plan = await _title_options_plan(talk=talk, digest=digest, request=request, language=language)
+    if plan is None:
+        return None
+    return PlannedKriaTurn(
+        plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
+    )
+
+
+async def _title_options_plan(
+    *,
+    talk: Sequence[Any],
+    digest: str,
+    request: str,
+    language: str | None = None,
+) -> KriaTurnPlan | None:
+    """KRI-1560: up to three opening titles built from what the creator said, in ONE question.
+
+    None when she said nothing, the model failed, or no title survived the check
+    (`app.services.opening_titles`); the caller then asks its older question. Nothing is put on
+    the video here: a title becomes hers only when she taps it (`fold_creative_copy`).
+    """
+    if not talk or not digest or not settings.kria_opening_title_options_enabled:
+        return None
+    from app.services.opening_titles import (  # noqa: PLC0415
+        candidates_message,
+        candidates_question,
+        find_opening_titles,
+    )
+
+    reply_language = current_reply_language() or language or ""
+    # The titles go on her video, so they are in the language she speaks there; the question's
+    # own words follow the chat.
+    spoken = [sentence.language for sentence in talk if getattr(sentence, "language", "")]
+    title_language = max(set(spoken), key=spoken.count) if spoken else reply_language
+    titles = await asyncio.to_thread(
+        find_opening_titles, list(talk), language=title_language, request=request
+    )
+    question = candidates_question(
+        titles,
+        dependency_digest=digest,
+        clips=len({sentence.media_id for sentence in talk}),
+        language=chat_button_language() or reply_language,
+    )
+    if question is None:
+        return None
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        # The card lists the titles; the text says what they are. Typed answers still match a
+        # title's words or its number (`match_open_choice`).
+        response=candidates_message(titles),
+        choice_question=question,
+    )
+
+
+def _authorship_turn(digest: str, manifest: Any) -> PlannedKriaTurn:
+    """The older "do you have an idea, or should I write one?" question for the opening title."""
+    question = authorship_question(target="opening_title", dependency_digest=digest)
+    if (button_language := chat_button_language()) is not None:
+        localize_question(question, button_language)
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=question_message(
+                question,
+                say(
+                    en="Do you have an idea, or would you like me to write one?",
+                    tr="Aklında bir fikir var mı, yoksa ben mi yazayım?",
+                ),
+            ),
+            choice_question=question,
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+    )
+
+
+def _reasked_titles(question: Mapping[str, Any]) -> KriaTurnPlan:
+    """An open KRI-1560 titles question asked again as it was (no second model call)."""
+    from app.services.opening_titles import reasked  # noqa: PLC0415
+
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        response=say(
+            en="Which opening title should I use? Pick one, type your own, or skip it.",
+            tr="Hangi açılış başlığını kullanayım? Birini seç, kendin yaz ya da atla.",
+        ),
+        choice_question=reasked(question),
+    )
+
+
+async def _open_title_question(
+    db: AsyncSession,
+    *,
+    events: Sequence[Any],
+    digest: str,
+    item_id: uuid.UUID | None,
+    request: str,
+) -> KriaTurnPlan | None:
+    """KRI-1560: the opening-title question a draft gate asks: the open titles question again,
+    else new titles from what she said; None when neither exists (the older question is asked)."""
+    from app.services.creative_copy_decisions import KIND_CANDIDATES  # noqa: PLC0415
+
+    open_question = latest_open_creative_question(events)
+    if (
+        open_question is not None
+        and open_question.get("kind") == KIND_CANDIDATES
+        and open_question.get("creative_target") == "opening_title"
+        and open_question.get("dependency_digest") == digest
+    ):
+        return _reasked_titles(open_question)
+    item = await db.get(PlanItem, item_id) if item_id is not None else None
+    if item is None:
+        return None
+    return await _title_options_plan(talk=item_talk_sentences(item), digest=digest, request=request)
+
+
+async def _chat_title_turn(
+    db: AsyncSession,
+    *,
+    item_id: uuid.UUID,
+    manifest: Any,
+    request: str,
+    more_asks: bool,
+) -> PlannedKriaTurn:
+    """KRI-1560: a chat ask for a title on a finished draft, answered with ONE question.
+
+    Titles built from what she said when there are any, else the older "do you have an idea?"
+    question. ``more_asks``: the same message asked for more, which waits for her answer.
+    """
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+    item = await _refetch_item(db, item_id)
+    digest = media_digest(snapshot_media(item))
+    talk = item_talk_sentences(item)
+    await db.rollback()  # no connection pinned across the model call
+    plan = await _title_options_plan(talk=talk, digest=digest, request=request)
+    turn = (
+        PlannedKriaTurn(
+            plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
+        )
+        if plan is not None
+        else _authorship_turn(digest, manifest)
+    )
+    if not more_asks:
+        return turn
+    rest = say(
+        en="Once you choose, I'll do the rest of what you asked.",
+        tr="Sen seçince isteğinin kalanını da yapacağım.",
+    )
+    return replace(
+        turn, plan=turn.plan.model_copy(update={"response": f"{turn.plan.response}\n\n{rest}"})
+    )
+
+
+def _asks_title_without_words(requirements: Iterable[Any]) -> bool:
+    """A requirement asks for a title and gives no words ("başlık koy", "add a title")."""
+    from app.kria.brief_checks import title_off  # noqa: PLC0415
+
+    return any(
+        req.kind == "text"
+        and req.scope == "title"
+        and not str(req.literal or "").strip()
+        and not title_off(req)
+        for req in requirements
+    )
+
+
+async def _copy_question_turn(
+    decision: CreativeCopyDecision | None,
+    *,
+    inputs: _CreatorInputs,
+    creator_request: str,
+    manifest: Any,
+    response: str | None = None,
+) -> PlannedKriaTurn | None:
+    """`_creative_copy_turn`, but an opening title is first offered as several titles built
+    from what the creator said (KRI-1560, one question). The single model-written wording, or
+    "do you have an idea?", is asked only when she said nothing usable or no title held up."""
+    asked = _creative_copy_turn(
+        decision,
+        inputs=inputs,
+        creator_request=creator_request,
+        manifest=manifest,
+        response=response,
+    )
+    if asked is None or decision is None or decision.target != "opening_title":
+        return asked
+    titled = await _title_options_turn(
+        talk=getattr(inputs, "talk", ()),
+        digest=inputs.creative_copy_digest,
+        request=creator_request,
+        manifest=manifest,
+        language=decision.language,
+    )
+    return titled or asked
 
 
 def _creative_copy_turn(
@@ -6521,15 +6737,31 @@ async def _gate_unresolved_choices(
     # this event-folded server path.  The question id, offered option, exact candidate
     # and current owned-media digest are all checked by ``fold_creative_copy``; a model
     # cannot manufacture an approval by emitting a field in its strategy.
+    thread_events = await _load_thread_events(db, thread_id)
     creative = fold_creative_copy(
         [
-            *await _load_thread_events(db, thread_id),
+            *thread_events,
             ("assistant", {"creative_copy_resolution": planned.creative_copy_resolution}),
         ],
         dependency_digest=media_digest(planned.media_snapshot),
     )
     for state in creative.values():
         if not state.approved and not state.cancelled:
+            # "I have an idea" (write_my_own) waits for her words; titles are never pushed on it.
+            if (
+                state.target == "opening_title"
+                and not state.candidate
+                and state.status != "write_my_own"
+            ):
+                titled = await _open_title_question(
+                    db,
+                    events=thread_events,
+                    digest=media_digest(planned.media_snapshot),
+                    item_id=item_id,
+                    request=creator_text or "",
+                )
+                if titled is not None:
+                    return replace(planned, plan=titled)
             question = (
                 wording_question(
                     target=state.target,
@@ -6876,6 +7108,15 @@ async def _gate_unresolved_choices(
     )
     if resolution.question is not None:
         if resolution.question.kind == "title_text":
+            titled = await _open_title_question(
+                db,
+                events=events,
+                digest=media_digest(planned.media_snapshot),
+                item_id=item_id,
+                request=creator_text or "",
+            )
+            if titled is not None:
+                return replace(planned, plan=titled)
             title_question = authorship_question(
                 target="opening_title",
                 dependency_digest=media_digest(planned.media_snapshot),
@@ -8123,6 +8364,31 @@ async def _plan_live_turn(
                 shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
                 await db.rollback()
                 route = route_requirements(fresh, shape, message=user_message, full_replan=False)
+            if (
+                route == "editor_ops"
+                and _asks_title_without_words(fresh)
+                and not any(
+                    state.target == "opening_title" and (state.approved or state.cancelled)
+                    for state in creative_copy_states.values()
+                )
+            ):
+                # KRI-1560: "başlık koy" on a finished draft. The editor model would write a
+                # title itself and put it on the video unasked (prod thread 1b8974a0, "Renk
+                # Kavgası"); she gets titles built from what she said to pick from instead, and
+                # this turn's other asks wait in the brief for the re-plan her answer starts.
+                titles_turn = await _chat_title_turn(
+                    db,
+                    item_id=item_id,
+                    manifest=manifest,
+                    request=user_message,
+                    more_asks=len(fresh) > 1,
+                )
+                return replace(
+                    titles_turn,
+                    brief_updates=pre_extracted_updates,
+                    brief_expected_version=prior_brief.version if prior_brief else 0,
+                    defer_brief=False,
+                )
             if route == "editor_ops":
                 editor_plan = (
                     first_editor_result[0]

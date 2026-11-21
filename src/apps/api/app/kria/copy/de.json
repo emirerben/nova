@@ -2146,6 +2146,11 @@
     "I planned this without {names}: it's still being checked. Ask me to add it once it's ready.": "Ich habe das ohne {names} geplant, weil es noch geprüft wird. Sag mir, dass ich es hinzufügen soll, sobald es fertig ist.",
     "I planned this without {names}: they're still being checked. Ask me to add them once they're ready.": "Ich habe das ohne {names} geplant, weil sie noch geprüft werden. Sag mir, dass ich sie hinzufügen soll, sobald sie fertig sind.",
     "one of your Visuals": "eines deiner Visuals",
-    "some of your Visuals": "einige deiner Visuals"
+    "some of your Visuals": "einige deiner Visuals",
+    "Here are {count} openings from what you said. Pick one and I'll open the video with it.": "Hier sind {count} Einstiege aus dem, was du sagst. Wähl einen, dann öffne ich das Video damit.",
+    "I found one opening in what you said. Use it, or type your own.": "Ich habe in dem, was du sagst, einen Einstieg gefunden. Nimm ihn oder schreib deinen eigenen.",
+    "Once you choose, I'll do the rest of what you asked.": "Sobald du gewählt hast, mache ich den Rest von dem, was du wolltest.",
+    "Which opening title should I use? Pick one, type your own, or skip it.": "Welchen Titel soll ich am Anfang zeigen? Wähl einen, schreib deinen eigenen oder lass ihn weg.",
+    "Your first sentence already pulls people in: “{line}”. I'd keep it without a title, or you can pick one of these.": "Dein erster Satz zieht die Leute schon rein: „{line}“. Ich würde ihn ohne Titel lassen, oder du wählst einen von diesen."
   }
 }

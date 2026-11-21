@@ -3240,6 +3240,10 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-1560: a title ask is answered with up to three titles built from what the creator said,
+    # in one question (`services/opening_titles`). Kill switch: false asks the older "do you have
+    # an idea, or should I write one?" question instead, and makes no extra model call.
+    kria_opening_title_options_enabled: bool = True
     # 29 Ekim lane E (KRI-1039): an ask the editor ops can express is composed with them
     # instead of refused, asked about or re-planned: a word-by-word title is one
     # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up

@@ -23,6 +23,10 @@ OPT_GENERATE = "generate"
 OPT_APPROVE = "approve"
 OPT_REVISE = "revise"
 OPT_CANCEL = "cancel"
+# KRI-1560: one question offering several titles built from what the creator said
+# (`app.services.opening_titles`). Each title is an option keyed ``title_<n>``.
+KIND_CANDIDATES = "creative_copy_candidates"
+CANDIDATE_KEY_PREFIX = "title_"
 
 Events = Iterable[tuple[str, Mapping[str, Any] | None]]
 Target = Literal["opening_title", "closing_title"]
@@ -131,6 +135,7 @@ _SKIP_ALIASES: tuple[str, ...] = (
     "başlıksız devam et",
     "gerek yok",
 )
+SKIP_ALIASES = _SKIP_ALIASES
 
 
 def authorship_question(*, target: Target, dependency_digest: str) -> dict[str, Any]:
@@ -242,6 +247,20 @@ def localize_question(question: dict[str, Any], language: str) -> dict[str, Any]
     """
 
     code = language.lower().split("-")[0]
+    if question.get("kind") == KIND_CANDIDATES:
+        # The titles are the creator's own words and stay as they are; only "No title" is
+        # server copy (`opening_titles.no_title_label`).
+        from app.services.opening_titles import no_title_label  # noqa: PLC0415
+
+        for option in question["options"]:
+            if option.get("key") == OPT_CANCEL:
+                shown = no_title_label(code)
+                aliases = list(option.get("aliases") or [])
+                if option["label"] != shown and option["label"] not in aliases:
+                    aliases.append(option["label"])
+                option["aliases"] = aliases
+                option["label"] = shown
+        return question
     labels = _COPY_LABELS.get(code)
     if labels:
         by_key = dict(
@@ -435,7 +454,11 @@ def fold_creative_copy(
                 ] = (
                     "stale"
                     if question.get("dependency_digest") != dependency_digest
-                    else ("authorship" if kind == "creative_copy_authorship" else "revise")
+                    else (
+                        "authorship"
+                        if kind in {"creative_copy_authorship", KIND_CANDIDATES}
+                        else "revise"
+                    )
                 )
                 candidate = (
                     normalize_copy(question.get("candidate", ""))
@@ -476,7 +499,18 @@ def fold_creative_copy(
         }
         if option not in options:
             continue
-        if option == OPT_APPROVE and question.get("kind") == "creative_copy_wording":
+        picked = _picked_candidate(question, option)
+        if picked is not None:
+            states[target] = CreativeCopyState(
+                target=target,
+                dependency_digest=dependency_digest,
+                status="approved",
+                candidate=picked,
+                approved=picked,
+                provenance="generated",
+                question_id=str(selection.get("question_id")),
+            )
+        elif option == OPT_APPROVE and question.get("kind") == "creative_copy_wording":
             candidate = normalize_copy(question.get("candidate", ""))
             candidate_digest = hashlib.sha256(candidate.encode()).hexdigest()[:24]
             if candidate and question.get("candidate_digest") == candidate_digest:
@@ -501,6 +535,23 @@ def fold_creative_copy(
                 target=target, dependency_digest=dependency_digest, status=option
             )
     return states
+
+
+def _picked_candidate(question: Mapping[str, Any], option: str) -> str | None:
+    """The title a tap on ``option`` approves in a KRI-1560 candidates question, else None.
+
+    Only the server's stored text counts, and only when its digest still matches: a model
+    cannot add a title to the question after it was asked.
+    """
+    if question.get("kind") != KIND_CANDIDATES or not option.startswith(CANDIDATE_KEY_PREFIX):
+        return None
+    for row in question.get("candidates") or []:
+        if not isinstance(row, Mapping) or row.get("key") != option:
+            continue
+        text = normalize_copy(row.get("text", ""))
+        digest = hashlib.sha256(text.encode()).hexdigest()[:24]
+        return text if text and row.get("digest") == digest else None
+    return None
 
 
 # Marks a title literal as the server's copy of an approved wording: ``{"target", "text"}``.
@@ -614,7 +665,10 @@ def latest_open_creative_question(events: Events) -> dict[str, Any] | None:
 
 __all__ = [
     "APPROVED_COPY_FACT",
+    "CANDIDATE_KEY_PREFIX",
     "CREATIVE_COPY_CONFLICT",
+    "KIND_CANDIDATES",
+    "SKIP_ALIASES",
     "SOURCE_SUGGESTION",
     "SUGGESTION_APPROVED",
     "SUGGESTION_PIN_KEY",

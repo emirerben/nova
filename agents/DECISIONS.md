@@ -123,6 +123,7 @@ These are the "why" behind invariants stated tersely in CLAUDE.md's pipeline sec
 ### [2026-05-13] Gemini metadata never becomes on-screen overlay text
 **Incident:** job `a1091488` (Rule of Thirds) rendered "pilot in cockpit" — Gemini's `detected_subject` from a cockpit clip — in place of "The"/"Thirds".
 **Fix:** removed the `_consensus_subject(clip_metas)` fallback and the empty-hook `clip_meta.hook_text` fallback. Overlay substitution input is now exclusively user-provided (`inputs.location`). Sentinel: `TestNoGeminiTextLeaks`. Does NOT cover `copy_writer` (captions are a separate trust surface).
+**Amended 2026-11-22 (KRI-1560, signed off by Emir in DM, answer 1A):** the rule stands for any text applied without the creator's approval. A title OFFERED for her approval may quote or paraphrase her own speech: it shows the line and time it rests on, every name and number in it must be in that line (`opening_titles.check_title`), and it becomes her text only when she taps it (`creative_copy_decisions._picked_candidate`). See the 2026-11-22 entry below.
 
 ### [2026-05] Dockerfile / .dockerignore coupling (PR #118/#119)
 **Incident:** PR #118 (`f156c19`, v0.4.7.0) added `COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics` for the Loop B online judge. Local pytest + the `test-api` CI job both passed (they run against the source tree, not the image). The deploy then failed on Fly with "not found in build context" because `.dockerignore` excluded the source path — the two files don't track each other and nothing local flags the mismatch. PR #119 (`121a6e9`) hotfixed `.dockerignore` with negation patterns to let the rubrics through.
@@ -4100,3 +4101,17 @@ CLAUDE.md was already 77 bytes over its 38,000 budget on main when KRI-1562 need
 - `NARRATIVE_CLIP_ORDER_ENABLED` — default `true`. Plan-item edits follow the filming guide's shot order (`content_plan_build._narrative_clip_order`), read at render time. `false` ⇒ greedy matching. Apply: fly secret + restart.
 
 - `TIKTOK_DEEP_ANALYSIS_ENABLED` — default `true`; `false` ⇒ no TikTok analysis in persona/plan/hook prompts (byte-identical). Apply: fly secret + restart.
+
+## [2026-11-22] Opening titles are offered from what the creator said, several in one question (KRI-1560)
+
+**Context:** Alanur wrote "başlık koy" on a finished Talking draft (prod thread `1b8974a0`). The chat-edit model wrote "Renk Kavgası" itself and put it on the video with no question, and the reply said no title was added because she gave no wording, though her full transcript was there. Three rules stood between her transcript and an opening: a wording question carried one candidate (only the main planner made one, so chat edits never asked), the hook suggestion card carried one model wording that may not echo the transcript, and on-screen text could not come from her speech.
+**Decision (Emir, DM 2026-11-22: 1A, 2A, 3B, 4A):**
+1. A title shown for her approval may quote or paraphrase her own speech (see the amended 2026-05-13 entry). One agent (`nova.compose.opening_title`) reads her numbered sentences and proposes up to three; the server keeps only titles whose names and numbers are in the sentences they cite, that share a content word with them, and that pass the bait and language checks. Thin evidence gives fewer titles, never invented ones; no title left means the older "do you have an idea?" question.
+2. The titles are one choice question (`kind: creative_copy_candidates`): each title is an answer block with "0:12 · “her line”" under it and a pencil that puts its words in the composer (quoted, so what she sends back is her own wording); then "No title". Her opening already hooking: "No title" is recommended and at most two titles follow.
+3. A title asked for in her first message is asked before the draft is made; the draft uses her pick.
+4. The hook chip says "Find an opening title" and asks for these titles. The words-on-the-card hook (`KRIA_SUGGESTION_HOOK_COPY_ENABLED`) should be switched off in production, since it shows one ungrounded wording and applies it on tap.
+**Where:** first message and re-plans (`planner._copy_question_turn`), the draft gate and the brief's wordless-title check (`planner._open_title_question`), and a chat ask on a finished draft (`planner._chat_title_turn`, before the editor model runs; that turn's other asks wait in the brief for the re-plan her answer starts).
+**Not changed:** the main planner prompt still forbids the planner itself from putting transcript words on screen (its title wording, if any, is replaced by the grounded titles); the hook card's own copy gate. `TestNoGeminiTextLeaks` is unchanged.
+**Kill switch:** `KRIA_OPENING_TITLE_OPTIONS_ENABLED=false` (default `true`; fly secret + restart api and worker) asks the older "do you have an idea?" question again and makes no extra model call.
+**Reversal condition:** creators report titles that misquote them, or the evidence check lets a fabricated title through. Narrow `check_title` first; the kill switch stops offering titles entirely.
+
