@@ -5,7 +5,8 @@ Each pytest process appends JSON lines to `<dir>/<worker>.jsonl`:
 - one `startup` row: seconds from plugin load to the end of collection, and how
   many tests that process collected. More cores do not shrink this part;
 - one `test` row per test: outcome, wall seconds of setup, call and teardown,
-  and CPU seconds of this process plus the children it waited for (ffmpeg).
+  CPU seconds of this process plus the children it waited for (ffmpeg), and
+  the timeout that applies to it (its own marker, else the run's default).
   Wall time far above CPU time means the test was waiting, not computing.
 
 Rows are written as the tests finish, so a crashed worker keeps what it ran.
@@ -42,6 +43,25 @@ def _outcome(report) -> str | None:
     if report.when == "call":
         return "xpassed" if hasattr(report, "wasxfail") else "passed"
     return None
+
+
+def _timeout(item) -> float | None:
+    """Seconds pytest-timeout allows this test: its marker, else the run's setting."""
+    marker = item.get_closest_marker("timeout")
+    value = None
+    if marker is not None:
+        value = marker.args[0] if marker.args else marker.kwargs.get("timeout")
+    if value is None:
+        value = item.config.getoption("timeout", None)
+    if value is None:
+        try:
+            value = item.config.getini("timeout")
+        except ValueError:  # pytest-timeout is not installed
+            value = None
+    try:
+        return float(value) if value else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _reason(report) -> str:
@@ -85,6 +105,7 @@ class Recorder:
             "setup": 0,
             "call": 0,
             "teardown": 0,
+            "timeout": _timeout(item),
         }
         self.pending[item.nodeid] = row
         cpu, wall = _cpu_seconds(), time.perf_counter()

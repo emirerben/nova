@@ -98,7 +98,7 @@ avoid dependency installation, PostgreSQL/Redis services, five web workers and
 macOS runners. Superseded PR and portable main CI runs are cancelled; a running main iOS
 release lane is never cancelled. Nightly/manual regressions have separate concurrency groups.
 
-API tests run as three shards over the complete non-quality test-file set
+API tests run as six shards over the complete non-quality test-file set
 (KRI-1544); every shard feeds the same stable `test-api` gate, so sharding
 changes wall-clock scheduling without reducing coverage. The count lives in
 `scripts/ci/api-tests.py` (`SHARD_COUNT`) and the workflow matrix must list
@@ -131,7 +131,23 @@ arm (runs 44651481740, 44658565495, 44664494076):
 | two shards by file position (before) | 24.6 min | 2 samples | none |
 | three packed, `load` mode | 16.2 min | 1 | slide-post delivery tests in 3 of 5 repeats (KRI-1545) |
 | three packed, `--dist loadfile` | not adopted | 5, one test at a median of 53 s | none |
-| three packed, `load` mode, KRI-1545 lock (adopted) | 18.3 min | 2 | none |
+| three packed, `load` mode, KRI-1545 lock (adopted 2026-11-20) | 18.3 min | 2 | none |
+
+Measured on 2026-11-21 on a throwaway branch, API job only, five repeats per
+arm on one commit (run 44913979019, 45 jobs, all green), with the locked
+install and timings refreshed from five runs:
+
+| Layout | Slowest shard job, median | Tests near their timeout | Other differences |
+| --- | --- | --- | --- |
+| three packed | 1,012 s (16.9 min) | none | none |
+| six packed (adopted) | 642 s (10.7 min) | none | none: 52,354 tests, identical outcomes |
+
+Tests with a timeout of their own did get slower at six shards, with room to
+spare: the three carousel focus-mode renders reached 47 s of their 180 s, and
+one route replay 59 s of its 300 s. No test on the default 60 s timeout went
+above 45 s in either layout. An earlier run of the same experiment (run
+44903511580) had one test at 45-46 s, `test_lane_targets_only_move_toward_green`;
+it was split per fixture first (#2443).
 
 What that taught:
 
@@ -148,11 +164,23 @@ What that taught:
 
 Before changing the count, the packing or the xdist mode, run the old and the
 new layout side by side on a throwaway branch (the API job alone, at least five
-repeats per arm, per-test times from the junit reports) and require:
+repeats per arm) and compare the per-test rows:
 
-1. no failure that the old layout does not have;
-2. among tests that reach 20 s in either arm and set no timeout of their own,
-   no sample at 60 s and no more samples above 45 s than the old layout.
+```sh
+python3 scripts/ci/api-times.py compare OLD_DIR NEW_DIR
+```
+
+It requires:
+
+1. no test that stopped running and no outcome that differs;
+2. no test newly at its timeout, and no more samples per run above three
+   quarters of their timeout than the old layout (45 s of the default 60 s;
+   a test with its own timeout is judged against that).
+
+A throwaway branch for this adds one workflow triggered by pushes to that
+branch, holding the API job with a `layout` and a `repeat` matrix dimension,
+`max-parallel: 10` so real pull requests keep runners, and an environment
+override for the shard count. Do not reduce `ci.yml` itself: a test reads it.
 
 The `iPhone validation` matrix has a `unit` leg (build, unit tests, selected UI
 subset, named-unit gate) plus `creation` and `screens` legs that compile from
