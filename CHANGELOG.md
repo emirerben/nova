@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.50.0] - 2026-11-21
+
+### Changed
+- fix(ios): move split clips and scroll from the timeline body (#2408) <!-- release-pr: 2408 -->
+
 ## [0.89.49.0] - 2026-11-21
 
 ### Changed
