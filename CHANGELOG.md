@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.56.0] - 2026-11-21
+
+### Changed
+- ci(api): lock the API's Python dependencies with CPU-only torch (KRI-1534) (#2434) <!-- release-pr: 2434 -->
+
 ## [0.89.55.0] - 2026-11-21
 
 ### Changed
