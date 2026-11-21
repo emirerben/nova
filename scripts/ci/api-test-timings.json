@@ -1,5 +1,5 @@
 {
- "measured": "2026-11-21, runs 44912190256 44911885233 44909702681 44906934270 44903105230: three shards, locked install, ubuntu-latest, -n auto",
+ "measured": "2026-11-21: five runs with three shards on the locked install, ubuntu-latest, -n auto (run ids in the pull request that set six shards)",
  "files": {
   "tests/agents/test_copilot_model_scope.py": 9.5,
   "tests/agents/test_creator_wire_contract.py": 73.4,
