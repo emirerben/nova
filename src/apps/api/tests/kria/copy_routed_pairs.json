@@ -2425,6 +2425,31 @@
    "app/services/sfx_capability.py",
    "Nothing in this video clearly called for a sound effect, so I added none",
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/agents/editor_ops_v2/background.py",
+   "I can't change where you are part by part on this edit yet.",
+   "Bu düzenlemede yerini bölüm bölüm henüz değiştiremiyorum."
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "change where you are part by part",
+   "yerini bölüm bölüm değiştirmek"
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "change where you are in that part",
+   "o bölümde yerini değiştirmek"
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "take that picture away",
+   "o görseli kaldırmak"
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "move that picture",
+   "o görselin zamanını değiştirmek"
   ]
  ],
  "retired": [

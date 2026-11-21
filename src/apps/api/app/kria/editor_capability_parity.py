@@ -401,7 +401,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
             "set_background_sequence",
             "set_speaker_frame",
             "clear_speaker_frame",
+            # KRI-1558: the editor's per-section frame (`setSpeakerFrame` at a playhead inside a
+            # layout window) and its window list edits; chat lays out or sets parts directly.
+            "arrange_sections",
+            "set_section_layout",
+            "remove_background_window",
+            "retime_background_window",
         ),
+        fields=("speaker_layout", "section_numbers", "start_s", "end_s", "window_index"),
     ),
     # Qendresa item 16: the speaker full screen in their own take before the background / corner.
     # The planner writes it from the creator's first ask (`background_media.full_screen_opening`);

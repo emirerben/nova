@@ -485,6 +485,10 @@ _OP_PHRASES = {
     "set_background_sequence": "change the backgrounds behind you",
     "set_speaker_frame": "make you small in a corner",
     "clear_speaker_frame": "put you back full screen",
+    "arrange_sections": "change where you are part by part",
+    "set_section_layout": "change where you are in that part",
+    "remove_background_window": "take that picture away",
+    "retime_background_window": "move that picture",
 }
 _OP_PHRASES_TR = {
     "set_edit_direction": "kurgunun yönünü değiştirmek",
@@ -496,6 +500,10 @@ _OP_PHRASES_TR = {
     "set_background_sequence": "arkandaki arka planları değiştirmek",
     "set_speaker_frame": "seni köşede küçültmek",
     "clear_speaker_frame": "seni tekrar tam ekran yapmak",
+    "arrange_sections": "yerini bölüm bölüm değiştirmek",
+    "set_section_layout": "o bölümde yerini değiştirmek",
+    "remove_background_window": "o görseli kaldırmak",
+    "retime_background_window": "o görselin zamanını değiştirmek",
 }
 
 

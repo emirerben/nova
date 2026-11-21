@@ -80,6 +80,7 @@ _PORTABLE_FAMILIES = {
     "music",
     "overlay",
     "sfx",
+    "speaker_sections",
     "text",
     "title",
     "transition",
@@ -1022,6 +1023,8 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
             families.append("background_windows")
         if background_focus_open(job, variant):
             families.append("background_focus")
+        if background_sections_open(job, variant):
+            families.append("speaker_sections")
     if color_moments_open(job, variant) or color_moments_removal_only(job, variant):
         families.append("color_moments")
     if (
@@ -1283,6 +1286,32 @@ def background_full_opening_open(job: Any, variant: dict[str, Any]) -> bool:
     return speaker_full_opening_unavailable_reason() is None
 
 
+def background_sections_open(job: Any, variant: dict[str, Any]) -> bool:
+    """May chat lay the speaker out per section (KRI-1558)?
+
+    The windows lane is open AND the sections gate holds (flag, ``speakerSections`` verified, a
+    protocol 54 build: `speaker_sections_unavailable_reason`, same worker-side client rule). False
+    adds nothing to the snapshot or the prompt, so a closed gate is byte-identical to before.
+    """
+    if not background_windows_open(job, variant):
+        return False
+    from app.services.phone_rollout import speaker_sections_unavailable_reason  # noqa: PLC0415
+
+    return speaker_sections_unavailable_reason() is None
+
+
+def speaker_sections_for(variant: dict[str, Any]) -> list[Any]:
+    """The take's sections on the output timeline (KRI-1558): `sections_from_cues` over the
+    variant's caption words, tiling ``0..background_duration_s``. Empty when either is missing."""
+    from app.pipeline.talking_sections import sections_from_cues  # noqa: PLC0415
+
+    duration = background_duration_s(variant)
+    cues = variant.get("caption_cues")
+    if duration <= 0 or not isinstance(cues, list):
+        return []
+    return sections_from_cues(cues, duration)
+
+
 def background_color_reason(job: Any, variant: dict[str, Any]) -> str | None:
     """Why chat may not put a plain colour behind the speaker although the lane is open, in
     words for the creator; None when the colour gate holds (KRI-1173).
@@ -1404,6 +1433,34 @@ def _background_snapshot(
         )
     if focus_open:
         section["focus_available"] = True
+    if background_sections_open(job, variant):
+        # KRI-1558: the take's sections and the speaker's layout in each, only while the sections
+        # gate is open, so every other snapshot keeps its exact shape.
+        section["sections_available"] = True
+        section["sections"] = [
+            {
+                "n": part.index,
+                "start_s": part.start_s,
+                "end_s": part.end_s,
+                "words": part.text[:90],
+            }
+            for part in speaker_sections_for(variant)
+        ]
+        layouts = current.get("layout_windows") if isinstance(current, dict) else None
+        section["layout_windows"] = [
+            {
+                "start_s": window.get("start_s"),
+                "end_s": window.get("end_s"),
+                "layout": window.get("layout"),
+                **(
+                    {"preset": background_frame_preset(window.get("speaker_frame"))}
+                    if window.get("layout") == "small"
+                    else {}
+                ),
+            }
+            for window in layouts or []
+            if isinstance(window, dict)
+        ]
     # Qendresa item 16: shown only while the speaker has a full-screen opening, so every other
     # snapshot keeps its exact shape. Read-only for the model: no op sets it.
     spans = current.get("full_screen_windows") if isinstance(current, dict) else None

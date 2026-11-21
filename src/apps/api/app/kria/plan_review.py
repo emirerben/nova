@@ -136,6 +136,11 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             # with the background.
             "patch_caption_line",
             "remove_full_screen_opening",
+            # KRI-1558: the speaker's layout per section and one timed background at a time.
+            "arrange_sections",
+            "set_section_layout",
+            "remove_background_window",
+            "retime_background_window",
         }
     ),
 }
@@ -204,6 +209,8 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
             "background",
             "background_windows",
             "background_focus",
+            # KRI-1558: the speaker's layout per section goes with the background.
+            "speaker_sections",
             "color_moments",
             "caption_lines",
         }
@@ -854,6 +861,8 @@ def repair_note(report: RepairReport, already_left_alone: list[str]) -> str:
 
 
 _TIMING_KEYS = frozenset({"start_s", "end_s", "start", "end", "at_s"})
+# The background's timed lists (KRI-1558 adds the speaker's layout per section).
+_TIMED_LISTS = ("windows", "full_screen_windows", "layout_windows")
 
 
 def _timing_identity(value: Any) -> Any:
@@ -868,11 +877,9 @@ def _rebase_timing(current: Any, old: Any, new: Any) -> Any:
     """Apply an internal auto-rebase delta without copying wording/style/source edits."""
     out = copy.deepcopy(current)
     if isinstance(old, dict) and isinstance(new, dict) and isinstance(out, dict):
-        omitted_windows = {
-            key for key in ("windows", "full_screen_windows") if key in old and key not in new
-        }
+        omitted_windows = {key for key in _TIMED_LISTS if key in old and key not in new}
         old, new = copy.deepcopy(old), copy.deepcopy(new)
-        for key in ("windows", "full_screen_windows"):
+        for key in _TIMED_LISTS:
             if key in old or key in new:
                 old.setdefault(key, [])
                 new.setdefault(key, [])
@@ -933,7 +940,7 @@ def _retain_current_timing(restored: Any, current: Any) -> Any:
     if isinstance(out, dict) and isinstance(current, dict):
         # A style restore must retain whether the timing owner currently has windows.
         # DTO serialization omits collapsed lists, so intersection alone loses them.
-        for key in ("windows", "full_screen_windows"):
+        for key in _TIMED_LISTS:
             if key not in current:
                 out.pop(key, None)
             elif key not in out:

@@ -2146,6 +2146,11 @@
     "I planned this without {names}: it's still being checked. Ask me to add it once it's ready.": "Ich habe das ohne {names} geplant, weil es noch geprüft wird. Sag mir, dass ich es hinzufügen soll, sobald es fertig ist.",
     "I planned this without {names}: they're still being checked. Ask me to add them once they're ready.": "Ich habe das ohne {names} geplant, weil sie noch geprüft werden. Sag mir, dass ich sie hinzufügen soll, sobald sie fertig sind.",
     "one of your Visuals": "eines deiner Visuals",
-    "some of your Visuals": "einige deiner Visuals"
+    "some of your Visuals": "einige deiner Visuals",
+    "I can't change where you are part by part on this edit yet.": "In diesem Video kann ich deinen Platz noch nicht Teil für Teil ändern.",
+    "change where you are in that part": "deinen Platz in diesem Teil ändern",
+    "change where you are part by part": "deinen Platz Teil für Teil ändern",
+    "move that picture": "dieses Bild verschieben",
+    "take that picture away": "dieses Bild entfernen"
   }
 }

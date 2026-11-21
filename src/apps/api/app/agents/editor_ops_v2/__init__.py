@@ -63,6 +63,8 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "background_windows": "speaker_background_windows.txt",
     # Qendresa item 18: aim / zoom the recordings, only while the focus gate is open.
     "background_focus": "speaker_background_focus.txt",
+    # KRI-1558: the speaker's layout per section, only while the sections gate is open.
+    "speaker_sections": "speaker_sections.txt",
     # KRI-1350: colour moments, only while the colour-moments gate is open.
     "color_moments": "color_moments.txt",
     # KRI-1394: the creator's own song, only on an edit that has one and the editor's capability.

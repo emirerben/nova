@@ -319,6 +319,9 @@ def _copilot_operations():
         if name == "side":
             # KRI-1394: `make_split_full_screen` plays full screen from or until `at_s`.
             return enum("from", "until")
+        if name == "speaker_layout":
+            # KRI-1558: how the speaker is drawn in a section.
+            return enum("own", "full", "small", "picture")
         if name == "preset":
             # KRI-1162: the speaker's corner, a name and never numbers (S37).
             return enum(
@@ -340,7 +343,7 @@ def _copilot_operations():
             return number
         if name in list_strings:
             return arr(string)
-        if name in {"slide_indexes", "order"}:
+        if name in {"slide_indexes", "order", "section_numbers"}:
             return arr(integer)
         if name == "selector":
             return selector
