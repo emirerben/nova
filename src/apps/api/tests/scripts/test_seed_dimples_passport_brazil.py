@@ -6,15 +6,18 @@ recipe so the admin editor preview matches what the renderer ships. A
 regression here turns the title screen back into 90px white centered text and
 silently breaks the template's signature look.
 """
+
 import importlib.util
 import os
 import sys
 
 import pytest
 
-_SEED_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "scripts", "seed_dimples_passport_brazil.py"
-))
+_SEED_PATH = os.path.normpath(
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "scripts", "seed_dimples_passport_brazil.py"
+    )
+)
 _spec = importlib.util.spec_from_file_location("seed_dimples_passport_brazil", _SEED_PATH)
 _seed = importlib.util.module_from_spec(_spec)
 sys.modules["seed_dimples_passport_brazil"] = _seed
@@ -55,8 +58,7 @@ def _prefix_overlay(slot: dict) -> dict | None:
     Identified by white color + non-jumbo size + non-font-cycle effect."""
     overlays = slot.get("text_overlays") or []
     candidates = [
-        o for o in overlays
-        if o.get("text") == "Welcome to" and o.get("effect") != "font-cycle"
+        o for o in overlays if o.get("text") == "Welcome to" and o.get("effect") != "font-cycle"
     ]
     return candidates[0] if candidates else None
 
@@ -475,8 +477,7 @@ class TestCurtainCloseAfterSlot5:
     def test_interstitials_list_has_one_entry(self):
         recipe = build_recipe()
         assert len(recipe["interstitials"]) == 1, (
-            "Recipe should declare exactly one interstitial — the curtain-close "
-            "after slot 5"
+            "Recipe should declare exactly one interstitial — the curtain-close after slot 5"
         )
 
     def test_interstitial_targets_slot_5(self):
@@ -573,9 +574,7 @@ class TestCurtainSurvivesConsolidation:
 
         consolidated = consolidate_slots(recipe, mock_clips)
 
-        curtains = [
-            i for i in consolidated.interstitials if i.get("type") == "curtain-close"
-        ]
+        curtains = [i for i in consolidated.interstitials if i.get("type") == "curtain-close"]
         assert len(curtains) == 1, (
             f"Curtain-close was dropped during consolidation "
             f"({len(curtains)} curtains survive, expected 1). Check that "

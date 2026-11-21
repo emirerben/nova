@@ -41,11 +41,11 @@ _INLINE_DEFAULTS: dict[str, str] = {
         '{"start_s": float, "end_s": float, "energy": float 0–10, "description": string} '
         "— pick the BEST moments only; do NOT pad the list with filler. Include a mix "
         "of durations (3–5s, 8–12s, and at least one ≥13s when meaningful action exists).\n\n"
-        "For EVERY best_moment, \"description\" MUST be a short concrete action label "
-        "naming the visible event (e.g. \"shot on goal\", \"through-ball pass\", "
-        "\"dribble past defender\", \"header save\", \"tackle wins ball\"). Do NOT use "
-        "vague descriptions like \"player on field\", \"match in progress\", or "
-        "\"wide shot\". If no meaningful action occurs in a candidate window, omit it "
+        'For EVERY best_moment, "description" MUST be a short concrete action label '
+        'naming the visible event (e.g. "shot on goal", "through-ball pass", '
+        '"dribble past defender", "header save", "tackle wins ball"). Do NOT use '
+        'vague descriptions like "player on field", "match in progress", or '
+        '"wide shot". If no meaningful action occurs in a candidate window, omit it '
         "entirely — return fewer moments rather than weak ones.\n\n"
         "Return ONLY valid JSON, no markdown."
     ),

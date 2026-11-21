@@ -4,6 +4,7 @@ These exist because the visual rhythm of the template lives in the recipe data,
 not in code — and bad data passes silently. A regression here means every video
 rendered from this template ships with the wrong grid timing.
 """
+
 import importlib.util
 import os
 import sys
@@ -11,9 +12,9 @@ import sys
 import pytest
 
 # Load seed_rule_of_thirds.py from the scripts/ dir without a package install
-_SEED_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "scripts", "seed_rule_of_thirds.py"
-))
+_SEED_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "seed_rule_of_thirds.py")
+)
 _spec = importlib.util.spec_from_file_location("seed_rule_of_thirds", _SEED_PATH)
 _seed = importlib.util.module_from_spec(_spec)
 sys.modules["seed_rule_of_thirds"] = _seed
@@ -59,9 +60,7 @@ class TestGridStartsWhiteOnSceneCut:
             if not windows:
                 continue  # no highlight at all → trivially white throughout
             first_start = min(w[0] for w in windows)
-            assert first_start > 0.0, (
-                f"hook slot starts with red at t={first_start}s — must be > 0"
-            )
+            assert first_start > 0.0, f"hook slot starts with red at t={first_start}s — must be > 0"
 
     def test_first_white_phase_is_perceptible(self):
         """The white phase before the first red flash must be long enough to

@@ -32,10 +32,12 @@ def detect_scenes(video_path: str) -> list[SceneCut]:
 
     cuts: list[SceneCut] = []
     for i, (start, _end) in enumerate(scene_list):
-        cuts.append(SceneCut(
-            timestamp_s=start.get_seconds(),
-            score=float(i),  # index as proxy score; detector doesn't expose raw score
-        ))
+        cuts.append(
+            SceneCut(
+                timestamp_s=start.get_seconds(),
+                score=float(i),  # index as proxy score; detector doesn't expose raw score
+            )
+        )
 
     log.info("scene_detect_done", cut_count=len(cuts))
     return cuts

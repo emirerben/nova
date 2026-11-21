@@ -27,9 +27,7 @@ def _mock_db_with_photo_template():
     template.id = "936e9558-248f-49be-b857-2b9a193522c6"
     template.analysis_status = "ready"
     template.recipe_cached = {
-        "slots": [
-            {"position": 1, "media_type": "photo", "target_duration_s": 3.5}
-        ]
+        "slots": [{"position": 1, "media_type": "photo", "target_duration_s": 3.5}]
     }
     result = MagicMock()
     result.scalar_one_or_none = MagicMock(return_value=template)
@@ -75,9 +73,7 @@ def test_image_conversion_error_propagates_through_threadpool_to_422(
     test, a future refactor that uses asyncio.to_thread (which has
     subtly different exception semantics) or that swallows exceptions
     in the helper would silently regress to 500."""
-    mock_convert.side_effect = ImageConversionError(
-        "Could not encode image: test failure tail"
-    )
+    mock_convert.side_effect = ImageConversionError("Could not encode image: test failure tail")
     res = client_with_photo_template.post(
         "/uploads/template-photo",
         **_form(_png_bytes()),

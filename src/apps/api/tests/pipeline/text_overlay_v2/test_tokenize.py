@@ -12,15 +12,11 @@ from app.pipeline.text_overlay_v2.tokenize import (
 
 
 def _poly(x_min: float, y_min: float, x_max: float, y_max: float) -> OcrPolygon:
-    return OcrPolygon(
-        points=[(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
-    )
+    return OcrPolygon(points=[(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)])
 
 
 def _det(text: str, *, t: float = 0.0, bbox=(0.1, 0.4, 0.9, 0.5)) -> FrameDetection:
-    return FrameDetection(
-        frame_t_s=t, text=text, polygon=_poly(*bbox), confidence=0.9
-    )
+    return FrameDetection(frame_t_s=t, text=text, polygon=_poly(*bbox), confidence=0.9)
 
 
 # ── Single-word fast path ─────────────────────────────────────────────────────
@@ -123,8 +119,10 @@ def test_multiline_multiword_split_both_axes():
     out = split_detection_into_words(det)
     assert [d.text for d in out] == ["if", "you", "put", "in"]
     # First line: y range 0.4 to 0.5.
-    assert all(d.polygon.aabb()[1] == 0.4 and d.polygon.aabb()[3] == pytest.approx(0.5, abs=1e-9)
-               for d in out[:2])
+    assert all(
+        d.polygon.aabb()[1] == 0.4 and d.polygon.aabb()[3] == pytest.approx(0.5, abs=1e-9)
+        for d in out[:2]
+    )
     # Second line: y range 0.5 to 0.6.
     assert all(
         d.polygon.aabb()[1] == pytest.approx(0.5, abs=1e-9) and d.polygon.aabb()[3] == 0.6

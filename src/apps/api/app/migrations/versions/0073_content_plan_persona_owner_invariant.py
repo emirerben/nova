@@ -79,9 +79,7 @@ def _catalog_owner_columns(bind: Any) -> list[Mapping[str, Any]]:
 
 def _verify_catalog_contract(bind: Any) -> None:
     rows = _catalog_owner_columns(bind)
-    by_column = {
-        (str(row["table_name"]), str(row["column_name"])): row for row in rows
-    }
+    by_column = {(str(row["table_name"]), str(row["column_name"])): row for row in rows}
     if set(by_column) != _REQUIRED_OWNER_COLUMNS:
         missing = sorted(_REQUIRED_OWNER_COLUMNS - set(by_column))
         unexpected = sorted(set(by_column) - _REQUIRED_OWNER_COLUMNS)

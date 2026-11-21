@@ -35,11 +35,14 @@ def _basic_overlay(text: str = "Hello", start_s: float = 0.0, end_s: float = 4.0
 class TestAuth:
     def test_missing_token_rejected(self, client):
         with _patch_settings():
-            res = client.post("/admin/overlay-preview", json={
-                "overlays": [_basic_overlay()],
-                "slot_duration_s": 5.0,
-                "time_in_slot_s": 1.0,
-            })
+            res = client.post(
+                "/admin/overlay-preview",
+                json={
+                    "overlays": [_basic_overlay()],
+                    "slot_duration_s": 5.0,
+                    "time_in_slot_s": 1.0,
+                },
+            )
         assert res.status_code in (401, 422)
 
     def test_wrong_token_returns_401(self, client):
@@ -142,13 +145,15 @@ class TestSubjectSubstitution:
 
     def test_substitutes_per_span(self):
         out = _substitute_subject(
-            [{
-                "text": "static",
-                "spans": [
-                    {"text": "Hello "},
-                    {"text": "{{subject}}!"},
-                ],
-            }],
+            [
+                {
+                    "text": "static",
+                    "spans": [
+                        {"text": "Hello "},
+                        {"text": "{{subject}}!"},
+                    ],
+                }
+            ],
             "WORLD",
         )
         assert out[0]["spans"][1]["text"] == "WORLD!"
@@ -233,28 +238,34 @@ class TestFontFamilyCoverage:
 
 class TestStripUnknownFontFamilies:
     def test_strips_overlay_unknown_font(self):
-        out = _strip_unknown_font_families([
-            {"text": "x", "font_family": "DoesNotExist"},
-        ])
+        out = _strip_unknown_font_families(
+            [
+                {"text": "x", "font_family": "DoesNotExist"},
+            ]
+        )
         assert "font_family" not in out[0]
 
     def test_keeps_known_font(self):
         first_known = next(iter(_FONT_REGISTRY.get("fonts", {}).keys()))
-        out = _strip_unknown_font_families([
-            {"text": "x", "font_family": first_known},
-        ])
+        out = _strip_unknown_font_families(
+            [
+                {"text": "x", "font_family": first_known},
+            ]
+        )
         assert out[0]["font_family"] == first_known
 
     def test_strips_span_unknown_font(self):
-        out = _strip_unknown_font_families([
-            {
-                "text": "x",
-                "spans": [
-                    {"text": "a", "font_family": "DoesNotExist"},
-                    {"text": "b"},
-                ],
-            },
-        ])
+        out = _strip_unknown_font_families(
+            [
+                {
+                    "text": "x",
+                    "spans": [
+                        {"text": "a", "font_family": "DoesNotExist"},
+                        {"text": "b"},
+                    ],
+                },
+            ]
+        )
         assert "font_family" not in out[0]["spans"][0]
         assert "font_family" not in out[0]["spans"][1]
 

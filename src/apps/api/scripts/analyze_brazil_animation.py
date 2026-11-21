@@ -41,6 +41,7 @@ Sampling at 0.033s (per-frame at 30fps) catches every cycle change at
 the FONT_CYCLE_FAST_INTERVAL_S=0.07 tempo. Coarser sampling will miss
 some transitions but is faster.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -65,13 +66,13 @@ FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 CYCLE_FONTS = [
     # (display_name, file, category)
-    ("Playfair Bold",      "PlayfairDisplay-Bold.ttf",     "serif-display"),  # settle
-    ("Montserrat",         "Montserrat-ExtraBold.ttf",     "sans"),
-    ("Instrument Serif",   "InstrumentSerif-Regular.ttf",  "serif-thin"),
-    ("Bodoni Moda",        "BodoniModa-Bold.ttf",          "serif-fat"),
-    ("Fraunces",           "Fraunces-Bold.ttf",            "serif-mod"),
-    ("Permanent Marker",   "PermanentMarker-Regular.ttf",  "brush"),
-    ("Pacifico",           "Pacifico-Regular.ttf",         "script"),
+    ("Playfair Bold", "PlayfairDisplay-Bold.ttf", "serif-display"),  # settle
+    ("Montserrat", "Montserrat-ExtraBold.ttf", "sans"),
+    ("Instrument Serif", "InstrumentSerif-Regular.ttf", "serif-thin"),
+    ("Bodoni Moda", "BodoniModa-Bold.ttf", "serif-fat"),
+    ("Fraunces", "Fraunces-Bold.ttf", "serif-mod"),
+    ("Permanent Marker", "PermanentMarker-Regular.ttf", "brush"),
+    ("Pacifico", "Pacifico-Regular.ttf", "script"),
 ]
 
 # --- Color targets (match seed_dimples_passport_brazil.py) ---
@@ -94,6 +95,7 @@ TEMPLATE_FONT_SIZE = 200
 
 
 # ---------------- template generation ----------------
+
 
 @dataclass
 class FontTemplate:
@@ -118,7 +120,7 @@ def _build_templates(text: str = "BRAZIL") -> list[FontTemplate]:
         ys, xs = np.where(arr > 64)
         if len(xs) == 0:
             continue
-        tight = arr[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+        tight = arr[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
         # Normalize to (NORM_H, NORM_W) — pad if aspect doesn't match
         tight_img = Image.fromarray(tight, "L")
         norm = _aspect_pad_resize(tight_img, NORM_W, NORM_H)
@@ -145,6 +147,7 @@ def _aspect_pad_resize(img: Image.Image, target_w: int, target_h: int) -> Image.
 
 # ---------------- frame extraction + analysis ----------------
 
+
 def _check_deps() -> None:
     if shutil.which("ffmpeg") is None:
         sys.exit("error: ffmpeg not found on PATH")
@@ -152,18 +155,38 @@ def _check_deps() -> None:
 
 def _video_duration_s(path: Path) -> float:
     out = subprocess.check_output(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)], text=True)
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        text=True,
+    )
     return float(out.strip())
 
 
 def _extract_frames(video: Path, sample_step_s: float, out_dir: Path) -> list[Path]:
     fps = 1.0 / sample_step_s
-    subprocess.run([
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-i", str(video), "-vf", f"fps={fps}",
-        "-y", str(out_dir / "f_%04d.png"),
-    ], check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-vf",
+            f"fps={fps}",
+            "-y",
+            str(out_dir / "f_%04d.png"),
+        ],
+        check=True,
+    )
     return sorted(out_dir.glob("f_*.png"))
 
 
@@ -178,9 +201,9 @@ def _yellow_mask_in_band(frame: np.ndarray) -> tuple[np.ndarray, int, int] | Non
     g = band[..., 1].astype(int)
     b = band[..., 2].astype(int)
     mask = (
-        (np.abs(r - YELLOW_RGB[0]) < YELLOW_CH_TOL) &
-        (np.abs(g - YELLOW_RGB[1]) < YELLOW_CH_TOL) &
-        (np.abs(b - YELLOW_RGB[2]) < YELLOW_CH_TOL)
+        (np.abs(r - YELLOW_RGB[0]) < YELLOW_CH_TOL)
+        & (np.abs(g - YELLOW_RGB[1]) < YELLOW_CH_TOL)
+        & (np.abs(b - YELLOW_RGB[2]) < YELLOW_CH_TOL)
     )
     if int(mask.sum()) < YELLOW_MIN_PIXELS:
         return None
@@ -194,7 +217,7 @@ def _yellow_mask_in_band(frame: np.ndarray) -> tuple[np.ndarray, int, int] | Non
     if cx > TITLE_CENTROID_X_MAX_FRAC * FRAME_WIDTH:
         return None
     # Tight-crop the yellow region
-    crop = mask[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+    crop = mask[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
     return crop, int(ys.min() + y_lo), int(xs.min())
 
 
@@ -226,16 +249,16 @@ def _identify_font(crop: np.ndarray, templates: list[FontTemplate]) -> tuple[str
     return best, scores
 
 
-def analyze_video(video: Path, sample_step_s: float, label: str,
-                  templates: list[FontTemplate]) -> dict:
+def analyze_video(
+    video: Path, sample_step_s: float, label: str, templates: list[FontTemplate]
+) -> dict:
     print(f"\n[{label}] analyzing {video.name} ...", file=sys.stderr)
     duration = _video_duration_s(video)
     obs: list[FrameObs] = []
     with tempfile.TemporaryDirectory(prefix=f"brazil_anim_{label}_") as td:
         td_path = Path(td)
         frames = _extract_frames(video, sample_step_s, td_path)
-        print(f"[{label}] {len(frames)} frames at {sample_step_s}s step",
-              file=sys.stderr)
+        print(f"[{label}] {len(frames)} frames at {sample_step_s}s step", file=sys.stderr)
         for i, fp in enumerate(frames):
             t = i * sample_step_s
             arr = np.array(Image.open(fp).convert("RGB"))
@@ -245,12 +268,12 @@ def analyze_video(video: Path, sample_step_s: float, label: str,
                 continue
             crop, y0, x0 = res
             font_name, scores = _identify_font(crop, templates)
-            obs.append(FrameObs(t=t, crop=crop, font_name=font_name,
-                                 iou_scores=scores))
+            obs.append(FrameObs(t=t, crop=crop, font_name=font_name, iou_scores=scores))
     return _summarize(obs, sample_step_s, duration, str(video), label)
 
 
 # ---------------- summary stats ----------------
+
 
 def _runs(seq: list[str | None]) -> list[tuple[str | None, int]]:
     """Run-length encode a sequence."""
@@ -268,13 +291,15 @@ def _runs(seq: list[str | None]) -> list[tuple[str | None, int]]:
     return out
 
 
-def _summarize(obs: list[FrameObs], step_s: float, duration: float,
-               video: str, label: str) -> dict:
+def _summarize(obs: list[FrameObs], step_s: float, duration: float, video: str, label: str) -> dict:
     visible = [o for o in obs if o.font_name is not None]
     if not visible:
         return {
-            "label": label, "video": video, "duration_s": duration,
-            "sample_step_s": step_s, "frames_total": len(obs),
+            "label": label,
+            "video": video,
+            "duration_s": duration,
+            "sample_step_s": step_s,
+            "frames_total": len(obs),
             "frames_with_title": 0,
             "summary": "no title detected in any frame",
         }
@@ -301,7 +326,7 @@ def _summarize(obs: list[FrameObs], step_s: float, duration: float,
         spans.append((cur_start, len(obs) - 1))
     # Longest span = the BRAZIL window
     longest = max(spans, key=lambda s: s[1] - s[0])
-    primary = obs[longest[0]:longest[1] + 1]
+    primary = obs[longest[0] : longest[1] + 1]
     primary_fonts = [o.font_name for o in primary]
     primary_runs = _runs(primary_fonts)
 
@@ -365,8 +390,7 @@ def _summarize(obs: list[FrameObs], step_s: float, duration: float,
             "frames": len(primary),
         },
         "font_runs": [
-            {"font": f, "frames": n, "duration_s": n * step_s,
-             "start_s": primary[i_start].t}
+            {"font": f, "frames": n, "duration_s": n * step_s, "start_s": primary[i_start].t}
             for (f, n), i_start in _annotate_runs(primary_runs, primary)
         ],
         "font_frequency": freq_pct,
@@ -393,8 +417,9 @@ def _summarize(obs: list[FrameObs], step_s: float, duration: float,
     }
 
 
-def _annotate_runs(runs: list[tuple[str | None, int]],
-                   primary: list[FrameObs]) -> list[tuple[tuple, int]]:
+def _annotate_runs(
+    runs: list[tuple[str | None, int]], primary: list[FrameObs]
+) -> list[tuple[tuple, int]]:
     out = []
     i = 0
     for run in runs:
@@ -404,6 +429,7 @@ def _annotate_runs(runs: list[tuple[str | None, int]],
 
 
 # ---------------- rendering ----------------
+
 
 def _fmt(v, dp=3):
     if v is None:
@@ -420,69 +446,78 @@ def render_single_report(rep: dict) -> str:
     lines.append("=" * 84)
     lines.append(f"video:             {rep['video']}")
     lines.append(f"duration:          {rep['duration_s']:.2f}s")
-    lines.append(f"sampled:           {rep['frames_total']} frames "
-                 f"at {rep['sample_step_s']}s step")
-    if rep['frames_with_title'] == 0:
+    lines.append(f"sampled:           {rep['frames_total']} frames at {rep['sample_step_s']}s step")
+    if rep["frames_with_title"] == 0:
         lines.append("\n  NO TITLE DETECTED — yellow text not found in any frame")
         return "\n".join(lines)
 
     pw = rep["primary_brazil_window"]
-    lines.append(f"BRAZIL window:     {pw['start_s']:.2f}s → {pw['end_s']:.2f}s "
-                 f"(duration {pw['duration_s']:.2f}s, {pw['frames']} frames)")
-    lines.append(f"match confidence:  mean IoU {rep['matching_confidence_mean_iou']:.3f} "
-                 f"({rep['frames_with_title']} title frames analyzed)")
+    lines.append(
+        f"BRAZIL window:     {pw['start_s']:.2f}s → {pw['end_s']:.2f}s "
+        f"(duration {pw['duration_s']:.2f}s, {pw['frames']} frames)"
+    )
+    lines.append(
+        f"match confidence:  mean IoU {rep['matching_confidence_mean_iou']:.3f} "
+        f"({rep['frames_with_title']} title frames analyzed)"
+    )
 
     cyc = rep["cycle"]
     lines.append("")
     lines.append("--- CYCLE STATS ---")
-    lines.append(f"  transitions:               {cyc['transitions']} "
-                 f"({cyc['transitions_per_sec']:.2f}/sec)")
+    lines.append(
+        f"  transitions:               {cyc['transitions']} ({cyc['transitions_per_sec']:.2f}/sec)"
+    )
     lines.append(f"  median run duration:       {cyc['median_run_duration_s']:.3f}s")
     lines.append(f"  implied cycle interval:    {cyc['implied_cycle_interval_s']:.3f}s")
-    lines.append(f"  distinct fonts seen:       {cyc['distinct_fonts_seen']} of "
-                 f"{len(CYCLE_FONTS)}")
+    lines.append(f"  distinct fonts seen:       {cyc['distinct_fonts_seen']} of {len(CYCLE_FONTS)}")
 
     settle = rep["settle"]
     lines.append("")
     lines.append("--- SETTLE PHASE ---")
     if settle["fired"]:
-        lines.append(f"  DETECTED — last run held {settle['duration_s']:.2f}s "
-                     f"on '{settle['font']}'")
+        lines.append(
+            f"  DETECTED — last run held {settle['duration_s']:.2f}s on '{settle['font']}'"
+        )
     else:
-        lines.append("  not detected — cycle ran through to the end without "
-                     "settling on one font (matches font_cycle_accel_at_s=0.0)")
+        lines.append(
+            "  not detected — cycle ran through to the end without "
+            "settling on one font (matches font_cycle_accel_at_s=0.0)"
+        )
 
     accel = rep["accel"]
     lines.append("")
     lines.append("--- ACCEL / RAMP DETECTION ---")
     if accel["fired"]:
         d = accel["direction"]
-        lines.append(f"  {d.upper()} DETECTED: median interval shifted from "
-                     f"{accel['first_half_median_interval_s']:.3f}s in first half "
-                     f"to {accel['second_half_median_interval_s']:.3f}s in second")
+        lines.append(
+            f"  {d.upper()} DETECTED: median interval shifted from "
+            f"{accel['first_half_median_interval_s']:.3f}s in first half "
+            f"to {accel['second_half_median_interval_s']:.3f}s in second"
+        )
     else:
         m1 = accel.get("first_half_median_interval_s")
         m2 = accel.get("second_half_median_interval_s")
-        lines.append(f"  tempo flat across the cycle "
-                     f"(first half {_fmt(m1)}s vs second half {_fmt(m2)}s)")
+        lines.append(
+            f"  tempo flat across the cycle (first half {_fmt(m1)}s vs second half {_fmt(m2)}s)"
+        )
 
     lines.append("")
     lines.append("--- FONT FREQUENCY ---")
     lines.append(f"  {'font':22s}  {'frames':>7s}  {'visible':>10s}  {'% of window':>12s}")
-    lines.append(f"  {'-'*22}  {'-'*7}  {'-'*10}  {'-'*12}")
-    rows = sorted(rep["font_frequency"].items(),
-                  key=lambda kv: -kv[1]["frames"])
+    lines.append(f"  {'-' * 22}  {'-' * 7}  {'-' * 10}  {'-' * 12}")
+    rows = sorted(rep["font_frequency"].items(), key=lambda kv: -kv[1]["frames"])
     for fname, stats in rows:
-        lines.append(f"  {fname:22s}  {stats['frames']:>7d}  "
-                     f"{stats['time_s']:>8.2f}s  {stats['pct_of_window']:>10.1f}%")
+        lines.append(
+            f"  {fname:22s}  {stats['frames']:>7d}  "
+            f"{stats['time_s']:>8.2f}s  {stats['pct_of_window']:>10.1f}%"
+        )
 
     lines.append("")
     lines.append("--- PHASE TIMELINE (first 30 runs) ---")
     lines.append(f"  {'t_start':>8s}  {'duration':>10s}  font")
-    lines.append(f"  {'-'*8}  {'-'*10}  {'-'*22}")
+    lines.append(f"  {'-' * 8}  {'-' * 10}  {'-' * 22}")
     for r in rep["font_runs"][:30]:
-        lines.append(f"  {r['start_s']:>7.3f}s  {r['duration_s']:>8.3f}s  "
-                     f"{r['font']}")
+        lines.append(f"  {r['start_s']:>7.3f}s  {r['duration_s']:>8.3f}s  {r['font']}")
     if len(rep["font_runs"]) > 30:
         lines.append(f"  ... ({len(rep['font_runs']) - 30} more runs)")
 
@@ -506,7 +541,7 @@ def render_diff_report(ref: dict, ours: dict) -> str:
         lines.append(f"  {metric:34s} {_fmt(rv):>12s} {_fmt(ov):>12s} {d:>12s}  {notes}")
 
     lines.append(f"  {'metric':34s} {'REF':>12s} {'OURS':>12s} {'DELTA':>12s}  notes")
-    lines.append(f"  {'-'*34} {'-'*12} {'-'*12} {'-'*12}  {'-'*40}")
+    lines.append(f"  {'-' * 34} {'-' * 12} {'-' * 12} {'-' * 12}  {'-' * 40}")
 
     rw = ref["primary_brazil_window"]
     ow = ours["primary_brazil_window"]
@@ -515,63 +550,87 @@ def render_diff_report(ref: dict, ours: dict) -> str:
     row("BRAZIL window duration (s)", rw["duration_s"], ow["duration_s"])
 
     rc, oc = ref["cycle"], ours["cycle"]
-    row("transitions in window", rc["transitions"], oc["transitions"],
-        dfmt=lambda d: f"{d:+.0f}")
+    row("transitions in window", rc["transitions"], oc["transitions"], dfmt=lambda d: f"{d:+.0f}")
     row("transitions / sec", rc["transitions_per_sec"], oc["transitions_per_sec"])
-    row("median run duration (s)", rc["median_run_duration_s"],
-        oc["median_run_duration_s"], notes="cycle interval")
-    row("distinct fonts seen", rc["distinct_fonts_seen"],
-        oc["distinct_fonts_seen"], dfmt=lambda d: f"{d:+.0f}",
-        notes=f"of {len(CYCLE_FONTS)}")
+    row(
+        "median run duration (s)",
+        rc["median_run_duration_s"],
+        oc["median_run_duration_s"],
+        notes="cycle interval",
+    )
+    row(
+        "distinct fonts seen",
+        rc["distinct_fonts_seen"],
+        oc["distinct_fonts_seen"],
+        dfmt=lambda d: f"{d:+.0f}",
+        notes=f"of {len(CYCLE_FONTS)}",
+    )
 
     rs, os_ = ref["settle"], ours["settle"]
     lines.append("")
     lines.append("--- SETTLE PHASE ---")
-    lines.append(f"  REF:  fired={rs['fired']}, font={rs['font']}, "
-                 f"duration={rs['duration_s']:.2f}s")
-    lines.append(f"  OURS: fired={os_['fired']}, font={os_['font']}, "
-                 f"duration={os_['duration_s']:.2f}s")
+    lines.append(
+        f"  REF:  fired={rs['fired']}, font={rs['font']}, duration={rs['duration_s']:.2f}s"
+    )
+    lines.append(
+        f"  OURS: fired={os_['fired']}, font={os_['font']}, duration={os_['duration_s']:.2f}s"
+    )
 
     ra, oa = ref["accel"], ours["accel"]
     lines.append("")
     lines.append("--- ACCEL / RAMP ---")
-    lines.append(f"  REF:  fired={ra['fired']}, dir={ra['direction']}, "
-                 f"first-half {_fmt(ra.get('first_half_median_interval_s'))}s "
-                 f"→ second-half {_fmt(ra.get('second_half_median_interval_s'))}s")
-    lines.append(f"  OURS: fired={oa['fired']}, dir={oa['direction']}, "
-                 f"first-half {_fmt(oa.get('first_half_median_interval_s'))}s "
-                 f"→ second-half {_fmt(oa.get('second_half_median_interval_s'))}s")
+    lines.append(
+        f"  REF:  fired={ra['fired']}, dir={ra['direction']}, "
+        f"first-half {_fmt(ra.get('first_half_median_interval_s'))}s "
+        f"→ second-half {_fmt(ra.get('second_half_median_interval_s'))}s"
+    )
+    lines.append(
+        f"  OURS: fired={oa['fired']}, dir={oa['direction']}, "
+        f"first-half {_fmt(oa.get('first_half_median_interval_s'))}s "
+        f"→ second-half {_fmt(oa.get('second_half_median_interval_s'))}s"
+    )
 
     lines.append("")
     lines.append("--- FONT FREQUENCY (frames per font in the BRAZIL window) ---")
-    fonts_all = sorted(set(list(ref["font_frequency"].keys()) +
-                            list(ours["font_frequency"].keys())))
-    lines.append(f"  {'font':22s}  {'REF frames':>11s}  {'REF time':>10s}  "
-                 f"{'OURS frames':>12s}  {'OURS time':>10s}  delta time")
-    lines.append(f"  {'-'*22}  {'-'*11}  {'-'*10}  {'-'*12}  {'-'*10}  {'-'*10}")
+    fonts_all = sorted(
+        set(list(ref["font_frequency"].keys()) + list(ours["font_frequency"].keys()))
+    )
+    lines.append(
+        f"  {'font':22s}  {'REF frames':>11s}  {'REF time':>10s}  "
+        f"{'OURS frames':>12s}  {'OURS time':>10s}  delta time"
+    )
+    lines.append(f"  {'-' * 22}  {'-' * 11}  {'-' * 10}  {'-' * 12}  {'-' * 10}  {'-' * 10}")
     for f in fonts_all:
         rstats = ref["font_frequency"].get(f, {"frames": 0, "time_s": 0.0})
         ostats = ours["font_frequency"].get(f, {"frames": 0, "time_s": 0.0})
         dt = ostats["time_s"] - rstats["time_s"]
-        lines.append(f"  {f:22s}  {rstats['frames']:>11d}  "
-                     f"{rstats['time_s']:>8.2f}s  {ostats['frames']:>12d}  "
-                     f"{ostats['time_s']:>8.2f}s  {dt:+.2f}s")
+        lines.append(
+            f"  {f:22s}  {rstats['frames']:>11d}  "
+            f"{rstats['time_s']:>8.2f}s  {ostats['frames']:>12d}  "
+            f"{ostats['time_s']:>8.2f}s  {dt:+.2f}s"
+        )
 
     lines.append("")
     lines.append("VERDICT:")
     issues = []
     # Tempo
     if oc["transitions_per_sec"] > rc["transitions_per_sec"] * 1.25:
-        issues.append(f"OURS cycles {oc['transitions_per_sec']/rc['transitions_per_sec']:.2f}× "
-                      f"faster than REF ({oc['transitions_per_sec']:.2f} vs "
-                      f"{rc['transitions_per_sec']:.2f} transitions/sec)")
+        issues.append(
+            f"OURS cycles {oc['transitions_per_sec'] / rc['transitions_per_sec']:.2f}× "
+            f"faster than REF ({oc['transitions_per_sec']:.2f} vs "
+            f"{rc['transitions_per_sec']:.2f} transitions/sec)"
+        )
     elif rc["transitions_per_sec"] > oc["transitions_per_sec"] * 1.25:
-        issues.append(f"REF cycles {rc['transitions_per_sec']/oc['transitions_per_sec']:.2f}× "
-                      f"faster than OURS")
+        issues.append(
+            f"REF cycles {rc['transitions_per_sec'] / oc['transitions_per_sec']:.2f}× "
+            f"faster than OURS"
+        )
     # Settle
     if rs["fired"] and not os_["fired"]:
-        issues.append("REF has a SETTLE phase (ends on one font); OURS keeps cycling "
-                      "through (matches our font_cycle_accel_at_s=0.0)")
+        issues.append(
+            "REF has a SETTLE phase (ends on one font); OURS keeps cycling "
+            "through (matches our font_cycle_accel_at_s=0.0)"
+        )
     if os_["fired"] and not rs["fired"]:
         issues.append("OURS settles; REF does not — investigate")
     # Accel
@@ -581,8 +640,10 @@ def render_diff_report(ref: dict, ours: dict) -> str:
         issues.append(f"OURS has an accel ramp ({oa['direction']}); REF tempo is flat")
     # Font diversity
     if abs(oc["distinct_fonts_seen"] - rc["distinct_fonts_seen"]) > 1:
-        issues.append(f"Font diversity differs: REF used {rc['distinct_fonts_seen']} "
-                      f"distinct fonts, OURS {oc['distinct_fonts_seen']}")
+        issues.append(
+            f"Font diversity differs: REF used {rc['distinct_fonts_seen']} "
+            f"distinct fonts, OURS {oc['distinct_fonts_seen']}"
+        )
     if not issues:
         lines.append("  No major animation deltas — cycles look comparable.")
     else:
@@ -593,8 +654,10 @@ def render_diff_report(ref: dict, ours: dict) -> str:
 
 # ---------------- visual strip ----------------
 
-def write_strip(reports: list[dict], out_path: Path,
-                max_cells: int = 40, cell_w: int = 130, cell_h: int = 160) -> None:
+
+def write_strip(
+    reports: list[dict], out_path: Path, max_cells: int = 40, cell_w: int = 130, cell_h: int = 160
+) -> None:
     """Render a side-by-side strip showing each video's BRAZIL window
     as a sequence of (crop, font label) cells."""
     rows = []
@@ -606,8 +669,7 @@ def write_strip(reports: list[dict], out_path: Path,
         if not win:
             continue
         # Find the obs subset matching the primary BRAZIL window
-        in_win = [o for o in obs if win["start_s"] <= o.t <= win["end_s"]
-                  and o.crop is not None]
+        in_win = [o for o in obs if win["start_s"] <= o.t <= win["end_s"] and o.crop is not None]
         # Subsample if too many
         if len(in_win) > max_cells:
             step = len(in_win) / max_cells
@@ -627,20 +689,21 @@ def write_strip(reports: list[dict], out_path: Path,
 
     # Header
     try:
-        header_font = ImageFont.truetype(
-            str(FONTS_DIR / "Inter-Bold.ttf"), 22)
-        cell_font = ImageFont.truetype(
-            str(FONTS_DIR / "Inter-Regular.ttf"), 13)
+        header_font = ImageFont.truetype(str(FONTS_DIR / "Inter-Bold.ttf"), 22)
+        cell_font = ImageFont.truetype(str(FONTS_DIR / "Inter-Regular.ttf"), 13)
     except Exception:
         header_font = ImageFont.load_default()
         cell_font = ImageFont.load_default()
-    d.text((10, 10), f"BRAZIL font-cycle timeline — {max_cells_row} cells per row",
-           fill=(220, 220, 220), font=header_font)
+    d.text(
+        (10, 10),
+        f"BRAZIL font-cycle timeline — {max_cells_row} cells per row",
+        fill=(220, 220, 220),
+        font=header_font,
+    )
 
     for row_i, (label, cells) in enumerate(rows):
         y0 = 40 + row_i * cell_h
-        d.text((10, y0 + cell_h // 2 - 8), label, fill=(244, 208, 63),
-               font=header_font)
+        d.text((10, y0 + cell_h // 2 - 8), label, fill=(244, 208, 63), font=header_font)
         for ci, fobs in enumerate(cells):
             x0 = label_col_w + ci * cell_w
             crop = fobs.crop
@@ -651,11 +714,11 @@ def write_strip(reports: list[dict], out_path: Path,
             yellow_on_black = Image.composite(yellow_layer, black_layer, crop_norm)
             img.paste(yellow_on_black, (x0 + 3, y0 + 3))
             # Font label
-            label_text = (fobs.font_name or "?")
-            d.text((x0 + 3, y0 + cell_h - 38), label_text,
-                   fill=(220, 220, 220), font=cell_font)
-            d.text((x0 + 3, y0 + cell_h - 22), f"{fobs.t:.2f}s",
-                   fill=(120, 200, 120), font=cell_font)
+            label_text = fobs.font_name or "?"
+            d.text((x0 + 3, y0 + cell_h - 38), label_text, fill=(220, 220, 220), font=cell_font)
+            d.text(
+                (x0 + 3, y0 + cell_h - 22), f"{fobs.t:.2f}s", fill=(120, 200, 120), font=cell_font
+            )
 
     img.save(out_path)
     print(f"strip written: {out_path}", file=sys.stderr)
@@ -663,28 +726,32 @@ def write_strip(reports: list[dict], out_path: Path,
 
 # ---------------- CLI ----------------
 
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("videos", nargs="+",
-                    help="One or more video paths. Use LABEL=path to label. "
-                         "Two with labels triggers diff mode.")
-    ap.add_argument("--sample-step", type=float, default=0.033,
-                    help="Seconds between sampled frames (default 0.033 = "
-                         "30fps per-frame)")
-    ap.add_argument("--strip", type=Path,
-                    help="Write a visual cycle-strip PNG to this path")
-    ap.add_argument("--json", type=Path,
-                    help="Write structured JSON report to this path")
+    ap.add_argument(
+        "videos",
+        nargs="+",
+        help="One or more video paths. Use LABEL=path to label. "
+        "Two with labels triggers diff mode.",
+    )
+    ap.add_argument(
+        "--sample-step",
+        type=float,
+        default=0.033,
+        help="Seconds between sampled frames (default 0.033 = 30fps per-frame)",
+    )
+    ap.add_argument("--strip", type=Path, help="Write a visual cycle-strip PNG to this path")
+    ap.add_argument("--json", type=Path, help="Write structured JSON report to this path")
     args = ap.parse_args()
 
     _check_deps()
     print("building font templates ...", file=sys.stderr)
     templates = _build_templates(text="BRAZIL")
-    print(f"  {len(templates)} templates ready: "
-          f"{[t.name for t in templates]}", file=sys.stderr)
+    print(f"  {len(templates)} templates ready: {[t.name for t in templates]}", file=sys.stderr)
 
     parsed = []
     for v in args.videos:
@@ -698,16 +765,14 @@ def main() -> int:
             sys.exit(f"error: video not found: {p}")
         parsed.append((label, p))
 
-    reports = [analyze_video(p, args.sample_step, label, templates)
-               for label, p in parsed]
+    reports = [analyze_video(p, args.sample_step, label, templates) for label, p in parsed]
 
     print()
     for r in reports:
         print(render_single_report(r))
         print()
     if len(reports) == 2:
-        ref = next((r for r in reports if "REF" in r["label"].upper()),
-                   reports[0])
+        ref = next((r for r in reports if "REF" in r["label"].upper()), reports[0])
         ours = next((r for r in reports if r is not ref), reports[1])
         print(render_diff_report(ref, ours))
         print()

@@ -162,9 +162,7 @@ async def test_admin_wrong_secret(client):
 async def test_admin_valid_secret(client):
     await client.post("/api/waitlist", json={"email": "carol@example.com"})
 
-    res = await client.get(
-        "/api/admin/waitlist", headers={"X-Admin-Secret": "test-admin-secret"}
-    )
+    res = await client.get("/api/admin/waitlist", headers={"X-Admin-Secret": "test-admin-secret"})
     assert res.status_code == 200
     data = res.json()
     assert len(data) == 1

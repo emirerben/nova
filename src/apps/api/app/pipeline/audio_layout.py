@@ -26,18 +26,21 @@ BODY_SLOT_AUDIO_CHANNELS = "2"
 # Output args for re-encoding to body-slot layout. Used everywhere a video
 # output needs concat-copy-compatible audio.
 BODY_SLOT_AUDIO_OUT_ARGS: list[str] = [
-    "-c:a", BODY_SLOT_AUDIO_CODEC,
-    "-b:a", BODY_SLOT_AUDIO_BITRATE,
-    "-ar", BODY_SLOT_AUDIO_SAMPLE_RATE,
-    "-ac", BODY_SLOT_AUDIO_CHANNELS,
+    "-c:a",
+    BODY_SLOT_AUDIO_CODEC,
+    "-b:a",
+    BODY_SLOT_AUDIO_BITRATE,
+    "-ar",
+    BODY_SLOT_AUDIO_SAMPLE_RATE,
+    "-ac",
+    BODY_SLOT_AUDIO_CHANNELS,
 ]
 
 # lavfi anullsrc input matching the body-slot layout. Use as additional
 # `-i ...` args when the source has no audio track but the output must.
 SILENT_AUDIO_INPUT_ARGS: list[str] = [
-    "-f", "lavfi",
-    "-i", (
-        f"anullsrc=channel_layout=stereo"
-        f":sample_rate={BODY_SLOT_AUDIO_SAMPLE_RATE}"
-    ),
+    "-f",
+    "lavfi",
+    "-i",
+    (f"anullsrc=channel_layout=stereo:sample_rate={BODY_SLOT_AUDIO_SAMPLE_RATE}"),
 ]

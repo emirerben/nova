@@ -4,6 +4,7 @@ Uses subprocess FFmpeg (not MoviePy — see CLAUDE.md). Frames are decoded
 into a temp directory as PNG and loaded one at a time as numpy arrays so
 RAM stays flat regardless of video length.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -40,14 +41,22 @@ def probe_video(path: Path) -> dict:
     """
     out = subprocess.run(
         [
-            "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,r_frame_rate,duration",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=0",
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,r_frame_rate,duration",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=0",
             str(path),
         ],
-        check=False, capture_output=True, text=True,
+        check=False,
+        capture_output=True,
+        text=True,
     )
     if out.returncode != 0:
         raise VideoReadError(f"ffprobe failed: {out.stderr.strip()}")
@@ -107,19 +116,24 @@ def sample_frames(
     with tempfile.TemporaryDirectory(prefix="ovf_frames_") as td:
         td_path = Path(td)
         cmd = [
-            "ffmpeg", "-nostdin", "-loglevel", "error",
-            "-ss", f"{t_start:.4f}",
-            "-i", str(video_path),
-            "-t", f"{duration_window:.4f}",
-            "-vf", f"fps={fps_sample}",
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{t_start:.4f}",
+            "-i",
+            str(video_path),
+            "-t",
+            f"{duration_window:.4f}",
+            "-vf",
+            f"fps={fps_sample}",
             "-y",
             str(td_path / "f_%05d.png"),
         ]
         result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         if result.returncode != 0:
-            raise VideoReadError(
-                f"ffmpeg frame extraction failed: {result.stderr.strip()}"
-            )
+            raise VideoReadError(f"ffmpeg frame extraction failed: {result.stderr.strip()}")
 
         frame_paths = sorted(td_path.glob("f_*.png"))
         if not frame_paths:
@@ -140,10 +154,17 @@ def extract_audio(video_path: Path, out_path: Path) -> bool:
     ffmpeg errors raise VideoReadError.
     """
     cmd = [
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-i", str(video_path),
-        "-vn", "-acodec", "copy",
-        "-y", str(out_path),
+        "ffmpeg",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-acodec",
+        "copy",
+        "-y",
+        str(out_path),
     ]
     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if result.returncode == 0:
@@ -158,10 +179,19 @@ def extract_audio(video_path: Path, out_path: Path) -> bool:
     # Some videos store audio in a codec that can't be `copy`'d into the
     # inferred container — fall back to re-encoding to AAC.
     cmd_reencode = [
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-i", str(video_path),
-        "-vn", "-c:a", "aac", "-b:a", "128k",
-        "-y", str(out_path),
+        "ffmpeg",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        str(video_path),
+        "-vn",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-y",
+        str(out_path),
     ]
     result2 = subprocess.run(cmd_reencode, check=False, capture_output=True, text=True)
     if result2.returncode == 0:

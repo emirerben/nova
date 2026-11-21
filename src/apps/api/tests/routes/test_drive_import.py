@@ -79,6 +79,7 @@ class TestDriveImportValidation:
 
             # Reset cached Fernet state
             import app.routes.uploads as uploads_mod
+
             uploads_mod._fernet_valid = None
             uploads_mod._fernet = None
 
@@ -161,6 +162,7 @@ class TestDriveImportValidation:
 
     def test_missing_fernet_key_returns_503(self, client):
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -174,6 +176,7 @@ class TestDriveImportValidation:
 
     def test_file_too_large_returns_422(self, client):
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -191,6 +194,7 @@ class TestDriveImportValidation:
 
     def test_invalid_mime_returns_422(self, client):
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -209,6 +213,7 @@ class TestDriveImportValidation:
     def test_accepts_application_octet_stream(self, client):
         """Drive may report application/octet-stream for valid videos."""
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -242,6 +247,7 @@ class TestDriveImportValidation:
 
     def test_empty_platforms_returns_422(self, client):
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -258,6 +264,7 @@ class TestDriveImportValidation:
 
     def test_unknown_platform_returns_422(self, client):
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -313,6 +320,7 @@ class TestDriveImportBatchValidation:
 
     def test_empty_files_returns_422(self, client):
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -326,6 +334,7 @@ class TestDriveImportBatchValidation:
 
     def test_too_many_files_returns_422(self, client):
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -362,6 +371,7 @@ class TestDriveImportBatchValidation:
     def test_file_extension_whitelist(self, client):
         """User-supplied filename extension must be sanitized."""
         import app.routes.uploads as uploads_mod
+
         uploads_mod._fernet_valid = None
         uploads_mod._fernet = None
 
@@ -373,12 +383,14 @@ class TestDriveImportBatchValidation:
             mock_s.max_upload_bytes = 4 * 1024 * 1024 * 1024
 
             body = {
-                "files": [{
-                    "drive_file_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
-                    "filename": "video.mp4/../../etc/passwd",
-                    "file_size_bytes": 1000,
-                    "mime_type": "video/mp4",
-                }],
+                "files": [
+                    {
+                        "drive_file_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
+                        "filename": "video.mp4/../../etc/passwd",
+                        "file_size_bytes": 1000,
+                        "mime_type": "video/mp4",
+                    }
+                ],
                 "google_access_token": "ya29.test",
             }
             res = client.post("/uploads/drive-import-batch", json=body)

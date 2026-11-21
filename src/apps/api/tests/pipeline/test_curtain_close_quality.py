@@ -28,6 +28,7 @@ correlates with macroblock visibility in real-world content with grain
 and motion, which a synthetic gradient does not reproduce reliably across
 ffmpeg/libx264 versions.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -55,25 +56,48 @@ def test_curtain_close_uses_overlay_path_with_pinned_encoder_args(tmp_path: Path
     src = tmp_path / "src.mp4"
     out = tmp_path / "out.mp4"
 
-    subprocess.run([
-        "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-        "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=30:d=1.5",
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100:d=1.5",
-        "-c:v", "libx264", "-profile:v", "high",
-        "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "96k", "-shortest", str(src),
-    ], check=True, capture_output=True, timeout=30)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=320x180:r=30:d=1.5",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=stereo:sample_rate=44100:d=1.5",
+            "-c:v",
+            "libx264",
+            "-profile:v",
+            "high",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-shortest",
+            str(src),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
 
     real_run = subprocess.run
     captured: list[list[str]] = []
 
     def capturing_run(cmd, *args, **kwargs):
-        if (
-            isinstance(cmd, list)
-            and cmd
-            and cmd[0] == "ffmpeg"
-            and "-filter_complex" in cmd
-        ):
+        if isinstance(cmd, list) and cmd and cmd[0] == "ffmpeg" and "-filter_complex" in cmd:
             captured.append(list(cmd))
         return real_run(cmd, *args, **kwargs)
 
@@ -105,6 +129,4 @@ def test_curtain_close_uses_overlay_path_with_pinned_encoder_args(tmp_path: Path
     )
     assert arg_after("-tune") == interstitials.CURTAIN_CLOSE_X264_TUNE
     assert arg_after("-crf") == interstitials.CURTAIN_CLOSE_X264_CRF
-    assert out.exists() and out.stat().st_size > 0, (
-        "function did not produce an output file"
-    )
+    assert out.exists() and out.stat().st_size > 0, "function did not produce an output file"

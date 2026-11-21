@@ -4,7 +4,6 @@ Verifies: snap math, cumulative carry, locked/exact bypass, empty-beats
 no-op, and 0.5 s duration floor.
 """
 
-
 from app.tasks.template_orchestrate import BEAT_SNAP_TOLERANCE_S, compute_snapped_slot_durations
 
 # ---------------------------------------------------------------------------

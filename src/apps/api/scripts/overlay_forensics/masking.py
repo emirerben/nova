@@ -14,6 +14,7 @@ more reliable than OCR for "where is the text" because:
 We then run OCR on the cropped mask region to answer "what text is in
 that region," not the other way around — see ocr.py.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ import numpy as np
 @dataclass(frozen=True)
 class BBox:
     """Pixel bounding box. (x_min, y_min) inclusive; (x_max, y_max) inclusive."""
+
     x_min: int
     y_min: int
     x_max: int
@@ -53,6 +55,7 @@ class BBox:
 @dataclass(frozen=True)
 class RelativeBBox:
     """BBox normalized to frame dimensions. Comparable across aspect ratios."""
+
     x_frac: float
     y_frac: float
     w_frac: float
@@ -114,6 +117,7 @@ def largest_blob_bbox(mask: np.ndarray, min_pixels: int = 50) -> BBox | None:
         return None
     try:
         import cv2  # type: ignore
+
         m8 = mask.astype(np.uint8)
         n_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(m8, connectivity=8)
         if n_labels <= 1:
@@ -133,8 +137,10 @@ def largest_blob_bbox(mask: np.ndarray, min_pixels: int = 50) -> BBox | None:
         if len(xs) == 0:
             return None
         return BBox(
-            x_min=int(xs.min()), y_min=int(ys.min()),
-            x_max=int(xs.max()), y_max=int(ys.max()),
+            x_min=int(xs.min()),
+            y_min=int(ys.min()),
+            x_max=int(xs.max()),
+            y_max=int(ys.max()),
         )
 
 
@@ -164,11 +170,12 @@ def stroke_width_ratio(mask: np.ndarray, bbox: BBox) -> float:
     """
     if bbox.height <= 0:
         return 0.0
-    crop = mask[bbox.y_min:bbox.y_max + 1, bbox.x_min:bbox.x_max + 1]
+    crop = mask[bbox.y_min : bbox.y_max + 1, bbox.x_min : bbox.x_max + 1]
     if not crop.any():
         return 0.0
     try:
         import cv2  # type: ignore
+
         # Pad with a 1-pixel background border so distanceTransform has
         # something to measure distance to — without padding, a tightly-cropped
         # mask that's fully foreground returns infinity-like garbage.
@@ -199,13 +206,13 @@ def serif_score(mask: np.ndarray, bbox: BBox) -> float:
     """
     if bbox.height < 10 or bbox.width < 10:
         return 0.0
-    crop = mask[bbox.y_min:bbox.y_max + 1, bbox.x_min:bbox.x_max + 1].astype(np.float32)
+    crop = mask[bbox.y_min : bbox.y_max + 1, bbox.x_min : bbox.x_max + 1].astype(np.float32)
     if not crop.any():
         return 0.0
     h, w = crop.shape
     top_band = crop[: max(1, h // 10), :]
-    bot_band = crop[-max(1, h // 10):, :]
-    mid_band = crop[h // 4: 3 * h // 4, :]
+    bot_band = crop[-max(1, h // 10) :, :]
+    mid_band = crop[h // 4 : 3 * h // 4, :]
     top_density = float(top_band.mean()) if top_band.size else 0.0
     bot_density = float(bot_band.mean()) if bot_band.size else 0.0
     mid_density = float(mid_band.mean()) if mid_band.size else 0.001
@@ -220,9 +227,7 @@ def color_delta_e(c1: tuple[int, int, int], c2: tuple[int, int, int]) -> float:
     brand color" within 0-100 range. True CIE2000 ΔE would need a LAB
     conversion that isn't worth the dependency here.
     """
-    return float(np.sqrt(
-        (c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2 + (c1[2] - c2[2]) ** 2
-    ))
+    return float(np.sqrt((c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2 + (c1[2] - c2[2]) ** 2))
 
 
 def sample_color(frame: np.ndarray, mask: np.ndarray) -> tuple[int, int, int]:

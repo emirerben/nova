@@ -35,6 +35,7 @@ not require API/DB credentials, and is safe to run against arbitrary log
 captures. If a log line is not valid JSON it is silently skipped (Fly
 sometimes interleaves non-structured stderr).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -125,9 +126,7 @@ def aggregate(events: Iterable[dict], group_by: str | None = None) -> dict:
     the structlog ``stage`` (outer) or ``phase`` (inner) value with a
     prefix so they don't collide.
     """
-    buckets: dict[str, dict[str, PhaseStats]] = defaultdict(
-        lambda: defaultdict(PhaseStats)
-    )
+    buckets: dict[str, dict[str, PhaseStats]] = defaultdict(lambda: defaultdict(PhaseStats))
     for evt in events:
         elapsed_raw = evt.get("elapsed_ms")
         if elapsed_raw is None:
@@ -221,9 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     rendered = (
-        render_json(buckets)
-        if args.format == "json"
-        else render_markdown(buckets, args.group_by)
+        render_json(buckets) if args.format == "json" else render_markdown(buckets, args.group_by)
     )
     print(rendered)
     return 0

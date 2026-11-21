@@ -74,12 +74,12 @@ class ObservedStyleSummary(BaseModel):
 
     videos_seen: int = 0
     has_on_screen_text: bool = False
-    font_feel: str | None = None      # e.g. "bold_display", "serif_editorial"
+    font_feel: str | None = None  # e.g. "bold_display", "serif_editorial"
     text_color_hex: str | None = None
     highlight_color_hex: str | None = None
-    position: str | None = None       # e.g. "center", "bottom"
-    size_class: str | None = None     # "small" | "medium" | "large"
-    layout: str | None = None         # "linear" | "cluster"
+    position: str | None = None  # e.g. "center", "bottom"
+    size_class: str | None = None  # "small" | "medium" | "large"
+    layout: str | None = None  # "linear" | "cluster"
     stroke: str | None = None
     text_anchor: str | None = None
     mean_confidence: float = 0.5

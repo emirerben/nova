@@ -10,6 +10,7 @@ stale env file can't accidentally seed staging/prod).
 
 Run: cd src/apps/api && .venv/bin/python scripts/seed_rule_of_thirds.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -107,86 +108,88 @@ def build_recipe() -> dict:
         "end_s": 3.0,
         "subject_substitute": False,
     }
-    slots.append({
-        "position": 1,
-        "target_duration_s": 3.0,
-        "priority": 10,
-        "slot_type": "hook",
-        "transition_in": "hard-cut",
-        "color_hint": "none",
-        "speed_factor": 1.0,
-        "energy": 6.0,
-        # Slot 1 carries the rule-of-thirds grid AND the title — matches the
-        # reference where the Big Ben subject sits at the top-left intersection
-        # under a red L while "The" / "Rule of" / "Thirds" stack inside the
-        # center cell of the grid. Highlight starts OFF so the opening reads as
-        # a clean white grid; it blinks twice on music beats: once when
-        # "Thirds" appears (t=1.4s) and once near the end of the slot (t=2.4s)
-        # to lead into slot 2's red L.
-        "has_grid": True,
-        "grid_color": "#FFFFFF",
-        "grid_opacity": 0.95,
-        "grid_thickness": 6,
-        "grid_highlight_intersection": "top-left",
-        "grid_highlight_color": "#E63946",
-        "grid_highlight_windows": [[1.4, 1.7], [2.4, 2.7]],
-        # 3-line title — each word on its own line, all three stacked inside
-        # the center cell of the rule-of-thirds grid.
-        #
-        # `position_y_frac` is the VERTICAL CENTER of the rendered text
-        # (text_overlay.py: `block_top = CANVAS_H * y_frac - block_h / 2`).
-        # Center cell bounds on a 1080x1920 frame: y=640 (ih/3) to y=1280
-        # (2*ih/3), height 640px. With 95px Playfair lines spread evenly:
-        #   y_frac 0.43 -> center y=826 (line 1: "The")
-        #   y_frac 0.50 -> center y=960 (line 2: "Rule of", dead center)
-        #   y_frac 0.57 -> center y=1094 (line 3: "Thirds", red)
-        # 134px between centers, ~39px gap between text blocks. Top text at
-        # y=779 (139px below the y=640 top grid line). Bottom text ending at
-        # y=1141 (139px above the y=1280 bottom grid line).
-        #
-        # All three overlays have distinct y_fracs, so _collect_absolute_overlays
-        # treats them as separate screen slots — no dedup truncation.
-        #
-        # Sizes tuned against the reference: 95px Playfair on 1920px video.
-        # Per-word horizontal width at 95px (measured from preview render):
-        # "The" ~135px, "Rule of" ~315px, "Thirds" ~295px — all fit inside the
-        # ~354px center-cell inside-width with margin. "Thirds" matches the
-        # upper lines' size; emphasis comes from snap-on + red color, not
-        # bigger type.
-        "text_overlays": [
-            {
-                **_HOOK_BASE,
-                "text": "The",
-                "text_size_px": 95,
-                "text_color": "#FFFFFF",
-                "start_s": 0.4,
-                "end_s": 3.0,
-                "position_y_frac": 0.43,
-            },
-            {
-                **_HOOK_BASE,
-                "text": "Rule of",
-                "text_size_px": 95,
-                "text_color": "#FFFFFF",
-                "start_s": 0.4,
-                "end_s": 3.0,
-                "position_y_frac": 0.50,
-            },
-            # "Thirds" snaps in on the beat at 1.4s — effect="none" overrides
-            # the inherited _HOOK_BASE fade-in so the appearance frame matches
-            # the grid red L's snap-on frame (grid_highlight_windows[0][0]).
-            {
-                **_HOOK_BASE,
-                "effect": "none",
-                "text": "Thirds",
-                "text_size_px": 95,
-                "text_color": "#E63946",
-                "start_s": 1.4,
-                "end_s": 3.0,
-                "position_y_frac": 0.57,
-            },
-        ],
-    })
+    slots.append(
+        {
+            "position": 1,
+            "target_duration_s": 3.0,
+            "priority": 10,
+            "slot_type": "hook",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 6.0,
+            # Slot 1 carries the rule-of-thirds grid AND the title — matches the
+            # reference where the Big Ben subject sits at the top-left intersection
+            # under a red L while "The" / "Rule of" / "Thirds" stack inside the
+            # center cell of the grid. Highlight starts OFF so the opening reads as
+            # a clean white grid; it blinks twice on music beats: once when
+            # "Thirds" appears (t=1.4s) and once near the end of the slot (t=2.4s)
+            # to lead into slot 2's red L.
+            "has_grid": True,
+            "grid_color": "#FFFFFF",
+            "grid_opacity": 0.95,
+            "grid_thickness": 6,
+            "grid_highlight_intersection": "top-left",
+            "grid_highlight_color": "#E63946",
+            "grid_highlight_windows": [[1.4, 1.7], [2.4, 2.7]],
+            # 3-line title — each word on its own line, all three stacked inside
+            # the center cell of the rule-of-thirds grid.
+            #
+            # `position_y_frac` is the VERTICAL CENTER of the rendered text
+            # (text_overlay.py: `block_top = CANVAS_H * y_frac - block_h / 2`).
+            # Center cell bounds on a 1080x1920 frame: y=640 (ih/3) to y=1280
+            # (2*ih/3), height 640px. With 95px Playfair lines spread evenly:
+            #   y_frac 0.43 -> center y=826 (line 1: "The")
+            #   y_frac 0.50 -> center y=960 (line 2: "Rule of", dead center)
+            #   y_frac 0.57 -> center y=1094 (line 3: "Thirds", red)
+            # 134px between centers, ~39px gap between text blocks. Top text at
+            # y=779 (139px below the y=640 top grid line). Bottom text ending at
+            # y=1141 (139px above the y=1280 bottom grid line).
+            #
+            # All three overlays have distinct y_fracs, so _collect_absolute_overlays
+            # treats them as separate screen slots — no dedup truncation.
+            #
+            # Sizes tuned against the reference: 95px Playfair on 1920px video.
+            # Per-word horizontal width at 95px (measured from preview render):
+            # "The" ~135px, "Rule of" ~315px, "Thirds" ~295px — all fit inside the
+            # ~354px center-cell inside-width with margin. "Thirds" matches the
+            # upper lines' size; emphasis comes from snap-on + red color, not
+            # bigger type.
+            "text_overlays": [
+                {
+                    **_HOOK_BASE,
+                    "text": "The",
+                    "text_size_px": 95,
+                    "text_color": "#FFFFFF",
+                    "start_s": 0.4,
+                    "end_s": 3.0,
+                    "position_y_frac": 0.43,
+                },
+                {
+                    **_HOOK_BASE,
+                    "text": "Rule of",
+                    "text_size_px": 95,
+                    "text_color": "#FFFFFF",
+                    "start_s": 0.4,
+                    "end_s": 3.0,
+                    "position_y_frac": 0.50,
+                },
+                # "Thirds" snaps in on the beat at 1.4s — effect="none" overrides
+                # the inherited _HOOK_BASE fade-in so the appearance frame matches
+                # the grid red L's snap-on frame (grid_highlight_windows[0][0]).
+                {
+                    **_HOOK_BASE,
+                    "effect": "none",
+                    "text": "Thirds",
+                    "text_size_px": 95,
+                    "text_color": "#E63946",
+                    "start_s": 1.4,
+                    "end_s": 3.0,
+                    "position_y_frac": 0.57,
+                },
+            ],
+        }
+    )
 
     # Slots 2-7: Content with white 3x3 grid overlay + per-intersection highlight.
     #
@@ -202,49 +205,51 @@ def build_recipe() -> dict:
     # red feels like a heavy lower-third instead of a snap-on-the-beat accent.
     _INTERSECTION_ROTATION = [
         "bottom-right",  # slot 2
-        "top-left",      # slot 3
-        "bottom-left",   # slot 4
-        "top-right",     # slot 5
+        "top-left",  # slot 3
+        "bottom-left",  # slot 4
+        "top-right",  # slot 5
         "bottom-right",  # slot 6
-        "top-left",      # slot 7
+        "top-left",  # slot 7
     ]
     for idx, pos in enumerate(range(2, 8)):
-        slots.append({
-            "position": pos,
-            "target_duration_s": 2.0,
-            "priority": 5,
-            # "broll" matches the SlotType literal in admin.py RecipeSlotSchema
-            # (see seed_dimples_passport_brazil.py for the existing convention).
-            "slot_type": "broll",
-            "transition_in": "hard-cut",
-            "color_hint": "none",
-            "speed_factor": 1.0,
-            "energy": 5.5,
-            "has_grid": True,
-            "grid_color": "#FFFFFF",
-            # Measured against the TikTok reference: white lines are ~6px wide
-            # and nearly solid (RGB ~252,255,255). Highlight (red) is rendered
-            # at 3x this thickness in reframe.py so the red L visually
-            # dominates the white grid at the ~3:1 ratio in the reference.
-            "grid_opacity": 0.95,
-            "grid_thickness": 6,
-            "grid_highlight_intersection": _INTERSECTION_ROTATION[idx],
-            # The default of "#D9435A" in RecipeSlotSchema differs from this
-            # explicit "#E63946" — set it explicitly so admin-UI re-saves of
-            # the recipe don't quietly desaturate the highlight.
-            "grid_highlight_color": "#E63946",
-            # Beat flash: cut starts COMPLETELY white, red arrives on the
-            # NEXT beat (mid-slot at t=1.0s, matching the ~1s beat cadence
-            # implied by slot 1's [1.4, 1.7] / [2.4, 2.7] pattern), then
-            # back to white. The red on the cut beat would collide with the
-            # visual scene change; landing it on the next sub-beat reads as
-            # punctuation, not a smear over the new shot.
-            #   0.0  →  1.0   pure white grid (clean cut, eye adjusts)
-            #   1.0  →  1.3   red L flash (the beat accent)
-            #   1.3  →  2.0   back to pure white
-            "grid_highlight_windows": [[1.0, 1.3]],
-            "text_overlays": [],
-        })
+        slots.append(
+            {
+                "position": pos,
+                "target_duration_s": 2.0,
+                "priority": 5,
+                # "broll" matches the SlotType literal in admin.py RecipeSlotSchema
+                # (see seed_dimples_passport_brazil.py for the existing convention).
+                "slot_type": "broll",
+                "transition_in": "hard-cut",
+                "color_hint": "none",
+                "speed_factor": 1.0,
+                "energy": 5.5,
+                "has_grid": True,
+                "grid_color": "#FFFFFF",
+                # Measured against the TikTok reference: white lines are ~6px wide
+                # and nearly solid (RGB ~252,255,255). Highlight (red) is rendered
+                # at 3x this thickness in reframe.py so the red L visually
+                # dominates the white grid at the ~3:1 ratio in the reference.
+                "grid_opacity": 0.95,
+                "grid_thickness": 6,
+                "grid_highlight_intersection": _INTERSECTION_ROTATION[idx],
+                # The default of "#D9435A" in RecipeSlotSchema differs from this
+                # explicit "#E63946" — set it explicitly so admin-UI re-saves of
+                # the recipe don't quietly desaturate the highlight.
+                "grid_highlight_color": "#E63946",
+                # Beat flash: cut starts COMPLETELY white, red arrives on the
+                # NEXT beat (mid-slot at t=1.0s, matching the ~1s beat cadence
+                # implied by slot 1's [1.4, 1.7] / [2.4, 2.7] pattern), then
+                # back to white. The red on the cut beat would collide with the
+                # visual scene change; landing it on the next sub-beat reads as
+                # punctuation, not a smear over the new shot.
+                #   0.0  →  1.0   pure white grid (clean cut, eye adjusts)
+                #   1.0  →  1.3   red L flash (the beat accent)
+                #   1.3  →  2.0   back to pure white
+                "grid_highlight_windows": [[1.0, 1.3]],
+                "text_overlays": [],
+            }
+        )
 
     return {
         "shot_count": len(slots),
@@ -269,9 +274,7 @@ async def seed() -> None:
         # Idempotent: lookup by pinned id, not name. An admin can rename the
         # template via the admin UI without causing the next seed run to create
         # a duplicate row.
-        existing = await db.execute(
-            select(VideoTemplate).where(VideoTemplate.id == TEMPLATE_ID)
-        )
+        existing = await db.execute(select(VideoTemplate).where(VideoTemplate.id == TEMPLATE_ID))
         row = existing.scalar_one_or_none()
         now = datetime.now(UTC)
         if row:

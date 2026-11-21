@@ -16,6 +16,7 @@ Allow-list: Brazil's "PERU" intentionally relies on the all-caps branch of
 the heuristic to swap in the user's location at render time. Adding a new
 entry requires a comment justifying the implicit-substitution choice.
 """
+
 from __future__ import annotations
 
 import importlib

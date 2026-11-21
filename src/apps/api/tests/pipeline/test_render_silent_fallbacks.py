@@ -16,6 +16,7 @@ output is missing something the recipe declared, with no error to the user.
 Curtain-close is covered separately by test_curtain_close_timeout.py:
 test_curtain_close_failure_is_not_swallowed.
 """
+
 from __future__ import annotations
 
 import ast
@@ -55,18 +56,12 @@ def _every_handler_raises(try_node: ast.Try) -> bool:
 
 
 def _orch_tree() -> ast.AST:
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "app" / "tasks" / "template_orchestrate.py"
-    )
+    path = Path(__file__).resolve().parents[2] / "app" / "tasks" / "template_orchestrate.py"
     return ast.parse(path.read_text())
 
 
 def _text_overlay_tree() -> ast.AST:
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "app" / "pipeline" / "text_overlay.py"
-    )
+    path = Path(__file__).resolve().parents[2] / "app" / "pipeline" / "text_overlay.py"
     return ast.parse(path.read_text())
 
 

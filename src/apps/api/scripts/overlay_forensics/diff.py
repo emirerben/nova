@@ -1,4 +1,5 @@
 """Property-by-property diff engine + severity classifier + summary writer."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ Severity = Literal["critical", "major", "minor"]
 # Severity thresholds — tunable named constants per the plan.
 POSITION_MAJOR_FRAC = 0.15
 POSITION_MINOR_FRAC = 0.05
-SIZE_MAJOR_RATIO = 0.4   # >40% relative-size delta = major
+SIZE_MAJOR_RATIO = 0.4  # >40% relative-size delta = major
 SIZE_MINOR_RATIO = 0.10
 COLOR_MAJOR_DELTA_E = 30.0
 COLOR_MINOR_DELTA_E = 10.0
@@ -54,11 +55,13 @@ def levenshtein(a: str, b: str) -> int:
     for i, ca in enumerate(a, 1):
         curr = [i]
         for j, cb in enumerate(b, 1):
-            curr.append(min(
-                prev[j] + 1,
-                curr[j - 1] + 1,
-                prev[j - 1] + (0 if ca == cb else 1),
-            ))
+            curr.append(
+                min(
+                    prev[j] + 1,
+                    curr[j - 1] + 1,
+                    prev[j - 1] + (0 if ca == cb else 1),
+                )
+            )
         prev = curr
     return prev[-1]
 
@@ -98,10 +101,13 @@ def pair_events(
         # Require minimum score to count as a match; otherwise leave unpaired.
         if best_idx is not None and best_score > 0.0:
             used_output_indices.add(best_idx)
-            paired.append(PairedEvent(
-                recipe=r_ev, output=output_events[best_idx],
-                pair_key=_event_label(r_ev),
-            ))
+            paired.append(
+                PairedEvent(
+                    recipe=r_ev,
+                    output=output_events[best_idx],
+                    pair_key=_event_label(r_ev),
+                )
+            )
         else:
             paired.append(PairedEvent(recipe=r_ev, output=None, pair_key=_event_label(r_ev)))
 
@@ -143,30 +149,36 @@ def diff_paired_event(
     label = pair.pair_key
 
     if pair.recipe is None and pair.output is not None:
-        out.append(DiffFinding(
-            severity="critical",
-            property=f"event[{label}].existence",
-            recipe=None,
-            output=_event_summary(pair.output, output_frame_w, output_frame_h),
-            reason=(
-                f"Output has an unexpected text event '{label}' (color={pair.output.color_key}, "
-                f"t={pair.output.t_start:.2f}-{pair.output.t_end:.2f}s) with no recipe counterpart"
-            ),
-        ))
+        out.append(
+            DiffFinding(
+                severity="critical",
+                property=f"event[{label}].existence",
+                recipe=None,
+                output=_event_summary(pair.output, output_frame_w, output_frame_h),
+                reason=(
+                    f"Output has an unexpected text event '{label}' "
+                    f"(color={pair.output.color_key}, "
+                    f"t={pair.output.t_start:.2f}-{pair.output.t_end:.2f}s) "
+                    "with no recipe counterpart"
+                ),
+            )
+        )
         return out
 
     if pair.output is None and pair.recipe is not None:
-        out.append(DiffFinding(
-            severity="critical",
-            property=f"event[{label}].existence",
-            recipe=_event_summary(pair.recipe, recipe_frame_w, recipe_frame_h),
-            output=None,
-            reason=(
-                f"Recipe text event '{label}' is missing from output entirely "
-                f"(recipe color={pair.recipe.color_key}, t={pair.recipe.t_start:.2f}-"
-                f"{pair.recipe.t_end:.2f}s)"
-            ),
-        ))
+        out.append(
+            DiffFinding(
+                severity="critical",
+                property=f"event[{label}].existence",
+                recipe=_event_summary(pair.recipe, recipe_frame_w, recipe_frame_h),
+                output=None,
+                reason=(
+                    f"Recipe text event '{label}' is missing from output entirely "
+                    f"(recipe color={pair.recipe.color_key}, t={pair.recipe.t_start:.2f}-"
+                    f"{pair.recipe.t_end:.2f}s)"
+                ),
+            )
+        )
         return out
 
     assert pair.recipe is not None and pair.output is not None
@@ -177,13 +189,15 @@ def diff_paired_event(
     if r.text and o.text:
         dist = levenshtein(r.text, o.text)
         if dist > 1:
-            out.append(DiffFinding(
-                severity="critical",
-                property=f"event[{label}].text",
-                recipe=r.text,
-                output=o.text,
-                reason=f"Text identity mismatch: recipe={r.text!r} vs output={o.text!r}",
-            ))
+            out.append(
+                DiffFinding(
+                    severity="critical",
+                    property=f"event[{label}].text",
+                    recipe=r.text,
+                    output=o.text,
+                    reason=f"Text identity mismatch: recipe={r.text!r} vs output={o.text!r}",
+                )
+            )
 
     # Position diff (relative coords)
     r_rel = r.median_relative_bbox(recipe_frame_w, recipe_frame_h)
@@ -198,13 +212,15 @@ def diff_paired_event(
     else:
         sev = None  # type: ignore[assignment]
     if sev is not None:
-        out.append(DiffFinding(
-            severity=sev,
-            property=f"event[{label}].position",
-            recipe={"cx_frac": round(r_rel.cx_frac, 3), "cy_frac": round(r_rel.cy_frac, 3)},
-            output={"cx_frac": round(o_rel.cx_frac, 3), "cy_frac": round(o_rel.cy_frac, 3)},
-            reason=f"centroid delta dx={dx:.3f}, dy={dy:.3f} (max {pos_delta:.3f})",
-        ))
+        out.append(
+            DiffFinding(
+                severity=sev,
+                property=f"event[{label}].position",
+                recipe={"cx_frac": round(r_rel.cx_frac, 3), "cy_frac": round(r_rel.cy_frac, 3)},
+                output={"cx_frac": round(o_rel.cx_frac, 3), "cy_frac": round(o_rel.cy_frac, 3)},
+                reason=f"centroid delta dx={dx:.3f}, dy={dy:.3f} (max {pos_delta:.3f})",
+            )
+        )
 
     # Size diff (height fraction is the most reliable size signal)
     if r_rel.h_frac > 0 and o_rel.h_frac > 0:
@@ -216,37 +232,43 @@ def diff_paired_event(
         else:
             sev = None  # type: ignore[assignment]
         if sev is not None:
-            out.append(DiffFinding(
-                severity=sev,
-                property=f"event[{label}].size",
-                recipe={"h_frac": round(r_rel.h_frac, 3)},
-                output={"h_frac": round(o_rel.h_frac, 3)},
-                reason=f"text size differs by {ratio_delta:.1%} (relative to recipe)",
-            ))
+            out.append(
+                DiffFinding(
+                    severity=sev,
+                    property=f"event[{label}].size",
+                    recipe={"h_frac": round(r_rel.h_frac, 3)},
+                    output={"h_frac": round(o_rel.h_frac, 3)},
+                    reason=f"text size differs by {ratio_delta:.1%} (relative to recipe)",
+                )
+            )
 
     # Animation entrance kind
     if hasattr(r, "_entrance") and hasattr(o, "_entrance"):
         r_ent = r._entrance  # type: ignore[attr-defined]
         o_ent = o._entrance  # type: ignore[attr-defined]
         if r_ent[0] != o_ent[0]:
-            out.append(DiffFinding(
-                severity="major",
-                property=f"event[{label}].animation.entrance",
-                recipe=r_ent[0],
-                output=o_ent[0],
-                reason=f"different animation family: recipe={r_ent[0]} vs output={o_ent[0]}",
-            ))
+            out.append(
+                DiffFinding(
+                    severity="major",
+                    property=f"event[{label}].animation.entrance",
+                    recipe=r_ent[0],
+                    output=o_ent[0],
+                    reason=f"different animation family: recipe={r_ent[0]} vs output={o_ent[0]}",
+                )
+            )
         elif abs(r_ent[1] - o_ent[1]) > ENTRANCE_DURATION_MINOR_S:
-            out.append(DiffFinding(
-                severity="minor",
-                property=f"event[{label}].animation.entrance_duration_s",
-                recipe=round(r_ent[1], 3),
-                output=round(o_ent[1], 3),
-                reason=(
-                    f"same entrance family ({r_ent[0]}) but settle duration differs by "
-                    f"{abs(r_ent[1] - o_ent[1]):.2f}s"
-                ),
-            ))
+            out.append(
+                DiffFinding(
+                    severity="minor",
+                    property=f"event[{label}].animation.entrance_duration_s",
+                    recipe=round(r_ent[1], 3),
+                    output=round(o_ent[1], 3),
+                    reason=(
+                        f"same entrance family ({r_ent[0]}) but settle duration differs by "
+                        f"{abs(r_ent[1] - o_ent[1]):.2f}s"
+                    ),
+                )
+            )
 
     # Visible duration
     dur_delta = abs(r.duration_s - o.duration_s)
@@ -257,13 +279,15 @@ def diff_paired_event(
     else:
         sev = None  # type: ignore[assignment]
     if sev is not None:
-        out.append(DiffFinding(
-            severity=sev,
-            property=f"event[{label}].duration_s",
-            recipe=round(r.duration_s, 3),
-            output=round(o.duration_s, 3),
-            reason=f"on-screen duration differs by {dur_delta:.2f}s",
-        ))
+        out.append(
+            DiffFinding(
+                severity=sev,
+                property=f"event[{label}].duration_s",
+                recipe=round(r.duration_s, 3),
+                output=round(o.duration_s, 3),
+                reason=f"on-screen duration differs by {dur_delta:.2f}s",
+            )
+        )
 
     return out
 

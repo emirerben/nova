@@ -44,12 +44,18 @@ def _probe_duration(path: str) -> float:
     """Return media duration in seconds, or 0.0 sentinel on probe failure."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "quiet",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             path,
         ],
-        capture_output=True, timeout=10, check=False,
+        capture_output=True,
+        timeout=10,
+        check=False,
     )
     try:
         return float(result.stdout.strip())
@@ -180,10 +186,7 @@ def render_intro_voiceover_mix(
         )
     elif music_idx is not None:
         # Music only (VO probe failed) — same shape as old _mix_template_audio.
-        filter_parts.append(
-            f"[{music_idx}:a]atrim=0:{video_dur:.3f},asetpts=PTS-STARTPTS,"
-            f"{_TAIL}"
-        )
+        filter_parts.append(f"[{music_idx}:a]atrim=0:{video_dur:.3f},asetpts=PTS-STARTPTS,{_TAIL}")
     else:
         # VO only (music probe failed). Pad VO with silence for body, no music.
         filter_parts.append(
@@ -196,14 +199,22 @@ def render_intro_voiceover_mix(
         ["ffmpeg"]
         + inputs
         + [
-            "-filter_complex", ";".join(filter_parts),
-            "-map", "0:v",
-            "-map", final_audio_label,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-t", f"{video_dur:.3f}",
-            "-movflags", "+faststart",
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "0:v",
+            "-map",
+            final_audio_label,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-t",
+            f"{video_dur:.3f}",
+            "-movflags",
+            "+faststart",
             "-y",
             output_path,
         ]

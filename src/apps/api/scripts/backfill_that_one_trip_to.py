@@ -33,6 +33,7 @@ Against prod (Fly.io):
     fly ssh console -a nova-video
     cd /app && python scripts/backfill_that_one_trip_to.py --apply --yes
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,9 +92,7 @@ async def find_template(db):
     from app.models import VideoTemplate  # noqa: PLC0415
 
     result = await db.execute(
-        select(VideoTemplate).where(
-            VideoTemplate.name.ilike(TEMPLATE_NAME_PATTERN)
-        )
+        select(VideoTemplate).where(VideoTemplate.name.ilike(TEMPLATE_NAME_PATTERN))
     )
     rows = result.scalars().all()
     if not rows:
@@ -156,10 +155,16 @@ def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
             target = FRAGMENT_MAP.get(sample_lc)
             if target is not None:
                 if overlay.get("subject_part") != target:
-                    changes.append((
-                        "fragment", slot_idx, ov_idx, sample_raw,
-                        overlay.get("subject_part"), target,
-                    ))
+                    changes.append(
+                        (
+                            "fragment",
+                            slot_idx,
+                            ov_idx,
+                            sample_raw,
+                            overlay.get("subject_part"),
+                            target,
+                        )
+                    )
                     overlay["subject_part"] = target
                 continue
 
@@ -173,9 +178,16 @@ def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
                     overlay.get("subject_template") != template
                     or overlay.get("subject_chars") != chars
                 ):
-                    changes.append((
-                        "typewriter", slot_idx, ov_idx, sample_raw, template, chars,
-                    ))
+                    changes.append(
+                        (
+                            "typewriter",
+                            slot_idx,
+                            ov_idx,
+                            sample_raw,
+                            template,
+                            chars,
+                        )
+                    )
                     overlay["subject_template"] = template
                     overlay["subject_chars"] = chars
 
