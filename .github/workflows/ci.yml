@@ -354,7 +354,18 @@ jobs:
         with:
           name: api-junit-${{ github.run_id }}-${{ matrix.shard }}-${{ github.run_attempt }}
           path: src/apps/api/test-results/api-junit.xml
-          retention-days: 3
+          retention-days: 30
+          if-no-files-found: ignore
+      # One row per test from tests/_ci_times.py: setup, call and teardown
+      # seconds, CPU seconds and outcome. scripts/ci/api-times.py reads them.
+      - name: Keep per-test times by phase
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-times-${{ github.run_id }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: src/apps/api/test-results/ci-times
+          retention-days: 30
           if-no-files-found: ignore
 
   # KRI-559 executes only incident-corpus journeys selected by ci-changes.

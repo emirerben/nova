@@ -24,6 +24,9 @@ if (
         returncode=2,
     )
 
+# Per-test timing rows for CI; does nothing unless NOVA_CI_TIMES_DIR is set.
+pytest_plugins = ("tests._ci_times",)
+
 os.environ.setdefault("STORAGE_BUCKET", "nova-test")
 os.environ.setdefault("STORAGE_PROVIDER", "gcs")
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/nova_test")

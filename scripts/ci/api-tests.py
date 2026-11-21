@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,8 @@ DEFAULT_SECONDS = 0.5
 MAX_SECONDS = 3600
 # Relative to src/apps/api, where pytest runs.
 JUNIT = "test-results/api-junit.xml"
+# Where tests/_ci_times.py writes one row per test; ci.yml uploads it.
+TIMES = "test-results/ci-times"
 
 
 def test_files(api_root: Path) -> list[Path]:
@@ -120,6 +123,11 @@ def pytest_command(selected: list[Path]) -> list[str]:
     ]
 
 
+def pytest_env(environ: dict[str, str]) -> dict[str, str]:
+    """The shard's environment, with the per-test recorder switched on."""
+    return {**environ, "NOVA_CI_TIMES_DIR": TIMES}
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:
@@ -133,7 +141,10 @@ def main(argv: list[str] | None = None) -> int:
     selected = shard_files(api_root, shard)
     print(f"API test shard {shard}/{SHARD_COUNT}: {len(selected)} files")
     return subprocess.run(
-        pytest_command(selected), cwd=api_root, check=False
+        pytest_command(selected),
+        cwd=api_root,
+        env=pytest_env(dict(os.environ)),
+        check=False,
     ).returncode
 
 
