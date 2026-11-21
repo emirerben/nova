@@ -120,15 +120,11 @@ def _backfill_one(track: MusicTrack, *, include_stale: bool, dry_run: bool) -> s
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print changes without persisting."
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Print changes without persisting.")
     parser.add_argument(
         "--track-id", type=str, default=None, help="Backfill a single track by UUID."
     )
-    parser.add_argument(
-        "--limit", type=int, default=None, help="Stop after N tracks."
-    )
+    parser.add_argument("--limit", type=int, default=None, help="Stop after N tracks.")
     parser.add_argument(
         "--include-stale",
         action="store_true",

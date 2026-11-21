@@ -20,6 +20,7 @@ from PIL import Image, ImageOps
 # Register HEIC/HEIF decoder so iPhone defaults work
 try:
     import pillow_heif  # type: ignore[import]
+
     pillow_heif.register_heif_opener()
 except ImportError:  # pragma: no cover — install enforced via pyproject
     pass
@@ -92,8 +93,7 @@ def image_bytes_to_mp4(
     """
     if len(raw) > MAX_INPUT_BYTES:
         raise ImageConversionError(
-            f"Image exceeds {MAX_INPUT_BYTES // (1024 * 1024)}MB limit "
-            f"({len(raw)} bytes)"
+            f"Image exceeds {MAX_INPUT_BYTES // (1024 * 1024)}MB limit ({len(raw)} bytes)"
         )
 
     duration_s = max(0.5, float(duration_s))
@@ -104,7 +104,8 @@ def image_bytes_to_mp4(
         png_path.write_bytes(png_bytes)
 
         cmd = [
-            "ffmpeg", "-y",
+            "ffmpeg",
+            "-y",
             # -loglevel warning + -nostats: drop the per-frame progress stream
             # from stderr so that `proc.stderr` on a non-zero exit contains
             # the actual error line(s), not `frame=N fps=… size=…` noise.
@@ -114,16 +115,25 @@ def image_bytes_to_mp4(
             # pixel-format / SAR-mismatch warnings visible — useful for
             # diagnosing the next class of failure without waiting for
             # ffmpeg to exit non-zero.
-            "-loglevel", "warning",
+            "-loglevel",
+            "warning",
             "-nostats",
-            "-loop", "1",
-            "-framerate", str(FPS),
-            "-i", str(png_path),
-            "-t", f"{duration_s:.3f}",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-preset", "veryfast",
-            "-crf", "20",
+            "-loop",
+            "1",
+            "-framerate",
+            str(FPS),
+            "-i",
+            str(png_path),
+            "-t",
+            f"{duration_s:.3f}",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
             # Tag explicit bt709 color metadata so the downstream reframe
             # pipeline's colorspace handling doesn't see "primaries=unknown"
             # and reject the clip. The muxer-level -color_primaries /
@@ -132,11 +142,16 @@ def image_bytes_to_mp4(
             # -x264-params override. Without this, ffprobe reads back
             # primaries=unknown,matrix=unknown and the reframe colorspace
             # filter fails with EINVAL (rc=234 in prod, job 2795fa69).
-            "-color_primaries", "bt709",
-            "-color_trc", "bt709",
-            "-colorspace", "bt709",
-            "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
-            "-movflags", "+faststart",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
+            "-x264-params",
+            "colorprim=bt709:transfer=bt709:colormatrix=bt709",
+            "-movflags",
+            "+faststart",
             out_path,
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True)

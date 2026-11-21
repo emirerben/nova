@@ -10,6 +10,7 @@ Why this exists separately from seed_dimples_passport_brazil.py:
 
 Run: cd src/apps/api && .venv/bin/python scripts/backfill_dimples_passport_inputs.py --yes
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,9 +43,7 @@ REQUIRED_INPUTS = _seed.REQUIRED_INPUTS
 async def backfill() -> int:
     """Set required_inputs on the Dimples Passport row. Returns exit code."""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(VideoTemplate).where(VideoTemplate.name == TEMPLATE_NAME)
-        )
+        result = await db.execute(select(VideoTemplate).where(VideoTemplate.name == TEMPLATE_NAME))
         row = result.scalars().first()
         if row is None:
             print(

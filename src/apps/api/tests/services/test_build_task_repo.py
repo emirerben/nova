@@ -367,9 +367,7 @@ class TestShipGate:
         build_task_repo.claim_next_gating_task(db, claimed_by="g1")
         db.commit()
         report = {"passed": True, "results": []}
-        build_task_repo.open_pr(
-            db, t.id, pr_url="https://gh/pr/1", pr_number=1, gate_report=report
-        )
+        build_task_repo.open_pr(db, t.id, pr_url="https://gh/pr/1", pr_number=1, gate_report=report)
         db.commit()
 
         after = build_task_repo.get_task(db, t.id)
@@ -394,9 +392,7 @@ class TestShipGate:
             "passed": False,
             "results": [{"name": "pytest", "blocking": True, "passed": False}],
         }
-        build_task_repo.gate_failed(
-            db, t.id, gate_report=report, progress_note="pytest failed"
-        )
+        build_task_repo.gate_failed(db, t.id, gate_report=report, progress_note="pytest failed")
         db.commit()
 
         after = build_task_repo.get_task(db, t.id)

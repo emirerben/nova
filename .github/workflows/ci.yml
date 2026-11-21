@@ -62,9 +62,10 @@ jobs:
             echo "::error::src/apps/api/uv.lock does not match pyproject.toml. Run 'cd src/apps/api && uv lock' and commit the result."
             exit 1
           }
-      - name: Run API lint
-        working-directory: src/apps/api
-        run: ruff check .
+      # Lint and format, both always, with the ruff version uv.lock pins. The
+      # same command runs in scripts/preship-check.sh.
+      - name: Run API lint and format check
+        run: python3 scripts/ci/api-lint.py
 
   # This gate remains present on every PR, including docs-only changes.
   # Waiting on `needs:` happens before a job starts and doesn't count toward

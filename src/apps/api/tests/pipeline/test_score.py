@@ -18,9 +18,13 @@ from app.pipeline.score import (
 from app.pipeline.transcribe import Transcript, Word
 
 
-def make_transcript(words: list[tuple[str, float, float]], low_confidence: bool = False) -> Transcript:  # noqa: E501
+def make_transcript(
+    words: list[tuple[str, float, float]], low_confidence: bool = False
+) -> Transcript:  # noqa: E501
     ws = [Word(text=t, start_s=s, end_s=e, confidence=1.0) for t, s, e in words]
-    return Transcript(words=ws, full_text=" ".join(t for t, _, _ in words), low_confidence=low_confidence)  # noqa: E501
+    return Transcript(
+        words=ws, full_text=" ".join(t for t, _, _ in words), low_confidence=low_confidence
+    )  # noqa: E501
 
 
 def make_probe(duration_s: float = 300.0, aspect_ratio: str = "16:9") -> VideoProbe:
@@ -73,12 +77,14 @@ class TestAdjustHookScore:
 
 class TestFirstSentence:
     def test_extracts_first_sentence(self):
-        transcript = make_transcript([
-            ("Hello", 10.0, 10.5),
-            ("world.", 10.5, 11.0),
-            ("Next", 11.0, 11.5),
-            ("sentence.", 11.5, 12.0),
-        ])
+        transcript = make_transcript(
+            [
+                ("Hello", 10.0, 10.5),
+                ("world.", 10.5, 11.0),
+                ("Next", 11.0, 11.5),
+                ("sentence.", 11.5, 12.0),
+            ]
+        )
         result = _first_sentence(transcript, 10.0, 15.0)
         assert result == "Hello world."
 
@@ -110,10 +116,12 @@ class TestNormalizeToTen:
 class TestSelectCandidates:
     def test_returns_nine_candidates_for_long_video(self):
         probe = make_probe(duration_s=600.0)
-        transcript = make_transcript([
-            ("This is amazing!", 0.0, 3.0),
-            ("More content here.", 50.0, 53.0),
-        ])
+        transcript = make_transcript(
+            [
+                ("This is amazing!", 0.0, 3.0),
+                ("More content here.", 50.0, 53.0),
+            ]
+        )
         cuts = [SceneCut(timestamp_s=45.0, score=1.0)]
 
         # No source_ref → heuristic path (no Gemini calls)

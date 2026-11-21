@@ -111,9 +111,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "ck_sound_effects_vocal_probability", "sound_effects", type_="check"
-    )
+    op.drop_constraint("ck_sound_effects_vocal_probability", "sound_effects", type_="check")
     for column in (
         "manual_audit_status",
         "quality_tier",

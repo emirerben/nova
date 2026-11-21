@@ -2884,7 +2884,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "redis", specifier = ">=5.0" },
     { name = "regex", specifier = "==2026.6.28" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.17.6" },
     { name = "scenedetect", extras = ["opencv"], specifier = ">=0.6" },
     { name = "skia-python", specifier = ">=87,<200" },
     { name = "slowapi", specifier = ">=0.1.9" },

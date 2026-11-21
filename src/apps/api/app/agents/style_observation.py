@@ -48,12 +48,12 @@ from app.pipeline.prompt_loader import load_prompt
 # font name or `effect`. Keep in sync with ``prompts/observe_video_style.txt``.
 
 FontFeel = Literal[
-    "serif_editorial",   # e.g. Playfair Display, Cormorant, Gloock
-    "clean_sans",        # e.g. DM Sans, Inter, Poppins
-    "bold_display",      # e.g. Bebas Neue, Anton, Bangers
-    "handwritten",       # e.g. Permanent Marker, brush fonts
-    "mono",              # e.g. monospaced / typewriter
-    "none",              # no on-screen text visible
+    "serif_editorial",  # e.g. Playfair Display, Cormorant, Gloock
+    "clean_sans",  # e.g. DM Sans, Inter, Poppins
+    "bold_display",  # e.g. Bebas Neue, Anton, Bangers
+    "handwritten",  # e.g. Permanent Marker, brush fonts
+    "mono",  # e.g. monospaced / typewriter
+    "none",  # no on-screen text visible
 ]
 Position = Literal["top", "center", "bottom", "center-above", "center-below"]
 SizeClass = Literal["small", "medium", "large"]
@@ -84,9 +84,9 @@ _CONFIDENCE_DEFAULT_HAS_TEXT = 0.7  # style observation carries perceptual ambig
 class StyleObservationInput(BaseModel):
     """Per-video input for the style observation agent."""
 
-    file_uri: str           # Gemini File API URI (returned by gemini_upload_and_wait)
+    file_uri: str  # Gemini File API URI (returned by gemini_upload_and_wait)
     file_mime: str = "video/mp4"
-    caption: str = ""       # TikTok caption — optional context for the prompt
+    caption: str = ""  # TikTok caption — optional context for the prompt
     # Relative performance vs the creator's own median (views ÷ median_views).
     # Passed to the prompt so the model can note "this was a top-performer" for
     # display in the provenance card. NOT used for weighting in the aggregator

@@ -39,6 +39,7 @@ Gates (Plan section "Phase 0.6"):
 The benchmark does NOT compare different concurrency settings. That's a
 separate Phase 2 single-machine Fly canary, not a pytest run.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,9 +53,7 @@ from pathlib import Path
 import pytest
 
 PARITY_CLIPS_DIR = Path(os.environ.get("PARITY_CLIPS_DIR", "")).expanduser()
-BENCH_REPORT_DIR = Path(
-    os.environ.get("BENCH_REPORT_DIR", tempfile.gettempdir())
-).expanduser()
+BENCH_REPORT_DIR = Path(os.environ.get("BENCH_REPORT_DIR", tempfile.gettempdir())).expanduser()
 # Clamp to at least 1; statistics.median([]) would otherwise raise mid-test.
 BENCH_REPEATS = max(1, int(os.environ.get("BENCH_REPEATS", "3")))
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "parity_templates"
@@ -136,7 +135,10 @@ def _build_steps_and_probes(fixture: dict, clips: list[Path]):
 
 
 def _render_once(
-    fixture: dict, clips: list[Path], tmp_path: Path, force_single_pass: bool,
+    fixture: dict,
+    clips: list[Path],
+    tmp_path: Path,
+    force_single_pass: bool,
 ) -> tuple[Path, float]:
     from app.tasks.template_orchestrate import _assemble_clips
 
@@ -260,13 +262,14 @@ def _append_report(result: BenchResult) -> None:
             f"| {result.template} | {result.repeats} | "
             f"{result.multi_median:.2f}s | {result.single_median:.2f}s | "
             f"{result.ratio:.2f}x | "
-            f"{result.output_size_multi/1024:.0f} KB | "
-            f"{result.output_size_single/1024:.0f} KB |\n"
+            f"{result.output_size_multi / 1024:.0f} KB | "
+            f"{result.output_size_single / 1024:.0f} KB |\n"
         )
 
 
 def test_ffmpeg_is_available() -> None:
     """Harness depends on ffmpeg/ffprobe on PATH."""
     import shutil
+
     assert shutil.which("ffmpeg"), "ffmpeg not on PATH"
     assert shutil.which("ffprobe"), "ffprobe not on PATH"

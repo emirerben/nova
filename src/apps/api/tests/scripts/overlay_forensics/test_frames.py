@@ -3,6 +3,7 @@
 End-to-end behavior (real ffmpeg invocations) is covered by the analyzer's
 integration test. These tests assert input-validation and error paths.
 """
+
 from __future__ import annotations
 
 import shutil

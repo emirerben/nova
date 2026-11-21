@@ -77,7 +77,8 @@ def test_missing_template_returns_404(client: TestClient) -> None:
 
 
 def test_happy_path_returns_202_enqueued(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app.dependency_overrides[get_db] = _db_with_template(
         _template(recipe={"clip_filter_hint": "ball in frame", "slots": []}),
@@ -104,7 +105,8 @@ def test_happy_path_returns_202_enqueued(
 
 
 def test_duplicate_returns_202_with_duplicate_flag(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Re-firing the same gcs_path doesn't error; the response just flags
     it so the frontend can suppress retries."""
@@ -112,7 +114,8 @@ def test_duplicate_returns_202_with_duplicate_flag(
         _template(recipe={"clip_filter_hint": "", "slots": []}),
     )
     monkeypatch.setattr(
-        "app.routes.clips.schedule_prefetch", AsyncMock(return_value=False),
+        "app.routes.clips.schedule_prefetch",
+        AsyncMock(return_value=False),
     )
     res = client.post(
         "/clips/prefetch-analyze",
@@ -123,7 +126,8 @@ def test_duplicate_returns_202_with_duplicate_flag(
 
 
 def test_mixed_media_template_skips_without_scheduling(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Photo slots bypass Gemini in the orchestrator. Prefetching them
     would burn quota for nothing — the route must short-circuit before
@@ -148,7 +152,8 @@ def test_mixed_media_template_skips_without_scheduling(
 
 
 def test_template_without_recipe_uses_empty_filter_hint(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A template that hasn't been analysed yet has recipe_cached=None.
     Treat it like an empty filter_hint — the orchestrator falls back the

@@ -28,6 +28,7 @@ def mock_db():
 @pytest.fixture
 def client(mock_db):
     """HTTPX async client with mocked DB dependency."""
+
     async def _override_db():
         yield mock_db
 

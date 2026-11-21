@@ -30,9 +30,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 #                    hit PostgreSQL's idle-timeout on Fly.io
 #   pool_size / max_overflow – keep the pool small; Celery workers are
 #                    low-concurrency (prefetch_multiplier=1)
-_sync_db_url = settings.database_url.replace(
-    "postgresql+asyncpg://", "postgresql://"
-)
+_sync_db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
 sync_engine = create_engine(
     _sync_db_url,
     pool_pre_ping=True,

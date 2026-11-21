@@ -31,12 +31,14 @@ def load_eval_cases() -> list[dict]:
         if gt_path.exists() and video_path.exists():
             with open(gt_path) as f:
                 gt = json.load(f)
-            cases.append({
-                "video_path": str(video_path),
-                "best_start_s": gt["best_start_s"],
-                "best_end_s": gt["best_end_s"],
-                "notes": gt.get("notes", ""),
-            })
+            cases.append(
+                {
+                    "video_path": str(video_path),
+                    "best_start_s": gt["best_start_s"],
+                    "best_end_s": gt["best_end_s"],
+                    "notes": gt.get("notes", ""),
+                }
+            )
     return cases
 
 
