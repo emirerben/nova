@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.74.0] - 2026-11-21
+
+### Changed
+- fix(kria): the brief extractor routes informative text about a public subject to the typed research fact (#2454) <!-- release-pr: 2454 -->
+
+## [0.89.73.0] - 2026-11-21
+
+### Changed
+- fix(kria): a word-by-word or translated research ask with no qualifying source renders the rest of the text (KRI-1413) (#2452) <!-- release-pr: 2452 -->
+
+## [0.89.72.0] - 2026-11-21
+
+### Changed
+- fix(kria): research accepts government registries and the national tourism organization as primary sources (#2453) <!-- release-pr: 2453 -->
+
+## [0.89.71.0] - 2026-11-21
+
+### Changed
+- fix(kria): a paid call the ledger already settled is a bug, not an AI timeout (KRI-1413) (#2451) <!-- release-pr: 2451 -->
+
 ## [0.89.70.0] - 2026-11-21
 
 ### Changed

@@ -51,7 +51,8 @@ def _source(host: str) -> dict:
     }
 
 
-# The recorded answer: every host is the operator, a city government or a travel site.
+# The recorded answer, minus the one national tourism source the source rules now accept
+# (japan.travel): every host left is the operator, a city site or a travel site, none accepted.
 RECORDED = {
     "facts": [
         {
@@ -62,7 +63,7 @@ RECORDED = {
         {
             "id": "fact-1",
             "text": "The route covers 7.3 kilometers along the Hozugawa River",
-            "sources": [_source("city.kameoka.kyoto.jp"), _source("japan.travel")],
+            "sources": [_source("city.kameoka.kyoto.jp"), _source("wmg-kyototourism.org")],
         },
         {
             "id": "fact-2",

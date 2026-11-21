@@ -100,10 +100,10 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # the CHAT LANGUAGE line (`conversation_language`); the values before it were abe644f4 /
 # 05b2007d / d5b8a2cf / 271524fd.
 MAIN_PROMPT_SHA = {
-    "neither": "3731664d04a3721259f88cc6429c51fc9f8b618144574b5bcee1fb1255f4fa43",
-    (True, True): "12f7087f5535d26d8c25a23f58a3b390653c4bd1aaf3bbced3f350a003e2efa3",
-    (True, False): "bcc90d2467a7b44da54e911b21db5fc44713cd98bc68251af45343fdef04d9b2",
-    (False, True): "823890fc955fa42dc3fde8f10296ab80b4c3ddab22b681b748bfe798f1fc8a9f",
+    "neither": "7cd34ba1a5ab4b4861a5579b87d24c32e999c321d0c49dd90f9234346698fc86",
+    (True, True): "7a6d9f5e41ca9fbd69220b8fd7e91b5ac3afd7e1668c852317427cd1203e8ec9",
+    (True, False): "b31e1b8332e4a1f7c18a86996f69f2ffd3562559e54cbcec0f850c715accdef8",
+    (False, True): "2dba7829e4b198673344316d43806399c11288cdd45dab7977bf2a0827825d8d",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (
