@@ -38,6 +38,7 @@ from app.pipeline.speech_cleanup_analysis import (
     SpeechCleanupMultiTakeResult,
 )
 from app.pipeline.transcribe import Transcript, Word
+from app.services.source_length_policy import speech_analysis_window_s
 
 SpeechCleanupSourceKind = Literal["voiceover", "embedded_spine"]
 SpeechCleanupAnalysisView = Literal["full_clip", "talking_head_spine_capped"]
@@ -48,7 +49,6 @@ MULTI_TAKE_SNAPSHOT_SCHEMA_VERSION = 2
 PREFLIGHT_JOB_CONTRACT_FIELD = "speech_cleanup_preflight_contract"
 PREFLIGHT_JOB_CONTRACT_VALUE = "snapshot_v1"
 SUPPORTED_SNAPSHOT_ENGINE_VERSIONS = frozenset({"preflight-v1-2026-09-05"})
-MAX_SNAPSHOT_WINDOW_S = 300.0
 AUDIO_APPLY_TIMEOUT_S = 300
 _FLOAT_TOLERANCE_S = 1e-3
 _FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -330,7 +330,7 @@ def hydrate_speech_cleanup_snapshot(value: object) -> HydratedSpeechCleanupSnaps
     if (
         window_start < 0
         or window_end <= window_start
-        or window_end - window_start > MAX_SNAPSHOT_WINDOW_S + _FLOAT_TOLERANCE_S
+        or window_end - window_start > speech_analysis_window_s() + _FLOAT_TOLERANCE_S
     ):
         raise SpeechCleanupSnapshotError("source_window")
     fingerprint = _required_token(
@@ -442,7 +442,10 @@ def _hydrate_multi_take_snapshot(outer: Mapping[str, Any]) -> HydratedSpeechClea
 
     takes: list[HydratedSpeechCleanupTake] = []
     for take in result.takes:
-        if take.window_end_s - take.window_start_s > MAX_SNAPSHOT_WINDOW_S + _FLOAT_TOLERANCE_S:
+        if (
+            take.window_end_s - take.window_start_s
+            > speech_analysis_window_s() + _FLOAT_TOLERANCE_S
+        ):
             raise SpeechCleanupSnapshotError("source_window")
         take_snapshot = None
         if take.analysis is not None:

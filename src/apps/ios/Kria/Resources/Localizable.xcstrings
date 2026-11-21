@@ -17623,6 +17623,22 @@
         }
       }
     },
+    "Google Gemini and OpenAI process your messages and selected footage, including faces, voices and transcripts, to edit videos. Anthropic (Claude) uses your edit requests and project context to suggest changes. Kria stores your projects and finished videos." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Gemini und OpenAI verarbeiten deine Nachrichten und ausgewählten Aufnahmen mit Gesichtern, Stimmen und Transkripten für den Videoschnitt. Anthropic (Claude) nutzt deine Änderungswünsche und Projektinformationen für Vorschläge. Kria speichert deine Projekte und fertigen Videos."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Gemini ve OpenAI, video düzenlemek için mesajlarını ve seçtiğin görüntüleri, yüzler, sesler ve dökümler dahil, işler. Anthropic (Claude), düzenleme isteklerini ve proje bilgilerini kullanarak değişiklik önerir. Kria projelerini ve bitmiş videolarını saklar."
+          }
+        }
+      }
+    },
     "Google sign-in is not configured for this build." : {
       "localizations" : {
         "de" : {
@@ -20264,22 +20280,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kria artık Fotoğraflar'daki bu öğeye erişemiyor."
-          }
-        }
-      }
-    },
-    "Only selected media is uploaded: originals for cloud editing or smaller copies for analysis." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nur ausgewählte Medien werden hochgeladen: Originale für den Cloud-Schnitt oder kleinere Kopien für die Analyse."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yalnızca seçtiğin medya yüklenir: bulutta düzenleme için orijinaller veya analiz için küçük kopyalar."
           }
         }
       }
@@ -24682,6 +24682,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bunun sadece bir kısmı yapılabildi."
+          }
+        }
+      }
+    },
+    "Only selected media is uploaded: originals for cloud editing or smaller copies for analysis." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur ausgewählte Medien werden hochgeladen: Originale für den Cloud-Schnitt oder kleinere Kopien für die Analyse."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yalnızca seçtiğin medya yüklenir: bulutta düzenleme için orijinaller veya analiz için küçük kopyalar."
           }
         }
       }
@@ -41716,6 +41732,22 @@
         }
       }
     },
+    "This song is too long. Kria can use up to %@. Trim it and add it again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Song ist zu lang. Kria kann bis zu %@ verwenden. Kürze ihn und füge ihn noch einmal hinzu."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu şarkı çok uzun. Kria en fazla %@ kullanabilir. Kısaltıp tekrar ekle."
+          }
+        }
+      }
+    },
     "This split-screen layout cannot be saved. Your edits are still here." : {
       "localizations" : {
         "de" : {
@@ -42036,22 +42068,6 @@
         }
       }
     },
-    "This video is longer than 30 minutes, which is too long to analyze." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieses Video ist länger als 30 Minuten und damit zu lang zum Analysieren."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bu video 30 dakikadan uzun; analiz için çok uzun."
-          }
-        }
-      }
-    },
     "This video is longer than an edit can be. Trim or remove some clips and save again. Your edits are still here." : {
       "localizations" : {
         "de" : {
@@ -42064,6 +42080,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu video bir düzenlemenin olabileceğinden uzun. Birkaç klibi kırp ya da kaldır ve tekrar kaydet. Düzenlemelerin hâlâ burada."
+          }
+        }
+      }
+    },
+    "This video is too long to analyze." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Video ist zu lang zum Analysieren."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu video analiz için çok uzun."
+          }
+        }
+      }
+    },
+    "This video is too long to analyze. Kria can analyze videos up to %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Video ist zu lang zum Analysieren. Kria kann Videos bis zu %@ analysieren."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu video analiz için çok uzun. Kria en fazla %@ uzunluğundaki videoları analiz edebilir."
+          }
+        }
+      }
+    },
+    "This video is too long. This kind of video can use up to %@. Trim it and add it again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Video ist zu lang. Diese Art von Video kann bis zu %@ verwenden. Kürze es und füge es noch einmal hinzu."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu video çok uzun. Bu tür bir video en fazla %@ kullanabilir. Kısaltıp tekrar ekle."
           }
         }
       }
@@ -42304,6 +42368,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu seslendirme eklenemedi. Kaydın hâlâ burada, tekrar dene."
+          }
+        }
+      }
+    },
+    "This voiceover is too long. Kria can use up to %@. Trim it and add it again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Voiceover ist zu lang. Kria kann bis zu %@ verwenden. Kürze es und füge es noch einmal hinzu."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu seslendirme çok uzun. Kria en fazla %@ kullanabilir. Kısaltıp tekrar ekle."
           }
         }
       }
@@ -48251,22 +48331,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mesajın gönderildi ama sohbet yenilenemedi."
-          }
-        }
-      }
-    },
-    "Google Gemini and OpenAI process your messages and selected footage, including faces, voices and transcripts, to edit videos. Anthropic (Claude) uses your edit requests and project context to suggest changes. Kria stores your projects and finished videos." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Google Gemini und OpenAI verarbeiten deine Nachrichten und ausgewählten Aufnahmen mit Gesichtern, Stimmen und Transkripten für den Videoschnitt. Anthropic (Claude) nutzt deine Änderungswünsche und Projektinformationen für Vorschläge. Kria speichert deine Projekte und fertigen Videos."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Google Gemini ve OpenAI, video düzenlemek için mesajlarını ve seçtiğin görüntüleri, yüzler, sesler ve dökümler dahil, işler. Anthropic (Claude), düzenleme isteklerini ve proje bilgilerini kullanarak değişiklik önerir. Kria projelerini ve bitmiş videolarını saklar."
           }
         }
       }

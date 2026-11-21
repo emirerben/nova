@@ -155,6 +155,14 @@ from app.services.phone_destination import (
     with_device_intent,
 )
 from app.services.song_range import SongRangeError, apply_song_range, normalized_range
+from app.services.source_length_policy import (
+    PickRole,
+    exceeded_pick_rule,
+    format_pick_limits,
+    pick_limit_s,
+    too_long_message,
+    upload_role,
+)
 from app.services.source_replacement import (
     MEDIA_REPLACED_EVENT,
     REASON_RETAKE,
@@ -1016,14 +1024,20 @@ async def _device_ready_visual_count(
 def _media_capabilities(
     *, item: PlanItem, clip_count: int, visual_count: int, device_ready_visual_count: int = 0
 ) -> dict[str, Any]:
-    """Project the existing PlanItem upload contract for chat clients."""
+    """Project the existing PlanItem upload contract for chat clients.
 
+    ``max_duration_s`` (KRI-1554) is the longest source each role takes in this item's format
+    (`source_length_policy.pick_limit_s`); the iPhone refuses a longer file when it is picked.
+    """
+
+    edit_format = item.edit_format
     return {
         "clips": {
             "current": clip_count,
             "max": _format_clip_limit(item.edit_format),
             "server_max": _MAX_CLIPS_PER_ITEM,
             "max_file_bytes": _MAX_BYTES_PER_FILE,
+            "max_duration_s": pick_limit_s(edit_format, "clip"),
             "content_types": sorted(_ALLOWED_CONTENT_TYPES),
             "format": item.edit_format or "montage",
             # Absent (not false) while the flag is off, so the payload is byte-identical.
@@ -1044,12 +1058,14 @@ def _media_capabilities(
                 "image": _MAX_POOL_IMAGE_BYTES,
                 "video": _MAX_POOL_VIDEO_BYTES,
             },
+            "max_duration_s": {"video": pick_limit_s(edit_format, "visual_video")},
             "content_types": sorted(_OVERLAY_ALLOWED_CONTENT_TYPES),
         },
         "voiceover": {
             "current": 1 if item.voiceover_gcs_path else 0,
             "max": 1,
             "max_file_bytes": _MAX_VOICEOVER_BYTES,
+            "max_duration_s": pick_limit_s(edit_format, "voiceover"),
             "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
         },
         # Only once a song is attached, so every existing consumer of this
@@ -1060,6 +1076,7 @@ def _media_capabilities(
                     "current": 1,
                     "max": 1,
                     "max_file_bytes": _MAX_VOICEOVER_BYTES,
+                    "max_duration_s": pick_limit_s(edit_format, "song"),
                     "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
                 }
             }
@@ -3693,7 +3710,13 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 item,
                 detector_policy=current_detector_policy(),
             )
-            row = await current_analysis_async(db, item.id)
+            # KRI-1554: a source longer than the analysis window has no current analysis; a row
+            # saved before that rule covered only its start, so it is never shown.
+            row = (
+                None
+                if resolution.reason == "source_too_long"
+                else await current_analysis_async(db, item.id)
+            )
             # Historical note (2026-09-24, thread f249fb29): this projection
             # once passed a `storage_path` that `schedule_item_preflight_*`
             # did not, so a phone Talking item could show "applicable" with
@@ -4332,13 +4355,20 @@ async def capabilities(
                 "id": key,
                 "edit_format": value,
                 "max_clips": _format_clip_limit(value),
+                # KRI-1554: the longest source each role takes in this format; the picker
+                # refuses a longer file before it uploads. Keys are the media roles below
+                # ("clip", "voiceover", "song", "visual_video").
+                "max_duration_s": format_pick_limits(value),
             }
             for key, value in formats.items()
         ],
+        # `max_duration_s` here is the limit with no format chosen yet (the library limit,
+        # or the song limit); a format's own row above is tighter where it differs.
         "media": {
             "clips": {
                 "max": _MAX_CLIPS_PER_ITEM,
                 "max_file_bytes": _MAX_BYTES_PER_FILE,
+                "max_duration_s": pick_limit_s(None, "clip"),
                 "content_types": sorted(_ALLOWED_CONTENT_TYPES),
             },
             "visuals": {
@@ -4347,11 +4377,13 @@ async def capabilities(
                     "image": _MAX_POOL_IMAGE_BYTES,
                     "video": _MAX_POOL_VIDEO_BYTES,
                 },
+                "max_duration_s": {"video": pick_limit_s(None, "visual_video")},
                 "content_types": sorted(_OVERLAY_ALLOWED_CONTENT_TYPES),
             },
             "voiceover": {
                 "max": 1,
                 "max_file_bytes": _MAX_VOICEOVER_BYTES,
+                "max_duration_s": pick_limit_s(None, "voiceover"),
                 "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
             },
             **(
@@ -4359,6 +4391,7 @@ async def capabilities(
                     "song": {
                         "max": 1,
                         "max_file_bytes": _MAX_VOICEOVER_BYTES,
+                        "max_duration_s": pick_limit_s(None, "song"),
                         "content_types": sorted(PROJECT_AUDIO_CONTENT_TYPES),
                     }
                 }
@@ -6659,6 +6692,27 @@ async def upload_urls(
                 reason="reserved_prefix",
                 thread_id=str(thread.id),
             )
+        if contract.proxy is not None and (
+            broken := exceeded_pick_rule(
+                contract.proxy.original.duration_s,
+                getattr(item, "edit_format", None),
+                upload_role(content_type, file.role),
+            )
+        ):
+            # KRI-1554: the proxy names its original's length, so a build that does not check it
+            # at pick time is refused before anything uploads.
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                too_long_message(
+                    getattr(item, "edit_format", None), upload_role(content_type, file.role)
+                ),
+                reason="source_too_long",
+                thread_id=str(thread.id),
+                limit=broken.key,
+                max_duration_s=broken.max_duration_s,
+                declared_duration_s=contract.proxy.original.duration_s,
+            )
         if contract.purpose == "analysis_proxy":
             if not (
                 settings.phone_rendering_for(user.id) or has_native_device_only_intent(thread.state)
@@ -6836,13 +6890,15 @@ async def _verify_registered_uploads(
     library_sources: dict[str, Any],
     native_client: bool,
     reject: Callable[..., NoReturn],
+    edit_format: str | None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Verify each reserved upload against storage and return its registration rows.
 
     Shared by attach and replace so a retaken video passes exactly the checks a first take
-    does (object generation, probe, proxy descriptor, library registration). Returns the
-    rows (with the server-only ``_ATTACH_PRIVATE_KEYS``) and the physical upload paths.
-    ``reject`` raises; attach reports an HTTP error, replace a typed code.
+    does (object generation, probe, proxy descriptor, source length, library registration).
+    Returns the rows (with the server-only ``_ATTACH_PRIVATE_KEYS``) and the physical upload
+    paths. ``reject`` raises; attach reports an HTTP error, replace a typed code.
+    ``edit_format`` is the item's format: it sets the source-length limit (KRI-1554).
     """
     proxy_contracts: dict[str, MediaUploadContract] = {}
     proxy_ids = [
@@ -7041,17 +7097,23 @@ async def _verify_registered_uploads(
                     descriptor_has_audio=contract.proxy.original.has_audio,
                     probed_has_audio=has_audio,
                 )
+        # KRI-1554: the measured length against this format's limit, so a build without the
+        # pick-time check is refused here, before any plan is drafted or approved.
+        role: PickRole = (
+            "song" if media.role == "song" else "voiceover" if media.kind == "audio" else "clip"
+        )
+        if broken := exceeded_pick_rule(duration_s, edit_format, role):
+            reject(
+                422,
+                too_long_message(edit_format, role),
+                reason="song_too_long" if role == "song" else "source_too_long",
+                thread_id=str(thread.id),
+                media_id=media.media_id,
+                limit=broken.key,
+                max_duration_s=broken.max_duration_s,
+                probed_duration_s=duration_s,
+            )
         if media.role == "song":
-            if duration_s > settings.user_song_max_duration_s:
-                reject(
-                    422,
-                    f"Songs must be {int(settings.user_song_max_duration_s // 60)} minutes "
-                    "or shorter",
-                    reason="song_too_long",
-                    thread_id=str(thread.id),
-                    media_id=media.media_id,
-                    probed_duration_s=duration_s,
-                )
             try:
                 int(generation)
             except ValueError:
@@ -7353,6 +7415,7 @@ async def attach_media(
         library_sources=library_sources,
         native_client=native_client,
         reject=functools.partial(_reject_media, "creation_thread.attach_media.rejected"),
+        edit_format=getattr(item, "edit_format", None),
     )
     # Reused uploads can resolve to the same canonical path under different
     # client IDs. Reject those selections before references or media mutation.
@@ -7788,6 +7851,7 @@ async def replace_media(
         library_sources={},
         native_client=native_client,
         reject=_reject_replace,
+        edit_format=getattr(item, "edit_format", None),
     )
     source = verified[0]
     if not source["has_audio"]:

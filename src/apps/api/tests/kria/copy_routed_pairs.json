@@ -2425,6 +2425,11 @@
    "app/services/sfx_capability.py",
    "Nothing in this video clearly called for a sound effect, so I added none",
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under {limit_minutes:g} minutes) and try again. No fallback edit was rendered.",
+   "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
   ]
  ],
  "retired": [
@@ -2842,6 +2847,11 @@
    "app/kria/brief_checks.py",
    "A Talking video can't do this, so it stays as filmed",
    "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
+   "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under 5 minutes) and try again. No fallback edit was rendered.",
+   "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
   ]
  ]
 }

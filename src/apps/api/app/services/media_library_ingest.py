@@ -31,6 +31,7 @@ from app.models import (
     User,
 )
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.source_length_policy import library_max_s
 
 log = structlog.get_logger()
 ACTIVE_ASSET_LIMIT = 500
@@ -377,7 +378,7 @@ def verified_source_metadata(
                 ]
                 audio = any(stream.get("codec_type") == "audio" for stream in streams)
                 duration = float(probe.get("format", {}).get("duration", 0))
-                if not math.isfinite(duration) or not 0 < duration <= 1800:
+                if not math.isfinite(duration) or not 0 < duration <= library_max_s():
                     raise ValueError("Media must have a supported, finite duration")
                 if kind == "video" and not videos or kind == "audio" and (not audio or videos):
                     raise ValueError("Uploaded media has the wrong stream kind")
