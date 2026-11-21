@@ -47,69 +47,24 @@ jobs:
     needs: changes
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
-    # Slowest green run 5.8 min, but the same cached `pip install -e ".[dev]"`
-    # took 12.7 min in a green api shard; 25 leaves room for that.
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: src/apps/api/pyproject.toml
-      - name: Install API dependencies
-        if: needs.changes.outputs.api == 'true'
-        working-directory: src/apps/api
-        run: pip install -e ".[dev]"
-      - name: Run API lint
-        working-directory: src/apps/api
-        run: ruff check .
-
-  # Side by side while the locked environment is introduced (uv.lock, installed
-  # by .github/actions/api-env). It installs the lock, checks it still matches
-  # pyproject.toml, then installs the old unlocked way and reports every package
-  # whose version differs. No suite uses the locked environment yet; they
-  # switch in a follow-up once this report is clean.
-  api-env:
-    needs: changes
-    if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The locked install takes about 10 s (it was 2 min, and once 12.7 min, as
+    # an unlocked `pip install`); lint itself about 1 s.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/api-env
+      # A dependency change without `uv lock` would otherwise install the old
+      # lock and test something other than what pyproject.toml declares.
       - name: Check the lock matches pyproject.toml
         working-directory: src/apps/api
-        run: uv lock --check
-      - name: Verify the locked environment imports, lints and collects
-        working-directory: src/apps/api
         run: |
-          python - <<'PYTHON'
-          # skia is left out: it needs libEGL, which this job does not install.
-          import cv2, open_clip, torch, torchvision
-          assert not torch.cuda.is_available()
-          assert "+cpu" in torch.__version__, torch.__version__
-          print("torch", torch.__version__, "torchvision", torchvision.__version__)
-          PYTHON
-          ruff check .
-          pytest --collect-only -q tests/schemas tests/cli | tail -1
-      - name: Compare with the unlocked pip install
+          uv lock --check || {
+            echo "::error::src/apps/api/uv.lock does not match pyproject.toml. Run 'cd src/apps/api && uv lock' and commit the result."
+            exit 1
+          }
+      - name: Run API lint
         working-directory: src/apps/api
-        run: |
-          uv pip freeze --exclude-editable | sort > "$RUNNER_TEMP/locked.txt"
-          uv venv --quiet --seed --python 3.11 "$RUNNER_TEMP/unlocked"
-          "$RUNNER_TEMP/unlocked/bin/pip" install --quiet -e ".[dev]"
-          "$RUNNER_TEMP/unlocked/bin/pip" freeze --exclude-editable | sort > "$RUNNER_TEMP/unlocked.txt"
-          {
-            echo "### Locked environment compared with the unlocked pip install"
-            echo "Locked: $(wc -l < "$RUNNER_TEMP/locked.txt") packages, $(du -sm .venv | cut -f1) MB."
-            echo "Unlocked: $(wc -l < "$RUNNER_TEMP/unlocked.txt") packages, $(du -sm "$RUNNER_TEMP/unlocked" | cut -f1) MB."
-            echo
-            echo "Lines starting with < are only in the locked environment, > only in the unlocked one:"
-            echo '```'
-            diff "$RUNNER_TEMP/locked.txt" "$RUNNER_TEMP/unlocked.txt" || [ "$?" -eq 1 ]
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+        run: ruff check .
 
   # This gate remains present on every PR, including docs-only changes.
   # Waiting on `needs:` happens before a job starts and doesn't count toward
@@ -154,20 +109,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: src/apps/api/pyproject.toml
+      - uses: ./.github/actions/api-env
       - name: Test iOS verification orchestration
         run: python3 -m unittest discover -s scripts/ios/tests -v
       - name: iPhone screen text has German and Turkish
         run: |
           python3 scripts/ios/localization.py check
           python3 scripts/ios/localization.py scan
-      - name: Install contract generator dependencies
-        working-directory: src/apps/api
-        run: pip install -e .
       - name: Verify mobile OpenAPI and shared contracts
         working-directory: src/apps/api
         env:
@@ -204,14 +152,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: src/apps/api/pyproject.toml
-      - name: Install offline replay dependencies
-        working-directory: src/apps/api
-        run: pip install -e '.[dev]'
+      - uses: ./.github/actions/api-env
       - name: Resolve immutable comparison base
         id: comparison-base
         run: |
@@ -344,14 +285,7 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: src/apps/api/pyproject.toml
-      - name: Install API dependencies
-        working-directory: src/apps/api
-        run: pip install -e ".[dev]"
+      - uses: ./.github/actions/api-env
       - name: Verify Alembic upgrade-downgrade roundtrip
         working-directory: src/apps/api
         env:
@@ -481,14 +415,7 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: src/apps/api/pyproject.toml
-      - name: Install API dependencies
-        working-directory: src/apps/api
-        run: pip install -e ".[dev]"
+      - uses: ./.github/actions/api-env
       - name: Migrate disposable library database
         working-directory: src/apps/api
         run: python -m alembic upgrade head
@@ -550,12 +477,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare journey result directory
         run: mkdir -p test-results/kri-559
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/api-env
         if: needs.changes.outputs.journey == 'true'
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: src/apps/api/pyproject.toml
       # Match API CI's native Python-library dependencies (Skia imports GL).
       - name: Disable unused Chrome apt source
         run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
@@ -563,10 +486,6 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
-      - name: Install offline journey dependencies
-        if: needs.changes.outputs.journey == 'true'
-        working-directory: src/apps/api
-        run: pip install -e '.[dev]'
       - name: Verify KRI-492 offline policy and compiled-recipe replay prerequisites
         if: contains(needs.changes.outputs.journey_ids, 'kri-492-length-ownership')
         working-directory: src/apps/api
@@ -1581,7 +1500,7 @@ jobs:
   # test_nightly_alert.py holds that and the schedule-only condition.
   nightly-alert:
     if: always() && github.event_name == 'schedule'
-    needs: [api-env, changes, ci-selftests, lint-suites, lint, test-api, ios-contracts, build-and-test, creator-contract-replay, shared-motion-runtime, test-api-suite, journey-mapping, journey-library, journey-offline, journey-native, journey]
+    needs: [changes, ci-selftests, lint-suites, lint, test-api, ios-contracts, build-and-test, creator-contract-replay, shared-motion-runtime, test-api-suite, journey-mapping, journey-library, journey-offline, journey-native, journey]
     runs-on: ubuntu-latest
     # Reads a few job logs and makes three or four API calls.
     timeout-minutes: 10
