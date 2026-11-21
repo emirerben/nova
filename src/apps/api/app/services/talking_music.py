@@ -115,7 +115,9 @@ def song_treatment(track: Any, *, gain_db: float = GAIN_DB) -> dict[str, Any]:
 
 
 def _labels(track: Any) -> Mapping[str, Any]:
-    raw = getattr(track, "ai_labels", None) or {}
+    raw = getattr(track, "ai_labels", None)
+    if not isinstance(raw, Mapping):
+        return {}
     labels = raw.get("labels") if isinstance(raw.get("labels"), Mapping) else raw
     return labels if isinstance(labels, Mapping) else {}
 

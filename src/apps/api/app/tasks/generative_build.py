@@ -5533,9 +5533,13 @@ def _talking_music_bed(
     if treatment is None and ask is not None:
         if not speech_duck_planned_for(client_protocol):
             return missing(talking_music.APP_TOO_OLD)
-        treatment, reason = _match_talking_song(
-            job_id, mood=ask.mood, spoken_text=spoken_text, take_s=take_s
-        )
+        try:
+            treatment, reason = _match_talking_song(
+                job_id, mood=ask.mood, spoken_text=spoken_text, take_s=take_s
+            )
+        except Exception as exc:  # noqa: BLE001 - a lost song never fails the talk
+            record_pipeline_event("phone", "talking_music_match_failed", {"reason": str(exc)[:200]})
+            treatment, reason = None, talking_music.NO_MATCH
         if treatment is None:
             return missing(reason)
     if treatment is None:

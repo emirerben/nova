@@ -1880,6 +1880,9 @@ def _compile_subtitled_editor_commit(
         row["duration_s"] = recipe.duration
         if drop_song:
             row["smart_music_treatment"] = None
+        if drop_song or "background_music" in active_sections:
+            # The worker's record of how the asked song turned out no longer describes this one.
+            row.pop("talking_music", None)
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
         if framing_receipt is not None:

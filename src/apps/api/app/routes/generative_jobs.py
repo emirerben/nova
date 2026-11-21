@@ -6616,11 +6616,12 @@ def _resolve_background_music_treatment(
     video_duration_s = visual_block_variant_duration(variant)
     track_duration_s = _track_duration(track)
     current = variant.get("smart_music_treatment") or {}
-    # KRI-1562: another song (a chat swap names only the track) never inherits the old song's
-    # part; it starts on its own best section.
+    # KRI-1562: another song under a phone Talking edit (a chat swap names only the track)
+    # never inherits the old song's part; it starts on its own best section.
     window = (
         current
         if str(current.get("track_id")) == str(track.id)
+        or not is_phone_subtitled_editor_variant(variant)
         else dict(
             zip(
                 ("section_start_s", "section_end_s"),
