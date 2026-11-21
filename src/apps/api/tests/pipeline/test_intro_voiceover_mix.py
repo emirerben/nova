@@ -48,14 +48,21 @@ class TestRenderHappyPath:
     def test_full_3stream_filter_graph_built(self, mock_probe, mock_run):
         # video=30, music=30, vo=10.5
         mock_probe.side_effect = lambda p: {
-            "/v.mp4": 30.0, "/m.m4a": 30.0, "/vo.m4a": 10.5,
+            "/v.mp4": 30.0,
+            "/m.m4a": 30.0,
+            "/vo.m4a": 10.5,
         }[p]
         mock_run.return_value = _ok()
 
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
-            music_duck_db=-12.0, music_fadeup_ms=200, output_lufs=-14.0,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
+            music_duck_db=-12.0,
+            music_fadeup_ms=200,
+            output_lufs=-14.0,
         )
 
         # Inspect the ffmpeg call
@@ -92,8 +99,11 @@ class TestProbeFailures:
     def test_video_probe_fail_copies_input(self, mock_probe, mock_run, mock_copy):
         mock_probe.side_effect = lambda p: 0.0 if p == "/v.mp4" else 30.0
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
         )
         # FFmpeg never invoked; input video copied to output
         mock_run.assert_not_called()
@@ -106,8 +116,11 @@ class TestProbeFailures:
         # video ok, music+vo both fail
         mock_probe.side_effect = lambda p: 30.0 if p == "/v.mp4" else 0.0
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
         )
         mock_run.assert_not_called()
         mock_copy.assert_called_once_with("/v.mp4", "/out.mp4")
@@ -117,13 +130,18 @@ class TestProbeFailures:
     def test_vo_probe_fail_falls_back_to_music_only(self, mock_probe, mock_run):
         # video=30, music=30, vo=0 (probe failed)
         mock_probe.side_effect = lambda p: {
-            "/v.mp4": 30.0, "/m.m4a": 30.0, "/vo.m4a": 0.0,
+            "/v.mp4": 30.0,
+            "/m.m4a": 30.0,
+            "/vo.m4a": 0.0,
         }[p]
         mock_run.return_value = _ok()
 
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
         )
 
         cmd = mock_run.call_args[0][0]
@@ -144,13 +162,18 @@ class TestProbeFailures:
     def test_music_probe_fail_falls_back_to_vo_only(self, mock_probe, mock_run):
         # video=30, music=0 (failed), vo=10.5
         mock_probe.side_effect = lambda p: {
-            "/v.mp4": 30.0, "/m.m4a": 0.0, "/vo.m4a": 10.5,
+            "/v.mp4": 30.0,
+            "/m.m4a": 0.0,
+            "/vo.m4a": 10.5,
         }[p]
         mock_run.return_value = _ok()
 
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
         )
 
         cmd = mock_run.call_args[0][0]
@@ -171,14 +194,19 @@ class TestFFmpegFailure:
     @patch("app.pipeline.intro_voiceover_mix._probe_duration")
     def test_ffmpeg_nonzero_falls_back_to_copy(self, mock_probe, mock_run, mock_copy):
         mock_probe.side_effect = lambda p: {
-            "/v.mp4": 30.0, "/m.m4a": 30.0, "/vo.m4a": 10.5,
+            "/v.mp4": 30.0,
+            "/m.m4a": 30.0,
+            "/vo.m4a": 10.5,
         }[p]
         mock_run.return_value = _fail(b"some ffmpeg error")
 
         # Should NOT raise; should copy input video as fallback.
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
         )
         mock_copy.assert_called_once_with("/v.mp4", "/out.mp4")
 
@@ -191,18 +219,23 @@ class TestFilterGraphParams:
     @patch("app.pipeline.intro_voiceover_mix._probe_duration")
     def test_custom_duck_db_and_fadeup_ms(self, mock_probe, mock_run):
         mock_probe.side_effect = lambda p: {
-            "/v.mp4": 30.0, "/m.m4a": 30.0, "/vo.m4a": 10.5,
+            "/v.mp4": 30.0,
+            "/m.m4a": 30.0,
+            "/vo.m4a": 10.5,
         }[p]
         mock_run.return_value = _ok()
 
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
-            music_duck_db=-9.0, music_fadeup_ms=350, output_lufs=-16.0,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
+            music_duck_db=-9.0,
+            music_fadeup_ms=350,
+            output_lufs=-16.0,
         )
-        fc = mock_run.call_args[0][0][
-            mock_run.call_args[0][0].index("-filter_complex") + 1
-        ]
+        fc = mock_run.call_args[0][0][mock_run.call_args[0][0].index("-filter_complex") + 1]
         assert "volume=-9.00dB" in fc
         assert "acrossfade=d=0.350" in fc
         assert "loudnorm=I=-16.0" in fc
@@ -212,17 +245,20 @@ class TestFilterGraphParams:
     def test_short_vo_truncated_by_apad_atrim(self, mock_probe, mock_run):
         # VO is 3.2s, intro is 10.5s — VO should be padded with silence to 30s.
         mock_probe.side_effect = lambda p: {
-            "/v.mp4": 30.0, "/m.m4a": 30.0, "/vo.m4a": 3.2,
+            "/v.mp4": 30.0,
+            "/m.m4a": 30.0,
+            "/vo.m4a": 3.2,
         }[p]
         mock_run.return_value = _ok()
 
         render_intro_voiceover_mix(
-            video_path="/v.mp4", music_path="/m.m4a", voiceover_path="/vo.m4a",
-            output_path="/out.mp4", intro_duration_s=10.5,
+            video_path="/v.mp4",
+            music_path="/m.m4a",
+            voiceover_path="/vo.m4a",
+            output_path="/out.mp4",
+            intro_duration_s=10.5,
         )
-        fc = mock_run.call_args[0][0][
-            mock_run.call_args[0][0].index("-filter_complex") + 1
-        ]
+        fc = mock_run.call_args[0][0][mock_run.call_args[0][0].index("-filter_complex") + 1]
         # apad to full video duration (30s), then atrim guarantees no overshoot
         assert "apad=pad_dur=30.000" in fc
         assert "atrim=0:30.000" in fc

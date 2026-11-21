@@ -27,9 +27,7 @@ from app.tasks.template_orchestrate import (
 )
 
 # Skip these tests if ffmpeg is missing (e.g. minimal CI without media tools).
-HAVE_FFMPEG = subprocess.run(
-    ["which", "ffmpeg"], capture_output=True, check=False
-).returncode == 0
+HAVE_FFMPEG = subprocess.run(["which", "ffmpeg"], capture_output=True, check=False).returncode == 0
 pytestmark = pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not on PATH")
 
 
@@ -60,7 +58,7 @@ class TestBuildFixedIntroAss:
     def test_writes_one_dialogue_per_caption(self, tmp_path):
         captions = [
             {"text": "Do you smoke?", "start_s": 0.0, "end_s": 1.4},
-            {"text": "No",            "start_s": 1.5, "end_s": 2.7},
+            {"text": "No", "start_s": 1.5, "end_s": 2.7},
         ]
         out = tmp_path / "captions.ass"
         _build_fixed_intro_ass(captions, {}, str(out))
@@ -78,27 +76,21 @@ class TestBuildFixedIntroAss:
     def test_font_family_translation_dmsans(self, tmp_path):
         captions = [{"text": "Hi", "start_s": 0.0, "end_s": 1.0}]
         out = tmp_path / "captions.ass"
-        _build_fixed_intro_ass(
-            captions, {"font_family": "DMSans-Bold"}, str(out)
-        )
+        _build_fixed_intro_ass(captions, {"font_family": "DMSans-Bold"}, str(out))
         # The seed-script value DMSans-Bold maps to ASS-registered "DM Sans"
         assert "DM Sans" in out.read_text()
 
     def test_unknown_font_passes_through(self, tmp_path):
         captions = [{"text": "Hi", "start_s": 0.0, "end_s": 1.0}]
         out = tmp_path / "captions.ass"
-        _build_fixed_intro_ass(
-            captions, {"font_family": "SomeFancyFont"}, str(out)
-        )
+        _build_fixed_intro_ass(captions, {"font_family": "SomeFancyFont"}, str(out))
         assert "SomeFancyFont" in out.read_text()
 
     def test_color_hex_converted_to_bgr(self, tmp_path):
         captions = [{"text": "Hi", "start_s": 0.0, "end_s": 1.0}]
         out = tmp_path / "captions.ass"
         # Red (#FF0000) → BGR 0000FF
-        _build_fixed_intro_ass(
-            captions, {"color": "#FF0000"}, str(out)
-        )
+        _build_fixed_intro_ass(captions, {"color": "#FF0000"}, str(out))
         assert "&H000000FF" in out.read_text()
 
     def test_caption_text_with_apostrophe_preserved(self, tmp_path):
@@ -121,7 +113,7 @@ class TestRenderIntroWithCaptions:
     def test_renders_30fps_silent_mp4_with_correct_duration(self, tmp_path):
         captions = [
             {"text": "Do you smoke?", "start_s": 0.0, "end_s": 1.4},
-            {"text": "No",            "start_s": 1.5, "end_s": 2.5},
+            {"text": "No", "start_s": 1.5, "end_s": 2.5},
         ]
         out = tmp_path / "intro.mp4"
         _render_intro_with_captions(
@@ -135,10 +127,20 @@ class TestRenderIntroWithCaptions:
         assert out.exists()
         # ffprobe: duration ~3s, fps=30, no audio, size 1080x1920
         probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries",
-             "stream=codec_type,width,height,r_frame_rate", "-show_entries",
-             "format=duration", "-of", "default=nw=1", str(out)],
-            capture_output=True, check=False,
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,width,height,r_frame_rate",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1",
+                str(out),
+            ],
+            capture_output=True,
+            check=False,
         )
         text = probe.stdout.decode()
         assert "width=1080" in text
@@ -162,11 +164,24 @@ class TestRenderIntroWithCaptions:
 def _make_silent_segment(out_path: str, duration_s: float, color: str = "blue") -> None:
     """Helper: render a silent test mp4 with the same spec as intro/body."""
     subprocess.run(
-        ["ffmpeg", "-f", "lavfi",
-         "-i", f"color=c={color}:s=1080x1920:d={duration_s}:r=30",
-         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
-         "-an", "-y", out_path],
-        capture_output=True, check=True,
+        [
+            "ffmpeg",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c={color}:s=1080x1920:d={duration_s}:r=30",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "30",
+            "-an",
+            "-y",
+            out_path,
+        ],
+        capture_output=True,
+        check=True,
     )
 
 
@@ -181,9 +196,18 @@ class TestConcatSilent:
         assert out.exists()
 
         probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=nw=1:nk=1", str(out)],
-            capture_output=True, check=False,
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1:nk=1",
+                str(out),
+            ],
+            capture_output=True,
+            check=False,
         )
         dur = float(probe.stdout.decode().strip())
         # Allow ±100ms for keyframe alignment.
@@ -220,6 +244,7 @@ class TestSelectBodyWindow:
     @patch("app.pipeline.probe.probe_video")
     def test_snap_to_nearest_scene_within_tolerance(self, mock_probe, mock_scenes, _energy):
         from app.pipeline.scene_detect import SceneCut
+
         mock_probe.return_value = MagicMock(duration_s=60.0)
         # natural midpoint is 20.25; cuts at 19.0 (Δ1.25), 22.0 (Δ1.75), 30.0 (Δ9.75)
         mock_scenes.return_value = [
@@ -243,6 +268,7 @@ class TestSelectBodyWindow:
     @patch("app.pipeline.probe.probe_video")
     def test_no_eligible_cuts_keeps_base_pick(self, mock_probe, mock_scenes, _energy):
         from app.pipeline.scene_detect import SceneCut
+
         mock_probe.return_value = MagicMock(duration_s=60.0)
         # No cuts within ±1.5 of natural=20.25 → keep base_start (no forced snap).
         # New behavior: don't drag the window to a far cut just because it exists.
@@ -293,6 +319,7 @@ class TestSelectBodyWindow:
     @patch("app.pipeline.probe.probe_video")
     def test_cut_too_close_to_end_excluded(self, mock_probe, mock_scenes, _energy):
         from app.pipeline.scene_detect import SceneCut
+
         mock_probe.return_value = MagicMock(duration_s=21.0)
         # max_start = 21 - 19.5 = 1.5; cut at 5.0 would overflow
         mock_scenes.return_value = [
@@ -320,9 +347,7 @@ class TestAudioEnergyPeakSelection:
     @patch("app.pipeline.scene_detect.detect_scenes", return_value=[])
     @patch("app.pipeline.probe.probe_video")
     @patch("app.tasks.template_orchestrate._audio_energy_curve")
-    def test_picks_loudest_window_not_midpoint(
-        self, mock_energy, mock_probe, _scenes
-    ):
+    def test_picks_loudest_window_not_midpoint(self, mock_energy, mock_probe, _scenes):
         """User clip 50s; loudest 19.5s window starts at t=25 — not midpoint=15.25."""
         mock_probe.return_value = MagicMock(duration_s=50.0)
         # 50 buckets of 1s. Buckets 25..44 (the celebration) are loud.

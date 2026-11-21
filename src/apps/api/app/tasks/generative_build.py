@@ -5631,6 +5631,95 @@ def _resolve_phone_sound_effect(sfx: Any) -> Any:
     return ResolvedSoundEffect(request=sfx, asset=asset, duration_s=duration_s)
 
 
+def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dict]:
+    """KRI-1561: the recorded voiceover's timed words (``text`` / ``start_s`` / ``end_s``) on the
+    montage clock (the voice plays from the first frame), or ``[]``.
+
+    The montage worker transcribes nothing else, so this runs only for a general sound-effect
+    ask whose gate is open. The content-hash transcript cache serves a re-render; any failure
+    reads as "no timed words", which the chooser reports as ``no_timed_evidence``.
+    """
+    if not voiceover_gcs_path:
+        return []
+    try:
+        from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
+        from app.storage import download_to_file  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = os.path.join(tmpdir, "montage_voiceover")
+            download_to_file(str(voiceover_gcs_path), local)
+            transcript = transcribe_whisper_cached(local)
+        return [
+            {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
+            for word in transcript.words
+        ]
+    except Exception as exc:  # noqa: BLE001 - optional effects never fail the render
+        log.warning("phone_montage_sfx.transcribe_failed", job_id=job_id, error=str(exc)[:200])
+        return []
+
+
+def _phone_choose_sound_effects(
+    job_id: str,
+    *,
+    strategy: Any,
+    limit: Any,
+    words: Any,
+    duration_s: float,
+    taken_at_s: list[float],
+    lane_drops: list[dict],
+) -> tuple[list[Any], dict | None]:
+    """KRI-1561: resolved lane rows for the creator's general sound-effect ask, and the receipt.
+
+    ``([], None)`` when the strategy carries no ask. The rows sit on the lane clock of the
+    caller's ``words`` and ``duration_s``; one the catalogue can no longer serve is a lane drop
+    for that row alone, never a failed job.
+    """
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.agents.sfx_placement import SfxPlacementAgent  # noqa: PLC0415
+    from app.services.phone_sfx_choice import (  # noqa: PLC0415
+        choose_for_phone,
+        demote_receipt,
+        read_sfx_ask,
+    )
+    from app.tasks.autoplace import _load_glossary  # noqa: PLC0415
+
+    ask = read_sfx_ask(strategy)
+    if ask is None:
+        return [], None
+
+    def catalog() -> list[dict]:
+        with _sync_session() as db:
+            return _load_glossary(db)
+
+    def run_agent(payload: Any) -> Any:
+        if not settings.gemini_api_key:
+            raise RuntimeError("no model key for sound-effect placement")
+        return SfxPlacementAgent(default_client()).run(payload, ctx=RunContext(job_id=job_id))
+
+    choice = choose_for_phone(
+        ask,
+        limit=limit,
+        words=words,
+        duration_s=duration_s,
+        catalog_loader=catalog,
+        run_agent=run_agent,
+        taken_at_s=taken_at_s,
+    )
+    resolved: list[Any] = []
+    dropped: list[str] = []
+    for row in choice.effects:
+        try:
+            resolved.append(_resolve_phone_sound_effect(row))
+        except OperationalError:
+            raise  # transient DB -> Celery autoretry, never a lane drop
+        except Exception as exc:  # noqa: BLE001 - one effect never fails the job
+            lane_drops.append({"lane": "sound_effects", "id": row.id, "reason": str(exc)[:300]})
+            dropped.append(row.id)
+    receipt = demote_receipt(choice.receipt, dropped) if dropped else choice.receipt
+    return resolved, receipt
+
+
 def _resolve_phone_voiceover_bed(
     job_id: str,
     voiceover_gcs_path: str | None,
@@ -6147,6 +6236,7 @@ def _run_phone_voiceover_montage_job(
     # recipe (pins, intro and beds untouched); the editor derives the lane from the pinned
     # recipe on its first Save. Never fails the job.
     timed_cards: tuple = ()
+    timed_visuals: tuple = ()
     timed_receipt: dict | None = None
     timed_lane = _phone_timed_card_lane(
         job_id,
@@ -6157,6 +6247,7 @@ def _run_phone_voiceover_montage_job(
     )
     if timed_lane is not None:
         timed_cards, card_visuals, timed_receipt = timed_lane
+        timed_visuals = tuple(card_visuals)
         if timed_cards:
             from app.pipeline.phone_narrated_plan import replace_editor_lanes  # noqa: PLC0415
             from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
@@ -6176,6 +6267,47 @@ def _run_phone_voiceover_montage_job(
                     reason="compile_dropped",
                 )
                 timed_cards = ()
+
+    # KRI-1561: a general "add sound effects where they fit" ask. The recorded voice plays from
+    # the first frame, so its words are on the montage clock; the effects join the KRI-281 lane
+    # beside any timed cards, and a recipe the compiler refuses keeps its pre-effects shape.
+    sfx_choice_receipt: dict | None = None
+    if raw_creator_strategy.get("sfx_ask"):
+        from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+            replace_editor_lanes as _replace_lanes,
+        )
+        from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+        from app.services.sfx_capability import voiceover_sfx_limit  # noqa: PLC0415
+
+        sfx_limit = voiceover_sfx_limit()
+        chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
+            job_id,
+            strategy=raw_creator_strategy,
+            limit=sfx_limit,
+            words=(
+                _phone_montage_voice_words(job_id, decision.extras.get("voiceover_gcs_path"))
+                if sfx_limit is None
+                else []
+            ),
+            duration_s=float(recipe.duration),
+            taken_at_s=[],
+            lane_drops=[],
+        )
+        if chosen_sfx:
+            try:
+                recipe = _replace_lanes(
+                    recipe,
+                    lanes=PhoneSubtitledLanes(overlays=list(timed_cards), sound_effects=chosen_sfx),
+                    visuals=timed_visuals,
+                    video_track_id="montage",
+                )
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                from app.services.phone_sfx_choice import demote_receipt  # noqa: PLC0415
+
+                log.warning("phone_montage_sfx.compile_dropped", job_id=job_id, error=str(exc))
+                sfx_choice_receipt = demote_receipt(
+                    sfx_choice_receipt, [row.request.id for row in chosen_sfx]
+                )
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
@@ -6246,6 +6378,8 @@ def _run_phone_voiceover_montage_job(
             new_entry[TIMED_CARD_RECEIPT_FIELD] = timed_receipt
             if timed_cards:
                 new_entry[TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
+        if sfx_choice_receipt is not None:
+            new_entry["phone_sfx_choice_receipt"] = sfx_choice_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
@@ -7428,6 +7562,30 @@ def _composed_plan(
     return fallback
 
 
+def _creation_text_request_id(generation: Any, call_index: int) -> str:
+    """The paid-call ledger request id for one text compose of a unified-montage plan.
+
+    The ledger refuses a key it has already settled. A story plan whose text could not be
+    placed is composed again as the fast montage, and a worker retry composes the plan again;
+    both send the same research search (it carries only the topic) under the same key, and the
+    refusal reached the creator as "the AI took too long" (prod cc3e380b). Each later compose
+    and each worker retry is a new logical call, so its id says so. The first compose of the
+    first delivery keeps the bare id, and a redelivery of the same retry keeps its id.
+    """
+    from celery import current_task  # noqa: PLC0415
+
+    try:
+        retries = int(getattr(current_task.request, "retries", 0) or 0)
+    except Exception:  # noqa: BLE001 - no task context outside a worker
+        retries = 0
+    parts = [f"creation-text:{generation}"]
+    if retries:
+        parts.append(f"r{retries}")
+    if call_index:
+        parts.append(f"c{call_index}")
+    return ":".join(parts)
+
+
 @phone_text_generation
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -7620,14 +7778,18 @@ def _run_phone_unified_montage_job(
     text_drops: list = []
 
     text_requirements = brief.live() if brief is not None else None
+    compose_calls = 0
 
     def compose(candidate: Any) -> Any:
+        nonlocal compose_calls
         text_drops.clear()
+        request_id = _creation_text_request_id(generation, compose_calls)
+        compose_calls += 1
         try:
             return compose_creation_text(
                 candidate.snapshot,
                 creator_request=str(request or ""),
-                ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+                ctx=RunContext(job_id=job_id, request_id=request_id),
                 copy_constraints=snapshot_copy_constraints(candidate.snapshot),
                 text_requirements=text_requirements,
                 # KRI-881: sourced wording the creator approved, replayed without a new search.
@@ -9835,6 +9997,8 @@ def _run_phone_subtitled_job(
     visuals: tuple = ()
     lane_drops: list[dict] = []
     raw_words: list[dict] | None = None
+    # KRI-1561: what the chooser did for a general sound-effect ask (None: no ask).
+    sfx_choice_receipt: dict | None = None
     # KRI-176: creator-safe receipt for the transcript-grounded overlay lane.
     # Persisted on the variant only when `overlay_grounding_enabled` (see the
     # bottom of this function) -- stays `None` otherwise, byte-identical.
@@ -12613,6 +12777,43 @@ def _run_phone_subtitled_job(
                                 reason="speech_cleanup_cut",
                             )
 
+                # KRI-1561: a general "add sound effects where they fit" ask. The chooser works
+                # on the CUT timeline, so it runs once the lanes above are final and sits beside
+                # any named cue's sound (a named cue always keeps its own slot).
+                if talking_strategy.get("sfx_ask"):
+                    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+                        PhoneSubtitledLanes as _SfxLanes,
+                    )
+                    from app.services.sfx_capability import subtitled_sfx_limit  # noqa: PLC0415
+                    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+                    chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
+                        job_id,
+                        strategy=talking_strategy,
+                        limit=SfxLimit.multi_speaker
+                        if talking_lanes_skipped
+                        else subtitled_sfx_limit(),
+                        words=remap_words(raw_words, cut_plan)
+                        if raw_words and cut_plan is not None
+                        else raw_words,
+                        duration_s=float(talking_timeline_s),
+                        taken_at_s=[
+                            float(row.request.at_s)
+                            for row in (lanes.sound_effects if lanes is not None else [])
+                        ],
+                        lane_drops=lane_drops,
+                    )
+                    if chosen_sfx:
+                        base_lanes = lanes if lanes is not None else _SfxLanes()
+                        lanes = base_lanes.model_copy(
+                            update={
+                                "sound_effects": sorted(
+                                    [*base_lanes.sound_effects, *chosen_sfx],
+                                    key=lambda row: row.request.at_s,
+                                )
+                            }
+                        )
+
                 if inserts and lanes is not None and lanes.background is not None:
                     # The matte cuts out every camera-roll clip on the main track as "the
                     # speaker", so it would cut out the inserted clip too: no insert, said so.
@@ -12875,6 +13076,20 @@ def _run_phone_subtitled_job(
                         beat_receipt = _demote_beat_receipt(
                             beat_receipt, card_ids=dropped_card_ids, reason="compile_dropped"
                         )
+                if sfx_choice_receipt is not None:
+                    # A chosen row the compiler's own retry loop dropped is not "placed".
+                    from app.services.phone_sfx_choice import demote_receipt  # noqa: PLC0415
+
+                    kept_sfx_ids = {
+                        row.request.id for row in (lanes.sound_effects if lanes is not None else [])
+                    }
+                    lost_sfx_ids = [
+                        row["id"]
+                        for row in sfx_choice_receipt.get("placed") or []
+                        if row["id"] not in kept_sfx_ids
+                    ]
+                    if lost_sfx_ids:
+                        sfx_choice_receipt = demote_receipt(sfx_choice_receipt, lost_sfx_ids)
                 lane_receipt = {
                     "applied": list(lane_names(lanes)) if lanes is not None else [],
                     "dropped": lane_drops,
@@ -13502,6 +13717,8 @@ def _run_phone_subtitled_job(
             new_entry["phone_overlay_receipt"] = overlay_receipt
         if beats_enabled:
             new_entry["phone_beat_receipt"] = beat_receipt
+        if sfx_choice_receipt is not None:
+            new_entry["phone_sfx_choice_receipt"] = sfx_choice_receipt
         if cut_plan is not None:
             # Admin/debug parity with the cloud `required_v1` render (`base["silence_cut"]`).
             # KRI-965: also the cut the editor rebuilds this take from (iOS
@@ -18694,6 +18911,40 @@ def _run_phone_narrated_job(
                         else PhoneSubtitledLanes(overlays=list(timed_cards))
                     )
                     visuals = _merge_visual_bindings(visuals, card_visuals)
+            # KRI-1561: a general "add sound effects where they fit" ask. The voice words are
+            # already on the rendered clock, and a named cue's sound keeps its own slot.
+            sfx_choice_receipt: dict | None = None
+            if strategy.get("sfx_ask"):
+                from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+                    PhoneSubtitledLanes as _SfxLanes,
+                )
+                from app.services.sfx_capability import voiceover_sfx_limit  # noqa: PLC0415
+
+                chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
+                    job_id,
+                    strategy=strategy,
+                    limit=voiceover_sfx_limit(),
+                    words=[
+                        {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
+                        for word in transcript.words
+                    ],
+                    duration_s=float(voiceover_duration_s),
+                    taken_at_s=[
+                        float(row.request.at_s)
+                        for row in (lanes.sound_effects if lanes is not None else [])
+                    ],
+                    lane_drops=[],
+                )
+                if chosen_sfx:
+                    base_lanes = lanes if lanes is not None else _SfxLanes()
+                    lanes = base_lanes.model_copy(
+                        update={
+                            "sound_effects": sorted(
+                                [*base_lanes.sound_effects, *chosen_sfx],
+                                key=lambda row: row.request.at_s,
+                            )
+                        }
+                    )
             while True:
                 try:
                     recipe = compile_phone_narrated_plan(
@@ -18756,7 +19007,11 @@ def _run_phone_narrated_job(
                     # names another part (the title, a step) is not the beats' to fix.
                     if (
                         lanes is None
-                        or (beat_receipt is None and timed_receipt is None)
+                        or (
+                            beat_receipt is None
+                            and timed_receipt is None
+                            and sfx_choice_receipt is None
+                        )
                         or (
                             not isinstance(exc, SubtitledLaneError)
                             and exc.lane is not None
@@ -18785,6 +19040,18 @@ def _run_phone_narrated_job(
                     if timed_receipt is not None:
                         timed_receipt = _demote_timed_card_receipt(
                             timed_receipt, card_ids=dropped_card_ids, reason="compile_dropped"
+                        )
+                    if sfx_choice_receipt is not None:
+                        from app.services.phone_sfx_choice import (  # noqa: PLC0415
+                            demote_receipt as _demote_sfx_choice,
+                        )
+
+                        sfx_choice_receipt = _demote_sfx_choice(
+                            sfx_choice_receipt,
+                            sorted(
+                                {sfx.request.id for sfx in lanes.sound_effects}
+                                - {sfx.request.id for sfx in dropped.sound_effects}
+                            ),
                         )
                     lanes = dropped if dropped.overlays or dropped.sound_effects else None
             # An explicit photo-then-original sequence is atomic. Only the final
@@ -18929,6 +19196,8 @@ def _run_phone_narrated_job(
             # KRI-519: the same creator-safe receipt Talking keeps; the chat's
             # render notes read it to say which named moment never came up.
             new_entry["phone_beat_receipt"] = beat_receipt
+        if sfx_choice_receipt is not None:
+            new_entry["phone_sfx_choice_receipt"] = sfx_choice_receipt
         if timed_receipt is not None:
             from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
                 TIMED_CARD_RECEIPT_FIELD,

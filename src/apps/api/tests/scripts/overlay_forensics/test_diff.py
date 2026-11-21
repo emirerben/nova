@@ -1,4 +1,5 @@
 """Tests for scripts/overlay_forensics/diff.py."""
+
 from __future__ import annotations
 
 from scripts.overlay_forensics.diff import (
@@ -16,15 +17,23 @@ from scripts.overlay_forensics.events import FrameObservation, TextEvent
 from scripts.overlay_forensics.masking import BBox
 
 
-def _ev(text: str, color: str, bbox: BBox,
-        t_start: float, t_end: float,
-        pixels: int = 1000, entrance: tuple[str, float] = ("static", 0.0)) -> TextEvent:
+def _ev(
+    text: str,
+    color: str,
+    bbox: BBox,
+    t_start: float,
+    t_end: float,
+    pixels: int = 1000,
+    entrance: tuple[str, float] = ("static", 0.0),
+) -> TextEvent:
     n_obs = max(2, int((t_end - t_start) / 0.05) + 1)
     obs = [
         FrameObservation(
             t_s=t_start + i * (t_end - t_start) / (n_obs - 1),
-            color_key=color, bbox=bbox,
-            mask_pixel_count=pixels, mean_brightness=0.8,
+            color_key=color,
+            bbox=bbox,
+            mask_pixel_count=pixels,
+            mean_brightness=0.8,
         )
         for i in range(n_obs)
     ]
@@ -88,8 +97,10 @@ def test_diff_paired_event_flags_text_mismatch_as_critical():
     o = _ev("Morocco", "maize", BBox(400, 800, 600, 1000), 0.0, 2.4)
     findings = diff_paired_event(
         type("P", (), {"recipe": r, "output": o, "pair_key": "This"})(),
-        recipe_frame_w=1024, recipe_frame_h=576,
-        output_frame_w=1080, output_frame_h=1920,
+        recipe_frame_w=1024,
+        recipe_frame_h=576,
+        output_frame_w=1080,
+        output_frame_h=1920,
     )
     severities = [f.severity for f in findings]
     assert "critical" in severities
@@ -103,8 +114,10 @@ def test_diff_paired_event_flags_missing_event_as_critical():
     r = _ev("This", "white", BBox(100, 200, 200, 250), 0.0, 1.3)
     findings = diff_paired_event(
         type("P", (), {"recipe": r, "output": None, "pair_key": "This"})(),
-        recipe_frame_w=1024, recipe_frame_h=576,
-        output_frame_w=1080, output_frame_h=1920,
+        recipe_frame_w=1024,
+        recipe_frame_h=576,
+        output_frame_w=1080,
+        output_frame_h=1920,
     )
     assert len(findings) == 1
     assert findings[0].severity == "critical"
@@ -115,8 +128,10 @@ def test_diff_paired_event_flags_extra_event_as_critical():
     o = _ev("Morocco", "maize", BBox(400, 800, 600, 1000), 0.0, 2.4)
     findings = diff_paired_event(
         type("P", (), {"recipe": None, "output": o, "pair_key": "Morocco"})(),
-        recipe_frame_w=1024, recipe_frame_h=576,
-        output_frame_w=1080, output_frame_h=1920,
+        recipe_frame_w=1024,
+        recipe_frame_h=576,
+        output_frame_w=1080,
+        output_frame_h=1920,
     )
     assert len(findings) == 1
     assert findings[0].severity == "critical"
@@ -131,8 +146,10 @@ def test_diff_paired_event_position_delta_classified_correctly():
     o = _ev("This", "white", BBox(540 - 50, 576, 540 + 50, 676), 0.0, 1.3)
     findings = diff_paired_event(
         type("P", (), {"recipe": r, "output": o, "pair_key": "This"})(),
-        recipe_frame_w=1024, recipe_frame_h=1920,
-        output_frame_w=1080, output_frame_h=1920,
+        recipe_frame_w=1024,
+        recipe_frame_h=1920,
+        output_frame_w=1080,
+        output_frame_h=1920,
     )
     pos = [f for f in findings if "position" in f.property]
     assert pos, "expected a position finding"
@@ -144,8 +161,10 @@ def test_diff_paired_event_animation_family_mismatch_is_major():
     o = _ev("This", "white", BBox(100, 200, 200, 250), 0.0, 1.3, entrance=("static", 0.0))
     findings = diff_paired_event(
         type("P", (), {"recipe": r, "output": o, "pair_key": "This"})(),
-        recipe_frame_w=1024, recipe_frame_h=576,
-        output_frame_w=1024, output_frame_h=576,
+        recipe_frame_w=1024,
+        recipe_frame_h=576,
+        output_frame_w=1024,
+        output_frame_h=576,
     )
     anim = [f for f in findings if "animation" in f.property]
     assert anim
@@ -155,7 +174,8 @@ def test_diff_paired_event_animation_family_mismatch_is_major():
 def test_diff_cooccurrence_rule_flags_recipe_yes_output_no():
     finding = diff_cooccurrence_rule(
         "africa_starts_while_this_and_is_visible",
-        recipe_satisfied=True, output_satisfied=False,
+        recipe_satisfied=True,
+        output_satisfied=False,
         description="x",
     )
     assert finding is not None
@@ -164,14 +184,20 @@ def test_diff_cooccurrence_rule_flags_recipe_yes_output_no():
 
 def test_diff_cooccurrence_rule_no_finding_when_both_satisfied():
     finding = diff_cooccurrence_rule(
-        "rule", recipe_satisfied=True, output_satisfied=True, description="x",
+        "rule",
+        recipe_satisfied=True,
+        output_satisfied=True,
+        description="x",
     )
     assert finding is None
 
 
 def test_diff_cooccurrence_rule_no_finding_when_recipe_unknown():
     finding = diff_cooccurrence_rule(
-        "rule", recipe_satisfied=None, output_satisfied=False, description="x",
+        "rule",
+        recipe_satisfied=None,
+        output_satisfied=False,
+        description="x",
     )
     assert finding is None
 

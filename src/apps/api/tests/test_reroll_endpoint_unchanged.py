@@ -70,7 +70,7 @@ def test_reroll_job_type_guard_still_template() -> None:
     """
     src = inspect.getsource(reroll_template_job)
     assert '"template"' in src
-    assert 'job_type' in src
+    assert "job_type" in src
 
 
 def test_reroll_creates_new_job_with_template_job_type() -> None:

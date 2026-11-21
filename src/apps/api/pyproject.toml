@@ -158,7 +158,9 @@ dev = [
     "pytest-timeout>=2.3",
     "httpx>=0.27",
     "aiosqlite>=0.20",
-    "ruff>=0.4",
+    # Exact: two ruff versions format differently, and CI and laptops must agree
+    # (scripts/ci/api-lint.py refuses any other version).
+    "ruff==0.17.6",
     "mypy>=1.10",
     "fonttools>=4.53",
     "anthropic>=0.116,<1",
@@ -198,6 +200,22 @@ include = ["app*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.format]
+# Not formatted yet, and this list only shrinks (scripts/ci/test_api_lint.py).
+# These pipeline files belong to no test journey, and CI refuses a change to an
+# unclaimed pipeline file, so a formatting-only change cannot touch them. When
+# you change one: add it to a journey, format it, and delete its line here.
+exclude = [
+    "app/pipeline/audio_layout.py",
+    "app/pipeline/intro_voiceover_mix.py",
+    "app/pipeline/lyric_support.py",
+    "app/pipeline/orientation.py",
+    "app/pipeline/prompt_loader.py",
+    "app/pipeline/scene_detect.py",
+    "app/pipeline/text_overlay_v2/tokenize.py",
+    "app/pipeline/text_wrap.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

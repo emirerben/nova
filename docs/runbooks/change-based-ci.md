@@ -98,7 +98,7 @@ avoid dependency installation, PostgreSQL/Redis services, five web workers and
 macOS runners. Superseded PR and portable main CI runs are cancelled; a running main iOS
 release lane is never cancelled. Nightly/manual regressions have separate concurrency groups.
 
-API tests run as three shards over the complete non-quality test-file set
+API tests run as six shards over the complete non-quality test-file set
 (KRI-1544); every shard feeds the same stable `test-api` gate, so sharding
 changes wall-clock scheduling without reducing coverage. The count lives in
 `scripts/ci/api-tests.py` (`SHARD_COUNT`) and the workflow matrix must list
@@ -131,7 +131,23 @@ arm (runs 44651481740, 44658565495, 44664494076):
 | two shards by file position (before) | 24.6 min | 2 samples | none |
 | three packed, `load` mode | 16.2 min | 1 | slide-post delivery tests in 3 of 5 repeats (KRI-1545) |
 | three packed, `--dist loadfile` | not adopted | 5, one test at a median of 53 s | none |
-| three packed, `load` mode, KRI-1545 lock (adopted) | 18.3 min | 2 | none |
+| three packed, `load` mode, KRI-1545 lock (adopted 2026-11-20) | 18.3 min | 2 | none |
+
+Measured on 2026-11-21 on a throwaway branch, API job only, five repeats per
+arm on one commit (run 44913979019, 45 jobs, all green), with the locked
+install and timings refreshed from five runs:
+
+| Layout | Slowest shard job, median | Tests near their timeout | Other differences |
+| --- | --- | --- | --- |
+| three packed | 1,012 s (16.9 min) | none | none |
+| six packed (adopted) | 642 s (10.7 min) | none | none: 52,354 tests, identical outcomes |
+
+Tests with a timeout of their own did get slower at six shards, with room to
+spare: the three carousel focus-mode renders reached 47 s of their 180 s, and
+one route replay 59 s of its 300 s. No test on the default 60 s timeout went
+above 45 s in either layout. An earlier run of the same experiment (run
+44903511580) had one test at 45-46 s, `test_lane_targets_only_move_toward_green`;
+it was split per fixture first (#2443).
 
 What that taught:
 
@@ -148,11 +164,50 @@ What that taught:
 
 Before changing the count, the packing or the xdist mode, run the old and the
 new layout side by side on a throwaway branch (the API job alone, at least five
-repeats per arm, per-test times from the junit reports) and require:
+repeats per arm) and compare the per-test rows:
 
-1. no failure that the old layout does not have;
-2. among tests that reach 20 s in either arm and set no timeout of their own,
-   no sample at 60 s and no more samples above 45 s than the old layout.
+```sh
+python3 scripts/ci/api-times.py compare OLD_DIR NEW_DIR
+```
+
+It requires:
+
+1. no test that stopped running and no outcome that differs;
+2. no test newly at its timeout, and no more samples per run above three
+   quarters of their timeout than the old layout (45 s of the default 60 s;
+   a test with its own timeout is judged against that).
+
+A throwaway branch for this adds one workflow triggered by pushes to that
+branch, holding the API job with a `layout` and a `repeat` matrix dimension,
+`max-parallel: 10` so real pull requests keep runners, and an environment
+override for the shard count. Do not reduce `ci.yml` itself: a test reads it.
+
+Order the matrix so the arms take turns (repeat 1 of every arm, then repeat 2),
+never one whole arm after the other. Runner speed drifts over an hour, and a
+run on 2026-11-21 that listed all "disk" jobs before all "memory" jobs showed a
+7% gain for an in-memory test database that was not real: tests that never touch
+the database were 10% faster in that arm too. Read a difference under about 10%
+at five repeats as noise unless it shows up only in the tests the change
+should affect. That experiment is neither adopted nor disproven; all time spent
+off the CPU is about 1,100 s per run across six shards, so the most a faster
+database could save is about 45 s per shard.
+
+`journey-offline` runs its two slowest steps (the KRI-492 prerequisites and the
+camera-roll tests) on four xdist workers. Both spend about 215 s in
+`tests/integration/test_actual_export_verification.py` when run serially.
+Measured on 2026-11-21 on a throwaway branch, six repeats per arm, arms taking
+turns, same commit:
+
+| Workers | KRI-492 step, median | Camera-roll step, median | Outcomes against serial |
+| --- | --- | --- | --- |
+| serial | 230 s | 232 s | |
+| two | 179 s | 163 s | identical, 262 and 180 tests |
+| four | 153 s | 151 s | identical, 262 and 180 tests |
+
+Four workers only gain a third because the tests already use every core
+(FFmpeg): summed test time doubles. The slowest test used 26% of its timeout.
+The same file runs in both steps and in an API shard; running it once per job
+would save more and is not done yet.
 
 The `iPhone validation` matrix has a `unit` leg (build, unit tests, selected UI
 subset, named-unit gate) plus `creation` and `screens` legs that compile from
@@ -392,6 +447,43 @@ download is faster than a cache restore of that size.
   `python3 scripts/ci/api-times.py compare OLD_DIR NEW_DIR`. It fails when a
   test stopped running, an outcome changed, a test newly reaches the 60 s
   timeout, or more samples per run sit above 45 s.
+
+### API lint and format
+
+`python3 scripts/ci/api-lint.py` runs `ruff check` and `ruff format --check` on
+`src/apps/api`. `lint-suites` runs it on the whole tree; `scripts/preship-check.sh`
+runs it on the changed files. Both checks always run, so one push shows every
+problem. First measured 2026-11-21 on a laptop: 0.06 s lint, 0.03 s format,
+3,452 files.
+
+- ruff is pinned exactly (`ruff==` in `pyproject.toml`, the same version in
+  `uv.lock`). The command refuses to run with any other version and prints the
+  install line, because two ruff versions format differently. Before the pin,
+  CI ran 0.17 and laptops 0.15, and formatting was not checked in CI at all:
+  92 files had drifted.
+- To move to a new ruff: change the pin, run `cd src/apps/api && uv lock`,
+  run `ruff format .` with the new version and commit the three together.
+- Format one file, never a directory you did not change, and with the pinned
+  ruff (a bare `ruff` on PATH may be another version):
+  `cd src/apps/api && "$(python3 ../../../scripts/ci/api-lint.py --ruff-path)" format path/to/file.py`.
+
+### Local git hooks
+
+`hk.pkl` defines two git hooks, run by [hk](https://hk.jdx.dev). Install once
+per clone: `brew install hk && hk install` (`scripts/worktree-setup.sh` does the
+second part). The install is in the repository's git config, so every worktree
+has it; a branch without `hk.pkl` runs no hk checks. They repeat checks CI
+runs anyway, to save the CI round trip.
+
+| Hook | Checks | Measured 2026-11-21 |
+| --- | --- | --- |
+| commit | `api-lint.py` on the staged API Python files (check only, nothing is rewritten) | 0.08 s |
+| push | `api-lint.py` on the whole API tree, the CLAUDE.md size limit, the journey and UI test registries, and unmapped journey paths against main | 2.0-2.3 s |
+
+The budget for both together is 9 s. Time them with
+`HK_TIMING_JSON=/tmp/hk.json hk run pre-push --from-ref origin/main --to-ref HEAD </dev/null`.
+The editor's format-on-save hook (`scripts/hooks/format-on-save.sh`) formats
+only with the pinned ruff; with any other version it does nothing.
 
 ### Skips in the API shards
 

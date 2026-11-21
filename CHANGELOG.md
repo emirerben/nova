@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.70.0] - 2026-11-21
+
+### Changed
+- feat(kria): the montage-with-voiceover worker places effects for a general sound-effect ask (KRI-1561) (#2449) <!-- release-pr: 2449 -->
+
+## [0.89.69.0] - 2026-11-21
+
+### Changed
+- ci(hooks): commit and push hooks through hk, format-on-save with the pinned ruff (KRI-1534) (#2448) <!-- release-pr: 2448 -->
+
+## [0.89.68.0] - 2026-11-21
+
+### Changed
+- test(intent-review): take the shared lock before borrowed fixtures write rows (KRI-1534) (#2450) <!-- release-pr: 2450 -->
+
+## [0.89.67.0] - 2026-11-21
+
+### Changed
+- ci(journeys): run the two slowest journey-offline steps on four workers (KRI-1534) (#2447) <!-- release-pr: 2447 -->
+
+## [0.89.66.0] - 2026-11-21
+
+### Changed
+- ci(api): check formatting in CI with the pinned ruff (KRI-1534) (#2446) <!-- release-pr: 2446 -->
+
+## [0.89.65.0] - 2026-11-21
+
+### Changed
+- feat(kria): the Talking and Voiceover workers place effects for a general sound-effect ask (KRI-1561) (#2442) <!-- release-pr: 2442 -->
+
+## [0.89.64.0] - 2026-11-21
+
+### Changed
+- ci(api): run the API suite as six shards (KRI-1534) (#2445) <!-- release-pr: 2445 -->
+
+## [0.89.63.0] - 2026-11-21
+
+### Changed
+- ci(ios): print where the iPhone build's time went (KRI-1534) (#2444) <!-- release-pr: 2444 -->
+
+## [0.89.62.0] - 2026-11-21
+
+### Changed
+- test(kria): one lane-targets guard test per fixture (KRI-1534) (#2443) <!-- release-pr: 2443 -->
+
+## [0.89.61.0] - 2026-11-21
+
+### Changed
+- ci(api): write opencv-contrib last so cv2 always has the cascade classifier (KRI-1534) (#2441) <!-- release-pr: 2441 -->
+
+## [0.89.60.0] - 2026-11-21
+
+### Changed
+- fix(kria): failed research renders the approved video without explanations; each text compose pays under its own key (KRI-1413) (#2440) <!-- release-pr: 2440 -->
+
 ## [0.89.59.0] - 2026-11-21
 
 ### Changed

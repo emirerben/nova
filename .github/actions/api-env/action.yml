@@ -29,5 +29,14 @@ runs:
         for extra in $EXTRAS; do extras+=(--extra "$extra"); done
         # --frozen: install the lock as written, never resolve again.
         uv sync --frozen --python 3.11 --group cpu-torch "${extras[@]}"
+        # The lock holds three OpenCV distributions (the project's headless one,
+        # mediapipe's contrib one and scenedetect's plain one). All unpack into
+        # the same cv2/ directory, uv unpacks in parallel, and only contrib has
+        # cv2.CascadeClassifier in OpenCV 5. Write contrib last, every time,
+        # which is what the old one-package-at-a-time install always did.
+        contrib="$(uv pip show opencv-contrib-python | sed -n 's/^Version: //p')"
+        [ -n "$contrib" ] || { echo "::error::opencv-contrib-python is not in the environment"; exit 1; }
+        uv pip install --reinstall --no-deps --quiet "opencv-contrib-python==$contrib"
+        .venv/bin/python -c 'import cv2; assert hasattr(cv2, "CascadeClassifier"), "cv2 has no CascadeClassifier: the wrong OpenCV build is on top"'
         echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
         echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"

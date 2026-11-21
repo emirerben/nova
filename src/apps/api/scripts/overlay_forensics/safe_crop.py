@@ -9,6 +9,7 @@ This module projects bboxes from the recipe's coordinate system onto the
 hypothetical 9:16 center-crop and reports whether they survive intact, or
 if any portion would be clipped.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

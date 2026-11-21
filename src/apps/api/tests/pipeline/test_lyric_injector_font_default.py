@@ -8,7 +8,6 @@ def _recipe() -> dict:
 def _cache() -> dict:
     return {
         "source": "lrclib_synced+whisper",
-
         "lines": [
             {
                 "text": "Default font",
@@ -16,7 +15,7 @@ def _cache() -> dict:
                 "end_s": 2.0,
                 "words": [{"text": "Default font", "start_s": 1.0, "end_s": 2.0}],
             }
-        ]
+        ],
     }
 
 

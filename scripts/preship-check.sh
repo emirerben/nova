@@ -66,18 +66,14 @@ else
   if [ -z "$REL" ]; then
     info "all changed .py files deleted — skipped"
   else
-    RUFF="$REPO/src/apps/api/.venv/bin/ruff"
-    [ -x "$RUFF" ] || RUFF="$(command -v ruff || true)"
-    if [ -z "$RUFF" ]; then
-      warn "ruff not found (no venv, not on PATH) — skipped"
+    # The command CI's lint-suites job runs: lint and format, with the ruff
+    # version uv.lock pins (it refuses any other and names the install).
+    # shellcheck disable=SC2086
+    if OUT="$(python3 scripts/ci/api-lint.py $REL 2>&1)"; then
+      pass "ruff clean on $(echo "$REL" | wc -l | tr -d ' ') changed file(s)"
     else
-      # shellcheck disable=SC2086
-      if OUT="$( (cd src/apps/api && "$RUFF" check $REL && "$RUFF" format --check $REL) 2>&1 )"; then
-        pass "ruff clean on $(echo "$REL" | wc -l | tr -d ' ') changed file(s)"
-      else
-        fail "ruff violations on changed files:"
-        echo "$OUT" | sed 's/^/         /'
-      fi
+      fail "ruff (lint or format) on changed files:"
+      echo "$OUT" | sed 's/^/         /'
     fi
   fi
 fi

@@ -99,12 +99,7 @@ def test_curtain_close_subprocess_uses_pinned_timeout(tmp_path: Path) -> None:
 
     def capturing_run(cmd, *args, **kwargs):
         # PNG-overlay path: ffmpeg -filter_complex "...overlay=..."
-        if (
-            isinstance(cmd, list)
-            and cmd
-            and cmd[0] == "ffmpeg"
-            and "-filter_complex" in cmd
-        ):
+        if isinstance(cmd, list) and cmd and cmd[0] == "ffmpeg" and "-filter_complex" in cmd:
             fc_idx = cmd.index("-filter_complex")
             if fc_idx + 1 < len(cmd) and "overlay=" in cmd[fc_idx + 1]:
                 captured_timeouts.append(kwargs.get("timeout"))

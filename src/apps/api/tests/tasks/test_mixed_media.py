@@ -52,8 +52,13 @@ def _recipe(*media_types: str) -> TemplateRecipe:
 
 def _probe(duration: float = 5.0) -> SimpleNamespace:
     return SimpleNamespace(
-        duration_s=duration, fps=30.0, width=1080, height=1920,
-        has_audio=False, codec="h264", aspect_ratio="9:16",
+        duration_s=duration,
+        fps=30.0,
+        width=1080,
+        height=1920,
+        has_audio=False,
+        codec="h264",
+        aspect_ratio="9:16",
         file_size_bytes=1000,
     )
 
@@ -87,8 +92,10 @@ class TestBuildPositionalClipMetas:
         local_paths = ["/tmp/photo_clip.mp4"]
         probe_map = {"/tmp/photo_clip.mp4": _probe(4.0)}
 
-        with patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as up, \
-             patch("app.tasks.template_orchestrate.analyze_clip") as an:
+        with (
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as up,
+            patch("app.tasks.template_orchestrate.analyze_clip") as an,
+        ):
             metas = _build_positional_clip_metas(local_paths, slots, probe_map)
 
         assert up.call_count == 0, "photo slots must not hit Gemini"
@@ -110,8 +117,9 @@ class TestBuildPositionalClipMetas:
             best_moments=[{"start_s": 0, "end_s": 5, "energy": 7, "description": "x"}],
         )
         with (
-            patch("app.tasks.template_orchestrate.gemini_upload_and_wait",
-                  return_value=MagicMock()),
+            patch(
+                "app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()
+            ),
             patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta),
         ):
             metas = _build_positional_clip_metas(local_paths, slots, probe_map)
@@ -130,12 +138,16 @@ class TestBuildPositionalClipMetas:
         }
 
         fake_meta = ClipMeta(
-            clip_id="g/x", transcript="", hook_text="", hook_score=5.0,
+            clip_id="g/x",
+            transcript="",
+            hook_text="",
+            hook_score=5.0,
             best_moments=[{"start_s": 0, "end_s": 5, "energy": 5, "description": ""}],
         )
         with (
-            patch("app.tasks.template_orchestrate.gemini_upload_and_wait",
-                  return_value=MagicMock()),
+            patch(
+                "app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()
+            ),
             patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta),
         ):
             metas = _build_positional_clip_metas(local_paths, slots, probe_map)
@@ -239,14 +251,20 @@ class TestMatchPositional:
         recipe = _recipe("video", "photo")
         metas = [
             ClipMeta(
-                clip_id="clip_0", transcript="", hook_text="", hook_score=5.0,
+                clip_id="clip_0",
+                transcript="",
+                hook_text="",
+                hook_score=5.0,
                 best_moments=[
                     {"start_s": 0, "end_s": 3.5, "energy": 5, "description": ""},
                     {"start_s": 5, "end_s": 8, "energy": 6, "description": ""},
                 ],
             ),
             ClipMeta(
-                clip_id="clip_1", transcript="", hook_text="", hook_score=5.0,
+                clip_id="clip_1",
+                transcript="",
+                hook_text="",
+                hook_score=5.0,
                 best_moments=[{"start_s": 0, "end_s": 4.0, "energy": 5, "description": ""}],
             ),
         ]
@@ -268,7 +286,10 @@ class TestMatchPositional:
     def test_picks_closest_duration_moment(self):
         recipe = _recipe("video")  # slot 1 wants 3.0s
         meta = ClipMeta(
-            clip_id="clip_0", transcript="", hook_text="", hook_score=5.0,
+            clip_id="clip_0",
+            transcript="",
+            hook_text="",
+            hook_score=5.0,
             best_moments=[
                 {"start_s": 0, "end_s": 10, "energy": 5, "description": "long"},
                 {"start_s": 0, "end_s": 3.1, "energy": 5, "description": "perfect"},

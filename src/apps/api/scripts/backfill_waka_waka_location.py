@@ -53,6 +53,7 @@ Against prod (Fly.io):
     fly ssh console -a nova-video
     cd /app && python scripts/backfill_waka_waka_location.py --apply --yes
 """
+
 from __future__ import annotations
 
 import argparse
@@ -180,17 +181,20 @@ def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
 
             current_template = overlay.get("subject_template")
             current_sample = overlay.get("sample_text", "")
-            if (
-                current_template == OUTRO_TEMPLATE
-                and current_sample == NEW_SAMPLE_TEXT
-            ):
+            if current_template == OUTRO_TEMPLATE and current_sample == NEW_SAMPLE_TEXT:
                 # Fully backfilled already.
                 continue
 
-            changes.append((
-                "outro", slot_idx, ov_idx,
-                current_sample, NEW_SAMPLE_TEXT, OUTRO_TEMPLATE,
-            ))
+            changes.append(
+                (
+                    "outro",
+                    slot_idx,
+                    ov_idx,
+                    current_sample,
+                    NEW_SAMPLE_TEXT,
+                    OUTRO_TEMPLATE,
+                )
+            )
             overlay["sample_text"] = NEW_SAMPLE_TEXT
             overlay["subject_template"] = OUTRO_TEMPLATE
 
@@ -323,9 +327,7 @@ async def run(apply_changes: bool) -> int:
                 if changes:
                     for kind, slot_idx, *_rest in changes:
                         if kind == "outro":
-                            ov = fresh.recipe_cached["slots"][slot_idx][
-                                "text_overlays"
-                            ][_rest[0]]
+                            ov = fresh.recipe_cached["slots"][slot_idx]["text_overlays"][_rest[0]]
                             if (
                                 ov.get("subject_template") != OUTRO_TEMPLATE
                                 or ov.get("sample_text") != NEW_SAMPLE_TEXT
@@ -349,8 +351,8 @@ async def run(apply_changes: bool) -> int:
         print(
             f"\nApplied. required_inputs updated={not inputs_match}, "
             f"recipe edits written={len(changes)} "
-            f"(unlock={sum(1 for c in changes if c[0]=='unlock')}, "
-            f"outro={sum(1 for c in changes if c[0]=='outro')})."
+            f"(unlock={sum(1 for c in changes if c[0] == 'unlock')}, "
+            f"outro={sum(1 for c in changes if c[0] == 'outro')})."
         )
         return 0
 

@@ -22,9 +22,7 @@ def upgrade() -> None:
         "plan_item_assets",
         sa.Column("media_status", sa.Text(), nullable=False, server_default="pending"),
     )
-    op.add_column(
-        "plan_item_assets", sa.Column("preview_gcs_generation", sa.Text(), nullable=True)
-    )
+    op.add_column("plan_item_assets", sa.Column("preview_gcs_generation", sa.Text(), nullable=True))
     op.add_column(
         "plan_item_assets",
         sa.Column(
@@ -36,11 +34,7 @@ def upgrade() -> None:
     )
     # Existing rows that already passed the old worker's probe are safe for
     # manual use.  Transitional/failed rows remain pending until reconciled.
-    op.execute(
-        sa.text(
-            "UPDATE plan_item_assets SET media_status = 'ready' WHERE status = 'ready'"
-        )
-    )
+    op.execute(sa.text("UPDATE plan_item_assets SET media_status = 'ready' WHERE status = 'ready'"))
     op.execute(
         sa.text(
             "UPDATE plan_item_assets SET media_status = 'failed' "

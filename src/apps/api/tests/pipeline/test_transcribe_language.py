@@ -34,9 +34,7 @@ class _FakeTranscriptions:
 
 class _FakeClient:
     def __init__(self, sink: dict, resp_language: str = "") -> None:
-        self.audio = type(
-            "A", (), {"transcriptions": _FakeTranscriptions(sink, resp_language)}
-        )()
+        self.audio = type("A", (), {"transcriptions": _FakeTranscriptions(sink, resp_language)})()
 
 
 @pytest.fixture()
@@ -64,9 +62,7 @@ def test_openai_normalizes_language_case(_audio, monkeypatch):
 def test_openai_captures_detected_language_on_autodetect(_audio, monkeypatch):
     # No hint passed → whisper auto-detects; the reported language ("turkish") is
     # normalized to ISO and carried on the Transcript so subtitled captions in it.
-    monkeypatch.setattr(
-        openai, "OpenAI", lambda **_k: _FakeClient({}, resp_language="turkish")
-    )
+    monkeypatch.setattr(openai, "OpenAI", lambda **_k: _FakeClient({}, resp_language="turkish"))
     t = tr._transcribe_openai(_audio)  # language=None → auto-detect
     assert t.language == "tr"
 
