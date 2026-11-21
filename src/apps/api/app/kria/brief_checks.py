@@ -8070,7 +8070,9 @@ _REASON_TR: dict[str, str] = {
         "Bu düzenlemede kliplerin ne kadar aydınlık ya da karanlık göründüğünü henüz "
         "değiştiremiyorum, o yüzden kendi ışıklarıyla kalıyorlar"
     ),
-    _TALKING_NO_SUCH_EDIT: "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır",
+    # KRI-1561: "Konuşmalı videoda" read as "in a video with speech". The Talking format is not
+    # the reason (nothing stops sound or a change over speech), so the line says "this edit".
+    _TALKING_NO_SUCH_EDIT: "Bu düzenlemede bunu yapamıyorum, o kısım çekildiği gibi kalıyor",
     _TALKING_NO_SPOKEN_TEXT: "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
     _TALKING_OPENING_CUT_PLAN: (
         "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"

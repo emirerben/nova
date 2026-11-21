@@ -65,8 +65,10 @@ from app.schemas.edit_proposal import (
 from app.services.creator_capabilities import (
     BACKGROUND_FOCUS_NOTICES,
     CAPABILITY_REACTION_BEATS,
+    DROPPED_TREATMENT_NOTICES,
     ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE,
     ENDING_CLIP_NOTICES,
+    GENERIC_SOUND_EFFECT_NOTICE,
     SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE,
     SPEAKER_BACKGROUND_NOTICES,
     SPEAKER_FULL_OPENING_NOTICES,
@@ -343,6 +345,18 @@ _KNOWN_TR: dict[str, str] = {
     "The requested licensed sound effect is unavailable. Choose another effect.": (
         "İstediğin lisanslı ses efekti yok. Başka bir efekt seç."
     ),
+    # KRI-1561: a general sound-effect ask with no named moment, and an optional treatment the
+    # edit cannot render (said once each, never silently dropped).
+    GENERIC_SOUND_EFFECT_NOTICE: (
+        "iPhone'da ses efektleri sadece söylediğin anlara konuyor (örneğin: \u201cdiyince "
+        "buzzer çal\u201d). Bir an söylemedin, o yüzden ses eklemedim."
+    ),
+    DROPPED_TREATMENT_NOTICES["overlays"]: (
+        "Resim ve video katmanları bu düzenleme için henüz yok; koymadım."
+    ),
+    DROPPED_TREATMENT_NOTICES["sfx"]: "Ses efektleri bu düzenleme için henüz yok; koymadım.",
+    DROPPED_TREATMENT_NOTICES["transitions"]: ("Geçişler bu düzenleme için henüz yok; koymadım."),
+    DROPPED_TREATMENT_NOTICES["looks"]: "Geniş görünümler bu düzenleme için henüz yok; koymadım.",
 }
 _SHAPE_NAMES_TR = {"Day vlog": "Günlük vlog", "Single-hero": "Tek kahraman"}
 # Notices with a value in them, rebuilt as `say()` templates (KRI-1362) so a catalog language

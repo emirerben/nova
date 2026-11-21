@@ -2360,6 +2360,71 @@
    "app/kria/landscape_fit_ask.py",
    "; the other {middle} keep the middle of the picture",
    "; diğer {middle} tanesinde görüntünün ortası korunuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "A Talking video can't do this, so it stays as filmed",
+   "Bu düzenlemede bunu yapamıyorum, o kısım çekildiği gibi kalıyor"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects on iPhone are placed only at spoken moments you name (for example: “when I say no, play a buzzer”). No moment was named, so no sound was added.",
+   "iPhone'da ses efektleri sadece söylediğin anlara konuyor (örneğin: “diyince buzzer çal”). Bir an söylemedin, o yüzden ses eklemedim."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Picture and video overlays aren't available for this edit yet; left them out.",
+   "Resim ve video katmanları bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects aren't available for this edit yet; left them out.",
+   "Ses efektleri bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Transitions aren't available for this edit yet; left them out.",
+   "Geçişler bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Wide looks aren't available for this edit yet; left them out.",
+   "Geniş görünümler bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "Sound effects are switched off right now, so none will be played",
+   "Ses efektleri şu an kapalı, o yüzden hiçbiri çalmayacak"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "This version of the app can't play sound effects yet, so none will be played",
+   "Uygulamanın bu sürümü henüz ses efekti çalamıyor, o yüzden hiçbiri çalmayacak"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "There are no sound effects to choose from right now, so I added none",
+   "Şu an seçilebilecek ses efekti yok, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "Sound effects need one speaker in the video, so I added none",
+   "Ses efektleri videoda tek konuşmacı gerektiriyor, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "I couldn't find a spoken word or a clear moment to put sound effects on, so I added none",
+   "Ses efektlerini koyacak bir söz ya da net bir an bulamadım, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "You asked for no sound effects, so I added none",
+   "Ses efekti istemedin, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "Nothing in this video clearly called for a sound effect, so I added none",
+   "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
   ]
  ],
  "retired": [
@@ -2772,6 +2837,11 @@
    "app/kria/landscape_fit_ask.py",
    "I'll crop the sideways clips to fill the vertical frame, keeping faces in it, and check it on the finished video",
    "Yatay klipleri dikey ekranı dolduracak şekilde kırpacağım, yüzleri kadrajda tutacağım ve bitmiş videoda kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "A Talking video can't do this, so it stays as filmed",
+   "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır"
   ]
  ]
 }
