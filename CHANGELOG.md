@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.58.0] - 2026-11-21
+
+### Changed
+- ci(api): fail on unlisted skips; run the history tests on pull requests (KRI-1534) (#2439) <!-- release-pr: 2439 -->
+
 ## [0.89.57.0] - 2026-11-21
 
 ### Changed
