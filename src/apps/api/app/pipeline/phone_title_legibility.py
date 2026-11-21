@@ -119,3 +119,51 @@ def title_legibility_pass(
         log.warning("phone_title_legibility.failed", error=str(exc)[:200])
         return rows, None
     return out, {"version": TITLE_LEGIBILITY_VERSION, "frames": len(frames), "lines": lines}
+
+
+def narrated_title_outline(
+    row: dict, frames: Sequence[legibility.GreyFrame], *, canvas: Any
+) -> tuple[dict, dict[str, Any] | None]:
+    """Tahini run: the same measurement for the phone narrated opening title (one row, not a
+    title look). ``row`` with a dark (or light) outline when its final block reads under 4.5:1
+    on the frames behind it, plus the receipt. The style pass gives every row an outline width
+    of 0, so only ``creator_style_fields`` say she set a colour or an outline herself (then the
+    row is left alone). An outline this pass drew is marked and dropped again once the line
+    reads without it. Switch off or no frame under the title: ``(row, None)``. Never raises."""
+    if not settings.title_legibility_enabled or not frames:
+        return row, None
+    try:
+        params = dict(row.get("source_params") or {})
+        authored = set(params.get("creator_style_fields") or [])
+        under = [
+            f for f in frames if f.start_s < float(row["end_s"]) and float(row["start_s"]) < f.end_s
+        ]
+        box = title_mod._measure_title_box(row, canvas=canvas)
+        contrast = legibility.worst_contrast(
+            str(row["color"]), (box.left, box.top, box.right, box.bottom), under
+        )
+        entry: dict[str, Any] = {
+            "id": row["id"],
+            "contrast": None if contrast is None else round(contrast, 2),
+            "treated": False,
+        }
+        receipt = {"version": TITLE_LEGIBILITY_VERSION, "frames": len(frames), "lines": [entry]}
+        if contrast is None:
+            return row, None
+        if contrast >= legibility.MIN_CONTRAST:
+            if params.pop(_MARK, False):
+                bare = {k: v for k, v in row.items() if k != "stroke_color"}
+                return {**bare, "stroke_width": 0, "source_params": params}, receipt
+            return row, receipt
+        if authored & {"color", "stroke_width"}:
+            entry["skipped"] = "creator_styled"
+            return row, receipt
+        ink = legibility.readable_ink(str(row["color"]))
+        # Whole pixels: the style pass refuses a fractional outline on a later restyle.
+        width = round(title_stroke_px(float(row["size_px"])))
+        params[_MARK] = True
+        entry.update(treated=True, stroke_color=ink, stroke_width=width)
+        return {**row, "stroke_color": ink, "stroke_width": width, "source_params": params}, receipt
+    except Exception as exc:  # noqa: BLE001 - a legibility nicety never blocks a render
+        log.warning("phone_title_legibility.narrated_failed", error=str(exc)[:200])
+        return row, None

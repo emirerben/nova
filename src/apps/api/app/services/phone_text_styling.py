@@ -609,6 +609,12 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                     ),
                     "watermark",
                 ),
+                # Tahini run: a narrated title styled first (`narrated_title_readable`) keeps
+                # its top spot; the captions keep off it. None registered: as before.
+                *(
+                    Obstacle(tuple(title["box"]), "text")
+                    for title in policy.get("_title_boxes") or []
+                ),
             ]
             _place(
                 row,
@@ -2124,6 +2130,46 @@ def generation_title_frames() -> list:
         legibility.GreyFrame(f["pixels"], WIDTH, HEIGHT, f["start_s"], f["end_s"])
         for f in policy.get("_background_frames") or []
     ]
+
+
+def narrated_title_readable(row: dict, *, canvas) -> dict:
+    """Tahini run (`NARRATED_TITLE_LEGIBILITY_ENABLED`, checked by the caller): the styled phone
+    narrated title ``row`` made readable on the footage it lands on.
+
+    * White, not the automatic fill's mid grey (#767676 over food and hands), unless the creator
+      set the title's colour (her saved or asked rule, or the row's ``creator_style_fields``).
+    * A dark outline where its block still reads under 4.5:1 on the sampled frames
+      (`phone_title_legibility.narrated_title_outline`; receipt ``variant["title_legibility"]``).
+    * Its final block recorded so the captions, styled after it, keep off it while it is up
+      (`generation_caption_look`).
+
+    No policy: ``row`` unchanged."""
+    policy = _POLICY.get()
+    if not policy:
+        return row
+    from app.pipeline.phone_text_style import animation_box, measure_box
+    from app.pipeline.phone_title_legibility import narrated_title_outline
+
+    row = copy.deepcopy(row)
+    authored = set((row.get("source_params") or {}).get("creator_style_fields") or [])
+    rule = effective_text_rule(
+        policy.get("preferences") or {}, policy.get("requested") or {}, "title"
+    )
+    if "color" not in rule and "color" not in authored:
+        row["color"] = "#FFFFFF"
+    row, receipt = narrated_title_outline(row, generation_title_frames(), canvas=canvas)
+    register_title_legibility(receipt)
+    boxes = [box for box in policy.get("_title_boxes") or [] if box["id"] != row["id"]]
+    boxes.append(
+        {
+            "id": row["id"],
+            "start_s": float(row["start_s"]),
+            "end_s": float(row["end_s"]),
+            "box": animation_box(row, measure_box(row, canvas), canvas),
+        }
+    )
+    policy["_title_boxes"] = boxes
+    return row
 
 
 def register_title_legibility(receipt: dict | None) -> None:

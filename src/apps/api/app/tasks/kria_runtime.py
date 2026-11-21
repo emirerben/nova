@@ -1701,6 +1701,37 @@ def _left_out_line(req: BriefRequirement, *, agreed: bool, label: str | None = N
     )
 
 
+def _done_anyway_line(req: BriefRequirement) -> str:
+    """Tahini: an ask the simpler version left out that the finished video does anyway."""
+    return say(en="- Done anyway: {what}", tr="- Yine de yapıldı: {what}", what=req.text())
+
+
+def _done_anyway(req: BriefRequirement, rendered: Any) -> bool:
+    """The finished video's own evidence (``rendered``, the review's facts) proves ``req`` met.
+
+    Tahini (prod job 1d062f21): "Make it without these" left out "Keep my whole voiceover"
+    and "Keep kitchen sounds quiet under my voice", which every phone Voiceover edit does, and
+    the review said "Left out as agreed" over a video that did both. The ask is judged as if
+    live, by the same checks as the live asks; only a checked ``met`` counts, so anything the
+    render cannot show (a look it was never asked to draw, an order it did not record) stays
+    left out."""
+    from app.kria.brief_checks import build_receipts  # noqa: PLC0415
+
+    reopened = req.model_copy(
+        update={
+            "status": "open",
+            "facts": {key: value for key, value in req.facts.items() if key != "superseded_by"},
+        }
+    )
+    receipts = build_receipts([reopened], rendered, include_unchecked=True)
+    return any(
+        receipt.requirement_id == req.id
+        and receipt.verification == "checked"
+        and receipt.status == "met"
+        for receipt in receipts
+    )
+
+
 def _card_summary(reply: str) -> str:
     """The approval card's copy of the draft reply (KRI-1403).
 
@@ -1808,14 +1839,19 @@ def _with_left_out(text: str, lines: str) -> str:
     return f"{text}\n{lines}"
 
 
-def _left_out_lines(brief: CreativeBrief, coverage: Mapping[str, Any]) -> list[str]:
+def _left_out_lines(
+    brief: CreativeBrief, coverage: Mapping[str, Any], *, rendered: Any = None
+) -> list[str]:
     """The approved draft's simpler-version omissions, for the after-render review (KRI-968).
 
     Only ids the approved brief really superseded: an id live again (restored later) or
-    unknown to the brief says nothing.
+    unknown to the brief says nothing. Tahini: with ``rendered`` (the finished video's review
+    facts) and `left_out_recheck_enabled`, an omission the video does anyway reads "Done
+    anyway" (`_done_anyway`).
     """
     from app.pipeline.phone_cta_text import requirement_asks_arrow  # noqa: PLC0415
 
+    recheck = rendered is not None and settings.left_out_recheck_enabled
     agreed = {str(req_id) for req_id in coverage.get("agreed_omission_ids") or ()}
     by_id = {req.id: req for req in brief.requirements}
     facets = coverage.get(_OMISSION_FACETS_KEY)
@@ -1823,7 +1859,9 @@ def _left_out_lines(brief: CreativeBrief, coverage: Mapping[str, Any]) -> list[s
     lines = []
     for req_id in coverage.get("accepted_omission_ids") or ():
         req = by_id.get(str(req_id))
-        if req is not None and not req.live:
+        if req is not None and not req.live and recheck and _done_anyway(req, rendered):
+            lines.append(_done_anyway_line(req))
+        elif req is not None and not req.live:
             lines.append(_left_out_line(req, agreed=req.id in agreed))
         elif (
             req is not None
@@ -9085,7 +9123,8 @@ def _approved_generation_requirements_review(
         return default_text, []
     # KRI-968: what the approved simpler version left out is said again on the finished
     # video, so the review never reads as if everything else was done.
-    left_out = "\n".join(_left_out_lines(brief, _approved_draft_coverage(db, execution)))
+    coverage = _approved_draft_coverage(db, execution)
+    left_out = "\n".join(_left_out_lines(brief, coverage))
     if not brief.live():
         return _with_left_out(default_text, left_out), []
     generation = str(variant.get("render_generation_id") or "") or None
@@ -9199,6 +9238,9 @@ def _approved_generation_requirements_review(
                 and live[receipt.requirement_id].order_replacement is not None
             )
         ]
+    if settings.left_out_recheck_enabled:
+        # Tahini: a left-out ask is judged by the same evidence as the live ones below.
+        left_out = "\n".join(_left_out_lines(brief, coverage, rendered=facts))
     known = {receipt.requirement_id for receipt in receipts}
     receipts.extend(
         build_receipts(

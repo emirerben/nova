@@ -2336,8 +2336,16 @@ def test_narrated_bed_level_mix_math_matches_montage_convention(monkeypatch):
     assert status.request.recipe.audio.original_volume == pytest.approx(0.4)
 
 
-def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(monkeypatch):
-    """KRI-455: the creator's confirmed title rides the pinned device recipe."""
+@pytest.mark.parametrize(("readable", "title_end_s"), [(False, 1.5), (True, 2.5)])
+def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(
+    monkeypatch, readable, title_end_s
+):
+    """KRI-455: the creator's confirmed title rides the pinned device recipe.
+
+    Its window: a second after the first word, as the cloud narrated intro, with
+    NARRATED_TITLE_LEGIBILITY_ENABLED off. On (Tahini run, a deliberate phone-only divergence:
+    1.56 s was too short to read), it holds to the end of the first sentence, 2.5-3 s."""
+    monkeypatch.setattr(gb.settings, "narrated_title_legibility_enabled", readable)
     job, snapshot, _session, _bindings = _setup_narrated(monkeypatch)
     candidates = {
         **job.all_candidates,
@@ -2350,8 +2358,9 @@ def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(monkeypatch):
     title = recipe.text_layers[0]
     assert title.id == "title-0"
     assert " ".join(run.text for run in title.runs) == "Cacio e pepe in 10 minutes"
-    # The first word ends at 0.5 s, so the title fades out a second later.
-    assert (title.start, title.end) == (0.0, pytest.approx(1.5))
+    # The first word ends at 0.5 s: off, the title fades out a second later; on, the first
+    # sentence ends before 2.5 s, so it holds the 2.5 s floor.
+    assert (title.start, title.end) == (0.0, pytest.approx(title_end_s))
     assert [layer.id for layer in recipe.text_layers[1:]] and all(
         layer.id.startswith("caption") for layer in recipe.text_layers[1:]
     )
@@ -2364,7 +2373,7 @@ def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(monkeypatch):
     [variant] = job.assembly_plan["variants"]
     [row] = variant["narrated_title_text_elements"]
     assert row["text"] == "Cacio e pepe in 10 minutes"
-    assert (row["start_s"], row["end_s"]) == (0.0, pytest.approx(1.5))
+    assert (row["start_s"], row["end_s"]) == (0.0, pytest.approx(title_end_s))
     # No `read_only` marker (KRI-465): the status route decides per request.
     assert "read_only" not in row["source_params"]
     [overlay] = build_overlays_from_text_elements(
