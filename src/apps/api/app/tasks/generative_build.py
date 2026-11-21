@@ -5631,6 +5631,33 @@ def _resolve_phone_sound_effect(sfx: Any) -> Any:
     return ResolvedSoundEffect(request=sfx, asset=asset, duration_s=duration_s)
 
 
+def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dict]:
+    """KRI-1561: the recorded voiceover's timed words (``text`` / ``start_s`` / ``end_s``) on the
+    montage clock (the voice plays from the first frame), or ``[]``.
+
+    The montage worker transcribes nothing else, so this runs only for a general sound-effect
+    ask whose gate is open. The content-hash transcript cache serves a re-render; any failure
+    reads as "no timed words", which the chooser reports as ``no_timed_evidence``.
+    """
+    if not voiceover_gcs_path:
+        return []
+    try:
+        from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
+        from app.storage import download_to_file  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = os.path.join(tmpdir, "montage_voiceover")
+            download_to_file(str(voiceover_gcs_path), local)
+            transcript = transcribe_whisper_cached(local)
+        return [
+            {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
+            for word in transcript.words
+        ]
+    except Exception as exc:  # noqa: BLE001 - optional effects never fail the render
+        log.warning("phone_montage_sfx.transcribe_failed", job_id=job_id, error=str(exc)[:200])
+        return []
+
+
 def _phone_choose_sound_effects(
     job_id: str,
     *,
@@ -6209,6 +6236,7 @@ def _run_phone_voiceover_montage_job(
     # recipe (pins, intro and beds untouched); the editor derives the lane from the pinned
     # recipe on its first Save. Never fails the job.
     timed_cards: tuple = ()
+    timed_visuals: tuple = ()
     timed_receipt: dict | None = None
     timed_lane = _phone_timed_card_lane(
         job_id,
@@ -6219,6 +6247,7 @@ def _run_phone_voiceover_montage_job(
     )
     if timed_lane is not None:
         timed_cards, card_visuals, timed_receipt = timed_lane
+        timed_visuals = tuple(card_visuals)
         if timed_cards:
             from app.pipeline.phone_narrated_plan import replace_editor_lanes  # noqa: PLC0415
             from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
@@ -6238,6 +6267,47 @@ def _run_phone_voiceover_montage_job(
                     reason="compile_dropped",
                 )
                 timed_cards = ()
+
+    # KRI-1561: a general "add sound effects where they fit" ask. The recorded voice plays from
+    # the first frame, so its words are on the montage clock; the effects join the KRI-281 lane
+    # beside any timed cards, and a recipe the compiler refuses keeps its pre-effects shape.
+    sfx_choice_receipt: dict | None = None
+    if raw_creator_strategy.get("sfx_ask"):
+        from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+            replace_editor_lanes as _replace_lanes,
+        )
+        from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+        from app.services.sfx_capability import voiceover_sfx_limit  # noqa: PLC0415
+
+        sfx_limit = voiceover_sfx_limit()
+        chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
+            job_id,
+            strategy=raw_creator_strategy,
+            limit=sfx_limit,
+            words=(
+                _phone_montage_voice_words(job_id, decision.extras.get("voiceover_gcs_path"))
+                if sfx_limit is None
+                else []
+            ),
+            duration_s=float(recipe.duration),
+            taken_at_s=[],
+            lane_drops=[],
+        )
+        if chosen_sfx:
+            try:
+                recipe = _replace_lanes(
+                    recipe,
+                    lanes=PhoneSubtitledLanes(overlays=list(timed_cards), sound_effects=chosen_sfx),
+                    visuals=timed_visuals,
+                    video_track_id="montage",
+                )
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                from app.services.phone_sfx_choice import demote_receipt  # noqa: PLC0415
+
+                log.warning("phone_montage_sfx.compile_dropped", job_id=job_id, error=str(exc))
+                sfx_choice_receipt = demote_receipt(
+                    sfx_choice_receipt, [row.request.id for row in chosen_sfx]
+                )
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
@@ -6308,6 +6378,8 @@ def _run_phone_voiceover_montage_job(
             new_entry[TIMED_CARD_RECEIPT_FIELD] = timed_receipt
             if timed_cards:
                 new_entry[TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
+        if sfx_choice_receipt is not None:
+            new_entry["phone_sfx_choice_receipt"] = sfx_choice_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:

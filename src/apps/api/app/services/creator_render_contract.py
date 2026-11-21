@@ -698,8 +698,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "sfx_ask.request_text",
         "sfx_ask.max_placements",
         note=(
-            "KRI-1561: a general sound-effect ask. The phone Talking and Voiceover workers "
-            "choose the moments (app.services.sfx_chooser.choose_sfx), write them as ordinary "
+            "KRI-1561: a general sound-effect ask. The phone Talking, Voiceover and "
+            "montage-with-voiceover workers choose the moments "
+            "(app.services.sfx_chooser.choose_sfx), write them as ordinary "
             "sound_effects lane rows and record variant['phone_sfx_choice_receipt']. The "
             "contract itself does not verify placement"
         ),
