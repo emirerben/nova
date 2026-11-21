@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.49.0] - 2026-11-21
+
+### Changed
+- fix(ios): chat scrolls over clip rows, slides don't tap their first tile, Photos prompt and 44 pt checks in UI tests (KRI-1550) (#2426) <!-- release-pr: 2426 -->
+
 ## [0.89.48.0] - 2026-11-20
 
 ### Changed
