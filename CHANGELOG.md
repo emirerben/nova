@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.55.0] - 2026-11-21
+
+### Changed
+- ci(api): record setup, call, teardown and CPU time per test (KRI-1534) (#2431) <!-- release-pr: 2431 -->
+
 ## [0.89.54.0] - 2026-11-21
 
 ### Changed
