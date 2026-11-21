@@ -311,6 +311,9 @@ class NarratedStepFact:
     out_of_sequence: bool = False
     moment: tuple[str, float | None] | None = None  # (words, shown at)
     clip: str = ""  # Tahini run: the clip's proxy basename, a clip-scoped ask's other id
+    # #2382 review: where in its clip this step starts (the record omits 0), so the pace
+    # receipt tells a clip playing on from a jump inside the same clip.
+    source_start_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -2533,6 +2536,13 @@ NARRATED_ALIGNMENT_FIELD = "narrated_alignment"
 NARRATED_ALIGNED_BASES = frozenset({"spoken_word_alignment", "guide_script_alignment"})
 
 
+def _record_seconds(value: Any) -> float:
+    """A record's seconds field, 0.0 when absent or not a number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
 def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> PlanFacts:
     """Read verifiable facts off a phone Voiceover render record (KRI-533).
 
@@ -2570,6 +2580,7 @@ def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> Plan
                 out_of_sequence=row.get("out_of_sequence") is True,
                 moment=moment,
                 clip=str(row.get("clip") or ""),
+                source_start_s=_record_seconds(row.get("source_start_s")),
             )
         )
     basis = record.get("ordering_basis")

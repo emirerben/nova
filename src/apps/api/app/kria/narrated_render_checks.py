@@ -112,18 +112,33 @@ def check_narrated_render_ask(req: BriefRequirement, facts: PlanFacts) -> Requir
     return check_clip_cue(req, facts)
 
 
+# How far apart (s) a step's in-point may sit from where the step before it stopped in the same
+# clip and still be the clip playing on: the record rounds in-points to 1 ms.
+_CONTINUOUS_TOLERANCE_S = 0.05
+
+
+def _plays_on(previous: NarratedStepFact, step: NarratedStepFact) -> bool:
+    """``step`` shows the same clip from where ``previous`` stopped: one shot, no visible cut.
+
+    #2382 review: a jump inside one clip (another part of it, or the start again) is a cut."""
+    if step.media_id != previous.media_id:
+        return False
+    stopped_at = previous.source_start_s + max(0.0, previous.end_s - previous.start_s)
+    return abs(step.source_start_s - stopped_at) <= _CONTINUOUS_TOLERANCE_S
+
+
 def _shots(steps: Sequence[NarratedStepFact]) -> list[float]:
-    """Seconds each shot is on screen: a step that shows the clip the step before showed is
-    the same shot."""
+    """Seconds each shot is on screen: a step that shows its clip on from where the step before
+    stopped is the same shot; a jump inside one clip, or another clip, starts a new one."""
     shots: list[float] = []
-    previous: str | None = None
+    previous: NarratedStepFact | None = None
     for step in steps:
         length = max(0.0, step.end_s - step.start_s)
-        if previous is not None and step.media_id == previous and shots:
+        if previous is not None and shots and _plays_on(previous, step):
             shots[-1] += length
         else:
             shots.append(length)
-        previous = step.media_id
+        previous = step
     return shots
 
 
