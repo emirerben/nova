@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.68.0] - 2026-11-21
+
+### Changed
+- test(intent-review): take the shared lock before borrowed fixtures write rows (KRI-1534) (#2450) <!-- release-pr: 2450 -->
+
 ## [0.89.67.0] - 2026-11-21
 
 ### Changed
