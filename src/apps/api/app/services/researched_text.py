@@ -116,7 +116,22 @@ _PRIMARY_INSTITUTIONS = frozenset(
         "louvre.fr",
         "rijksmuseum.nl",
         "turkishmuseums.com",
+        # Japan National Tourism Organization: an incorporated administrative agency of the
+        # government, the official national source for Japanese sites and routes.
+        "japan.travel",
     }
+)
+
+# Government and academic registries. The existing `gov`/`edu`/`ac` rule is generic; the other
+# governments name their registry per country (`go.jp` national and `lg.jp` local governments,
+# `go.kr`, `gouv.fr`, `gob.mx`, `govt.nz`, ...), never a bare `go.<tld>`, because `go.io` or
+# `go.to` are open for anyone to register. Registration under each listed suffix is restricted to
+# those bodies, so the suffix is the authority; a lookalike such as `evil-go.jp` or
+# `go.jp.evil.com` does not end in one.
+_PRIMARY_SUFFIX = re.compile(
+    r"\.(?:gov|edu)$|\.(?:gov|edu|ac)\.[a-z]{2}$"
+    r"|\.(?:go\.(?:jp|kr|th|id|ke|tz|ug)|lg\.jp|gouv\.(?:fr|ci|sn)"
+    r"|gob\.(?:mx|es|ar|cl|pe)|govt\.nz)$"
 )
 
 
@@ -133,7 +148,7 @@ def primary_evidence(evidence: ResearchEvidence) -> ResearchEvidence:
             if not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host):
                 return False
         return bool(
-            re.search(r"\.(?:gov|edu)$|\.(?:gov|edu|ac)\.[a-z]{2}$", host)
+            _PRIMARY_SUFFIX.search(host)
             or any(
                 host == domain or host.endswith("." + domain) for domain in _PRIMARY_INSTITUTIONS
             )
