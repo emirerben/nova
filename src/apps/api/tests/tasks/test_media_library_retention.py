@@ -10,9 +10,10 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
-from app.database import sync_session
+from app.database import sync_engine, sync_session
 from app.models import (
     Job,
     MediaAsset,
@@ -232,23 +233,29 @@ def test_legacy_job_scan_leaves_an_adopted_generation_for_library_retention(
     )
     monkeypatch.setattr(settings, "storage_retention_enabled", True)
     monkeypatch.setattr(settings, "storage_retention_scan_jobs", 10_000)
-    monkeypatch.setattr(storage_retention, "_previous_library_scan_cursor", lambda _db: None)
-
-    manifest_id = storage_retention.build_retention_manifest(now=now)
-    assert manifest_id is not None
-    with sync_session() as db:
-        entries = db.scalars(
-            select(StorageRetentionEntry).where(
-                StorageRetentionEntry.manifest_id == uuid.UUID(manifest_id),
-                StorageRetentionEntry.creator_id == source.user_id,
-                StorageRetentionEntry.object_path == path,
-            )
-        ).all()
-        assert [(entry.action, entry.reason) for entry in entries] == [
-            ("warn", "inactive_library_source_warning")
-        ]
-        db.get(StorageRetentionManifest, uuid.UUID(manifest_id)).status = "completed"
-        db.commit()
+    # The builder reuses any active manifest database-wide. Other workers exercise
+    # the executor with approved manifests while this test needs a fresh report.
+    with sync_engine.begin() as connection:
+        for table in ("storage_retention_manifests", "storage_retention_entries"):
+            ddl = f"CREATE TEMP TABLE {table} (LIKE public.{table} INCLUDING ALL) ON COMMIT DROP"
+            connection.execute(text(ddl))
+        sessions = sessionmaker(
+            bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        )
+        monkeypatch.setattr(storage_retention, "sync_session", sessions)
+        manifest_id = storage_retention.build_retention_manifest(now=now)
+        assert manifest_id is not None
+        with sessions() as db:
+            entries = db.scalars(
+                select(StorageRetentionEntry).where(
+                    StorageRetentionEntry.manifest_id == uuid.UUID(manifest_id),
+                    StorageRetentionEntry.creator_id == source.user_id,
+                    StorageRetentionEntry.object_path == path,
+                )
+            ).all()
+            assert [(entry.action, entry.reason) for entry in entries] == [
+                ("warn", "inactive_library_source_warning")
+            ]
 
 
 def _approved_library_entry(

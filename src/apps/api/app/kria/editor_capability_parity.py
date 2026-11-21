@@ -212,9 +212,10 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "split_screen_create": _g("agent_ops", "createSplitScreen", ("create_split_screen",)),
     "split_screen_layout": _g(
         "agent_ops",
-        "setSplitScreenDuration setSplitScreenPanelCount setSplitScreenPanelWeight "
-        "setSplitScreenGutter setSplitScreenBackgroundColor beginSplitDividerDrag "
-        "updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag setSplitCollapse",
+        "setSplitScreenDuration trimEmptySplitEnd setSplitScreenPanelCount "
+        "setSplitScreenPanelWeight setSplitScreenGutter setSplitScreenBackgroundColor "
+        "beginSplitDividerDrag updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag "
+        "setSplitCollapse",
         ("update_split_screen",),
         fields=(
             "duration_s",
@@ -229,6 +230,11 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "split_screen_clip_order": _g("agent_ops", "moveSelectedSplitScreenClip", ("move_split_clip",)),
     "split_screen_section_order": _g(
         "agent_ops", "moveSelectedSplitScreenSection", ("move_split_screen",)
+    ),
+    "split_screen_clip_drop": _g(
+        "agent_unsupported",
+        "dropSplitClip",
+        reason="Chat can assign one clip to a gap, but cannot swap two clips in one edit.",
     ),
     "split_screen_clip_offset": _g(
         "agent_ops",
@@ -284,7 +290,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "split_screen_queries": _g(
         "not_an_edit",
         "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved "
-        "canFillSplitPanelWithBlank",
+        "canFillSplitPanelWithBlank occupiedSplitEnd",
         reason="Read-only checks the Split panel uses to decide what to offer.",
     ),
     # ---------------------------------------------------------------- audio

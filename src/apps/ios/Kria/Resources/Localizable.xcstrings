@@ -30474,6 +30474,22 @@
         }
       }
     },
+    "Remove empty ending" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leeres Ende entfernen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Boş son kısmı kaldır"
+          }
+        }
+      }
+    },
     "Remove split" : {
       "localizations" : {
         "de" : {
@@ -33789,6 +33805,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kısa destek videoları."
+          }
+        }
+      }
+    },
+    "Shorten a clip or choose another spot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kürze einen Clip oder wähle eine andere Stelle."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bir klibi kısalt veya başka bir yer seç."
           }
         }
       }
@@ -41248,6 +41280,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu nesne, render yeteneği kullanılabilir olana kadar salt okunur."
+          }
+        }
+      }
+    },
+    "This clip won’t fit here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Clip passt hier nicht hin."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu klip buraya sığmıyor."
           }
         }
       }

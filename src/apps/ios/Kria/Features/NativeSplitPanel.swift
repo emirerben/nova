@@ -246,6 +246,13 @@ struct NativeSplitPanel: View {
                 NativeSplitBlankColorRow(session: session, color: color, sectionBackground: context.section.backgroundColor)
             }
 
+            if session.canEditSplitScreen, let end = session.occupiedSplitEnd(sectionID: sectionID),
+               context.section.durationS - end >= NativeSplitGaps.minimumDuration {
+                actionRow(String(localized: "Remove empty ending"), icon: "scissors", id: "native-editor-split-trim-empty-end") {
+                    session.trimEmptySplitEnd(sectionID: sectionID)
+                }
+            }
+
             if session.canExtendSplitToWholeVideo(sectionID: sectionID) {
                 actionRow(String(localized: "Extend split to whole video"), icon: "arrow.left.and.right", id: "native-editor-split-extend-whole") {
                     session.extendSplitToWholeVideo(sectionID: sectionID)
