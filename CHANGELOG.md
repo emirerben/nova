@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.69.0] - 2026-11-21
+
+### Changed
+- ci(hooks): commit and push hooks through hk, format-on-save with the pinned ruff (KRI-1534) (#2448) <!-- release-pr: 2448 -->
+
 ## [0.89.68.0] - 2026-11-21
 
 ### Changed
