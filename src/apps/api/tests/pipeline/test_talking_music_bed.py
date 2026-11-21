@@ -18,11 +18,13 @@ F12 Voiceover: the level under speech stays today's
 
 from __future__ import annotations
 
+import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from app.kria.device_render import recipe_digest
+from app.kria.device_render import canonical_recipe_document, recipe_digest
 from app.kria.portable_visual import AudioMuteWindow
 from app.kria.recipes import MAX_SPEECH_WINDOWS, TimelineClip, TimelineTrack
 from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
@@ -97,6 +99,26 @@ def _talking(**kwargs):
 # --- F1: byte identity ---------------------------------------------------------------------
 
 
+def _digest_without_font_measurements(recipe) -> str:
+    """`recipe_digest` minus what the platform's font backend measures.
+
+    Skia lays glyphs out with the OS rasterizer: macOS keeps fractional advances, Linux rounds
+    them to whole pixels, and baselines differ at the fifth decimal. The same pre-change code
+    digests differently on a Mac and in CI, so a literal pin over the raw document can only ever
+    hold on the machine that produced it. Glyph ids, text, fonts, timing, tracks and audio stay.
+    """
+
+    document = canonical_recipe_document(recipe)
+    for layer in document["text_layers"]:
+        for run in layer["runs"]:
+            run.pop("x", None)
+            run.pop("baseline_y", None)
+            for glyph in run["glyphs"]:
+                glyph.pop("x", None)
+    payload = json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def test_no_music_compiles_byte_identical_to_before():
     talking = _talking(
         keep_segments=[(0.0, 3.0), (4.0, 10.0)],
@@ -108,8 +130,8 @@ def test_no_music_compiles_byte_identical_to_before():
         additional_speakers=(_binding("extra", duration_s=4.0),),
         inserts=(PhoneInsert(binding=_binding("insert", duration_s=2.0), at_take_s=3.0),),
     )
-    assert recipe_digest(talking) == (
-        "aae39806550c98c2b7e1b0c91dbb9570b101424070cf51713db76d1e1451b036"
+    assert _digest_without_font_measurements(talking) == (
+        "cf331cb29ab614a7fe8f828e0fb840a951c5f2588b31641e18af2b8df08f6425"
     )
     music = PhoneMusicBed(
         catalog_id="track1",
@@ -121,8 +143,8 @@ def test_no_music_compiles_byte_identical_to_before():
     )
     decision, bindings = voiceover_fixture(music_track_id="track1", music_start_s=30.5, mix=0.7)
     voiceover = compile_voiceover(decision, bindings, music=music)
-    assert recipe_digest(voiceover) == (
-        "c21bf0d79375103f94c2353eff3dfba7d03df72ed15383fe9885f2bfb5ef4c08"
+    assert _digest_without_font_measurements(voiceover) == (
+        "708e63c0dc3dc0f25190299d632d72391caa5bc4babb7bd686655f069a5a848b"
     )
 
 
