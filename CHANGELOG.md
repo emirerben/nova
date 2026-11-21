@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.63.0] - 2026-11-21
+
+### Changed
+- ci(ios): print where the iPhone build's time went (KRI-1534) (#2444) <!-- release-pr: 2444 -->
+
 ## [0.89.62.0] - 2026-11-21
 
 ### Changed
