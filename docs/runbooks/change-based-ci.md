@@ -404,10 +404,11 @@ and does not yet.
 
 - A new skip in CI: make the test run, or add an entry with the reason. Do not
   widen an existing pattern to cover it.
-- Tests that need the repository's history (`tests/git_history_required.py`)
-  skip in the shards, which clone one commit, and run in
-  `creator-contract-replay` with `NOVA_REQUIRE_GIT_HISTORY=1`, where a missing
-  commit or merge base is a failure.
+- Tests that need the repository's history are marked
+  `@pytest.mark.needs_git_history` (`tests/git_history_required.py`). They skip
+  in the shards, which clone one commit, and run in `creator-contract-replay`
+  with `NOVA_REQUIRE_GIT_HISTORY=1`, where a missing commit or merge base is a
+  failure. That job runs only the marked tests.
 - First measured 2026-11-21: 115 skips per run in 26 files. 26 of them were
   checks that never ran on pull requests (25 reliability-gate fix-commit tests
   and the copy-catalog codemod test) and one needed an uninstalled package.

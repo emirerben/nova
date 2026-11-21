@@ -325,13 +325,14 @@ class ApiTestShardTests(unittest.TestCase):
 
     def test_every_file_that_asks_for_git_history_runs_in_the_history_job(self):
         (self.api_root / "tests/nested/test_bravo.py").write_text(
-            "from tests.git_history_required import git_history_required\n"
+            "import pytest\n\n@pytest.mark.needs_git_history\ndef test_x(): ...\n"
         )
         self.assertEqual(
             api_tests.history_files(self.api_root), [Path("tests/nested/test_bravo.py")]
         )
         command, env = api_tests.history_command(self.api_root, {"PATH": "/bin"})
         self.assertIn("tests/nested/test_bravo.py", command)
+        self.assertEqual(command[command.index("-m") + 1], "needs_git_history")
         self.assertEqual(env["NOVA_REQUIRE_GIT_HISTORY"], "1")
         workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
         self.assertIn("python3 scripts/ci/api-tests.py history\n", workflow)

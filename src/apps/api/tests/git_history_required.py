@@ -4,6 +4,10 @@ The API shards clone a single commit, so tests that ask git about older commits
 skip there. The `creator-contract-replay` job clones everything and sets
 ``NOVA_REQUIRE_GIT_HISTORY=1``: in that job a missing commit or merge base is a
 failure, never a skip. Same shape as ``tests/postgres_required.py``.
+
+Mark such a test ``@pytest.mark.needs_git_history``: that job runs exactly the
+marked tests (``scripts/ci/api-tests.py history``), not the rest of the file,
+because it does not install everything the shards do.
 """
 
 from __future__ import annotations

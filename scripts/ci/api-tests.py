@@ -201,13 +201,16 @@ def check_skips(api_root: Path, expected: Path = EXPECTED_SKIPS) -> int:
     return 1
 
 
+HISTORY_MARKER = "needs_git_history"
+
+
 def history_files(api_root: Path) -> list[Path]:
-    """Test files that ask whether git history is required: they skip on the
-    shards' one-commit clone, so they must also run where the history is."""
+    """Test files with a test marked as needing git history: those tests skip
+    on the shards' one-commit clone, so they must also run where it exists."""
     return [
         path
         for path in test_files(api_root)
-        if "git_history_required" in (api_root / path).read_text(encoding="utf-8")
+        if f"mark.{HISTORY_MARKER}" in (api_root / path).read_text(encoding="utf-8")
     ]
 
 
@@ -216,7 +219,9 @@ def history_command(api_root: Path, environ: dict[str, str]) -> tuple[list[str],
     files = history_files(api_root)
     if not files:
         raise ValueError("no test file asks for git history; the history job would check nothing")
-    command = ["pytest", *(str(path) for path in files), "-q", "-rs", "-p", "no:cacheprovider"]
+    # Only the marked tests: this job lacks libraries other tests in the same
+    # files need (skia's libEGL).
+    command = ["pytest", *(str(path) for path in files), "-m", HISTORY_MARKER, "-q", "-rs"]
     return command, {**environ, "NOVA_REQUIRE_GIT_HISTORY": "1"}
 
 
@@ -227,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     api_root = Path(__file__).resolve().parents[2] / "src/apps/api"
     if argv[0] == "history":
         command, env = history_command(api_root, dict(os.environ))
-        print("Tests that need git history:", *command[1 : command.index("-q")])
+        print("Tests that need git history:", *command[1 : command.index("-m")])
         return subprocess.run(command, cwd=api_root, env=env, check=False).returncode
     try:
         shard = int(argv[0])

@@ -76,6 +76,7 @@ def _is_ancestor(commit: str) -> bool | None:
     return None  # not a git checkout (e.g. a source tarball)
 
 
+@pytest.mark.needs_git_history
 @pytest.mark.parametrize("gate", _gates(MERGED))
 def test_fix_commits_are_on_this_branch(gate) -> None:
     ancestor = _is_ancestor(gate.fix_commit)
