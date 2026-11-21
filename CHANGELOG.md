@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.54.0] - 2026-11-21
+
+### Changed
+- feat(kria): music under speech for Talking and Voiceover phone edits (#2428) <!-- release-pr: 2428 -->
+
 ## [0.89.53.0] - 2026-11-21
 
 ### Changed
