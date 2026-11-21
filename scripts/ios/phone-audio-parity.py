@@ -75,6 +75,10 @@ is in OUT.
    effects (one over speech, ducked; one in a pause) must be audible in the native export at the
    planned times; controls: `talking_sfx_ask_no_duck`, `talking_sfx_ask_no_effects`. Command:
    `prepare OUT --cases talking_sfx_ask`.
+   `voiceover_montage_sfx_ask` (KRI-1561): the REAL `compile_phone_voiceover_montage_plan` plus the
+   `sfx` lane the worker adds (`replace_editor_lanes`); both effects must play at their planned
+   times with the voice still playing; control `voiceover_montage_sfx_ask_no_effects`. Command:
+   `prepare OUT --cases voiceover_montage_sfx_ask`.
    `talking_cutaway_sound`: the recipe comes from the REAL `compile_phone_subtitled_plan` with
    a `PhoneCutaway(sound=True)`. The speaker is a green clip carrying a 300 Hz tone, the
    cutaway a red clip carrying a 700 Hz tone, so the EXPORT must hold: the speaker tone before
@@ -548,6 +552,8 @@ def compare(out: Path) -> int:
                 row, failed = _compare_talking_cutaway_sound(directory, proof)
             elif proof["kind"] == "talking_sfx_ask":
                 row, failed = _compare_talking_sfx_ask(directory, proof)
+            elif proof["kind"] == "montage_sfx_ask":
+                row, failed = _compare_montage_sfx_ask(directory, proof)
             elif proof["kind"] == "voice_behind_footage":
                 row, failed = _compare_voice_behind_footage(out, directory, proof)
             else:
@@ -2172,10 +2178,160 @@ def _compare_talking_sfx_ask(directory: Path, proof: dict) -> tuple[dict, bool]:
     return row, bool(failed)
 
 
+# -------------------------------------------- Voiceover montage chosen effects (KRI-1561)
+
+MONTAGE_SFX_AT_S = (3.0, 8.0)
+
+
+def _montage_sfx_recipe(files: dict[str, Path], *, effects: bool = True):
+    from app.kria.render_assets import LibraryRenderAsset  # noqa: PLC0415
+    from app.pipeline.phone_narrated_plan import replace_editor_lanes  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        PhoneSubtitledLanes,
+        ResolvedSoundEffect,
+        SubtitledSoundEffect,
+    )
+
+    binding = _binding_for("footage", files["footage"])
+    recipe = compile_phone_voiceover_montage_plan(
+        _montage_decision(LEVELS_SECONDS, mix=VOICEOVER_MIX, music=False),
+        (binding,),
+        music=None,
+        narration=_narration(files["voice"]),
+    )
+    if not effects:
+        return recipe
+    rows = [
+        ResolvedSoundEffect(
+            request=SubtitledSoundEffect(id=f"ask-sfx-{i}", catalog_id="fx-ask", at_s=at_s),
+            asset=LibraryRenderAsset(
+                id="sfx-fx-ask",
+                catalog="sound_effect",
+                catalog_id="fx-ask",
+                generation="1",
+                fingerprint=_fingerprint(files["effect"]),
+            ),
+            duration_s=SFX_EFFECT_S,
+        )
+        for i, at_s in enumerate(MONTAGE_SFX_AT_S)
+    ]
+    return replace_editor_lanes(
+        recipe,
+        lanes=PhoneSubtitledLanes(sound_effects=rows),
+        visuals=(),
+        video_track_id="montage",
+    )
+
+
+def prepare_voiceover_montage_sfx_ask(out: Path) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    sources = out / "voiceover_montage_sfx_inputs"
+    sources.mkdir(exist_ok=True)
+    files = {
+        "voice": sources / "voice.m4a",
+        "footage": sources / "footage.mp4",
+        "effect": sources / "effect.m4a",
+    }
+    _write_tone_audio(files["voice"], VOICE_HZ, LEVELS_VOICE_AMPLITUDE, LEVELS_SECONDS)
+    _write_tone_clip(files["footage"], (74, 107, 138), FOOTAGE_HZ, LEVELS_SECONDS + 2)
+    _write_tone_audio(files["effect"], SFX_EFFECT_HZ, 0.5, SFX_EFFECT_S)
+    # `_write_levels_case` maps every library asset to files["music"]: here that is the effect.
+    files["music"] = files["effect"]
+    recipe = _montage_sfx_recipe(files)
+    proof = {
+        "kind": "montage_sfx_ask",
+        "duration_s": recipe.duration,
+        "voice_hz": VOICE_HZ,
+        "effect_hz": SFX_EFFECT_HZ,
+        "effect_s": SFX_EFFECT_S,
+        "effect_at_s": list(MONTAGE_SFX_AT_S),
+        "source_voice_amp": _tone_amp(files["voice"], VOICE_HZ),
+        "source_effect_amp": _tone_amp(files["effect"], SFX_EFFECT_HZ, at_s=SFX_EFFECT_S / 2),
+    }
+    _write_levels_case(out, "voiceover_montage_sfx_ask", recipe, files, proof)
+    _write_levels_case(
+        out,
+        "voiceover_montage_sfx_ask_no_effects",
+        _montage_sfx_recipe(files, effects=False),
+        files,
+        {**proof, "expect_failure": ["effects_play"], "allowed_failures": ["effects_play"]},
+    )
+    print(f"prepared voiceover_montage_sfx_ask cases in {out} ({recipe.duration:.2f}s)")
+
+
+def _compare_montage_sfx_ask(directory: Path, proof: dict) -> tuple[dict, bool]:
+    name = directory.name
+    phone = directory / "phone.mp4"
+    row: dict = {"case": name, "kind": proof["kind"]}
+    if not phone.exists():
+        row["error"] = "phone.mp4 missing: run the package test first"
+        return row, True
+    rate = 48000
+    pcm = _pcm(phone)
+    hz, length = proof["effect_hz"], proof["effect_s"]
+    eff_ref, voice_ref = proof["source_effect_amp"], proof["source_voice_amp"]
+
+    def tone_db(freq: float, a: float, b: float, ref: float) -> float:
+        amp = _goertzel(pcm, rate, (a + b) / 2, (b - a) / 2, freq)
+        return round(_amp_db(amp) - _amp_db(ref), 1)
+
+    played = [
+        tone_db(hz, at + 0.1, at + length - 0.1, eff_ref) for at in proof["effect_at_s"]
+    ]
+    checks: dict[str, dict] = {}
+    checks["effects_play"] = {
+        "level_vs_source_db": played,
+        "within_db": LEVEL_TOLERANCE_DB,
+        "ok": all(abs(v) <= LEVEL_TOLERANCE_DB for v in played),
+    }
+    first, second = proof["effect_at_s"]
+    quiet = [(0.5, first - 0.3), (first + length + 0.3, second - 0.3),
+             (second + length + 0.3, proof["duration_s"] - 0.5)]  # fmt: skip
+    leaks = [tone_db(hz, a, b, eff_ref) for a, b in quiet]
+    checks["effects_only_at_planned_times"] = {
+        "effect_tone_elsewhere_vs_source_db": leaks,
+        "max_db": LEAK_MAX_DB,
+        "ok": all(v <= LEAK_MAX_DB for v in leaks),
+    }
+    # The voice must keep playing under and around the effects (the lane never replaces it): its
+    # level is the same everywhere, whatever the mix put it at.
+    voice = [
+        tone_db(proof["voice_hz"], a, b, voice_ref)
+        for a, b in [(0.5, first - 0.3), (first + 0.1, first + length - 0.1),
+                     (second + 0.1, second + length - 0.1)]  # fmt: skip
+    ]
+    checks["voice_plays_throughout"] = {
+        "level_vs_source_db": voice,
+        "spread_db": round(max(voice) - min(voice), 1),
+        "ok": max(voice) - min(voice) <= LEVEL_TOLERANCE_DB and min(voice) > -12.0,
+    }
+    exported = _duration(phone)
+    checks["length"] = {
+        "exported_s": round(exported, 3),
+        "planned_s": round(proof["duration_s"], 3),
+        "ok": abs(exported - proof["duration_s"]) <= 1 / 30 + 0.02,
+    }
+    row["checks"] = checks
+    failed = sorted(k for k, v in checks.items() if not v["ok"])
+    row["failed_checks"] = failed
+    expect = proof.get("expect_failure")
+    if expect:
+        allowed = set(proof.get("allowed_failures") or expect)
+        caught = set(expect) <= set(failed) <= allowed
+        row["expect_failure"] = expect
+        row["negative_control_detected"] = caught
+        print(f"{name}: negative control {'DETECTED' if caught else 'MISSED'} ({failed})")
+        return row, not caught
+    row["passed"] = not failed
+    print(f"{name}: {'PASS' if row['passed'] else 'FAIL'} {failed}")
+    return row, bool(failed)
+
+
 CASES = {
     "all",
     "talking_cutaway_sound",
     "talking_sfx_ask",
+    "voiceover_montage_sfx_ask",
     "parity",
     "user_song",
     "voiceover_music_authored",
@@ -2199,6 +2355,8 @@ def prepare(out: Path, cases: str = "all") -> None:
         prepare_talking_cutaway_sound(out)
     if cases in {"all", "talking_sfx_ask"}:
         prepare_talking_sfx_ask(out)
+    if cases in {"all", "voiceover_montage_sfx_ask"}:
+        prepare_voiceover_montage_sfx_ask(out)
 
 
 if __name__ == "__main__":
