@@ -80,6 +80,7 @@ from app.kria.portable_speaker_background import (
     SpeakerBackgroundWindow,
     SpeakerFrame,
     SpeakerFullScreenWindow,
+    SpeakerLayoutWindow,
 )
 from app.kria.portable_text import TextInk
 from app.kria.portable_visual import AudioMuteWindow, VisualCanvasFill, VisualMediaPlacement
@@ -1281,6 +1282,29 @@ def _compile_background(
         if end - start < MIN_BACKGROUND_WINDOW_S - 1e-9:
             continue
         full_screen.append(SpeakerFullScreenWindow(start=start, end=end))
+    # KRI-1558: the layout spans pin nothing either; clipped to the edit the same way.
+    layouts: list[SpeakerLayoutWindow] = []
+    for span in background.layout_windows:
+        start = span.start_s
+        end = span.end_s
+        if timeline_duration_s is not None:
+            if start >= timeline_duration_s - 1e-6:
+                continue
+            end = min(end, timeline_duration_s)
+        if end - start < MIN_BACKGROUND_WINDOW_S - 1e-9:
+            continue
+        layouts.append(
+            SpeakerLayoutWindow(
+                start=start,
+                end=end,
+                layout=span.layout,
+                frame=(
+                    SpeakerFrame(**span.speaker_frame.model_dump())
+                    if span.speaker_frame is not None
+                    else None
+                ),
+            )
+        )
     frame = background.speaker_frame
     fill: dict[str, Any] = (
         {"media_kind": "color", "color": background.color}
@@ -1292,6 +1316,7 @@ def _compile_background(
         source_start=background.source_start_s if background.kind == "video" else 0.0,
         windows=windows or None,
         full_screen_windows=full_screen or None,
+        layout_windows=layouts or None,
         focus=fill_focus,
         speaker_frame=(
             SpeakerFrame(

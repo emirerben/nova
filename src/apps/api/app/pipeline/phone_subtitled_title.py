@@ -757,17 +757,96 @@ def frame_face_box(box: NormalizedBox, frame: tuple[float, float, float]) -> Nor
     return NormalizedBox(x_at(box.left), y_at(box.top), x_at(box.right), y_at(box.bottom))
 
 
+# KRI-1558: one layout window as text placement reads it: ``(start_s, end_s, layout, frame)`` on
+# the same clock as the rows, ``frame`` the ``(width, x, y)`` of a ``small`` window, else None.
+LayoutSpan = tuple[float, float, str, "tuple[float, float, float] | None"]
+
+
+def speaker_drawn_at(
+    t: float,
+    speaker_frame: tuple[float, float, float] | None,
+    full_screen_windows: Sequence[tuple[float, float]],
+    layout_windows: Sequence[LayoutSpan],
+) -> tuple[str, tuple[float, float, float] | None]:
+    """How the speaker is drawn at ``t`` (KRI-1558): ``("full", None)`` full-frame (a full-screen
+    span, an ``own`` or ``full`` layout, or no frame at all), ``("frame", frame)`` cut out small
+    at ``frame`` (a ``small`` layout, else the layer's ``speaker_frame``), or ``("hidden", None)``
+    (a ``picture`` layout: no face on screen). The phone's precedence: full-screen > layout >
+    the layer frame."""
+    if any(a <= t < b for a, b in full_screen_windows):
+        return "full", None
+    for a, b, layout, frame in layout_windows:
+        if a <= t < b:
+            if layout == "picture":
+                return "hidden", None
+            if layout == "small" and frame is not None:
+                return "frame", frame
+            return "full", None
+    return ("frame", speaker_frame) if speaker_frame is not None else ("full", None)
+
+
+def speaker_drawn_parts(
+    window: tuple[float, float],
+    speaker_frame: tuple[float, float, float] | None,
+    full_screen_windows: Sequence[tuple[float, float]],
+    layout_windows: Sequence[LayoutSpan],
+) -> list[tuple[float, float, str, tuple[float, float, float] | None]]:
+    """``window`` cut where the way the speaker is drawn changes (KRI-1558): ``(start, end, how,
+    frame)`` parts in order, `speaker_drawn_at` for each, neighbours drawn alike merged."""
+    start, end = window
+    cuts = {start, end}
+    for a, b in [*full_screen_windows, *((span[0], span[1]) for span in layout_windows)]:
+        for point in (a, b):
+            if start < point < end:
+                cuts.add(point)
+    points = sorted(cuts)
+    parts: list[tuple[float, float, str, tuple[float, float, float] | None]] = []
+    for a, b in zip(points, points[1:], strict=False):
+        if b - a <= 1e-6:
+            continue
+        how, frame = speaker_drawn_at(
+            (a + b) / 2, speaker_frame, full_screen_windows, layout_windows
+        )
+        if parts and parts[-1][2:] == (how, frame) and abs(parts[-1][1] - a) <= 1e-9:
+            parts[-1] = (parts[-1][0], b, how, frame)
+        else:
+            parts.append((a, b, how, frame))
+    return parts
+
+
 def _as_drawn(
     sample: Callable[[tuple[float, float]], tuple[list[NormalizedBox], Any]],
     window: tuple[float, float],
     speaker_frame: tuple[float, float, float] | None,
     full_screen_windows: Sequence[tuple[float, float]],
+    layout_windows: Sequence[LayoutSpan] = (),
 ) -> tuple[list[NormalizedBox], list[Any]]:
     """Boxes from the speaker's own video (faces, marked objects) where they are drawn over
     ``window``: mapped into ``speaker_frame`` (item 19), except inside a full-screen span
     (Qendresa item 16: she fills the canvas there, unmapped). ``sample(part)`` returns the
     full-frame boxes over a part of the window and its receipt; the receipts come back in order.
-    No span overlapping the window: one sample over the whole window, exactly as before."""
+    No span overlapping the window: one sample over the whole window, exactly as before.
+
+    KRI-1558: with ``layout_windows`` the window is sampled per part drawn alike
+    (`speaker_drawn_parts`): a ``small`` part maps into its own frame, an ``own`` / ``full`` part
+    stays full-frame and a ``picture`` part has no box (she is not drawn there)."""
+    drawn = (
+        speaker_drawn_parts(window, speaker_frame, full_screen_windows, layout_windows)
+        if layout_windows
+        else []
+    )
+    if drawn:
+        boxes_out: list[NormalizedBox] = []
+        receipts: list[Any] = []
+        for a, b, how, frame in drawn:
+            boxes, receipt = sample((a, b))
+            if how == "hidden":
+                boxes = []
+            elif how == "frame" and frame is not None:
+                boxes = [frame_face_box(box, frame) for box in boxes]
+            boxes_out.extend(boxes)
+            receipts.append(receipt)
+        return boxes_out, receipts
     start, end = window
     spans = sorted(
         (max(start, a), min(end, b))
@@ -818,6 +897,7 @@ def place_talking_title(
     speaker_frame: tuple[float, float, float] | None = None,
     full_screen_windows: Sequence[tuple[float, float]] = (),
     picture_band: tuple[float, float] | None = None,
+    layout_windows: Sequence[LayoutSpan] = (),
 ) -> tuple[dict, dict[str, Any]]:
     """``row`` moved off the speaker's face (and clear of the captions), plus
     a receipt for the job debug view. Never raises: anything that goes wrong
@@ -843,6 +923,9 @@ def place_talking_title(
     kept off the face as drawn. ``None`` (the default) leaves the placement unchanged.
     ``full_screen_windows`` (Qendresa item 16, cut-timeline seconds) are where she is drawn
     full-frame instead: the part of the row's time inside one keeps off her full-frame face.
+    ``layout_windows`` (KRI-1558, `LayoutSpan`, same clock) say how she is drawn per section: a
+    ``small`` one maps her face into its corner, ``own`` / ``full`` keep it full-frame, and a
+    ``picture`` one has no face to keep off.
 
     ``picture_band`` (KRI-1018, `picture_band`) is where a letterboxed speaker's picture sits on
     the canvas: the row then stays inside it (the preset y 0.15 is the black bar there), and the
@@ -865,6 +948,7 @@ def place_talking_title(
             speaker_frame=speaker_frame,
             full_screen_windows=full_screen_windows,
             picture_band=picture_band,
+            layout_windows=layout_windows,
         )
     try:
         faces, receipts = _as_drawn(
@@ -882,6 +966,7 @@ def place_talking_title(
             (float(row["start_s"]), float(row["end_s"])),
             speaker_frame,
             full_screen_windows,
+            layout_windows,
         )
         receipt = receipts[0]
         if len(receipts) > 1:
@@ -1009,6 +1094,7 @@ def place_protected_title(
     speaker_frame: tuple[float, float, float] | None = None,
     full_screen_windows: Sequence[tuple[float, float]] = (),
     picture_band: tuple[float, float] | None = None,
+    layout_windows: Sequence[LayoutSpan] = (),
 ) -> tuple[dict, dict[str, Any]]:
     """KRI-827: ``row`` kept off every face and every marked object for its whole window.
 
@@ -1037,6 +1123,7 @@ def place_protected_title(
             window,
             speaker_frame,
             full_screen_windows,
+            layout_windows,
         )
         receipt = receipts[0]
         if len(receipts) > 1:
@@ -1056,6 +1143,7 @@ def place_protected_title(
             window,
             speaker_frame,
             full_screen_windows,
+            layout_windows,
         )
         object_receipts = [r for part in object_parts for r in part]
         verified = bool(object_receipts) and all(

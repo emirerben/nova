@@ -340,6 +340,56 @@ three buttons), add it to `PHONE_RENDER_VERIFIED_FEATURES`, then the flag (api +
 off. Not changed: receipts (an ask to zoom still says it can't be verified), caption and card placement (they do not
 read the background picture).
 
+## Layout windows (KRI-1558)
+
+The speaker's place and size follow the talk: her own take while she opens and closes, small in a
+corner over a picture in one section, the picture alone in the next. One carrier, decided per frame
+on the phone like the full-screen opening: `layout_windows`. Failure modes (server rows 15-32):
+`docs/reviews/kri-1558-section-layout-failure-modes.md`. Capability row: `speakerSections`.
+
+| Where | Shape |
+| --- | --- |
+| Recipe (`SpeakerBackgroundLayer`) | `layout_windows: [{start, end, layout, frame?}]` (output seconds, `start <= t < end`, sorted, disjoint, >= 0.5 s, 1-40, absent while unused, never `[]`/`null`). `layout`: `own` (her take untouched, as in a full-screen window), `full` (cut-out at full size over the picture), `small` (cut-out at `frame`, a `speaker_frame`; present exactly then), `picture` (the picture alone, her voice on). Per frame: full-screen window > layout window > layer `speaker_frame` (a clip's own `speaker_frame_override` full/custom still wins over `full`/`small`). `EditRecipeV2` refuses one past the recipe end and derives `speakerSections` (not `speakerBackgroundWindows`). Shared fixture `tests/fixtures/speaker-background-parity/v6.json` (v5 is item 18's). |
+| Lane (`SubtitledBackground`) | `layout_windows: tuple[SubtitledLayoutWindow]` (`start_s, end_s, layout, speaker_frame?`) in ORIGINAL take time; `remap_lanes_for_cut` moves them like the full-screen spans (clipped at removal edges, dropped under 0.5 s, kept disjoint); `_compile_background` clips them to the edit. `uses_layouts`. Omitted from every dump while empty. |
+| Gate strip | `_strip_background_gates`: a closed sections gate drops only the layouts (trace `speaker_sections_phone_fallback`, `reason` + `window_count`); a closed windows gate takes them with the windows (`layout_window_count` on `speaker_background_windows_phone_fallback`). |
+| Editor document / Save | Document `speaker_background.layout_windows: [{start_s, end_s, layout, speaker_frame?}]` (cut time), also when projected from a never-saved variant's recipe (`lanes_from_recipe`) and through the authored (Range) timeline. Save section `EditorCommitSpeakerBackground.layout_windows: list[EditorCommitSpeakerLayoutWindow]`; only a Save that sets or changes them is gated: 426 `speaker_sections` below the protocol, 422 `speaker_sections_disabled` (reason) / `speaker_sections_invalid`. Clearing is always allowed; an echo of what the variant shows is not re-gated. 426 `speaker_sections` too for a build below 54 that Saves a variant carrying them (`variant_carries_speaker_sections`) or polls a pinned recipe with them. Capability `editor_capabilities.speaker_sections: {editable: true}`. |
+| Creation (worker) | `_resolve_strategy_background`: with `speaker_sections_planned_for(<creator_client_protocol stamp>)`, pictures behind her and NO named pace (`cadence_s`, KRI-1494 keeps an asked pace), the take is cut into sections (`talking_sections` over the KEPT words on the ORIGINAL take clock, the uncut take's length) and `arrange_layouts` (pictures = the sequence's pool rows in strategy order, else the fill) gives each a layout: one background window per section showing a picture, a layout window per section, no global `speaker_frame`, and the phrase/cadence layout is not run. `variants[i]["speaker_sections"]` = `TalkingSection.as_dict()` rows (original take clock), written only when the compiled recipe draws layouts. Nothing arranged = today's layout, byte for byte. |
+| Text placement | Read per span (`phone_subtitled_title.speaker_drawn_parts`): `small` maps her face into its corner, `own`/`full` keep it full-frame, `picture` has no face. Title / label placer (`_as_drawn`, `place_talking_title`, `place_protected_title`), CTA ending cut-out (`_cutout_boxes`), caption styler (`_record_speaker_layout` / `_faces_where_drawn` / `_beside_corner_speaker`), worker kwargs (`_closing_speaker_frame_kwargs`, `_phone_spoken_list_on_lanes`, list labels, `_list_label_backdrop_spans`: `small` and `picture` sections). Without layouts every one is unchanged. |
+
+Gates: `speaker_sections_supported()` / `speaker_sections_client_supported()` / `speaker_sections_unavailable_reason()`
+(request-aware; a worker has no build, so only the server checks apply) and `speaker_sections_planned_for(protocol)` /
+`speaker_sections_planned_reason(protocol)` (`disabled`, `unavailable`, `app_too_old`): `SPEAKER_SECTIONS_ENABLED` AND the
+windows gate AND `speakerSections` verified AND build >= `speaker_sections_min_client_protocol` (= `SPEAKER_SECTIONS_PROTOCOL`, 54).
+Rollout: verify `speakerSections` on a device (switches in preview and export, no click or uncut flash at a switch), add it to
+`PHONE_RENDER_VERIFIED_FEATURES`, then the flag (api + worker, restart). Rollback: the flag off + restart.
+Not done here: caption contrast still judges a layout edit against both the picture and her take for every segment
+(the conservative no-frame path); the opening title is placed before the lanes exist and does not read the layouts.
+
+**Sections.** `app/pipeline/talking_sections.py` (no model call): the spoken words are cut into sentences
+(`split_sentences`, the topic-placement rules), then into one section per ~8 s of talk (at most 6, none under 3 s), the
+boundaries chosen between sentences by the pause, a TextTiling-style dip in word-stem overlap and turn phrases
+("now", "finally", "şimdi", "son olarak", "jetzt", ...). `arrange_layouts` opens and closes on `own` and puts the
+pictures, in order, on the sections between, alternating `small` (alternating corners) and `picture`.
+`layout_mismatches` is the check against the section list (each section draws its planned layout; every change sits on
+a section boundary).
+
+**Chat** (family `speaker_sections`, prompt `prompts/edit_copilot_ops/speaker_sections.txt`, open only while
+`kria_editor_ops.background_sections_open`): the snapshot's BACKGROUND gains `sections` (caption words, output
+seconds) and `layout_windows`. Ops: `arrange_sections {asset_ids?}` (the planner's layout per section, replacing the
+cadence windows and the one corner), `set_section_layout {speaker_layout, section_numbers? | start_s?/end_s?, preset?}`
+(some parts, a stretch "from A to B", or the whole video), `remove_background_window {window_index}`,
+`retime_background_window {window_index, start_s?, end_s?}`. `clear_speaker_frame` clears every place that makes her
+small (the corner, `small`/`picture` sections, a clip's own corner); `set_speaker_frame` without a selector is one corner
+for the whole video and drops the layouts. The finished-video review reads a `small` section's corner as "small ... in
+some parts". Tests: `tests/kria/test_kri1558_section_layouts.py` (Alanur's turns, TR and EN) and the parity probes.
+
+**Editor** (iPhone, only with `editor_capabilities.speaker_sections`): the document keeps `layout_windows` through every
+background edit and timeline cut (`NativeSplitTimelineRebase`); the speaker panel shows "This part / Whole video" inside a
+section, and the corner presets, drag and pinch act on the part under the playhead. A take cut into two or more speaker
+pieces can be framed piece by piece (the engine plays a split with nothing removed as one shot, protocol 54). Tests:
+`SpeakerLayoutWindowsEditorTests`, `SpeakerBackgroundLivePreviewTests`, `SpeakerSectionsUITests`; engine:
+`SpeakerLayoutWindowsTests`, `SpeakerSectionSplitSeamTests`.
+
 ## Rollback
 
 Kill switch, never a code revert: `fly secrets set SPEAKER_BACKGROUND_ENABLED=false
@@ -360,7 +410,10 @@ projection), `tests/services/test_phone_speaker_background_pin.py` and
 `tests/schemas/test_guided_edit_revision.py`. KRI-1173 colour fill:
 `tests/kria/test_speaker_background_color.py` (wire, lane, gates, strip, compile),
 `tests/routes/test_speaker_background_color_editor.py` (426, Save, capability, projection) and the colour cases in
-`tests/tasks/test_speaker_background_worker.py`.
+`tests/tasks/test_speaker_background_worker.py`. KRI-1558 layout windows: `tests/kria/test_speaker_sections_contract.py`
+(wire, lane, remap, strip, compile, gates), `tests/routes/test_speaker_sections_editor.py` (document, Save round trip, 426,
+422, capability), `tests/tasks/test_speaker_sections_worker.py` (Green 3 through the worker, the cut) and
+`tests/pipeline/test_speaker_sections_text_placement.py`.
 
 ## Evidence
 

@@ -563,6 +563,7 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     newer than the one that declined is not necessarily new enough for the recipe.
     """
     from app.services.client_protocol import (  # noqa: PLC0415
+        SPEAKER_SECTIONS_PROTOCOL,
         SPEECH_DUCK_PROTOCOL,
         SPLIT_BLANK_PANEL_PROTOCOL,
         SPLIT_COLLAPSE_PROTOCOL,
@@ -587,6 +588,13 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "split_blank_panel",
             "minimum_client_protocol": SPLIT_BLANK_PANEL_PROTOCOL,
+        }
+    # KRI-1558: an older build would click at every layout change and could flash the uncut frame.
+    if "speakerSections" in recipe.required_capabilities and protocol < SPEAKER_SECTIONS_PROTOCOL:
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_sections",
+            "minimum_client_protocol": SPEAKER_SECTIONS_PROTOCOL,
         }
     from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES
 

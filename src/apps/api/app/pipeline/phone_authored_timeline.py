@@ -472,7 +472,7 @@ def compile_phone_authored_timeline(
             )
     elif previous.speaker_background is not None:
         background = previous.speaker_background.model_copy(deep=True)
-        for field in ("windows", "full_screen_windows"):
+        for field in ("windows", "full_screen_windows", "layout_windows"):
             windows = getattr(background, field) or []
             bounded = [
                 window.model_copy(update={"end": min(window.end, cursor)})

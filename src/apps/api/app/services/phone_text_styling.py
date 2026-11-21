@@ -1224,10 +1224,15 @@ def _beside_corner_speaker(look, cues: list[dict], canvas):
 
     policy = _POLICY.get()
     layout = policy.get("_speaker_layout") or {}
-    if layout.get("frame") is None or not settings.speaker_frame_caption_faces_enabled:
+    if (
+        layout.get("frame") is None and not layout.get("layouts")
+    ) or not settings.speaker_frame_caption_faces_enabled:
         return None
     canvas = canvas or PORTRAIT
-    spans = layout.get("full_screen") or []
+    # KRI-1558: with layout windows she sits in a corner only in their `small` sections (and,
+    # with a layer frame, where no layout covers); everywhere else is treated like a full-screen
+    # span here: a caption that starts there keeps its x.
+    spans = _not_in_corner(layout) if layout.get("layouts") else layout.get("full_screen") or []
     faces = [f for f in policy.get("_face_boxes") or [] if isinstance(f, dict)]
     # Her face where the corner frame draws it: every box outside a full-screen span.
     corner = [f for f in faces if not _inside(float(f["start_s"]), float(f["end_s"]), spans)]
@@ -1685,6 +1690,24 @@ def _record_speaker_layout(policy: dict, background) -> None:
         else {"width": frame.width_fraction, "x": frame.x_fraction, "y": frame.y_fraction},
         "full_screen": [{"start_s": float(s.start_s), "end_s": float(s.end_s)} for s in spans],
     }
+    layouts = getattr(background, "layout_windows", None) or ()
+    if layouts:
+        # KRI-1558: how she is drawn per section; absent while unused (byte-identical policy).
+        policy["_speaker_layout"]["layouts"] = [
+            {
+                "start_s": float(w.start_s),
+                "end_s": float(w.end_s),
+                "layout": str(w.layout),
+                "frame": None
+                if w.speaker_frame is None
+                else {
+                    "width": w.speaker_frame.width_fraction,
+                    "x": w.speaker_frame.x_fraction,
+                    "y": w.speaker_frame.y_fraction,
+                },
+            }
+            for w in layouts
+        ]
     if policy.get("_environment_sampled") and "_face_boxes_raw" in policy:
         before = policy.get("_face_boxes")
         policy["_face_boxes"] = _faces_where_drawn(policy["_face_boxes_raw"], policy)
@@ -1762,7 +1785,11 @@ def _faces_where_drawn(boxes: list[dict], policy: dict) -> list[dict]:
 
     layout = policy.get("_speaker_layout") or {}
     frame = layout.get("frame")
-    if not boxes or frame is None or not settings.speaker_frame_caption_faces_enabled:
+    if not boxes or not settings.speaker_frame_caption_faces_enabled:
+        return list(boxes)
+    if layout.get("layouts"):
+        return _faces_by_layout(boxes, layout)
+    if frame is None:
         return list(boxes)
     spans = layout.get("full_screen") or []
     mapped: list[dict] = []
@@ -1776,6 +1803,89 @@ def _faces_where_drawn(boxes: list[dict], policy: dict) -> list[dict]:
         for piece_start, piece_end in _outside(start, end, spans) if spans else [(start, end)]:
             mapped.append({**face, "start_s": piece_start, "end_s": piece_end, "box": box})
     return mapped
+
+
+def _drawn_at(layout: dict, t: float) -> tuple[str, dict | None]:
+    """KRI-1558: how she is drawn at ``t`` per the recorded layout: ``("full", None)``,
+    ``("frame", frame)`` or ``("hidden", None)`` (a ``picture`` section: no face on screen).
+    Full-screen spans win, then the layout windows, then the layer frame."""
+    if any(span["start_s"] <= t < span["end_s"] for span in layout.get("full_screen") or []):
+        return "full", None
+    for window in layout.get("layouts") or []:
+        if window["start_s"] <= t < window["end_s"]:
+            if window["layout"] == "picture":
+                return "hidden", None
+            if window["layout"] == "small" and window.get("frame") is not None:
+                return "frame", window["frame"]
+            return "full", None
+    frame = layout.get("frame")
+    return ("frame", frame) if frame is not None else ("full", None)
+
+
+def _layout_pieces(
+    layout: dict, start: float, end: float
+) -> list[tuple[float, float, str, dict | None]]:
+    """``[start, end)`` cut where the way she is drawn changes (KRI-1558), each piece with
+    `_drawn_at` its middle; neighbours drawn alike merged."""
+    cuts = {start, end}
+    for span in [*(layout.get("full_screen") or []), *(layout.get("layouts") or [])]:
+        for point in (float(span["start_s"]), float(span["end_s"])):
+            if start < point < end:
+                cuts.add(point)
+    points = sorted(cuts)
+    pieces: list[tuple[float, float, str, dict | None]] = []
+    for a, b in zip(points, points[1:], strict=False):
+        if b - a <= 1e-3:
+            continue
+        how, frame = _drawn_at(layout, (a + b) / 2)
+        if pieces and pieces[-1][2:] == (how, frame) and abs(pieces[-1][1] - a) <= 1e-3:
+            pieces[-1] = (pieces[-1][0], b, how, frame)
+        else:
+            pieces.append((a, b, how, frame))
+    return pieces
+
+
+def _faces_by_layout(boxes: list[dict], layout: dict) -> list[dict]:
+    """KRI-1558: ``boxes`` where the phone draws them per section: mapped into a ``small``
+    section's frame (dropped when that lands off the canvas), full-frame in an ``own`` / ``full``
+    section or a full-screen span, and gone in a ``picture`` section (she is not drawn)."""
+    mapped: list[dict] = []
+    for face in boxes:
+        for start, end, how, frame in _layout_pieces(
+            layout, float(face["start_s"]), float(face["end_s"])
+        ):
+            if how == "hidden":
+                continue
+            if how == "full" or frame is None:
+                mapped.append({**face, "start_s": start, "end_s": end})
+                continue
+            box = _in_frame(face["box"], frame)
+            if box[2] > 0 and box[0] < 1 and box[3] > 0 and box[1] < 1:
+                mapped.append({**face, "start_s": start, "end_s": end, "box": box})
+    return mapped
+
+
+# KRI-1558: the end of "the rest of the video" for a span computed without the edit's length.
+_LAYOUT_OPEN_END_S = 1800.0
+
+
+def _not_in_corner(layout: dict) -> list[dict]:
+    """KRI-1558: the spans where she is NOT drawn small in a corner (full-screen spans, ``own`` /
+    ``full`` / ``picture`` sections and, without a layer frame, time no layout covers), as
+    ``{"start_s", "end_s"}`` rows like the full-screen spans `_beside_corner_speaker` reads."""
+    corner: list[tuple[float, float]] = []
+    for start, end, how, _frame in _layout_pieces(layout, 0.0, _LAYOUT_OPEN_END_S):
+        if how == "frame":
+            corner.append((start, end))
+    out: list[dict] = []
+    cursor = 0.0
+    for start, end in corner:
+        if start > cursor + 1e-3:
+            out.append({"start_s": cursor, "end_s": start})
+        cursor = max(cursor, end)
+    if cursor < _LAYOUT_OPEN_END_S - 1e-3:
+        out.append({"start_s": cursor, "end_s": _LAYOUT_OPEN_END_S})
+    return out
 
 
 def _segments(spec: dict, until: float) -> list[tuple[float, float, dict]]:

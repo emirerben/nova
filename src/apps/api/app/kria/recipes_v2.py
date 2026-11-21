@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from pydantic import Field, model_serializer, model_validator
@@ -18,7 +19,7 @@ from app.kria.portable_motion import MotionSceneProgram
 from app.kria.portable_speaker_background import SpeakerBackgroundLayer
 from app.kria.portable_text import PortableTextLayer
 from app.kria.portable_visual import VisualCanvasFill
-from app.kria.recipes import EditRecipeV1
+from app.kria.recipes import EditRecipeV1, TimelineClip, TimelineTrack
 from app.kria.render_assets import RenderAssetManifest, VisualRenderAsset
 from app.kria.split_screen import RecipeSplitScreenSection
 
@@ -221,6 +222,16 @@ class EditRecipeV2(EditRecipeV1):
             # Qendresa item 18: a background picture aimed at its readable text.
             if self.speaker_background.uses_focus:
                 self.required_capabilities |= {"backgroundFocus"}
+            # KRI-1558: the speaker's layout per section (layout windows), and the take split
+            # where the speaker's layout changes, need the build that draws them and plays the
+            # join as one shot (no declick, the cut-out carries on).
+            for layout_window in self.speaker_background.layout_windows or ():
+                if layout_window.end > self.duration + 1e-6:
+                    raise ValueError("a layout window exceeds the timeline")
+            if self.speaker_background.uses_layouts or changes_speaker_layout_on_a_split(
+                self.tracks
+            ):
+                self.required_capabilities |= {"speakerSections"}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
         # KRI-1192: a run drawn in a script-fallback face needs a build that bundles it.
@@ -302,3 +313,44 @@ class EditRecipeV2(EditRecipeV1):
                 if font is None or font.kind != "library" or font.catalog != "font":
                     raise ValueError("text requires an exact library font")
         return self
+
+
+def changes_speaker_layout_on_a_split(tracks: Sequence[TimelineTrack]) -> bool:
+    """KRI-1558: two back-to-back pieces of one take on a video track with nothing removed between
+    them (same source, 1x, no hold, no transition, the source continuing where the first stopped)
+    that draw the speaker differently. Mirrors `EditRecipe.changesSpeakerLayoutOnASplit` (Swift).
+    Split-screen pieces have their own gate."""
+    for track in tracks:
+        if track.kind != "video":
+            continue
+        clips = sorted(track.clips, key=lambda clip: clip.timeline_start)
+        for outgoing, incoming in zip(clips, clips[1:], strict=False):
+            if (
+                outgoing.source_asset_id != incoming.source_asset_id
+                or outgoing.rate != 1
+                or incoming.rate != 1
+                or outgoing.hold_duration is not None
+                or incoming.hold_duration is not None
+                or (incoming.transition is not None and incoming.transition.duration > 0)
+                or outgoing.split_screen is not None
+                or incoming.split_screen is not None
+            ):
+                continue
+            outgoing_end = outgoing.timeline_start + outgoing.source_duration
+            if abs(incoming.timeline_start - outgoing_end) >= 0.001:
+                continue
+            if (
+                abs(incoming.source_start - (outgoing.source_start + outgoing.source_duration))
+                > 0.001
+            ):
+                continue
+            if _frame_key(outgoing) != _frame_key(incoming):
+                return True
+    return False
+
+
+def _frame_key(clip: TimelineClip) -> object:
+    override = clip.speaker_frame_override
+    if override is None or override.mode == "inherit":
+        return ("inherit",)
+    return (override.mode, override.frame.model_dump() if override.frame else None)

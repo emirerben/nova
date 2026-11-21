@@ -3571,6 +3571,7 @@
                 "scriptFonts",
                 "colorMoments",
                 "speechDuck",
+                "speakerSections",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3722,6 +3723,7 @@
                 "scriptFonts",
                 "colorMoments",
                 "speechDuck",
+                "speakerSections",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -4787,6 +4789,15 @@
             "title": "Kind",
             "type": "string"
           },
+          "layout_windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/EditorCommitSpeakerLayoutWindow"
+            },
+            "nullable": true,
+            "title": "Layout Windows",
+            "type": "array"
+          },
           "media_id": {
             "default": null,
             "maxLength": 160,
@@ -4932,6 +4943,46 @@
           "end_s"
         ],
         "title": "EditorCommitSpeakerFullScreenWindow",
+        "type": "object"
+      },
+      "EditorCommitSpeakerLayoutWindow": {
+        "additionalProperties": false,
+        "description": "One layout span of the Save section (KRI-1558): from ``start_s`` to ``end_s`` of the\nedit's timeline the speaker is drawn with ``layout`` (``own`` her own take, ``full`` the\ncut-out at full size, ``small`` the cut-out at ``speaker_frame``, ``picture`` the picture\nalone). Order, overlap, the 0.5 s minimum, the count, the edit end and the frame-iff-small\nrule are checked by `_validate_speaker_layout_windows` so they answer with their own code.",
+        "properties": {
+          "end_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End S",
+            "type": "number"
+          },
+          "layout": {
+            "enum": [
+              "own",
+              "full",
+              "small",
+              "picture"
+            ],
+            "title": "Layout",
+            "type": "string"
+          },
+          "speaker_frame": {
+            "$ref": "#/components/schemas/EditorCommitSpeakerFrame",
+            "default": null,
+            "nullable": true
+          },
+          "start_s": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start_s",
+          "end_s",
+          "layout"
+        ],
+        "title": "EditorCommitSpeakerLayoutWindow",
         "type": "object"
       },
       "EditorCommitUserSong": {
@@ -13055,6 +13106,17 @@
             "title": "Full Screen Windows",
             "type": "array"
           },
+          "layout_windows": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SpeakerLayoutWindow"
+            },
+            "maxItems": 40,
+            "minItems": 1,
+            "nullable": true,
+            "title": "Layout Windows",
+            "type": "array"
+          },
           "loop": {
             "default": true,
             "title": "Loop",
@@ -13249,6 +13311,47 @@
           "end"
         ],
         "title": "SpeakerFullScreenWindow",
+        "type": "object"
+      },
+      "SpeakerLayoutWindow": {
+        "additionalProperties": false,
+        "description": "KRI-1558: from ``start`` to ``end`` (output seconds, ``start <= t < end``) the speaker is\ndrawn with ``layout``. ``frame`` (where the cut-out sits) is present exactly when ``layout``\nis ``small``. Same bounds as a background window; mirrored by\n`KriaMediaEngine.SpeakerLayoutWindow`.",
+        "properties": {
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "End",
+            "type": "number"
+          },
+          "frame": {
+            "$ref": "#/components/schemas/SpeakerFrame",
+            "default": null,
+            "nullable": true
+          },
+          "layout": {
+            "enum": [
+              "own",
+              "full",
+              "small",
+              "picture"
+            ],
+            "title": "Layout",
+            "type": "string"
+          },
+          "start": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "layout"
+        ],
+        "title": "SpeakerLayoutWindow",
         "type": "object"
       },
       "SpeechWindow": {

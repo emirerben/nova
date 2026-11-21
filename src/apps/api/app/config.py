@@ -1157,6 +1157,17 @@ class Settings(BaseSettings):
     # need a build >= the minimum). Design: docs/reviews/background-focus-failure-modes.md.
     background_focus_enabled: bool = False
     background_focus_min_client_protocol: int = 42
+    # KRI-1558: the speaker's place and size follow the talk on a phone Talking edit with pictures
+    # behind her: the take is cut into a few sections (`pipeline/talking_sections.py`) and each
+    # gets a layout (her own take, the cut-out small in a corner over a picture, or the picture
+    # alone). Recipe field `speaker_background.layout_windows` (capability `speakerSections`, app
+    # builds >= `speaker_sections_min_client_protocol`). Default FALSE: off, every recipe, lane,
+    # editor document and receipt is byte-identical (one layout for the whole video). Apply: verify
+    # `speakerSections` on a device, add it to PHONE_RENDER_VERIFIED_FEATURES, then `fly secrets
+    # set SPEAKER_SECTIONS_ENABLED=true --app nova-video` + restart (api + worker); rollback =
+    # `...=false` + restart. Design: docs/reviews/kri-1558-section-layout-failure-modes.md.
+    speaker_sections_enabled: bool = False
+    speaker_sections_min_client_protocol: int = 54
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on

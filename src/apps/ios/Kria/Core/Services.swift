@@ -1445,7 +1445,10 @@ enum KriaClientProtocolContract {
     /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
     /// 53 (music under speech): a Talking or Voiceover recipe may carry `audio.speech_windows` with a music-role audio track; the
     /// device ducks that track under those windows. Needs `speechDuck`.
-    static let version = 53
+    /// 54 (KRI-1558): plays a Talking take split where the speaker's layout changes (back-to-back pieces of one take with
+    /// nothing removed, each with its own `speaker_frame_override`) as one shot: no declick at the join and the cut-out keeps
+    /// its state across it. Needs `speakerSections`. The server plans layouts per topic only for this protocol.
+    static let version = 54
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2391,6 +2394,9 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_windows_disabled": String(localized: "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here."),
             "speaker_full_opening_disabled": String(localized: "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here."),
             "speaker_full_opening_invalid": String(localized: "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here."),
+            // KRI-1558: the speaker's layout per part of the talk.
+            "speaker_sections_disabled": String(localized: "Changing where you are part by part isn’t available right now. Put yourself in one place for the whole video and save again. Your edits are still here."),
+            "speaker_sections_invalid": String(localized: "The parts where you change place overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here."),
             "background_focus_disabled": String(localized: "Aiming the background isn’t available for this video yet. Your edits are still here."),
             "background_focus_invalid": String(localized: "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here."),
             "speaker_background_window_invalid": String(localized: "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here."),

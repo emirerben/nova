@@ -1,0 +1,1309 @@
+{
+  "description": "Speaker-background layer wire contract, KRI-1558 extension (`layout_windows`, capability `speakerSections`, protocol 54): how the speaker is drawn in each span of the edit. `own` = her own take, full-frame and untouched (as inside a full-screen window); `full` = the cut-out speaker at full size over the picture; `small` = the cut-out speaker at `frame` (a `speaker_frame`, same bounds) over the picture; `picture` = the picture alone, the speaker not drawn (her voice plays on). Output seconds, `start <= t < end`; each window lasts at least 0.5 s, starts at 0 or later and ends within 1800 s; sorted by `start`, never overlapping (touching ends are fine), 1...40 of them. `frame` is present exactly when `layout` is `small` (`frame: null` elsewhere reads as absent). Per frame a full-screen window wins over a layout window, and a layout window replaces the layer's `speaker_frame`. Every `valid` layer must decode (Python SpeakerBackgroundLayer, Swift SpeakerBackgroundLayer), equal its `normalized` form and re-encode to it; every `invalid` entry must be rejected by both. v1.json to v5.json still apply unchanged: a layer without the key serialises exactly as there. `layout_windows: null` is read as absent on both sides and never written; `[]` is invalid.",
+  "valid": [
+    {
+      "name": "own-small-picture-own-over-windows",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "windows": [
+          {
+            "asset_id": "visual-a",
+            "media_kind": "image",
+            "start": 6.2,
+            "end": 14.1
+          },
+          {
+            "asset_id": "visual-b",
+            "media_kind": "video",
+            "source_start": 2,
+            "start": 14.1,
+            "end": 21.5
+          }
+        ],
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 6.2,
+            "layout": "own"
+          },
+          {
+            "start": 6.2,
+            "end": 14.1,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.76,
+              "y_fraction": 0.8
+            }
+          },
+          {
+            "start": 14.1,
+            "end": 21.5,
+            "layout": "picture"
+          },
+          {
+            "start": 21.5,
+            "end": 30,
+            "layout": "own"
+          }
+        ]
+      },
+      "normalized": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled",
+        "windows": [
+          {
+            "asset_id": "visual-a",
+            "media_kind": "image",
+            "source_start": 0.0,
+            "start": 6.2,
+            "end": 14.1
+          },
+          {
+            "asset_id": "visual-b",
+            "media_kind": "video",
+            "source_start": 2.0,
+            "start": 14.1,
+            "end": 21.5
+          }
+        ],
+        "layout_windows": [
+          {
+            "start": 0.0,
+            "end": 6.2,
+            "layout": "own"
+          },
+          {
+            "start": 6.2,
+            "end": 14.1,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.76,
+              "y_fraction": 0.8
+            }
+          },
+          {
+            "start": 14.1,
+            "end": 21.5,
+            "layout": "picture"
+          },
+          {
+            "start": 21.5,
+            "end": 30.0,
+            "layout": "own"
+          }
+        ]
+      }
+    },
+    {
+      "name": "full-then-small-left-over-a-colour",
+      "layer": {
+        "media_kind": "color",
+        "color": "#111111",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 4,
+            "layout": "full"
+          },
+          {
+            "start": 4,
+            "end": 9.5,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.24,
+              "y_fraction": 0.8
+            }
+          }
+        ]
+      },
+      "normalized": {
+        "media_kind": "color",
+        "color": "#111111",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled",
+        "layout_windows": [
+          {
+            "start": 0.0,
+            "end": 4.0,
+            "layout": "full"
+          },
+          {
+            "start": 4.0,
+            "end": 9.5,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.24,
+              "y_fraction": 0.8
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "with-a-full-screen-opening-and-a-layer-frame",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "speaker_frame": {
+          "width_fraction": 0.42,
+          "x_fraction": 0.76,
+          "y_fraction": 0.8
+        },
+        "full_screen_windows": [
+          {
+            "start": 0,
+            "end": 3
+          }
+        ],
+        "layout_windows": [
+          {
+            "start": 3,
+            "end": 10,
+            "layout": "picture"
+          },
+          {
+            "start": 12,
+            "end": 20,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.3,
+              "x_fraction": 0.8,
+              "y_fraction": 0.2
+            }
+          }
+        ]
+      },
+      "normalized": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled",
+        "speaker_frame": {
+          "width_fraction": 0.42,
+          "x_fraction": 0.76,
+          "y_fraction": 0.8
+        },
+        "full_screen_windows": [
+          {
+            "start": 0.0,
+            "end": 3.0
+          }
+        ],
+        "layout_windows": [
+          {
+            "start": 3.0,
+            "end": 10.0,
+            "layout": "picture"
+          },
+          {
+            "start": 12.0,
+            "end": 20.0,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.3,
+              "x_fraction": 0.8,
+              "y_fraction": 0.2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "touching-windows-are-fine",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 3.5,
+            "layout": "own"
+          },
+          {
+            "start": 3.5,
+            "end": 4,
+            "layout": "full"
+          }
+        ]
+      },
+      "normalized": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled",
+        "layout_windows": [
+          {
+            "start": 0.0,
+            "end": 3.5,
+            "layout": "own"
+          },
+          {
+            "start": 3.5,
+            "end": 4.0,
+            "layout": "full"
+          }
+        ]
+      }
+    },
+    {
+      "name": "frame-at-its-bounds",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 0.5,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.2,
+              "x_fraction": 0,
+              "y_fraction": 1
+            }
+          },
+          {
+            "start": 0.5,
+            "end": 1800,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 1,
+              "x_fraction": 1,
+              "y_fraction": 0
+            }
+          }
+        ]
+      },
+      "normalized": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled",
+        "layout_windows": [
+          {
+            "start": 0.0,
+            "end": 0.5,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.2,
+              "x_fraction": 0.0,
+              "y_fraction": 1.0
+            }
+          },
+          {
+            "start": 0.5,
+            "end": 1800.0,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 1.0,
+              "x_fraction": 1.0,
+              "y_fraction": 0.0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "forty-windows",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 0.5,
+            "layout": "own"
+          },
+          {
+            "start": 1,
+            "end": 1.5,
+            "layout": "full"
+          },
+          {
+            "start": 2,
+            "end": 2.5,
+            "layout": "picture"
+          },
+          {
+            "start": 3,
+            "end": 3.5,
+            "layout": "own"
+          },
+          {
+            "start": 4,
+            "end": 4.5,
+            "layout": "full"
+          },
+          {
+            "start": 5,
+            "end": 5.5,
+            "layout": "picture"
+          },
+          {
+            "start": 6,
+            "end": 6.5,
+            "layout": "own"
+          },
+          {
+            "start": 7,
+            "end": 7.5,
+            "layout": "full"
+          },
+          {
+            "start": 8,
+            "end": 8.5,
+            "layout": "picture"
+          },
+          {
+            "start": 9,
+            "end": 9.5,
+            "layout": "own"
+          },
+          {
+            "start": 10,
+            "end": 10.5,
+            "layout": "full"
+          },
+          {
+            "start": 11,
+            "end": 11.5,
+            "layout": "picture"
+          },
+          {
+            "start": 12,
+            "end": 12.5,
+            "layout": "own"
+          },
+          {
+            "start": 13,
+            "end": 13.5,
+            "layout": "full"
+          },
+          {
+            "start": 14,
+            "end": 14.5,
+            "layout": "picture"
+          },
+          {
+            "start": 15,
+            "end": 15.5,
+            "layout": "own"
+          },
+          {
+            "start": 16,
+            "end": 16.5,
+            "layout": "full"
+          },
+          {
+            "start": 17,
+            "end": 17.5,
+            "layout": "picture"
+          },
+          {
+            "start": 18,
+            "end": 18.5,
+            "layout": "own"
+          },
+          {
+            "start": 19,
+            "end": 19.5,
+            "layout": "full"
+          },
+          {
+            "start": 20,
+            "end": 20.5,
+            "layout": "picture"
+          },
+          {
+            "start": 21,
+            "end": 21.5,
+            "layout": "own"
+          },
+          {
+            "start": 22,
+            "end": 22.5,
+            "layout": "full"
+          },
+          {
+            "start": 23,
+            "end": 23.5,
+            "layout": "picture"
+          },
+          {
+            "start": 24,
+            "end": 24.5,
+            "layout": "own"
+          },
+          {
+            "start": 25,
+            "end": 25.5,
+            "layout": "full"
+          },
+          {
+            "start": 26,
+            "end": 26.5,
+            "layout": "picture"
+          },
+          {
+            "start": 27,
+            "end": 27.5,
+            "layout": "own"
+          },
+          {
+            "start": 28,
+            "end": 28.5,
+            "layout": "full"
+          },
+          {
+            "start": 29,
+            "end": 29.5,
+            "layout": "picture"
+          },
+          {
+            "start": 30,
+            "end": 30.5,
+            "layout": "own"
+          },
+          {
+            "start": 31,
+            "end": 31.5,
+            "layout": "full"
+          },
+          {
+            "start": 32,
+            "end": 32.5,
+            "layout": "picture"
+          },
+          {
+            "start": 33,
+            "end": 33.5,
+            "layout": "own"
+          },
+          {
+            "start": 34,
+            "end": 34.5,
+            "layout": "full"
+          },
+          {
+            "start": 35,
+            "end": 35.5,
+            "layout": "picture"
+          },
+          {
+            "start": 36,
+            "end": 36.5,
+            "layout": "own"
+          },
+          {
+            "start": 37,
+            "end": 37.5,
+            "layout": "full"
+          },
+          {
+            "start": 38,
+            "end": 38.5,
+            "layout": "picture"
+          },
+          {
+            "start": 39,
+            "end": 39.5,
+            "layout": "own"
+          }
+        ]
+      },
+      "normalized": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled",
+        "layout_windows": [
+          {
+            "start": 0.0,
+            "end": 0.5,
+            "layout": "own"
+          },
+          {
+            "start": 1.0,
+            "end": 1.5,
+            "layout": "full"
+          },
+          {
+            "start": 2.0,
+            "end": 2.5,
+            "layout": "picture"
+          },
+          {
+            "start": 3.0,
+            "end": 3.5,
+            "layout": "own"
+          },
+          {
+            "start": 4.0,
+            "end": 4.5,
+            "layout": "full"
+          },
+          {
+            "start": 5.0,
+            "end": 5.5,
+            "layout": "picture"
+          },
+          {
+            "start": 6.0,
+            "end": 6.5,
+            "layout": "own"
+          },
+          {
+            "start": 7.0,
+            "end": 7.5,
+            "layout": "full"
+          },
+          {
+            "start": 8.0,
+            "end": 8.5,
+            "layout": "picture"
+          },
+          {
+            "start": 9.0,
+            "end": 9.5,
+            "layout": "own"
+          },
+          {
+            "start": 10.0,
+            "end": 10.5,
+            "layout": "full"
+          },
+          {
+            "start": 11.0,
+            "end": 11.5,
+            "layout": "picture"
+          },
+          {
+            "start": 12.0,
+            "end": 12.5,
+            "layout": "own"
+          },
+          {
+            "start": 13.0,
+            "end": 13.5,
+            "layout": "full"
+          },
+          {
+            "start": 14.0,
+            "end": 14.5,
+            "layout": "picture"
+          },
+          {
+            "start": 15.0,
+            "end": 15.5,
+            "layout": "own"
+          },
+          {
+            "start": 16.0,
+            "end": 16.5,
+            "layout": "full"
+          },
+          {
+            "start": 17.0,
+            "end": 17.5,
+            "layout": "picture"
+          },
+          {
+            "start": 18.0,
+            "end": 18.5,
+            "layout": "own"
+          },
+          {
+            "start": 19.0,
+            "end": 19.5,
+            "layout": "full"
+          },
+          {
+            "start": 20.0,
+            "end": 20.5,
+            "layout": "picture"
+          },
+          {
+            "start": 21.0,
+            "end": 21.5,
+            "layout": "own"
+          },
+          {
+            "start": 22.0,
+            "end": 22.5,
+            "layout": "full"
+          },
+          {
+            "start": 23.0,
+            "end": 23.5,
+            "layout": "picture"
+          },
+          {
+            "start": 24.0,
+            "end": 24.5,
+            "layout": "own"
+          },
+          {
+            "start": 25.0,
+            "end": 25.5,
+            "layout": "full"
+          },
+          {
+            "start": 26.0,
+            "end": 26.5,
+            "layout": "picture"
+          },
+          {
+            "start": 27.0,
+            "end": 27.5,
+            "layout": "own"
+          },
+          {
+            "start": 28.0,
+            "end": 28.5,
+            "layout": "full"
+          },
+          {
+            "start": 29.0,
+            "end": 29.5,
+            "layout": "picture"
+          },
+          {
+            "start": 30.0,
+            "end": 30.5,
+            "layout": "own"
+          },
+          {
+            "start": 31.0,
+            "end": 31.5,
+            "layout": "full"
+          },
+          {
+            "start": 32.0,
+            "end": 32.5,
+            "layout": "picture"
+          },
+          {
+            "start": 33.0,
+            "end": 33.5,
+            "layout": "own"
+          },
+          {
+            "start": 34.0,
+            "end": 34.5,
+            "layout": "full"
+          },
+          {
+            "start": 35.0,
+            "end": 35.5,
+            "layout": "picture"
+          },
+          {
+            "start": 36.0,
+            "end": 36.5,
+            "layout": "own"
+          },
+          {
+            "start": 37.0,
+            "end": 37.5,
+            "layout": "full"
+          },
+          {
+            "start": 38.0,
+            "end": 38.5,
+            "layout": "picture"
+          },
+          {
+            "start": 39.0,
+            "end": 39.5,
+            "layout": "own"
+          }
+        ]
+      }
+    },
+    {
+      "name": "null-frame-on-own-reads-as-absent",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 2,
+            "layout": "own",
+            "frame": null
+          },
+          {
+            "start": 2,
+            "end": 5,
+            "layout": "picture",
+            "frame": null
+          }
+        ]
+      },
+      "normalized": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled",
+        "layout_windows": [
+          {
+            "start": 0.0,
+            "end": 2.0,
+            "layout": "own"
+          },
+          {
+            "start": 2.0,
+            "end": 5.0,
+            "layout": "picture"
+          }
+        ]
+      }
+    },
+    {
+      "name": "null-reads-as-absent",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": null
+      },
+      "normalized": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "source_start": 0.0,
+        "loop": true,
+        "subject_track_id": "subtitled"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "empty-list",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": []
+      }
+    },
+    {
+      "name": "overlap",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "own"
+          },
+          {
+            "start": 4,
+            "end": 8,
+            "layout": "picture"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsorted",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 10,
+            "end": 12,
+            "layout": "own"
+          },
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "picture"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shorter-than-half-a-second",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 0.3,
+            "layout": "own"
+          }
+        ]
+      }
+    },
+    {
+      "name": "end-before-start",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 5,
+            "end": 2,
+            "layout": "own"
+          }
+        ]
+      }
+    },
+    {
+      "name": "negative-start",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": -1,
+            "end": 3,
+            "layout": "own"
+          }
+        ]
+      }
+    },
+    {
+      "name": "past-the-timeline-limit",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 1799,
+            "end": 1801,
+            "layout": "own"
+          }
+        ]
+      }
+    },
+    {
+      "name": "not-finite",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": "Infinity",
+            "layout": "own"
+          }
+        ]
+      }
+    },
+    {
+      "name": "small-without-a-frame",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "small"
+          }
+        ]
+      }
+    },
+    {
+      "name": "small-with-a-null-frame",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "small",
+            "frame": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "frame-on-own",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "own",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.76,
+              "y_fraction": 0.8
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "frame-on-picture",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "picture",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.76,
+              "y_fraction": 0.8
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "frame-on-full",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "full",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.76,
+              "y_fraction": 0.8
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-layout",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "corner"
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing-layout",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-window-key",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "own",
+            "preset": "full"
+          }
+        ]
+      }
+    },
+    {
+      "name": "frame-too-narrow",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.1,
+              "x_fraction": 0.5,
+              "y_fraction": 0.5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "frame-centre-off-the-canvas",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.4,
+              "x_fraction": 1.2,
+              "y_fraction": 0.5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-frame-key",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 5,
+            "layout": "small",
+            "frame": {
+              "width_fraction": 0.42,
+              "x_fraction": 0.76,
+              "y_fraction": 0.8,
+              "preset": "small_bottom_right"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "more-than-forty",
+      "layer": {
+        "asset_id": "visual-fill",
+        "media_kind": "image",
+        "layout_windows": [
+          {
+            "start": 0,
+            "end": 0.5,
+            "layout": "own"
+          },
+          {
+            "start": 1,
+            "end": 1.5,
+            "layout": "own"
+          },
+          {
+            "start": 2,
+            "end": 2.5,
+            "layout": "own"
+          },
+          {
+            "start": 3,
+            "end": 3.5,
+            "layout": "own"
+          },
+          {
+            "start": 4,
+            "end": 4.5,
+            "layout": "own"
+          },
+          {
+            "start": 5,
+            "end": 5.5,
+            "layout": "own"
+          },
+          {
+            "start": 6,
+            "end": 6.5,
+            "layout": "own"
+          },
+          {
+            "start": 7,
+            "end": 7.5,
+            "layout": "own"
+          },
+          {
+            "start": 8,
+            "end": 8.5,
+            "layout": "own"
+          },
+          {
+            "start": 9,
+            "end": 9.5,
+            "layout": "own"
+          },
+          {
+            "start": 10,
+            "end": 10.5,
+            "layout": "own"
+          },
+          {
+            "start": 11,
+            "end": 11.5,
+            "layout": "own"
+          },
+          {
+            "start": 12,
+            "end": 12.5,
+            "layout": "own"
+          },
+          {
+            "start": 13,
+            "end": 13.5,
+            "layout": "own"
+          },
+          {
+            "start": 14,
+            "end": 14.5,
+            "layout": "own"
+          },
+          {
+            "start": 15,
+            "end": 15.5,
+            "layout": "own"
+          },
+          {
+            "start": 16,
+            "end": 16.5,
+            "layout": "own"
+          },
+          {
+            "start": 17,
+            "end": 17.5,
+            "layout": "own"
+          },
+          {
+            "start": 18,
+            "end": 18.5,
+            "layout": "own"
+          },
+          {
+            "start": 19,
+            "end": 19.5,
+            "layout": "own"
+          },
+          {
+            "start": 20,
+            "end": 20.5,
+            "layout": "own"
+          },
+          {
+            "start": 21,
+            "end": 21.5,
+            "layout": "own"
+          },
+          {
+            "start": 22,
+            "end": 22.5,
+            "layout": "own"
+          },
+          {
+            "start": 23,
+            "end": 23.5,
+            "layout": "own"
+          },
+          {
+            "start": 24,
+            "end": 24.5,
+            "layout": "own"
+          },
+          {
+            "start": 25,
+            "end": 25.5,
+            "layout": "own"
+          },
+          {
+            "start": 26,
+            "end": 26.5,
+            "layout": "own"
+          },
+          {
+            "start": 27,
+            "end": 27.5,
+            "layout": "own"
+          },
+          {
+            "start": 28,
+            "end": 28.5,
+            "layout": "own"
+          },
+          {
+            "start": 29,
+            "end": 29.5,
+            "layout": "own"
+          },
+          {
+            "start": 30,
+            "end": 30.5,
+            "layout": "own"
+          },
+          {
+            "start": 31,
+            "end": 31.5,
+            "layout": "own"
+          },
+          {
+            "start": 32,
+            "end": 32.5,
+            "layout": "own"
+          },
+          {
+            "start": 33,
+            "end": 33.5,
+            "layout": "own"
+          },
+          {
+            "start": 34,
+            "end": 34.5,
+            "layout": "own"
+          },
+          {
+            "start": 35,
+            "end": 35.5,
+            "layout": "own"
+          },
+          {
+            "start": 36,
+            "end": 36.5,
+            "layout": "own"
+          },
+          {
+            "start": 37,
+            "end": 37.5,
+            "layout": "own"
+          },
+          {
+            "start": 38,
+            "end": 38.5,
+            "layout": "own"
+          },
+          {
+            "start": 39,
+            "end": 39.5,
+            "layout": "own"
+          },
+          {
+            "start": 40,
+            "end": 40.5,
+            "layout": "own"
+          }
+        ]
+      }
+    }
+  ]
+}

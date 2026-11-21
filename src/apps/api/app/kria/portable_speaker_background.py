@@ -32,6 +32,13 @@ picture like ``VisualMediaPlacement``: ``{x, y, zoom}`` where the base scale is 
 scale is ``max(cover * zoom, contain)`` and ``x`` / ``y`` align the picture (0 = left / top edge,
 0.5 = centre, 1 = right / bottom edge). Capability ``backgroundFocus``; pinned by
 `tests/fixtures/speaker-background-parity/v5.json`.
+
+KRI-1558 (the speaker's place and size per section): optional ``layout_windows`` (absent while
+unused) say how the speaker is drawn in each span of the edit -- ``own`` (her own take untouched, as
+inside a full-screen window), ``full`` (the cut-out at full size over the picture), ``small`` (the
+cut-out at the window's ``frame``) or ``picture`` (the picture alone, her voice on). Per frame a
+full-screen window wins over a layout window, which replaces the layer's ``speaker_frame``.
+Capability ``speakerSections``; pinned by `tests/fixtures/speaker-background-parity/v6.json`.
 """
 
 from __future__ import annotations
@@ -49,6 +56,9 @@ MAX_TIMELINE_S = 1800.0
 MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
 # Qendresa item 16: an opening and (later) a closing full-frame span; a few, never a timeline.
 MAX_FULL_SCREEN_WINDOWS = 4
+# KRI-1558: one layout window per section of the take (a handful in practice).
+MAX_LAYOUT_WINDOWS = 40
+SpeakerLayout = Literal["own", "full", "small", "picture"]
 # Qendresa item 18: wire bounds of a background focus zoom.
 MIN_FOCUS_ZOOM = 0.2
 MAX_FOCUS_ZOOM = 4.0
@@ -196,6 +206,35 @@ class SpeakerFullScreenWindow(BaseModel):
         return self
 
 
+class SpeakerLayoutWindow(BaseModel):
+    """KRI-1558: from ``start`` to ``end`` (output seconds, ``start <= t < end``) the speaker is
+    drawn with ``layout``. ``frame`` (where the cut-out sits) is present exactly when ``layout``
+    is ``small``. Same bounds as a background window; mirrored by
+    `KriaMediaEngine.SpeakerLayoutWindow`."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    start: float = Field(ge=0.0, le=MAX_TIMELINE_S)
+    end: float = Field(gt=0.0, le=MAX_TIMELINE_S)
+    layout: SpeakerLayout
+    frame: SpeakerFrame | None = None
+
+    @model_validator(mode="after")
+    def _well_formed(self) -> SpeakerLayoutWindow:
+        if self.end - self.start < MIN_BACKGROUND_WINDOW_S:
+            raise ValueError("a layout window must last at least 0.5 seconds")
+        if (self.layout == "small") != (self.frame is not None):
+            raise ValueError("only a small layout window carries a frame, and it must")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("frame") is None:
+            data.pop("frame", None)
+        return data
+
+
 class SpeakerBackgroundLayer(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
@@ -219,6 +258,10 @@ class SpeakerBackgroundLayer(BaseModel):
     )
     # Qendresa item 18: aims the FILL picture (photo/video only); omitted while unused.
     focus: SpeakerBackgroundFocus | None = None
+    # KRI-1558, omitted from the wire while unused (never ``[]`` / ``null``).
+    layout_windows: list[SpeakerLayoutWindow] | None = Field(
+        default=None, min_length=1, max_length=MAX_LAYOUT_WINDOWS
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -279,6 +322,16 @@ class SpeakerBackgroundLayer(BaseModel):
                     raise ValueError("full-screen windows must be sorted and must not overlap")
         return self
 
+    @model_validator(mode="after")
+    def layout_windows_sorted_and_disjoint(self) -> SpeakerBackgroundLayer:
+        # KRI-1558: the phone picks THE layout window containing the time (S28's rule).
+        if self.layout_windows:
+            pairs = zip(self.layout_windows, self.layout_windows[1:], strict=False)
+            for earlier, later in pairs:
+                if later.start < earlier.end:
+                    raise ValueError("layout windows must be sorted and must not overlap")
+        return self
+
     @property
     def uses_windows(self) -> bool:
         """True when the layer needs the ``speakerBackgroundWindows`` capability."""
@@ -288,6 +341,11 @@ class SpeakerBackgroundLayer(BaseModel):
     def uses_full_screen(self) -> bool:
         """True when the layer needs the ``speakerFrameWindows`` capability (Qendresa item 16)."""
         return bool(self.full_screen_windows)
+
+    @property
+    def uses_layouts(self) -> bool:
+        """True when the layer needs the ``speakerSections`` capability (KRI-1558)."""
+        return bool(self.layout_windows)
 
     @property
     def uses_focus(self) -> bool:
@@ -328,4 +386,6 @@ class SpeakerBackgroundLayer(BaseModel):
             data.pop("full_screen_windows", None)
         if data.get("focus") is None:
             data.pop("focus", None)
+        if not data.get("layout_windows"):
+            data.pop("layout_windows", None)
         return data

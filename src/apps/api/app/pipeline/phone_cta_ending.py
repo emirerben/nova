@@ -265,20 +265,33 @@ def _touches(parts: Sequence[NormalizedBox], others: Sequence[NormalizedBox]) ->
 
 def _cutout_boxes(
     sampled: Sequence[tuple[tuple[float, float], Sequence[NormalizedBox]]],
-    frame: tuple[float, float, float],
+    frame: tuple[float, float, float] | None,
     full_screen_windows: Sequence[tuple[float, float]],
+    layout_windows: Sequence[pst.LayoutSpan] = (),
 ) -> list[NormalizedBox]:
     """KRI-1482: where the matted speaker is drawn in a corner ``frame`` (width, x, y) over
     each sampled part of the ending outside a full-screen span: from the top of her hair down
     to the layer's edge, the layer's full width (her shoulders fill it). A part where no face
-    was seen keeps the whole layer clear."""
-    width, x_center, y_center = (float(value) for value in frame)
+    was seen keeps the whole layer clear.
+
+    KRI-1558: with ``layout_windows`` each part is judged by how she is drawn there
+    (`speaker_drawn_at`): a ``small`` part keeps its own corner clear, any other part has no
+    cut-out to keep clear."""
     boxes: list[NormalizedBox] = []
     for (start, end), faces in sampled:
         middle = (start + end) / 2
-        if any(a <= middle <= b for a, b in full_screen_windows):
-            continue
-        drawn = [pst.frame_face_box(face, frame) for face in faces]
+        if layout_windows:
+            how, part_frame = pst.speaker_drawn_at(
+                middle, frame, full_screen_windows, layout_windows
+            )
+            if how != "frame" or part_frame is None:
+                continue
+        else:
+            if frame is None or any(a <= middle <= b for a, b in full_screen_windows):
+                continue
+            part_frame = frame
+        width, x_center, y_center = (float(value) for value in part_frame)
+        drawn = [pst.frame_face_box(face, part_frame) for face in faces]
         top = min(
             (face.top - _CUTOUT_HAIR_FRAC * face.height for face in drawn),
             default=y_center - width / 2,
@@ -310,6 +323,7 @@ def build_cta_ending(
     speaker_frame: tuple[float, float, float] | None = None,
     full_screen_windows: Sequence[tuple[float, float]] = (),
     avoid: Sequence[NormalizedBox] = (),
+    layout_windows: Sequence[pst.LayoutSpan] = (),
 ) -> CtaEnding | None:
     """The CTA ending for ``text`` ("comment READ"), or None to keep the lime tag.
 
@@ -319,7 +333,10 @@ def build_cta_ending(
     ``speaker_frame`` (width, x, y fractions; KRI-1482) is where the matted speaker is drawn
     small in a corner: the block and the arrow then keep off her face AND her cut-out there,
     except inside ``full_screen_windows`` (she fills the frame). ``avoid`` are other things on
-    screen during the ending (a label, a card) the block never touches."""
+    screen during the ending (a label, a card) the block never touches. ``layout_windows``
+    (KRI-1558, `phone_subtitled_title.LayoutSpan`) say how she is drawn per section: a ``small``
+    one keeps its own corner and face clear, ``own`` / ``full`` her full-frame face, and a
+    ``picture`` one nothing of hers."""
     try:
         return _build(
             text,
@@ -339,6 +356,7 @@ def build_cta_ending(
             speaker_frame=speaker_frame,
             full_screen_windows=full_screen_windows,
             avoid=avoid,
+            layout_windows=layout_windows,
         )
     except Exception as exc:  # noqa: BLE001 - fall back to the lime tag, never fail a draft
         log.warning("cta_ending_failed", error=str(exc)[:200])
@@ -364,6 +382,7 @@ def _build(
     speaker_frame: tuple[float, float, float] | None = None,
     full_screen_windows: Sequence[tuple[float, float]] = (),
     avoid: Sequence[NormalizedBox] = (),
+    layout_windows: Sequence[pst.LayoutSpan] = (),
 ) -> CtaEnding | None:
     from app.pipeline.phone_text_style import undrawable_text  # noqa: PLC0415
 
@@ -431,12 +450,12 @@ def _build(
     # KRI-1482: her face where it is DRAWN over the ending (mapped into a corner frame, full
     # frame inside a full-screen span). No frame: one sample of the whole window, as before.
     faces, face_receipts = pst._as_drawn(
-        faces_over, (start_s, end_s), speaker_frame, full_screen_windows
+        faces_over, (start_s, end_s), speaker_frame, full_screen_windows, layout_windows
     )
     face_receipt = face_receipts[0]
     cutout = (
-        _cutout_boxes(sampled, speaker_frame, full_screen_windows)
-        if speaker_frame is not None
+        _cutout_boxes(sampled, speaker_frame, full_screen_windows, layout_windows)
+        if speaker_frame is not None or layout_windows
         else []
     )
     # Never touched at all (the faces above keep the block's small `_MAX_COVERAGE` tolerance).
