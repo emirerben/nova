@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.60.0] - 2026-11-21
+
+### Changed
+- fix(kria): failed research renders the approved video without explanations; each text compose pays under its own key (KRI-1413) (#2440) <!-- release-pr: 2440 -->
+
 ## [0.89.59.0] - 2026-11-21
 
 ### Changed
