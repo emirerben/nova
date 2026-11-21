@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.64.0] - 2026-11-21
+
+### Changed
+- ci(api): run the API suite as six shards (KRI-1534) (#2445) <!-- release-pr: 2445 -->
+
 ## [0.89.63.0] - 2026-11-21
 
 ### Changed
