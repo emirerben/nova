@@ -27,7 +27,12 @@ from app.config import settings
 from app.kria.reply_language import reply_language_for
 from app.kria.route_capabilities import RouteId
 from app.kria.route_disclosure import strategy_notices
-from app.services.sfx_capability import guided_sfx_limit, limit_line
+from app.services.sfx_capability import (
+    guided_sfx_limit,
+    limit_line,
+    subtitled_sfx_limit,
+    voiceover_sfx_limit,
+)
 from app.services.sfx_chooser import SfxLimit
 
 LICENSED = {"effect_id": "fah", "semantics": "funny_moments", "max_placements": 3}
@@ -168,3 +173,44 @@ def test_every_new_notice_has_turkish() -> None:
             assert localize_known_message(text) == text
         with reply_language_for("tr"):
             assert localize_known_message(text) != text, text
+
+
+def test_the_talking_and_voiceover_limits_follow_the_lane_predicates_for_every_gate_combination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate the worker reads and the reason named for a closed one can never disagree."""
+    from app.services.phone_rollout import (
+        PHONE_SUBTITLED_EDITOR_FEATURES,
+        PHONE_VOICEOVER_EDITOR_FEATURES,
+        phone_subtitled_editor_lanes_supported,
+        phone_voiceover_editor_lanes_supported,
+    )
+
+    features = sorted({*PHONE_SUBTITLED_EDITOR_FEATURES, *PHONE_VOICEOVER_EDITOR_FEATURES})
+    switches = (
+        "sound_effects_enabled",
+        "phone_subtitled_editor_lanes_enabled",
+        "phone_subtitled_media_lanes_enabled",
+        "phone_voiceover_editor_lanes_enabled",
+        "media_overlays_enabled",
+    )
+    for values in itertools.product((True, False), repeat=len(switches) + 1):
+        *flags, verified = values
+        for name, value in zip(switches, flags, strict=True):
+            monkeypatch.setattr(settings, name, value, raising=False)
+        monkeypatch.setattr(
+            settings, "phone_render_verified_features", features if verified else [], raising=False
+        )
+        talking = subtitled_sfx_limit()
+        assert (talking is None) == (
+            settings.sound_effects_enabled and phone_subtitled_editor_lanes_supported()
+        ), values
+        voiceover = voiceover_sfx_limit()
+        assert (voiceover is None) == phone_voiceover_editor_lanes_supported(
+            require_client=False
+        ), values
+        if not verified and all(flags):
+            assert talking is SfxLimit.feature_unverified
+            assert voiceover is SfxLimit.feature_unverified
+        if not flags[0]:
+            assert talking is SfxLimit.flag_off and voiceover is SfxLimit.flag_off
