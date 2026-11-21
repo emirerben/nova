@@ -1351,6 +1351,9 @@ SOFT_SOURCES = {
     "still_grain": (0.06, "crop=1280:720:x=160:y=90,noise=alls=40:allf=t"),
 }
 SOFT_EXPORT = (270, 480)
+# The phone's analysis proxy (~0.7 Mbps), and one sharp enough to clear the exact bar.
+SOFT_PROXY_QUALITY = ("-preset", "medium", "-b:v", "700k", "-maxrate", "800k", "-bufsize", "1400k")
+SHARP_PROXY_QUALITY = ("-preset", "medium", "-crf", "10")
 SOFT_GEOMETRY = {
     "cover": "crop=ih*9/16:ih",
     "zoom2": "crop=ih*9/16/1.02:ih/1.02",
@@ -1398,9 +1401,9 @@ def soft_proxy(exports):
     root, _, _ = exports
     stills, built = {}, {}
 
-    def footage(name):
-        if name in built:
-            return built[name]
+    def footage(name, proxy_quality=SOFT_PROXY_QUALITY):
+        if (name, proxy_quality) in built:
+            return built[name, proxy_quality]
         kind, fps_in = name.rsplit("_", 1)
         scale, camera = SOFT_SOURCES[kind]
         if scale not in stills:
@@ -1438,8 +1441,8 @@ def soft_proxy(exports):
         proxy = _encode_raw(
             _held(frames, int(fps_in), [(0, len(frames) / int(fps_in))]),
             (568, 320),
-            root / f"soft-{name}-proxy.mp4",
-            *("-preset", "medium", "-b:v", "700k", "-maxrate", "800k", "-bufsize", "1400k"),
+            root / f"soft-{name}-proxy-{len(built)}.mp4",
+            *proxy_quality,
         )
         cache = {}
 
@@ -1453,8 +1456,8 @@ def soft_proxy(exports):
                 *("-preset", "fast", "-crf", "17"),
             )
 
-        built[name] = proxy, cut
-        return built[name]
+        built[name, proxy_quality] = proxy, cut
+        return built[name, proxy_quality]
 
     return footage
 
@@ -1553,3 +1556,41 @@ def test_still_footage_below_the_exact_bar_has_no_profile_to_pass_on(exports, so
     (picture,) = [c for c in report["checks"] if c["kind"] == "picture"]
     assert min(s["ssim_displayed"] for s in picture["sample_evidence"]) < 0.95, picture
     assert (picture["status"], picture["profile_samples"]) == ("failed", 0), picture
+
+
+# --- Held frames and the whole-window shift rule (CI repeat run, 2026-11-21) ---
+#
+# Failure modes written before any verifier change:
+# - a 30 fps proxy of a 25 fps original holds every sixth picture for two frames; a sample
+#   on a held frame matches its displayed frame AND its next frame, so it says nothing
+#   about timing, yet it counts as "in place" and switches the whole-window rule off;
+# - the held sample can be first, in the middle or last, and there can be two of them;
+# - a low-motion sample does the same without being a held frame: displayed and next
+#   both clear the exact bar (phase 1, sample 1);
+# - a correct export of the same footage has held samples too and must keep passing.
+#
+# The proxy here is sharp, so every neighbour clears the 0.95 bar by a wide margin and the
+# verdict does not depend on encoder noise. The soft-proxy case above
+# (handheld25-1-frame-late) reaches the same hole in about 1 CI run in 240, when the
+# rate-capped proxy encode happens to lift four neighbours over the bar.
+HELD_PHASES = [0.5 + k / 30 for k in range(6)]
+
+
+@pytest.mark.parametrize("start", HELD_PHASES)
+def test_one_frame_late_is_rejected_when_samples_land_on_held_frames(exports, soft_proxy, start):
+    root, _, recipe = exports
+    proxy, cut = soft_proxy("handheld_25", SHARP_PROXY_QUALITY)
+    report = verify_actual_export(
+        cut([(start + 1 / 30, 1.9)]), status(_portrait(recipe, [(start, 1.9)])), {"a": proxy}
+    )
+    assert report["status"] == "rejected", report
+
+
+@pytest.mark.parametrize("start", HELD_PHASES)
+def test_correct_export_with_held_frames_passes_against_a_sharp_proxy(exports, soft_proxy, start):
+    root, _, recipe = exports
+    proxy, cut = soft_proxy("handheld_25", SHARP_PROXY_QUALITY)
+    report = verify_actual_export(
+        cut([(start, 1.9)]), status(_portrait(recipe, [(start, 1.9)])), {"a": proxy}
+    )
+    assert report["status"] == "checked", report
