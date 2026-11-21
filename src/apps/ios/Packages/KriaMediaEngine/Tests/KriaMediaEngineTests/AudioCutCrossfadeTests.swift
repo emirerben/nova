@@ -29,8 +29,9 @@ final class AudioCutCrossfadeTests: XCTestCase {
     }
 
     func testOnlyRemovedSourceMaterialIsEverBorrowed() {
-        // Continuous source: nothing was removed, so there is no join to hide.
-        XCTAssertTrue(plan([clip("a", source: 0, duration: 1, at: 0), clip("b", source: 1, duration: 1, at: 1)]).isEmpty)
+        // Continuous source: nothing was removed, so nothing is borrowed and the join plays with no fade (KRI-1558).
+        XCTAssertEqual(plan([clip("a", source: 0, duration: 1, at: 0), clip("b", source: 1, duration: 1, at: 1)]),
+                       ["a": AudioCutHandles(continuousOut: true), "b": AudioCutHandles(continuousIn: true)])
         // Backwards jump: the "removed" audio would be a kept word.
         XCTAssertTrue(plan([clip("a", source: 2, duration: 1, at: 0), clip("b", source: 0, duration: 1, at: 1)]).isEmpty)
         // A different take has no shared room tone to crossfade.

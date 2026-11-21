@@ -43,6 +43,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     /// Set only when the recipe has a `speakerBackground` (KRI-1116).
     var speakerRole: SpeakerBackgroundRole? = nil
     var speakerFrameOverride: SpeakerFrameOverride? = nil
+    /// KRI-1558: shared by the pieces of one take split with nothing removed (`ShotContinuity`), so the speaker's
+    /// cut-out carries on across the split; nil keys the matte by `clipID` as before.
+    var shotKey: String? = nil
     func fadeAlpha(at time: Double) -> Double {
         fadeIn > 0 ? min(1, max(0, (time - (fadeStart ?? start)) / fadeIn)) : 1
     }
@@ -455,7 +458,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         let speakerStart = DispatchTime.now().uptimeNanoseconds
         for layer in speakers { speaker = try composeVideoLayer(layer, onto: speaker, instruction: instruction, request: request, time: time) }
         EngineSignpost.stage("talk.stage.speakerLayer", since: speakerStart)
-        let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
+        let key = speakers.map { $0.shotKey ?? $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
         switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil, frame: turn) {
         case .cutout(let mask):
             if slice != .speakerOnly { try compose(background) }
@@ -561,7 +564,10 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 let solo = RecipeVideoInstruction(timeRange: instruction.timeRange,
                     layers: backgrounds + [raw] + instruction.layers.filter { $0.backdropAssetID != nil }, text: [], canvas: instruction.canvas.size,
                     cameraPulses: instruction.cameraPulses, transparentBackground: true,
-                    speakerMatte: instruction.speakerMatte?.forPanel("occurrence:" + (layer.clipID ?? "")),
+                    // One speaker on screen draws through the composition's own matte, so a layout change on a split
+                    // with nothing removed keeps the cut-out's state (KRI-1558); overlapping speakers keep a panel each.
+                    speakerMatte: speakers.count == 1 ? instruction.speakerMatte
+                        : instruction.speakerMatte?.forPanel("occurrence:" + (layer.shotKey ?? layer.clipID ?? "")),
                     speakerFrame: layer.effectiveSpeakerFrame(instruction.speakerFrame),
                     speakerSlice: whole ? .whole : .speakerOnly)
                 let picture = try composeBelowText(backgrounds + [raw], onto: CIImage(color: .clear).cropped(to: bounds),

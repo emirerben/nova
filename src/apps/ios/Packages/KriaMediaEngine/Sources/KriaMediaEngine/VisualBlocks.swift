@@ -105,31 +105,68 @@ let audioCutCrossfadeHandle: TimeInterval = 0.025
 struct AudioCutHandles: Equatable, Sendable {
     var lead: TimeInterval = 0
     var tail: TimeInterval = 0
+    /// KRI-1558: this edge meets the same source with nothing removed (a take split where its layout changes),
+    /// so the two sides are one continuous recording and the edge plays with no fade at all.
+    var continuousIn = false
+    var continuousOut = false
     static let none = AudioCutHandles()
 
     /// Handles per clip ID. A cut qualifies only when both sides play their
     /// source at 1x with no hold, no transition and no authored audio fade, and
     /// the source jumps forward: the borrowed audio is then removed material
     /// (pause, breath, filler edge), never a kept word. Each handle stays
-    /// inside half the removed span and a quarter of either clip.
+    /// inside half the removed span and a quarter of either clip. A join whose
+    /// source does not jump at all borrows nothing and is marked continuous.
     static func plan(_ tracks: [TimelineTrack]) -> [String: AudioCutHandles] {
         var result: [String: AudioCutHandles] = [:]
         // KRI-282: audio-kind tracks qualify too, so back-to-back speech excerpts
         // lifted from one take join smoothly instead of only declicking.
         for track in tracks where track.kind == .video || track.kind == .audio {
             let clips = track.clips.sorted { $0.timelineStart < $1.timelineStart }
-            for (outgoing, incoming) in zip(clips, clips.dropFirst()) {
+            for (outgoing, incoming) in zip(clips, clips.dropFirst()) where sameShotJoin(outgoing, incoming) {
+                guard (outgoing.audioFadeOut ?? 0) == 0, (incoming.audioFadeIn ?? 0) == 0 else { continue }
                 let removed = incoming.sourceStart - (outgoing.sourceStart + outgoing.sourceDuration)
-                guard outgoing.sourceAssetID == incoming.sourceAssetID,
-                      outgoing.rate == 1, incoming.rate == 1,
-                      outgoing.holdDuration == nil, incoming.holdDuration == nil,
-                      (incoming.transition?.duration ?? 0) == 0,
-                      (outgoing.audioFadeOut ?? 0) == 0, (incoming.audioFadeIn ?? 0) == 0,
-                      abs(incoming.timelineStart - (outgoing.timelineStart + outgoing.duration)) < 0.001,
-                      removed > 0.001 else { continue }
+                if abs(removed) <= sourceContinuityTolerance {
+                    result[outgoing.id, default: .none].continuousOut = true
+                    result[incoming.id, default: .none].continuousIn = true
+                    continue
+                }
+                guard removed > 0.001 else { continue }
                 let handle = min(audioCutCrossfadeHandle, removed / 2, outgoing.sourceDuration / 4, incoming.sourceDuration / 4)
                 result[outgoing.id, default: .none].tail = handle
                 result[incoming.id, default: .none].lead = handle
+            }
+        }
+        return result
+    }
+}
+
+/// How far apart (seconds) the source may be across a join and still count as one continuous recording.
+let sourceContinuityTolerance: TimeInterval = 0.001
+
+/// Two clips of one source laid back to back on one track, both at 1x with no hold and no transition between them.
+/// With the source jumping forward it is a speech-cleanup cut; with no jump it is the same shot split in two.
+func sameShotJoin(_ outgoing: TimelineClip, _ incoming: TimelineClip) -> Bool {
+    outgoing.sourceAssetID == incoming.sourceAssetID
+        && outgoing.rate == 1 && incoming.rate == 1
+        && outgoing.holdDuration == nil && incoming.holdDuration == nil
+        && (incoming.transition?.duration ?? 0) == 0
+        && abs(incoming.timelineStart - (outgoing.timelineStart + outgoing.duration)) < 0.001
+}
+
+/// KRI-1558: the speaker's cut-out keeps its temporal state across a split with nothing removed (one shot, so the
+/// last good mask may still cover a missed frame), while a real cut still starts clean (S7). Maps every clip of a
+/// run of two or more continuous pieces to the run's first clip ID; clips outside such a run are absent.
+enum ShotContinuity {
+    static func runKeys(_ tracks: [TimelineTrack]) -> [String: String] {
+        var result: [String: String] = [:]
+        for track in tracks where track.kind == .video {
+            let clips = track.clips.sorted { $0.timelineStart < $1.timelineStart }
+            for (outgoing, incoming) in zip(clips, clips.dropFirst()) where sameShotJoin(outgoing, incoming)
+                && abs(incoming.sourceStart - (outgoing.sourceStart + outgoing.sourceDuration)) <= sourceContinuityTolerance {
+                let key = result[outgoing.id] ?? outgoing.id
+                result[outgoing.id] = key
+                result[incoming.id] = key
             }
         }
         return result
@@ -284,8 +321,8 @@ func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: Timelin
     let audioEnd = start + clip.sourceDuration / clip.rate
     let edge = max(0, min(audioEdgeFade, (audioEnd - start) / 4))
     let half = (audioEnd - start) / 2
-    let fadeIn = cut.lead > 0 ? 2 * cut.lead : max(edge, min(clip.audioFadeIn ?? 0, half))
-    let fadeOut = cut.tail > 0 ? 2 * cut.tail : max(edge, min(clip.audioFadeOut ?? 0, half))
+    let fadeIn = cut.continuousIn ? 0 : cut.lead > 0 ? 2 * cut.lead : max(edge, min(clip.audioFadeIn ?? 0, half))
+    let fadeOut = cut.continuousOut ? 0 : cut.tail > 0 ? 2 * cut.tail : max(edge, min(clip.audioFadeOut ?? 0, half))
     let steadyStart = start + fadeIn, steadyEnd = audioEnd - fadeOut
     // A crossfade edge follows sin/cos so the overlapped power stays level;
     // AVAudioMix ramps are linear, so the curve is a few linear pieces.

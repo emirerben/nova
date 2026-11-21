@@ -114,6 +114,7 @@ public struct PreviewComposition: @unchecked Sendable {
         }
         let overlayOrders = Self.overlayOrders(in: recipe)
         let speakerClipIDs = Self.speakerClipIDs(in: recipe)
+        let shotKeys = ShotContinuity.runKeys(recipe.tracks)
         for recipeTrack in recipe.tracks {
             // A track per cut can exhaust hardware decoders on long phone
             // timelines. Reuse tracks once their previous segment has ended;
@@ -370,6 +371,7 @@ public struct PreviewComposition: @unchecked Sendable {
                     if speakerClipIDs.contains(clip.id) {
                         layers[index].speakerRole = .speaker
                         layers[index].speakerFrameOverride = clip.speakerFrameOverride
+                        layers[index].shotKey = shotKeys[clip.id]
                     }
                 }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
