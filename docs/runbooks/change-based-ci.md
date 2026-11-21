@@ -421,6 +421,24 @@ download is faster than a cache restore of that size.
   test stopped running, an outcome changed, a test newly reaches the 60 s
   timeout, or more samples per run sit above 45 s.
 
+### API lint and format
+
+`python3 scripts/ci/api-lint.py` runs `ruff check` and `ruff format --check` on
+`src/apps/api`. `lint-suites` runs it on the whole tree; `scripts/preship-check.sh`
+runs it on the changed files. Both checks always run, so one push shows every
+problem. First measured 2026-11-21 on a laptop: 0.06 s lint, 0.03 s format,
+3,452 files.
+
+- ruff is pinned exactly (`ruff==` in `pyproject.toml`, the same version in
+  `uv.lock`). The command refuses to run with any other version and prints the
+  install line, because two ruff versions format differently. Before the pin,
+  CI ran 0.17 and laptops 0.15, and formatting was not checked in CI at all:
+  92 files had drifted.
+- To move to a new ruff: change the pin, run `cd src/apps/api && uv lock`,
+  run `ruff format .` with the new version and commit the three together.
+- Format one file, never a directory you did not change:
+  `cd src/apps/api && ruff format path/to/file.py`.
+
 ### Skips in the API shards
 
 A skipped test is a check that did not run. After pytest, each API shard reads
