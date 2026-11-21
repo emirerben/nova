@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.71.0] - 2026-11-21
+
+### Changed
+- fix(kria): a paid call the ledger already settled is a bug, not an AI timeout (KRI-1413) (#2451) <!-- release-pr: 2451 -->
+
 ## [0.89.70.0] - 2026-11-21
 
 ### Changed
