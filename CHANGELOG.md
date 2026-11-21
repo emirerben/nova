@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.52.0] - 2026-11-21
+
+### Changed
+- ci(guards): fail when a guard's diff cannot be read (KRI-1534) (#2432) <!-- release-pr: 2432 -->
+
 ## [0.89.51.0] - 2026-11-21
 
 ### Changed
