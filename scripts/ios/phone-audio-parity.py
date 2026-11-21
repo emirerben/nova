@@ -71,6 +71,10 @@ is in OUT.
    shown twice, another dropped). Command: `prepare OUT --cases voice_behind_footage`.
 
 5. A Talking footage cutaway plays its own sound under a muted speaker (KRI-1151).
+   `talking_sfx_ask` (KRI-1561): the REAL `compile_phone_subtitled_plan` with two chosen sound
+   effects (one over speech, ducked; one in a pause) must be audible in the native export at the
+   planned times; controls: `talking_sfx_ask_no_duck`, `talking_sfx_ask_no_effects`. Command:
+   `prepare OUT --cases talking_sfx_ask`.
    `talking_cutaway_sound`: the recipe comes from the REAL `compile_phone_subtitled_plan` with
    a `PhoneCutaway(sound=True)`. The speaker is a green clip carrying a 300 Hz tone, the
    cutaway a red clip carrying a 700 Hz tone, so the EXPORT must hold: the speaker tone before
@@ -542,6 +546,8 @@ def compare(out: Path) -> int:
                 row, failed = _compare_audio_levels(directory, proof)
             elif proof["kind"] == "talking_cutaway_sound":
                 row, failed = _compare_talking_cutaway_sound(directory, proof)
+            elif proof["kind"] == "talking_sfx_ask":
+                row, failed = _compare_talking_sfx_ask(directory, proof)
             elif proof["kind"] == "voice_behind_footage":
                 row, failed = _compare_voice_behind_footage(out, directory, proof)
             else:
@@ -1974,9 +1980,202 @@ def _compare_talking_cutaway_sound(directory: Path, proof: dict) -> tuple[dict, 
     return row, bool(failed)
 
 
+# -------------------------------------------- Talking chosen sound effects (KRI-1561)
+
+SFX_SPEAKER_HZ = 300.0
+SFX_EFFECT_HZ = 2000.0
+SFX_SPEAKER_S = 14.0
+SFX_EFFECT_S = 0.8
+SFX_OVER_SPEECH_AT_S = 3.0
+SFX_IN_PAUSE_AT_S = 9.0
+SFX_SPEECH_CUE = (2.0, 5.0)
+
+
+def _sfx_ask_recipe(speaker: Path, effect: Path, *, duck: bool, effects: bool = True):
+    from app.kria.render_assets import LibraryRenderAsset  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        PhoneSubtitledLanes,
+        ResolvedSoundEffect,
+        SubtitledSoundEffect,
+    )
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan  # noqa: PLC0415
+
+    def resolved(row_id: str, at_s: float) -> ResolvedSoundEffect:
+        return ResolvedSoundEffect(
+            request=SubtitledSoundEffect(id=row_id, catalog_id="fx-ask", at_s=at_s, volume=1.0),
+            asset=LibraryRenderAsset(
+                id="sfx-fx-ask",
+                catalog="sound_effect",
+                catalog_id="fx-ask",
+                generation="1",
+                fingerprint=_fingerprint(effect),
+            ),
+            duration_s=SFX_EFFECT_S,
+        )
+
+    start, end = SFX_SPEECH_CUE
+    cues = [
+        {
+            "text": "speaking here",
+            "start_s": start,
+            "end_s": end,
+            "words": [
+                {"text": "speaking", "start_s": start, "end_s": (start + end) / 2},
+                {"text": "here", "start_s": (start + end) / 2, "end_s": end},
+            ],
+        }
+    ]
+    lanes = PhoneSubtitledLanes(
+        sound_effects=[
+            resolved("ask-sfx-0", SFX_OVER_SPEECH_AT_S),
+            resolved("ask-sfx-1", SFX_IN_PAUSE_AT_S),
+        ]
+        if effects
+        else []
+    )
+    return compile_phone_subtitled_plan(
+        (_binding_for("speaker", speaker),),
+        caption_cues=cues,
+        lanes=lanes if effects else None,
+        duck_sfx_under_speech=duck,
+    )
+
+
+def prepare_talking_sfx_ask(out: Path) -> None:
+    from app.pipeline.phone_subtitled_plan import SFX_SPEECH_DUCK_GAIN  # noqa: PLC0415
+
+    inputs = out / "inputs_talking_sfx_ask"
+    inputs.mkdir(parents=True, exist_ok=True)
+    speaker = inputs / "speaker.mp4"
+    effect = inputs / "effect.m4a"
+    _write_tone_clip(speaker, (40, 180, 60), SFX_SPEAKER_HZ, SFX_SPEAKER_S)
+    _write_tone_audio(effect, SFX_EFFECT_HZ, 0.5, SFX_EFFECT_S)
+    files = {"speaker": speaker, "effect": effect}
+    recipe = _sfx_ask_recipe(speaker, effect, duck=True)
+    proof = {
+        "kind": "talking_sfx_ask",
+        "duration_s": recipe.duration,
+        "speaker_hz": SFX_SPEAKER_HZ,
+        "effect_hz": SFX_EFFECT_HZ,
+        "effect_s": SFX_EFFECT_S,
+        "over_speech_at_s": SFX_OVER_SPEECH_AT_S,
+        "in_pause_at_s": SFX_IN_PAUSE_AT_S,
+        "duck_gain": SFX_SPEECH_DUCK_GAIN,
+        "source_speaker_amp": _tone_amp(speaker, SFX_SPEAKER_HZ),
+        "source_effect_amp": _tone_amp(effect, SFX_EFFECT_HZ, at_s=SFX_EFFECT_S / 2),
+    }
+
+    def case(name: str, built, expect: list[str] | None = None) -> None:  # noqa: ANN001
+        extra = {"expect_failure": expect, "allowed_failures": expect} if expect else {}
+        _write_voice_case(out, name, built, files, {**proof, **extra})
+        directory = out / "cases" / name
+        assets = json.loads((directory / "assets.json").read_text())
+        for asset in built.asset_manifest.assets:
+            if asset.kind == "library" and asset.id.startswith("sfx-"):
+                assets[asset.id] = str(effect)  # the stand-in tone for the catalogue effect
+        (directory / "assets.json").write_text(json.dumps(assets, indent=2))
+
+    case("talking_sfx_ask", recipe)
+    case(
+        "talking_sfx_ask_no_duck",
+        _sfx_ask_recipe(speaker, effect, duck=False),
+        ["effect_ducked_under_speech"],
+    )
+    case(
+        "talking_sfx_ask_no_effects",
+        _sfx_ask_recipe(speaker, effect, duck=True, effects=False),
+        ["effect_plays_over_speech", "effect_plays_in_pause", "effect_ducked_under_speech"],
+    )
+    print(f"prepared talking_sfx_ask cases in {out} ({recipe.duration:.2f}s)")
+
+
+def _compare_talking_sfx_ask(directory: Path, proof: dict) -> tuple[dict, bool]:
+    name = directory.name
+    phone = directory / "phone.mp4"
+    row: dict = {"case": name, "kind": proof["kind"]}
+    if not phone.exists():
+        row["error"] = "phone.mp4 missing: run the package test first"
+        return row, True
+    rate = 48000
+    pcm = _pcm(phone)
+    hz, spk = proof["effect_hz"], proof["speaker_hz"]
+    eff_ref, spk_ref = proof["source_effect_amp"], proof["source_speaker_amp"]
+    length = proof["effect_s"]
+
+    def effect_db(at_s: float) -> float:
+        amp = _goertzel(pcm, rate, at_s + length / 2, length / 2 - 0.1, hz)
+        return round(_amp_db(amp) - _amp_db(eff_ref), 1)
+
+    duck_db = round(20 * math.log10(proof["duck_gain"]), 1)
+    checks: dict[str, dict] = {}
+    over, pause = effect_db(proof["over_speech_at_s"]), effect_db(proof["in_pause_at_s"])
+    # Audible at the planned time: within a few dB of what the recipe asks for. The effect on
+    # speech sits at the duck level; the one in a pause at full level.
+    checks["effect_plays_over_speech"] = {
+        "level_vs_source_db": over,
+        "floor_db": duck_db - LEVEL_TOLERANCE_DB,
+        "ok": over >= duck_db - LEVEL_TOLERANCE_DB,
+    }
+    checks["effect_plays_in_pause"] = {
+        "level_vs_source_db": pause,
+        "within_db": LEVEL_TOLERANCE_DB,
+        "ok": abs(pause) <= LEVEL_TOLERANCE_DB,
+    }
+    checks["effect_ducked_under_speech"] = {
+        "level_vs_source_db": over,
+        "expected_db": duck_db,
+        "within_db": LEVEL_TOLERANCE_DB,
+        "ok": abs(over - duck_db) <= LEVEL_TOLERANCE_DB,
+    }
+    quiet = [(0.8, 1.8), (5.5, 8.5), (10.5, proof["duration_s"] - 0.5)]
+    leaks = [
+        round(
+            _amp_db(_goertzel(pcm, rate, (a + b) / 2, (b - a) / 2, hz)) - _amp_db(eff_ref), 1
+        )
+        for a, b in quiet
+    ]
+    checks["effect_only_at_planned_times"] = {
+        "effect_tone_elsewhere_vs_source_db": leaks,
+        "max_db": LEAK_MAX_DB,
+        "ok": all(v <= LEAK_MAX_DB for v in leaks),
+    }
+    speaker_levels = [
+        round(
+            _amp_db(_goertzel(pcm, rate, (a + b) / 2, (b - a) / 2, spk)) - _amp_db(spk_ref), 1
+        )
+        for a, b in [(0.8, 1.8), (6.0, 8.5), (11.0, proof["duration_s"] - 0.5)]
+    ]
+    checks["speaker_plays_throughout"] = {
+        "level_vs_source_db": speaker_levels,
+        "within_db": LEVEL_TOLERANCE_DB,
+        "ok": all(abs(v) <= LEVEL_TOLERANCE_DB for v in speaker_levels),
+    }
+    exported = _duration(phone)
+    checks["length"] = {
+        "exported_s": round(exported, 3),
+        "planned_s": round(proof["duration_s"], 3),
+        "ok": abs(exported - proof["duration_s"]) <= 1 / 30 + 0.02,
+    }
+    row["checks"] = checks
+    failed = sorted(k for k, v in checks.items() if not v["ok"])
+    row["failed_checks"] = failed
+    expect = proof.get("expect_failure")
+    if expect:
+        allowed = set(proof.get("allowed_failures") or expect)
+        caught = set(expect) <= set(failed) <= allowed
+        row["expect_failure"] = expect
+        row["negative_control_detected"] = caught
+        print(f"{name}: negative control {'DETECTED' if caught else 'MISSED'} ({failed})")
+        return row, not caught
+    row["passed"] = not failed
+    print(f"{name}: {'PASS' if row['passed'] else 'FAIL'} {failed}")
+    return row, bool(failed)
+
+
 CASES = {
     "all",
     "talking_cutaway_sound",
+    "talking_sfx_ask",
     "parity",
     "user_song",
     "voiceover_music_authored",
@@ -1998,6 +2197,8 @@ def prepare(out: Path, cases: str = "all") -> None:
         prepare_voice_behind_footage(out)
     if cases in {"all", "talking_cutaway_sound"}:
         prepare_talking_cutaway_sound(out)
+    if cases in {"all", "talking_sfx_ask"}:
+        prepare_talking_sfx_ask(out)
 
 
 if __name__ == "__main__":
