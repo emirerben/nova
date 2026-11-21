@@ -3949,12 +3949,15 @@
     {
       "id": "kri-1562-talking-music",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_talking_music_bed.py tests/tasks/test_phone_talking_music_worker.py tests/routes/test_phone_talking_music_save.py",
+      "api_tests": "tests/pipeline/test_talking_music_bed.py tests/tasks/test_phone_talking_music_worker.py tests/routes/test_phone_talking_music_save.py tests/kria/test_talking_music_requests.py",
       "paths": [
         "src/apps/api/app/pipeline/sound_effects.py",
+        "src/apps/api/app/services/talking_music.py",
+        "src/apps/api/prompts/edit_copilot_ops/talking_music.txt",
         "src/apps/api/tests/pipeline/test_talking_music_bed.py",
         "src/apps/api/tests/tasks/test_phone_talking_music_worker.py",
-        "src/apps/api/tests/routes/test_phone_talking_music_save.py"
+        "src/apps/api/tests/routes/test_phone_talking_music_save.py",
+        "src/apps/api/tests/kria/test_talking_music_requests.py"
       ]
     }
   ]
