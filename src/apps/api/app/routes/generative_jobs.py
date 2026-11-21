@@ -6670,8 +6670,12 @@ def _resolve_background_music_treatment(
         "gain_db": min(0.0, max(-40.0, float(gain_db))),
         "speech_duck_db": float(current.get("speech_duck_db", -12.0) or -12.0),
         "final_lufs": float(current.get("final_lufs", -14.0) or -14.0),
-        # KRI-1562: the phone bed keeps its export margin for a song first chosen at Save.
-        "duration_s": round(track_duration_s, 3),
+        # KRI-1562: a phone Talking bed keeps its export margin for a song first chosen at Save.
+        **(
+            {"duration_s": round(track_duration_s, 3)}
+            if is_phone_subtitled_editor_variant(variant)
+            else {}
+        ),
     }
 
 
