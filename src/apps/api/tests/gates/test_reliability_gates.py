@@ -18,6 +18,7 @@ import pytest
 
 from app.config import Settings
 from tests.gates.manifest import API_ROOT, REPO_ROOT, ci_union, load_manifest
+from tests.git_history_required import git_history_required
 
 MANIFEST = load_manifest()
 MERGED = [gate for gate in MANIFEST.gates if gate.status == "merged"]
@@ -79,6 +80,11 @@ def _is_ancestor(commit: str) -> bool | None:
 def test_fix_commits_are_on_this_branch(gate) -> None:
     ancestor = _is_ancestor(gate.fix_commit)
     if ancestor is None:
+        if git_history_required():
+            pytest.fail(
+                f"NOVA_REQUIRE_GIT_HISTORY=1 but git cannot place {gate.fix_commit}"
+                " relative to HEAD; the checkout needs full history"
+            )
         pytest.skip("git history unavailable")
     assert ancestor, f"{gate.id}: fix commit {gate.fix_commit} is not an ancestor of HEAD"
 
