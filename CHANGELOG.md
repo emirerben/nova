@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.73.0] - 2026-11-21
+
+### Changed
+- fix(kria): a word-by-word or translated research ask with no qualifying source renders the rest of the text (KRI-1413) (#2452) <!-- release-pr: 2452 -->
+
 ## [0.89.72.0] - 2026-11-21
 
 ### Changed
