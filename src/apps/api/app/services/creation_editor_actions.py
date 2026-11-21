@@ -22,7 +22,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
-from app.models import CreationThreadEvent, Job, PlanItem, PlanItemAsset
+from app.models import CreationThreadEvent, Job, MusicTrack, PlanItem, PlanItemAsset
 from app.routes._copilot import CopilotTurnBody, run_copilot_turn
 from app.routes.generative_jobs import (
     EditorCommitRequest,
@@ -851,6 +851,12 @@ async def execute_copilot_edit(
             plan_item_id=str(thread.active_plan_item_id),
             visual_assets=visual_assets,
             phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(db, job, variant),
+            # KRI-1562: a chat song on a phone Talking edit is the background-music section.
+            background_music_track=(
+                await db.get(MusicTrack, payload.background_music.track_id)
+                if payload.background_music is not None and payload.background_music.track_id
+                else None
+            ),
         )
         from app.services.finished_style_learning import (
             explicitly_temporary,

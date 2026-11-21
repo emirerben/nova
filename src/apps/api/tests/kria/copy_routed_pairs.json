@@ -2455,6 +2455,11 @@
    "app/kria/brief_checks.py",
    "Your iPhone app is too old to play music under your voice; update it first",
    "iPhone uygulaman sesinin altında müzik çalmak için çok eski; önce güncelle"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "you asked for no music, so I won't add a song",
+   "müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum"
   ]
  ],
  "retired": [
