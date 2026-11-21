@@ -334,6 +334,43 @@ How to read it:
   leg. About a third of the failed PR Mac-minutes fell in such periods, judged
   by the last `iOS` run on `main` that had started before the PR run.
 
+### Waiting, setup and running per job
+
+`--phases` splits every job of the newest finished runs into three buckets, so
+a speed change is aimed at the biggest one:
+
+```sh
+python3 scripts/ci/ci-baseline.py --phases 150 --days 1 --until 2026-11-21T06:00:00Z
+python3 scripts/ci/ci-baseline.py --phases 150 --workflow ios.yml --event push
+```
+
+- **Waiting** is job creation to runner pickup, plus any step named "Wait for
+  ..." (a job waiting on another job). A job behind `needs` is created when its
+  dependencies finish, so their runtime is not counted as its wait.
+- **Setup** is checkout, toolchain installs, caches, service containers,
+  uploads and the runner's own bookkeeping. The step names it covers are listed
+  in `SETUP_PREFIXES` at the top of the script. A step that is not listed counts
+  as running, so a new step can never make setup look cheaper.
+- **Running** is everything else: the checks themselves.
+
+It costs one API call per run. Skipped, cancelled and never-started jobs are
+left out; matrix legs are reported separately. The report also lists every step
+with a median of 8 s or more and the bucket it was filed under.
+
+Pull-request runs of `ci.yml`. Job columns are seconds, p50 / p95, for
+`api (0)` and the iPhone unit leg:
+
+| Window | Runs | Minutes to last required check | API setup | API running | iPhone running | iPhone waiting |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-14 to 11-19, before KRI-1534 | 126 | median 50.0, p95 134.6 | 162 / 193 | 1,140 / 1,461 | 1,809 / 2,816 | 305 / 5,859 |
+| 2026-11-20, three API shards | 22 | median 32.5, p95 44.0 | 166 / 186 | 852 / 974 | 1,867 / 2,264 | 5 / 369 |
+
+Here the wait is run start to the last of `lint`, `test-api` and
+`build-and-test`, for every finished PR run, not only merged heads. Setup is
+about 2.5 minutes on every Linux job that installs the API (`pip install` 86 s,
+`setup-python` 32 s, service containers 22 s, apt 15 s). Runner-minutes per PR
+run on 2026-11-20: 75 Linux, 32 Mac.
+
 ## When a PR gets a Mac (KRI-1534)
 
 A pull request starts a Mac only when it changes an iPhone input
