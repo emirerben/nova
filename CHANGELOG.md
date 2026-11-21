@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.72.0] - 2026-11-21
+
+### Changed
+- fix(kria): research accepts government registries and the national tourism organization as primary sources (#2453) <!-- release-pr: 2453 -->
+
 ## [0.89.71.0] - 2026-11-21
 
 ### Changed
