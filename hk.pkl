@@ -1,0 +1,61 @@
+// Local git hooks, run by hk (https://hk.jdx.dev). Install once per clone:
+//   brew install hk && hk install
+// The install lives in the repository's git config, so every worktree has it.
+// A branch without this file runs no hk checks. Budget: under 9 s for both
+// hooks together; time them with
+//   HK_TIMING_JSON=/tmp/hk.json hk run pre-push --from-ref origin/main --to-ref HEAD </dev/null
+// These repeat checks CI runs anyway. They exist to save the CI round trip.
+amends "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Config.pkl"
+
+// Deleting a remote branch runs the push hook with an all-zero commit and
+// pushes no files, so there is nothing to check.
+local notADeletion = """
+  case "${HK_TO_REF:-}" in 0000000*) exit 0 ;; esac
+  """
+
+hooks {
+  ["pre-commit"] {
+    // Check only: nothing is rewritten or stashed while you commit.
+    steps {
+      ["api-lint"] {
+        glob = "src/apps/api/**/*.py"
+        check = "python3 scripts/ci/api-lint.py {{files}}"
+      }
+    }
+  }
+  ["pre-push"] {
+    steps {
+      ["api-lint"] {
+        check = """
+          \(notADeletion)
+          python3 scripts/ci/api-lint.py
+          """
+      }
+      ["claude-md-size"] {
+        check = """
+          \(notADeletion)
+          bash scripts/check_claude_md_size.sh
+          """
+      }
+      ["test-registries"] {
+        check = """
+          \(notADeletion)
+          make --no-print-directory check-test-registries
+          """
+      }
+      ["journey-mapping"] {
+        // What CI's journey-mapping job refuses: a changed path that matters
+        // to a journey and belongs to none. Compared with main, as CI does.
+        check = """
+          \(notADeletion)
+          to="${HK_TO_REF:-HEAD}"
+          base="$(git merge-base "$to" origin/main)" || exit 1
+          python3 scripts/ci/select-tests.py unmapped-paths --base "$base" --head "$to" || {
+            echo "Add each path above to a journey in scripts/ci/journey-manifest.json."
+            exit 1
+          }
+          """
+      }
+    }
+  }
+}
