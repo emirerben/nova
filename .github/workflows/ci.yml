@@ -507,8 +507,8 @@ jobs:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
           tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-492-length-ownership)"
-          # Four workers: tests/integration/test_actual_export_verification.py is
-          # 215 s of this step when run serially. Measured in docs/runbooks/change-based-ci.md.
+          # Four workers: the export verification tests are 215 s of this step
+          # when run serially. Measured in docs/runbooks/change-based-ci.md.
           python3 -m pytest $tests -q -n 4
           python3 ../../../scripts/ci/replay-creator-contracts.py \
             --snapshot ../../../scripts/ci/fixtures/kri492-creator-contracts.json \
