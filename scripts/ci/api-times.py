@@ -3,11 +3,19 @@
 
     gh run download <run id> -p 'api-times-*' -D /tmp/api-times   # one or more runs
     python3 scripts/ci/api-times.py /tmp/api-times [--json out.json]
+    python3 scripts/ci/api-times.py compare /tmp/old /tmp/new   # before a CI switch
 
 Keep the artifact directories when downloading. For each run and shard only the
 latest attempt is read. With several runs, a file's or a test's time is the
 middle run, so one slow runner does not set it. Outcomes and skips are those of
 the newest run. Stdlib only. Guard: scripts/ci/test_api_times.py.
+
+`compare` is the side-by-side check for a CI change (install, shard layout,
+runner): OLD and NEW each hold the rows of one or more runs. It fails when a
+test stopped running, an outcome changed, a test newly reaches the 60 s
+timeout, or more samples per run sit above 45 s than before. Every attempt of
+a shard counts as a sample. Tests only in NEW are listed, not failed: the
+arms are usually a few commits apart.
 """
 
 from __future__ import annotations
@@ -24,19 +32,27 @@ ARTIFACT_NAME = re.compile(r"api-times-([0-9]+)-([0-9]+)-([0-9]+)")
 PHASES = ("setup", "call", "teardown")
 SLOW_FILE_SECONDS = 20
 SLOW_TEST_SECONDS = 10
+# The suite's per-test timeout in CI, and the margin the layout bar watches
+# (docs/runbooks/change-based-ci.md).
+TIMEOUT_SECONDS = 60
+NEAR_TIMEOUT_SECONDS = 45
 
 
-def load(root: Path) -> list[dict]:
-    """One entry per run and shard: its rows and how many lines were unreadable."""
-    chosen: dict[tuple[str, str], tuple[int, Path]] = {}
+def load(root: Path, attempts_as_runs: bool = False) -> list[dict]:
+    """One entry per run and shard: its rows and how many lines were unreadable.
+
+    By default only the latest attempt of a run and shard is kept. With
+    `attempts_as_runs` every attempt is its own entry, for `compare`.
+    """
+    chosen: dict[tuple[str, str, str], tuple[int, Path]] = {}
     for directory in sorted({path.parent for path in root.rglob("*.jsonl")}):
         match = ARTIFACT_NAME.fullmatch(directory.name)
         run, shard, attempt = match.groups() if match else ("local", directory.name, "0")
-        key = (run, shard)
+        key = (run, shard, attempt if attempts_as_runs else "")
         if key not in chosen or int(attempt) > chosen[key][0]:
             chosen[key] = (int(attempt), directory)
     shards = []
-    for (run, shard), (_, directory) in sorted(chosen.items()):
+    for (run, shard, _), (_, directory) in sorted(chosen.items()):
         rows, unreadable = [], 0
         for path in sorted(directory.glob("*.jsonl")):
             for line in path.read_text(encoding="utf-8").splitlines():
@@ -105,6 +121,85 @@ def summarize(shards: list[dict]) -> dict:
     }
 
 
+def arm_samples(shards: list[dict]) -> dict:
+    """Per test: every outcome and every whole-test duration seen in one arm."""
+    outcomes: dict[str, set] = collections.defaultdict(set)
+    seconds: dict[str, list[float]] = collections.defaultdict(list)
+    for shard in shards:
+        for row in shard["rows"]:
+            if row.get("kind") != "test":
+                continue
+            outcomes[row["nodeid"]].add(row["outcome"])
+            seconds[row["nodeid"]].append(sum(row.get(phase, 0) for phase in PHASES))
+    distinct_shards = len({shard["shard"] for shard in shards}) or 1
+    return {
+        "outcomes": outcomes,
+        "seconds": seconds,
+        "samples": len(shards),
+        # A re-run of one shard adds samples, not a whole run.
+        "runs": len(shards) / distinct_shards,
+    }
+
+
+def compare(old_shards: list[dict], new_shards: list[dict]) -> dict:
+    old, new = arm_samples(old_shards), arm_samples(new_shards)
+    shared = sorted(set(old["outcomes"]) & set(new["outcomes"]))
+
+    def above(arm, limit):
+        return sum(value > limit for values in arm["seconds"].values() for value in values)
+
+    result = {
+        "samples": {"old": old["samples"], "new": new["samples"]},
+        "tests": {"old": len(old["outcomes"]), "new": len(new["outcomes"])},
+        "only_old": sorted(set(old["outcomes"]) - set(new["outcomes"])),
+        "only_new": sorted(set(new["outcomes"]) - set(old["outcomes"])),
+        "outcome_changes": {
+            node: {"old": sorted(old["outcomes"][node]), "new": sorted(new["outcomes"][node])}
+            for node in shared
+            if old["outcomes"][node] != new["outcomes"][node]
+        },
+        "newly_at_timeout": sorted(
+            node
+            for node, values in new["seconds"].items()
+            if max(values) >= TIMEOUT_SECONDS
+            and max(old["seconds"].get(node, [0])) < TIMEOUT_SECONDS
+        ),
+        "above_45_per_run": {
+            "old": round(above(old, NEAR_TIMEOUT_SECONDS) / old["runs"], 2),
+            "new": round(above(new, NEAR_TIMEOUT_SECONDS) / new["runs"], 2),
+        },
+    }
+    result["ok"] = not (
+        result["only_old"]
+        or result["outcome_changes"]
+        or result["newly_at_timeout"]
+        or result["above_45_per_run"]["new"] > result["above_45_per_run"]["old"]
+    )
+    return result
+
+
+def render_compare(result: dict, top: int = 40) -> str:
+    rate = result["above_45_per_run"]
+    lines = [
+        f"# API suite, old against new: {'PASS' if result['ok'] else 'FAIL'}",
+        f"Shard samples: old {result['samples']['old']}, new {result['samples']['new']};"
+        f" tests: old {result['tests']['old']}, new {result['tests']['new']}",
+        f"Tests that stopped running: {len(result['only_old'])}",
+        *(f"- {node}" for node in result["only_old"][:top]),
+        f"Tests whose outcome changed: {len(result['outcome_changes'])}",
+        *(
+            f"- {node}: {', '.join(change['old'])} -> {', '.join(change['new'])}"
+            for node, change in list(result["outcome_changes"].items())[:top]
+        ),
+        f"Tests newly at the {TIMEOUT_SECONDS} s timeout: {len(result['newly_at_timeout'])}",
+        *(f"- {node}" for node in result["newly_at_timeout"][:top]),
+        f"Samples above {NEAR_TIMEOUT_SECONDS} s per run: old {rate['old']}, new {rate['new']}",
+        f"Tests only in the new arm (not a failure): {len(result['only_new'])}",
+        *(f"- {node}" for node in result["only_new"][:top]),
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def render(report: dict, top: int = 25) -> str:
     files, tests, cpu = report["files"], report["tests"], report["cpu"]
     phase = report["phase_seconds"]
@@ -142,6 +237,16 @@ def render(report: dict, top: int = 25) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["compare"]:
+        if len(argv) != 3:
+            raise SystemExit("usage: api-times.py compare OLD_DIR NEW_DIR")
+        arms = [load(Path(path), attempts_as_runs=True) for path in argv[1:]]
+        if not all(arms):
+            raise SystemExit("error: an arm has no *.jsonl rows")
+        result = compare(*arms)
+        sys.stdout.write(render_compare(result))
+        return 0 if result["ok"] else 1
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("directory", type=Path)
     parser.add_argument("--json", type=Path, help="also write the full summary here")

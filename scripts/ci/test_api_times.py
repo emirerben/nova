@@ -13,6 +13,18 @@
   expected failure is listed as a skip;
 - the time before the first test is averaged across workers, hiding that every
   worker pays it.
+
+Ways `api-times.py compare OLD NEW` can wave through a CI change that should
+have been stopped (a new install, shard layout or runner):
+
+- a test that no longer runs in the new arm goes unnoticed;
+- a test that passed before and now skips (a package the new environment
+  lacks) is counted as "still green";
+- a test that never reached the 60 s timeout before reaches it now, or more
+  samples sit above 45 s than before, and the layout is adopted anyway;
+- a re-run of one shard (a second attempt) is read as a run that lost every
+  other shard's tests;
+- arms with different numbers of runs are compared count for count.
 """
 
 import importlib.util
@@ -136,6 +148,84 @@ class ApiTimesTests(unittest.TestCase):
         self.assertIn("Files over 20 s: 1", text)
         self.assertIn("tests/test_slow.py", text)
         self.assertIn("CPU 4%", text)
+
+
+class CompareTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def arm(self, name, runs):
+        """runs: {"<run>-<shard>-<attempt>": [rows]}"""
+        for artifact, rows in runs.items():
+            path = self.root / name / f"api-times-{artifact}" / "gw0.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        return self.root / name
+
+    def compare(self, old, new):
+        return api_times.compare(
+            api_times.load(self.arm("old", old), attempts_as_runs=True),
+            api_times.load(self.arm("new", new), attempts_as_runs=True),
+        )
+
+    def test_identical_arms_pass(self):
+        rows = [test_row("tests/test_a.py::test_x", 2), test_row("tests/test_a.py::test_s", 0, "skipped", "live only")]
+        result = self.compare({"1-0-1": rows}, {"2-0-1": rows})
+        self.assertTrue(result["ok"], result)
+
+    def test_a_test_that_stopped_running_fails_the_comparison(self):
+        result = self.compare(
+            {"1-0-1": [test_row("tests/test_a.py::test_x", 2), test_row("tests/test_a.py::test_y", 2)]},
+            {"2-0-1": [test_row("tests/test_a.py::test_x", 2)]},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["only_old"], ["tests/test_a.py::test_y"])
+
+    def test_a_pass_that_became_a_skip_fails_the_comparison(self):
+        result = self.compare(
+            {"1-0-1": [test_row("tests/test_a.py::test_x", 2)]},
+            {"2-0-1": [test_row("tests/test_a.py::test_x", 0, "skipped", "No module named six")]},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["outcome_changes"],
+            {"tests/test_a.py::test_x": {"old": ["passed"], "new": ["skipped"]}},
+        )
+
+    def test_a_rerun_of_one_shard_is_another_sample_not_a_missing_shard(self):
+        shard0 = [test_row("tests/test_a.py::test_x", 2)]
+        shard1 = [test_row("tests/test_b.py::test_y", 2)]
+        result = self.compare(
+            {"1-0-1": shard0, "1-1-1": shard1},
+            {"2-0-1": shard0, "2-1-1": shard1, "2-1-2": shard1},
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["samples"], {"old": 2, "new": 3})
+
+    def test_a_test_newly_at_the_timeout_fails_the_comparison(self):
+        result = self.compare(
+            {"1-0-1": [test_row("tests/test_a.py::test_x", 40), test_row("tests/test_a.py::test_long", 90)]},
+            {"2-0-1": [test_row("tests/test_a.py::test_x", 61), test_row("tests/test_a.py::test_long", 95)]},
+        )
+        self.assertFalse(result["ok"])
+        # test_long already ran past 60 s before (it sets its own timeout).
+        self.assertEqual(result["newly_at_timeout"], ["tests/test_a.py::test_x"])
+
+    def test_more_samples_above_45_seconds_fail_the_comparison(self):
+        result = self.compare(
+            {"1-0-1": [test_row("tests/test_a.py::test_x", 44), test_row("tests/test_a.py::test_y", 46)]},
+            {"2-0-1": [test_row("tests/test_a.py::test_x", 47), test_row("tests/test_a.py::test_y", 46)]},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["above_45_per_run"], {"old": 1.0, "new": 2.0})
+
+    def test_slow_samples_are_compared_per_run_not_count_for_count(self):
+        rows = [test_row("tests/test_a.py::test_y", 46)]
+        result = self.compare({"1-0-1": rows}, {"2-0-1": rows, "3-0-1": rows})
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["above_45_per_run"], {"old": 1.0, "new": 1.0})
 
 
 if __name__ == "__main__":

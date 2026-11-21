@@ -371,6 +371,28 @@ about 2.5 minutes on every Linux job that installs the API (`pip install` 86 s,
 `setup-python` 32 s, service containers 22 s, apt 15 s). Runner-minutes per PR
 run on 2026-11-20: 75 Linux, 32 Mac.
 
+### The API's locked install
+
+Every CI job that needs the API's Python packages uses
+`.github/actions/api-env`: `uv sync --frozen` from `src/apps/api/uv.lock`, with
+torch from the CPU-only index. Measured side by side on one hosted runner
+(#2434): 10 s and 2.3 GB locked, against 114 s and 7.0 GB for the unlocked
+`pip install -e ".[dev]"` it replaced. There is no cache on purpose: the
+download is faster than a cache restore of that size.
+
+- After any change to the dependencies in `src/apps/api/pyproject.toml`, run
+  `cd src/apps/api && uv lock` and commit `uv.lock`. `lint-suites` fails when
+  the two disagree.
+- The lock resolves every extra together, so CI runs versions the production
+  image (which installs the `observability` extra) can also install: celery
+  5.6.x and redis 6.4.x, not the 5.7.0 and 8.1.0 the unlocked install picked.
+  The production Dockerfile is not built from the lock yet.
+- Before changing how the suite is installed, sharded or run, download the
+  `api-times-*` artifacts of runs before and after and compare them:
+  `python3 scripts/ci/api-times.py compare OLD_DIR NEW_DIR`. It fails when a
+  test stopped running, an outcome changed, a test newly reaches the 60 s
+  timeout, or more samples per run sit above 45 s.
+
 ## When a PR gets a Mac (KRI-1534)
 
 A pull request starts a Mac only when it changes an iPhone input
