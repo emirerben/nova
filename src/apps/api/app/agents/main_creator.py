@@ -1178,10 +1178,14 @@ not a mute and records no audio_intent.
 "No sound effects" / "keine Soundeffekte" / "efekt sesi olmasın" => an `audio` requirement with
 {"audio_intent": "no_sound_effects"}; it never mutes the footage's own sound or the music.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
-historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
-"global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
-file name>", "request_quote": "<the creator's exact words asking for research or sources, copied
-verbatim>"}}. Never write the facts or sources yourself: the server researches before approval.
+historical facts", "research it online", "kaynakları ekle"), and informative text about a public
+place, route or subject that the creator did not write themselves ("informative captions about
+the Kyoto train", "add some facts about Cunda", "bilgilendirici alt yazı istiyorum") => ONE `text`
+requirement, scope "global", the ask in `description`, with {"research": {"topic": "<a public
+topic, never a link or file name>", "request_quote": "<the creator's exact words asking for it,
+copied verbatim>"}}. Never write the facts or sources yourself: the server researches before
+approval. The topic goes ONLY inside `research`; a bare `topic` fact means nothing to the server
+and leaves the ask unresearched.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
 `source_unchanged`. Lowering or removing the engine/motor noise in the footage's own sound
