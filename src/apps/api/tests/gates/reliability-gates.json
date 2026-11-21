@@ -1013,6 +1013,7 @@
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/app/services/nova_steps.py",
         "src/apps/api/app/services/sfx_catalog.py",
+        "src/apps/api/prompts/sfx_placement.txt",
         "src/apps/api/app/services/creator_capabilities.py",
         "src/apps/api/app/pipeline/narrated_photo_sequence.py",
         "src/apps/api/app/pipeline/phone_narrated_plan.py",

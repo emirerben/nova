@@ -207,10 +207,37 @@ def overlay(value: Any, _s: Mapping[str, Any]) -> str | None:
 def sfx(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
-    return say(
-        en="I can't add sound effects on this video yet, so none will be played",
-        tr="Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak",
-    )
+    from app.services.sfx_capability import limit_line  # noqa: PLC0415
+    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+    return limit_line(SfxLimit.format_unsupported)
+
+
+def sfx_unless(limit_of: Callable[[], Any]) -> Builder:
+    """`sfx` for a route whose writer plays the licensed effect when its gates are open (KRI-1561).
+
+    ``limit_of`` is the route's gate answer (`services.sfx_capability`): None when the writer
+    plays the effect, else the closed gate, which the line names. With
+    ``KRIA_HONEST_REPLY_LINES_ENABLED`` off it is `sfx`, byte-identical (the KRI-1347 switch)."""
+
+    def build(value: Any, strategy: Mapping[str, Any]) -> str | None:
+        if not value:
+            return None
+        from app.kria.brief_checks import honest_reply_lines  # noqa: PLC0415
+
+        if not honest_reply_lines():
+            return sfx(value, strategy)
+        try:
+            limit = limit_of()
+        except Exception:  # noqa: BLE001 - unknown means the old line stays
+            return sfx(value, strategy)
+        if limit is None:
+            return None
+        from app.services.sfx_capability import limit_line  # noqa: PLC0415
+
+        return limit_line(limit)
+
+    return build
 
 
 def title_animation(value: Any, _s: Mapping[str, Any]) -> str | None:

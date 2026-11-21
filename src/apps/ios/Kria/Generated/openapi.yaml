@@ -604,6 +604,23 @@
             "title": "Original Volume",
             "type": "number"
           },
+          "speech_duck_gain": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Speech Duck Gain",
+            "type": "number"
+          },
+          "speech_windows": {
+            "items": {
+              "$ref": "#/components/schemas/SpeechWindow"
+            },
+            "maxItems": 400,
+            "title": "Speech Windows",
+            "type": "array"
+          },
           "target_lufs": {
             "default": null,
             "maximum": -5,
@@ -3553,6 +3570,7 @@
                 "clipBackdropMedia",
                 "scriptFonts",
                 "colorMoments",
+                "speechDuck",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3703,6 +3721,7 @@
                 "clipBackdropMedia",
                 "scriptFonts",
                 "colorMoments",
+                "speechDuck",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -13232,6 +13251,31 @@
         "title": "SpeakerFullScreenWindow",
         "type": "object"
       },
+      "SpeechWindow": {
+        "additionalProperties": false,
+        "description": "Seconds of the finished timeline where a person is speaking (KRI-1562).",
+        "properties": {
+          "end": {
+            "exclusiveMinimum": true,
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "End",
+            "type": "number"
+          },
+          "start": {
+            "maximum": 1800,
+            "minimum": 0,
+            "title": "Start",
+            "type": "number"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "SpeechWindow",
+        "type": "object"
+      },
       "SplitScreenMembership": {
         "additionalProperties": false,
         "properties": {
@@ -15664,6 +15708,15 @@
               "audio"
             ],
             "title": "Kind",
+            "type": "string"
+          },
+          "role": {
+            "default": null,
+            "enum": [
+              "music"
+            ],
+            "nullable": true,
+            "title": "Role",
             "type": "string"
           }
         },

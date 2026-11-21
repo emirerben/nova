@@ -132,7 +132,7 @@ final class MomentOrderUITests: XCTestCase {
         let send = app.buttons["moment-order-send"]
         bringIntoView(send, in: app)
         XCTAssertTrue(send.isEnabled)
-        XCTAssertGreaterThanOrEqual(send.frame.height, 44)
+        assertTouchTarget(send.frame.height)
         attach(app, "Moments answered")
         send.tap()
 

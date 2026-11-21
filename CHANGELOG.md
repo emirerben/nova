@@ -2,6 +2,71 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.58.0] - 2026-11-21
+
+### Changed
+- ci(api): fail on unlisted skips; run the history tests on pull requests (KRI-1534) (#2439) <!-- release-pr: 2439 -->
+
+## [0.89.57.0] - 2026-11-21
+
+### Changed
+- ci: install the API from the lock in every CI job (KRI-1534) (#2436) <!-- release-pr: 2436 -->
+
+## [0.89.56.0] - 2026-11-21
+
+### Changed
+- ci(api): lock the API's Python dependencies with CPU-only torch (KRI-1534) (#2434) <!-- release-pr: 2434 -->
+
+## [0.89.55.0] - 2026-11-21
+
+### Changed
+- ci(api): record setup, call, teardown and CPU time per test (KRI-1534) (#2431) <!-- release-pr: 2431 -->
+
+## [0.89.54.0] - 2026-11-21
+
+### Changed
+- feat(kria): music under speech for Talking and Voiceover phone edits (#2428) <!-- release-pr: 2428 -->
+
+## [0.89.53.0] - 2026-11-21
+
+### Changed
+- feat(kria): one sound-effect chooser that returns placements or a named reason (KRI-1561) (#2433) <!-- release-pr: 2433 -->
+
+## [0.89.52.0] - 2026-11-21
+
+### Changed
+- ci(guards): fail when a guard's diff cannot be read (KRI-1534) (#2432) <!-- release-pr: 2432 -->
+
+## [0.89.51.0] - 2026-11-21
+
+### Changed
+- ci(baseline): report waiting, setup and running per job (KRI-1534) (#2430) <!-- release-pr: 2430 -->
+
+## [0.89.50.0] - 2026-11-21
+
+### Changed
+- fix(ios): move split clips and scroll from the timeline body (#2408) <!-- release-pr: 2408 -->
+
+## [0.89.49.0] - 2026-11-21
+
+### Changed
+- fix(ios): chat scrolls over clip rows, slides don't tap their first tile, Photos prompt and 44 pt checks in UI tests (KRI-1550) (#2426) <!-- release-pr: 2426 -->
+
+## [0.89.48.0] - 2026-11-20
+
+### Changed
+- feat(kria): recipe contract for music ducked under speech (#2427) <!-- release-pr: 2427 -->
+
+## [0.89.47.0] - 2026-11-20
+
+### Changed
+- ci: open one issue when a nightly CI or iOS run goes red (KRI-1549) (#2424) <!-- release-pr: 2424 -->
+
+## [0.89.46.0] - 2026-11-20
+
+### Changed
+- Fix account erasure with saved job clips (KRI-55) (#2419) <!-- release-pr: 2419 -->
+
 ## [0.89.45.0] - 2026-11-20
 
 ### Changed

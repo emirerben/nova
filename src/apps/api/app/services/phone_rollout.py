@@ -1397,6 +1397,63 @@ def color_moments_client_supported(*, require_client: bool | None = None) -> boo
     return protocol is not None and protocol >= settings.color_moments_min_client_protocol
 
 
+def recipe_has_speech_duck(recipe: Any) -> bool:
+    """Does this recipe ask the device to duck its music bed under speech (KRI-1562)?"""
+    return bool(getattr(getattr(recipe, "audio", None), "speech_windows", None))
+
+
+def speech_duck_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build duck music under ``audio.speech_windows``?
+
+    At least ``SPEECH_DUCK_PROTOCOL`` (53). An older build ignores the windows and would play
+    the music at full level over the creator's voice. ``require_client`` follows
+    `color_moments_client_supported` (a worker has no app build; the device-render poll
+    answers 426 instead).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPEECH_DUCK_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= SPEECH_DUCK_PROTOCOL
+
+
+def talking_music_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone Talking edit carry the creator's song, ducked under speech (KRI-1562)?
+
+    The kill switch (``talking_music_enabled``, default off), ``speechDuck``, ``musicBed`` and
+    ``audioMix`` in ``phone_render_verified_features``, and the app-build gate
+    (`speech_duck_client_supported`; a worker or a chat Save has no build to qualify).
+    """
+    return bool(
+        settings.talking_music_enabled
+        and {"speechDuck", "musicBed", "audioMix"} <= set(settings.phone_render_verified_features)
+        and speech_duck_client_supported(require_client=require_client)
+    )
+
+
+def speech_duck_planned_for(client_protocol: int | None) -> bool:
+    """May a worker duck a bed the edit already has (a Voiceover match) under speech?
+
+    Read like `freeze_frame_planned_for`: ``client_protocol`` is the approving app build
+    (``creator_client_protocol`` on the Job). An older build keeps today's one-level bed rather
+    than a recipe it would be told to update for.
+    """
+    from app.services.client_protocol import SPEECH_DUCK_PROTOCOL  # noqa: PLC0415
+
+    return (
+        talking_music_supported(require_client=False)
+        and client_protocol is not None
+        and client_protocol >= SPEECH_DUCK_PROTOCOL
+    )
+
+
 def color_moments_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may Kria add colour moments to a phone edit right now".
 

@@ -631,6 +631,7 @@
         "src/apps/api/app/tasks/speech_cleanup_analysis.py",
         "src/apps/api/prompts/clip_intent_planner.txt",
         "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/prompts/sfx_placement.txt",
         "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri612_explain_the_footages.json",
         "src/apps/api/tests/fixtures/prompt_coverage/kri651_approved_hook.json",
         "src/apps/api/tests/kria/test_brief_provider_recovery_postgres.py",
@@ -3944,6 +3945,17 @@
         "src/apps/api/app/tasks/maintenance.py",
         "src/apps/api/tests/kria/test_pending_visual_go_ahead_postgres.py",
         "src/apps/api/tests/integration/test_pool_asset_unclaimed_resend_postgres.py"
+      ]
+    },
+    {
+      "id": "kri-1562-talking-music",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_talking_music_bed.py tests/tasks/test_phone_talking_music_worker.py tests/routes/test_phone_talking_music_save.py",
+      "paths": [
+        "src/apps/api/app/pipeline/sound_effects.py",
+        "src/apps/api/tests/pipeline/test_talking_music_bed.py",
+        "src/apps/api/tests/tasks/test_phone_talking_music_worker.py",
+        "src/apps/api/tests/routes/test_phone_talking_music_save.py"
       ]
     }
   ]

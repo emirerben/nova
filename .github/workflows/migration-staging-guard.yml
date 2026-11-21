@@ -67,8 +67,10 @@ jobs:
 
           # Only ADDED files count. Editing an existing migration is a different
           # (and separately alarming) thing that this guard has no opinion on.
-          git diff --name-only --diff-filter=A "$BASE_SHA...$HEAD_SHA" \
-            | grep -E "^${DIR}/.*\.py$" > /tmp/added.txt || true
+          # The diff runs on its own line so its failure stops the step. grep
+          # exits 1 for "no match"; any other status is an error.
+          git diff --name-only --diff-filter=A "$BASE_SHA...$HEAD_SHA" > /tmp/diff.txt
+          grep -E "^${DIR}/.*\.py$" /tmp/diff.txt > /tmp/added.txt || [ "$?" -eq 1 ]
 
           count=$(wc -l < /tmp/added.txt | tr -d ' ')
           echo "migrations added: $count"

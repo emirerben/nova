@@ -29,12 +29,14 @@ from app.pipeline.phone_captions import (
 from app.pipeline.phone_editor_visuals import compile_editor_media_track
 from app.pipeline.phone_recipe_shared import (
     clip_tilt_fields,
+    parse_speech_source_windows,
     register_backdrop_visuals,
     snap_text_overshoot,
+    speech_windows_on_timeline,
     timeline_end_s,
 )
 from app.pipeline.phone_subtitled_plan import _compile_overlay_track, _compile_sfx_track
-from app.pipeline.phone_voiceover_montage_plan import voiceover_music_gain
+from app.pipeline.phone_voiceover_montage_plan import ducked_voiceover_bed, voiceover_music_gain
 from app.services.authored_editor import explicit_authored_slots
 from app.services.phone_editor_sources import (
     editor_source_bindings,
@@ -365,6 +367,7 @@ def compile_phone_authored_timeline(
     old_manifest = {asset.id: asset for asset in previous.asset_manifest.assets}
     old_assets = {asset.id: asset for asset in previous.assets}
     narration_id = None
+    voice_duck: float | None = None
     has_voice = variant.get("resolved_archetype") == "voiceover" or any(
         asset.kind == "voiceover" for asset in old_manifest.values()
     )
@@ -412,13 +415,16 @@ def compile_phone_authored_timeline(
                 projected["volume"] = (
                     voiceover_music_gain(variant["mix"]) if has_voice else float(variant["mix"])
                 )
+                if has_voice and track.role == "music" and projected["volume"] > 0:
+                    # KRI-1562: a bed that ducks under the voice keeps the duck's two levels.
+                    projected["volume"], voice_duck = ducked_voiceover_bed(projected["volume"])
             retained.append(TimelineClip.model_validate(projected))
             manifest[asset.id] = asset
             assets[asset.id] = old_assets[asset.id]
             if is_voice:
                 narration_id = asset.id
         if retained:
-            tracks.append(TimelineTrack(id=track.id, kind="audio", clips=retained))
+            tracks.append(TimelineTrack(id=track.id, kind="audio", clips=retained, role=track.role))
     original_gain = variant.get("original_audio_level")
     if original_gain is None:
         original_gain = (variant.get("audio_mix") or {}).get("original_level")
@@ -438,6 +444,18 @@ def compile_phone_authored_timeline(
     # Old mute windows target old clip IDs; current visual placements carry
     # their own audio policy and must not inherit removed footage's windows.
     audio["mute_windows"] = []
+    # KRI-1562: the bed ducks on the speech of the clips laid out here. A Talking edit carries
+    # its takes' spoken windows; a Voiceover edit's narration clip is kept as is, so its pinned
+    # windows still hold. No bed left, no duck.
+    spoken = parse_speech_source_windows(variant.get("speech_source_windows"))
+    if not any(track.role == "music" for track in tracks):
+        audio.update(speech_windows=[], speech_duck_gain=None)
+    elif spoken is not None:
+        audio["speech_windows"] = [
+            window.model_dump(mode="json") for window in speech_windows_on_timeline(tracks, spoken)
+        ]
+    if voice_duck is not None:
+        audio["speech_duck_gain"] = voice_duck
     background = None
     if "speaker_background" in variant:
         from app.pipeline.phone_subtitled_plan import _compile_background

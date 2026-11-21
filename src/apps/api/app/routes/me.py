@@ -3650,6 +3650,17 @@ async def confirm_account_deletion(
         .where(Job.id.in_(job_uuid_ids), Job.content_plan_item_id.is_not(None))
         .values(content_plan_item_id=None)
     )
+    # The forward plan-item reference also uses NO ACTION. Plans were locked
+    # before jobs, so only sever links within this owner's captured plans.
+    if locked_plan_ids:
+        await db.execute(
+            update(PlanItem)
+            .where(
+                PlanItem.content_plan_id.in_(locked_plan_ids),
+                PlanItem.current_job_id.in_(job_uuid_ids),
+            )
+            .values(current_job_id=None)
+        )
     # 2. Revoke + clear TikTok connection, delete only snapshotted rows.
     # Target-bound deletes are intentional: if a concurrent writer commits a
     # new no-CASCADE child after these snapshots, DELETE users.id must fail its
@@ -3676,7 +3687,14 @@ async def confirm_account_deletion(
     await db.execute(delete(TikTokPublication).where(TikTokPublication.id.in_(publication_ids)))
     # 3. Remaining OAuth tokens (instagram/youtube — no revoke API wired yet).
     await db.execute(delete(OAuthToken).where(OAuthToken.id.in_([row.id for row in oauth_tokens])))
-    # 4. Jobs — cascades AgentRun + VideoFeedback automatically.
+    # 4. Clips have a NO ACTION job FK. Their paths are already captured in
+    # the durable storage manifests above, so erase them before their jobs.
+    await db.execute(
+        delete(JobClip).where(
+            JobClip.id.in_([clip.id for clips in clips_by_job.values() for clip in clips])
+        )
+    )
+    # Jobs cascade AgentRun + VideoFeedback automatically.
     await db.execute(delete(Job).where(Job.id.in_(job_uuid_ids)))
     # The direct pool owner FK is NO ACTION. Explicitly remove the captured
     # projections before owner/source cascades, which also avoids FK ordering

@@ -16,6 +16,22 @@ Each test names one way `ci-baseline.py` could mislead a before/after comparison
   time the author waited;
 - a PR failure during a broken `main` read as the PR's own, or a cancelled
   `main` run read as proof `main` was green.
+
+Ways the per-job phase report (`--phases`) can mislead, also written first:
+
+- a skipped, cancelled or never-started job counted as a zero-second job, which
+  drags every median down;
+- a job behind `needs` charged its dependency's runtime as waiting, because the
+  wait was measured from the run's start and not the job's own creation;
+- a negative wait (runner clock ahead of GitHub's) reported as negative time;
+- a work step filed as setup ("Verify Alembic ...", "Upload and distribute to
+  external TestFlight") or a setup step filed as running ("Install ...",
+  "Run actions/checkout@v4", "Post ...", "Initialize containers");
+- a step that waits on another job ("Wait for ...") hidden inside running time;
+- a step GitHub skipped (no timestamps) crashing the report or adding time;
+- matrix legs merged under one name, hiding the slow leg;
+- Mac minutes reported as Linux minutes, or a skipped job billed a minute;
+- a run whose required checks never all finished reported as a short wait.
 """
 
 import importlib.util
@@ -263,6 +279,207 @@ class MainStateTests(unittest.TestCase):
                 "failure": {"failure": 20, "rerun": 30},
             },
         )
+
+
+def step(name, started, completed, conclusion="success"):
+    return {
+        "name": name,
+        "conclusion": conclusion,
+        "started_at": started,
+        "completed_at": completed,
+    }
+
+
+def phased_job(name, created, started, completed, steps, conclusion="success", labels=None):
+    return {
+        "name": name,
+        "labels": labels or ["ubuntu-latest"],
+        "conclusion": conclusion,
+        "created_at": created,
+        "started_at": started,
+        "completed_at": completed,
+        "steps": steps,
+    }
+
+
+class StepPhaseTests(unittest.TestCase):
+    def test_work_steps_are_running_time(self):
+        for name in (
+            "Run API test shard with timing reports",
+            "Verify Alembic upgrade-downgrade roundtrip",
+            "Build iPhone app and run selected unit tests",
+            "Upload and distribute to external TestFlight",
+            "Test CI selection and required-check contracts",
+            "Run selected iPhone UI scenarios",
+            "A step nobody has classified yet",
+        ):
+            self.assertEqual(ci_baseline.step_phase(name), "run", name)
+
+    def test_toolchain_and_housekeeping_steps_are_setup(self):
+        for name in (
+            "Set up job",
+            "Complete job",
+            "Initialize containers",
+            "Stop containers",
+            "Run actions/checkout@v4",
+            "Run ./.github/actions/apt-install",
+            "Post Run actions/cache/restore@v4",
+            "Install API dependencies",
+            "Install FFmpeg and Skia runtime libs",
+            "Set up Xcode",
+            "Restore Xcode build data",
+            "Save .debs for the next run",
+            "Disable unused Chrome apt source",
+            "Upload iOS test diagnostics",
+            "Select affected suites",
+        ):
+            self.assertEqual(ci_baseline.step_phase(name), "setup", name)
+
+    def test_a_step_that_waits_on_another_job_is_waiting(self):
+        self.assertEqual(
+            ci_baseline.step_phase("Wait for the portable journeys this leg depends on"),
+            "wait",
+        )
+
+
+class JobPhaseTests(unittest.TestCase):
+    def test_wait_runs_from_the_jobs_own_creation(self):
+        # Created 10 min into the run (behind `needs`), picked up 5 s later.
+        phases = ci_baseline.job_phases(
+            phased_job(
+                "test-api",
+                "2026-11-20T10:10:00Z",
+                "2026-11-20T10:10:05Z",
+                "2026-11-20T10:10:20Z",
+                [
+                    step("Set up job", "2026-11-20T10:10:05Z", "2026-11-20T10:10:07Z"),
+                    step("Run actions/checkout@v4", "2026-11-20T10:10:07Z", "2026-11-20T10:10:17Z"),
+                    step("Gate", "2026-11-20T10:10:17Z", "2026-11-20T10:10:20Z"),
+                ],
+            )
+        )
+        self.assertEqual(phases, {"wait": 5, "setup": 12, "run": 3, "total": 15})
+
+    def test_a_wait_step_counts_as_waiting_not_running(self):
+        phases = ci_baseline.job_phases(
+            phased_job(
+                "iPhone validation (unit)",
+                "2026-11-20T10:00:00Z",
+                "2026-11-20T10:00:20Z",
+                "2026-11-20T10:10:20Z",
+                [
+                    step("Wait for the portable journeys this leg depends on",
+                         "2026-11-20T10:00:20Z", "2026-11-20T10:04:20Z"),
+                    step("Build iPhone app and run selected unit tests",
+                         "2026-11-20T10:04:20Z", "2026-11-20T10:10:20Z"),
+                ],
+                labels=["macos-15"],
+            )
+        )
+        self.assertEqual(phases["wait"], 20 + 240)
+        self.assertEqual(phases["run"], 360)
+
+    def test_a_runner_clock_ahead_of_github_is_not_negative_waiting(self):
+        phases = ci_baseline.job_phases(
+            phased_job("lint", "2026-11-20T10:00:05Z", "2026-11-20T10:00:03Z",
+                       "2026-11-20T10:00:13Z", [])
+        )
+        self.assertEqual(phases["wait"], 0)
+
+    def test_jobs_that_did_no_work_are_left_out(self):
+        for conclusion, started in (
+            ("skipped", "2026-11-20T10:00:00Z"),
+            ("cancelled", "2026-11-20T10:00:00Z"),
+            ("success", None),
+        ):
+            self.assertIsNone(
+                ci_baseline.job_phases(
+                    phased_job("x", "2026-11-20T10:00:00Z", started,
+                               "2026-11-20T10:00:00Z", [], conclusion=conclusion)
+                ),
+                conclusion,
+            )
+
+    def test_a_skipped_step_adds_no_time_and_does_not_crash(self):
+        phases = ci_baseline.job_phases(
+            phased_job(
+                "api (0)", "2026-11-20T10:00:00Z", "2026-11-20T10:00:02Z",
+                "2026-11-20T10:01:02Z",
+                [
+                    step("Install API dependencies", None, None, conclusion="skipped"),
+                    step("Run API test shard with timing reports",
+                         "2026-11-20T10:00:02Z", "2026-11-20T10:01:02Z"),
+                ],
+            )
+        )
+        self.assertEqual((phases["setup"], phases["run"]), (0, 60))
+
+
+class PhaseTableTests(unittest.TestCase):
+    def jobs(self):
+        def api(shard, seconds, conclusion="success"):
+            return phased_job(
+                f"api ({shard})", "2026-11-20T10:00:00Z", "2026-11-20T10:00:02Z",
+                f"2026-11-20T10:{seconds // 60:02d}:{seconds % 60 + 2:02d}Z",
+                [step("Run API test shard with timing reports", "2026-11-20T10:00:02Z",
+                      f"2026-11-20T10:{seconds // 60:02d}:{seconds % 60 + 2:02d}Z")],
+                conclusion=conclusion,
+            )
+
+        return [api(0, 600), api(0, 620), api(1, 1200), api(1, 30, "skipped")]
+
+    def test_matrix_legs_stay_separate_and_skipped_jobs_do_not_count(self):
+        table = ci_baseline.phase_table(self.jobs())
+        self.assertEqual(table["api (0)"]["n"], 2)
+        self.assertEqual(table["api (1)"]["n"], 1)
+        self.assertEqual(table["api (1)"]["run"], {"p50": 1200, "p95": 1200})
+        self.assertEqual(table["api (0)"]["run"], {"p50": 600, "p95": 620})
+
+    def test_every_step_is_listed_with_the_phase_it_was_filed_under(self):
+        steps = ci_baseline.phase_table(self.jobs())["api (0)"]["steps"]
+        self.assertEqual(
+            steps,
+            [{"name": "Run API test shard with timing reports", "phase": "run",
+              "n": 2, "p50": 600, "p95": 620}],
+        )
+
+
+class RunnerMinuteTests(unittest.TestCase):
+    def test_minutes_are_split_by_runner_os_and_skipped_jobs_cost_nothing(self):
+        jobs = [
+            phased_job("api (0)", "2026-11-20T10:00:00Z", "2026-11-20T10:00:00Z",
+                       "2026-11-20T10:10:30Z", []),
+            phased_job("iPhone validation (unit)", "2026-11-20T10:00:00Z",
+                       "2026-11-20T10:00:00Z", "2026-11-20T10:30:00Z", [],
+                       labels=["macos-15"]),
+            phased_job("ios-contracts", "2026-11-20T10:00:00Z", "2026-11-20T10:00:00Z",
+                       "2026-11-20T10:00:00Z", [], conclusion="skipped"),
+        ]
+        self.assertEqual(ci_baseline.runner_minutes(jobs), {"linux": 11, "macos": 30})
+
+
+class RequiredWaitTests(unittest.TestCase):
+    RUN = {"run_started_at": "2026-11-20T10:00:00Z"}
+
+    def gate(self, name, completed, conclusion="success"):
+        return phased_job(name, "2026-11-20T10:00:00Z", "2026-11-20T10:00:01Z",
+                          completed, [], conclusion=conclusion)
+
+    def test_the_wait_ends_when_the_last_required_check_finishes(self):
+        jobs = [
+            self.gate("lint", "2026-11-20T10:05:00Z"),
+            self.gate("test-api", "2026-11-20T10:21:00Z", "failure"),
+            self.gate("build-and-test", "2026-11-20T10:40:00Z"),
+            self.gate("nightly-alert", "2026-11-20T11:40:00Z"),
+        ]
+        self.assertEqual(ci_baseline.run_required_minutes(self.RUN, jobs), 40.0)
+
+    def test_a_run_missing_a_required_check_is_not_a_short_wait(self):
+        jobs = [
+            self.gate("lint", "2026-11-20T10:05:00Z"),
+            self.gate("test-api", "2026-11-20T10:21:00Z", "cancelled"),
+        ]
+        self.assertIsNone(ci_baseline.run_required_minutes(self.RUN, jobs))
 
 
 class RepoTests(unittest.TestCase):

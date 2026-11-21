@@ -1,6 +1,8 @@
+import hashlib
 import json
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -231,6 +233,171 @@ def test_duck_music_during_speech_is_optional_and_derives_audio_ducking():
     assert "audioDucking" in ducked.required_capabilities
     assert json.loads(ducked.model_dump_json())["audio"]["duck_music_during_speech"] is True
     assert EditRecipeV2.model_validate_json(ducked.model_dump_json()) == ducked
+
+
+# Digests of the recipes below serialized by origin/main before `speech_windows`,
+# `speech_duck_gain` and `TimelineTrack.role` existed. A recipe that sets none of the three
+# must never grow a key, so every persisted recipe digest stays valid.
+_PLAIN_RECIPE_SHA256 = "c6be4c0e36b3805f43a5cdd4cc06446c35d650b2b1c3e364745c6730237bf746"
+_MUSIC_RECIPE_SHA256 = "4b0972ee13e3af9cb0867139c2cdb156eafef0728772f71a2d59376c22b39790"
+
+
+def _sha(recipe: EditRecipeV2) -> str:
+    return hashlib.sha256(recipe.model_dump_json().encode()).hexdigest()
+
+
+def _music_document(*, role=None, windows=None, gain=None):
+    document = json.loads(FIXTURE.read_text())
+    track = {
+        "id": "music",
+        "kind": "audio",
+        "clips": [
+            {
+                "id": "music-1",
+                "source_asset_id": "media-1",
+                "source_start": 0,
+                "source_duration": 2.0,
+                "timeline_start": 0,
+                "rate": 1,
+                "volume": 0.12,
+                "audio_fade_in": 0.5,
+                "audio_fade_out": 0.5,
+            }
+        ],
+    }
+    if role:
+        track["role"] = role
+    document["tracks"].append(track)
+    document["audio"]["duck_music_during_speech"] = True
+    document["audio"]["music_asset_id"] = "media-1"
+    if windows is not None:
+        document["audio"]["speech_windows"] = windows
+    if gain is not None:
+        document["audio"]["speech_duck_gain"] = gain
+    return document
+
+
+def test_recipes_without_speech_duck_fields_serialize_byte_identically():
+    plain = EditRecipeV2.model_validate(json.loads(FIXTURE.read_text()))
+    assert _sha(plain) == _PLAIN_RECIPE_SHA256
+    music = EditRecipeV2.model_validate(_music_document())
+    assert _sha(music) == _MUSIC_RECIPE_SHA256
+    wire = json.loads(music.model_dump_json())
+    assert {"speech_windows", "speech_duck_gain"}.isdisjoint(wire["audio"])
+    assert all("role" not in track for track in wire["tracks"])
+    assert "speechDuck" not in music.required_capabilities
+
+
+def test_speech_windows_serialize_and_derive_speech_duck_capability():
+    window = {"start": 0.2, "end": 0.9}
+    recipe = EditRecipeV2.model_validate(_music_document(role="music", windows=[window], gain=0.25))
+    wire = json.loads(recipe.model_dump_json())
+    assert wire["audio"]["speech_windows"] == [window]
+    assert wire["audio"]["speech_duck_gain"] == 0.25
+    assert [track.get("role") for track in wire["tracks"]] == [None, "music"]
+    assert {"speechDuck", "audioDucking"} <= recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+    # A music track alone, with no windows, asks nothing of the device.
+    plain_music = EditRecipeV2.model_validate(_music_document(role="music"))
+    assert "speechDuck" not in plain_music.required_capabilities
+
+
+def test_speech_windows_need_a_music_role_track():
+    with pytest.raises(ValidationError, match="music-role track"):
+        EditRecipeV2.model_validate(_music_document(windows=[{"start": 0, "end": 1}]))
+    with pytest.raises(ValidationError, match="must be an audio track"):
+        document = _music_document(role="music", windows=[{"start": 0, "end": 1}])
+        document["tracks"][0]["role"] = "music"
+        EditRecipeV2.model_validate(document)
+
+
+@pytest.mark.parametrize(
+    ("windows", "message"),
+    [
+        ([{"start": 1, "end": 2}, {"start": 0.2, "end": 0.5}], "sorted and must not overlap"),
+        ([{"start": 0, "end": 1}, {"start": 0.9, "end": 1.5}], "sorted and must not overlap"),
+        ([{"start": 1, "end": 1}], "positive duration"),
+        ([{"start": 0, "end": 1801}], "less than or equal to 1800"),
+        ([{"start": 0, "end": 1, "extra": 1}], "Extra inputs"),
+        (
+            [{"start": i * 0.01, "end": i * 0.01 + 0.005} for i in range(401)],
+            "at most 400",
+        ),
+    ],
+)
+def test_malformed_speech_windows_are_refused(windows, message):
+    with pytest.raises(ValidationError, match=message):
+        EditRecipeV2.model_validate(_music_document(role="music", windows=windows))
+
+
+@pytest.mark.parametrize("gain", [0, -0.1, 1.01])
+def test_speech_duck_gain_is_a_fraction(gain):
+    with pytest.raises(ValidationError):
+        EditRecipeV2.model_validate(
+            _music_document(role="music", windows=[{"start": 0, "end": 1}], gain=gain)
+        )
+
+
+def _speech_duck_status():
+    recipe = EditRecipeV2.model_validate(
+        _music_document(role="music", windows=[{"start": 0, "end": 1}])
+    )
+    return SimpleNamespace(request=SimpleNamespace(recipe=recipe))
+
+
+@pytest.mark.parametrize(("delta", "allowed"), [(None, False), (-1, False), (0, True)])
+def test_builds_below_the_speech_duck_protocol_are_told_to_update(delta, allowed):
+    from app.routes import device_render
+    from app.services.client_protocol import (
+        SPEECH_DUCK_PROTOCOL,
+        clear_request_context,
+        set_client_protocol,
+    )
+
+    protocol = None if delta is None else SPEECH_DUCK_PROTOCOL + delta
+    try:
+        set_client_protocol(protocol)
+        detail = device_render._client_update_detail(
+            SimpleNamespace(assembly_plan={}), {}, _speech_duck_status()
+        )
+    finally:
+        clear_request_context()
+    if allowed:
+        assert detail is None
+    else:
+        assert detail == {
+            "code": "client_update_required",
+            "feature": "speech_duck",
+            "minimum_client_protocol": SPEECH_DUCK_PROTOCOL,
+        }
+
+
+def test_a_recipe_without_windows_never_asks_for_the_new_build():
+    from app.routes import device_render
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    recipe = EditRecipeV2.model_validate(_music_document(role="music"))
+    status = SimpleNamespace(request=SimpleNamespace(recipe=recipe))
+    try:
+        set_client_protocol(52)
+        detail = device_render._client_update_detail(SimpleNamespace(assembly_plan={}), {}, status)
+    finally:
+        clear_request_context()
+    assert detail is None
+
+
+def test_speech_duck_is_refused_until_the_token_is_verified(monkeypatch):
+    from app.config import settings
+    from app.services import phone_rollout
+
+    recipe = _speech_duck_status().request.recipe
+    verified = ["basicComposition", "audioMix", "audioDucking", "musicBed", "visualBlocks"]
+    monkeypatch.setattr(settings, "phone_render_verified_features", verified)
+    with pytest.raises(phone_rollout.PhoneCapabilityUnavailable) as refused:
+        phone_rollout.validate_phone_pilot_recipe(recipe)
+    assert refused.value.capability == "speechDuck"
+    monkeypatch.setattr(settings, "phone_render_verified_features", [*verified, "speechDuck"])
+    phone_rollout.validate_phone_pilot_recipe(recipe)
 
 
 def visual_document():

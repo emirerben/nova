@@ -1,0 +1,140 @@
+{
+  "about": "Every skip the API shards may report in CI. See expected_skips() in api-tests.py. An entry starting with GAP is a check that does not run and should.",
+  "skips": [
+    {
+      "file": "tests/evals/parity/test_model_parity_de.py",
+      "reason": "no recorded German answer yet \\(paid live recording\\)",
+      "why": "Needs a paid live model call; replay CI never makes one."
+    },
+    {
+      "file": "tests/evals/test_camera_roll_voice_evals.py",
+      "reason": "judge scoring needs --with-judge",
+      "why": "Needs a paid live model call; replay CI never makes one."
+    },
+    {
+      "file": "tests/evals/test_camera_roll_voice_evals.py",
+      "reason": "live baseline needs --eval-mode=live",
+      "why": "Needs a paid live model call; replay CI never makes one."
+    },
+    {
+      "file": "tests/evals/test_edit_director_evals.py",
+      "reason": "requires --eval-mode=live --with-judge",
+      "why": "Needs a paid live model call; replay CI never makes one."
+    },
+    {
+      "file": "tests/evals/test_semantic_edit_proposal_evals.py",
+      "reason": "acceptance target is live-only",
+      "why": "Needs a paid live model call; replay CI never makes one."
+    },
+    {
+      "file": "tests/evals/test_suggestion_agent_evals.py",
+      "reason": "paid: needs --eval-mode=live",
+      "why": "Needs a paid live model call; replay CI never makes one."
+    },
+    {
+      "file": "tests/evals/test_retake_detector_evals.py",
+      "reason": "positive fixture",
+      "why": "Parametrised over all fixtures; this assertion only applies to the negative ones."
+    },
+    {
+      "file": "tests/evals/test_template_text_evals.py",
+      "reason": "ground-truth files are eval inputs",
+      "why": "Parametrised over a directory that also holds ground-truth inputs, which are not fixtures."
+    },
+    {
+      "file": "tests/evals/test_text_overlay_pipeline_evals.py",
+      "reason": "no ground truth for (not_just_luck|rich_in_life) ",
+      "why": "GAP: these two snapshots have no ground-truth file yet, so their accuracy is not checked."
+    },
+    {
+      "file": "tests/evals/test_text_overlay_pipeline_evals.py",
+      "reason": "no transcript sidecar for rich_in_life_v2 ",
+      "why": "GAP: this snapshot has no transcript sidecar yet."
+    },
+    {
+      "file": "tests/gates/test_reliability_gates.py",
+      "reason": "git history unavailable",
+      "why": "The shards clone one commit. These 25 tests run, and must pass, in the creator-contract-replay job, which has full history (NOVA_REQUIRE_GIT_HISTORY=1)."
+    },
+    {
+      "file": "tests/kria/test_copy_catalog.py",
+      "reason": "no merge-base with origin/main",
+      "why": "Same: runs in the creator-contract-replay job with full history."
+    },
+    {
+      "file": "tests/kria/test_assos_request_to_recipe.py",
+      "reason": "baseline-only",
+      "why": "Pinned to an earlier phase on purpose; later phases change the card and recipe."
+    },
+    {
+      "file": "tests/kria/test_chat_undo_seal_table.py",
+      "reason": "the probe does not compile on a phone",
+      "why": "These probes are covered by the parity guard instead."
+    },
+    {
+      "file": "tests/pipeline/test_kri1017_maximo2_replay.py",
+      "reason": "needs the kit source in KRI1017_SOURCE",
+      "why": "Opt-in replay of private media that is not in the repository."
+    },
+    {
+      "file": "tests/pipeline/test_subject_matte.py",
+      "reason": "mediapipe segmenter not usable on this host",
+      "why": "GAP: the hosted runner has no GL context, so the real segmenter is never exercised in CI."
+    },
+    {
+      "file": "tests/pipeline/test_text_element_parity_contract.py",
+      "reason": "helper-only case",
+      "why": "Parametrised case that does not apply to stored elements."
+    },
+    {
+      "file": "tests/routes/test_card_style_device_cases.py",
+      "reason": "set KRIA_CARD_STYLE_E2E_OUT",
+      "why": "Writes device cases for a manual phone run; not a check."
+    },
+    {
+      "file": "tests/tasks/test_qendresa_card_layout_device_cases.py",
+      "reason": "set KRIA_CARD_E2E_OUT",
+      "why": "Writes device cases for a manual phone run; not a check."
+    },
+    {
+      "file": "tests/tasks/test_qendresa_title_look_device_cases.py",
+      "reason": "set KRIA_TITLE_LOOK_E2E_OUT",
+      "why": "Writes device cases for a manual phone run; not a check."
+    },
+    {
+      "file": "tests/services/ocr/test_cross_check_fixtures.py",
+      "reason": "has no extractable tokens",
+      "why": "Parametrised over fixtures; this one has nothing to cross-check."
+    },
+    {
+      "file": "tests/services/test_generated_media_admission_postgres.py",
+      "reason": "requires dedicated admission scratch database",
+      "why": "GAP: needs a database of its own; planned with one database per test worker."
+    },
+    {
+      "file": "tests/tasks/test_render_generation_guard.py",
+      "reason": "requires the integration DB harness",
+      "why": "GAP: needs concurrent sessions on a database of its own; planned with one database per test worker."
+    },
+    {
+      "file": "tests/services/test_sfx_catalog.py",
+      "reason": "prod SFX library dump not available",
+      "why": "Opt-in replay of private media that is not in the repository."
+    },
+    {
+      "file": "tests/services/test_strict_export_duration.py",
+      "reason": "Opt-in original-media replay",
+      "why": "Opt-in replay of private media that is not in the repository."
+    },
+    {
+      "file": "tests/services/test_suggestion_registry_guards.py",
+      "reason": " is implemented$",
+      "why": "Parametrised over suggestion kinds; the case only applies to kinds that are not implemented yet."
+    },
+    {
+      "file": "tests/tasks/test_kri808_clip_speech_language.py",
+      "reason": "the kill switch replays prod's own first pass",
+      "why": "Parametrised case that is covered by the kill-switch test."
+    }
+  ]
+}

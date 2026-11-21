@@ -1,0 +1,33 @@
+name: Install the API's locked Python environment
+description: >-
+  Installs exactly what src/apps/api/uv.lock pins into src/apps/api/.venv and
+  puts it on PATH. torch comes from the CPU-only index (pyproject.toml
+  [tool.uv.sources]). There is deliberately no cache: on a hosted runner uv
+  downloaded and installed all 155 packages in 5 s (PR #2434), which is less
+  than restoring a cache of that size takes. Guard: scripts/ci/test_api_lock.py.
+inputs:
+  extras:
+    description: Space-separated optional-dependency groups to install.
+    required: false
+    default: dev
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      # setup-uv publishes no moving major tag; this commit is v10.4.0.
+      uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
+      with:
+        version: "0.13.9"
+        enable-cache: false
+    - name: Install API dependencies
+      shell: bash
+      working-directory: src/apps/api
+      env:
+        EXTRAS: ${{ inputs.extras }}
+      run: |
+        extras=()
+        for extra in $EXTRAS; do extras+=(--extra "$extra"); done
+        # --frozen: install the lock as written, never resolve again.
+        uv sync --frozen --python 3.11 --group cpu-torch "${extras[@]}"
+        echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"

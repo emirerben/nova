@@ -50,6 +50,7 @@ from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
+    GENERIC_SOUND_EFFECT_NOTICE,
     resolve_creator_manifest,
     speaker_background_pick_from_state,
 )
@@ -103,11 +104,7 @@ _REPAIR_D_SOUND_NOTICE = (
     "Sound effects on iPhone are placed at the moments you named; the "
     "general sound-effect treatment was left out."
 )
-_GENERIC_SOUND_EFFECT_NOTICE = (
-    "Sound effects on iPhone are placed only at spoken moments you name "
-    "(for example: “when I say no, play a buzzer”). No moment was "
-    "named, so no sound was added."
-)
+_GENERIC_SOUND_EFFECT_NOTICE = GENERIC_SOUND_EFFECT_NOTICE
 
 ACTIVE_CREATOR_PHASES = frozenset(
     {

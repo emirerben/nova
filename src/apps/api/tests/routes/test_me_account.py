@@ -375,6 +375,7 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
             _scalars([]),  # 8 — no OAuth token, nothing to revoke
             MagicMock(),  # 9
             MagicMock(),  # 10
+            MagicMock(),  # delete captured clips
             MagicMock(),  # 11
             MagicMock(),  # 12
         ]
@@ -389,7 +390,7 @@ def test_delete_confirm_deletes_in_fk_safe_order_and_dispatches_purge() -> None:
         resp = client.post("/me/account/delete-confirm", json={"token": token})
 
     assert resp.status_code == 204
-    assert db.execute.await_count == 19
+    assert db.execute.await_count == 20
     lock_sql = [str(call.args[0]) for call in db.execute.await_args_list[4:8]]
     assert "content_plans" in lock_sql[0]
     assert "personas" in lock_sql[1]
@@ -438,6 +439,7 @@ def test_delete_confirm_revokes_tiktok_token_before_deleting(monkeypatch) -> Non
             _scalars([tiktok_row]),  # tiktok OAuthToken rows
             MagicMock(),  # delete TikTokPublication
             MagicMock(),  # delete OAuthToken
+            MagicMock(),  # delete captured clips
             MagicMock(),  # delete Job
             MagicMock(),  # delete User
         ]
