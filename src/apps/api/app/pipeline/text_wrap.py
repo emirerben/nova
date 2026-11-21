@@ -67,7 +67,9 @@ def balanced_word_wrap_indices(
         slack_ratio = max(0.0, max_width - segment_width) / max_width
         count_ratio = (count - ideal_count) / max(1.0, ideal_count)
         orphan_penalty = 1000.0 if n > 3 and count == 1 else 0.0
-        return orphan_penalty + (8.0 * count_ratio * count_ratio) + (slack_ratio * slack_ratio)
+        return orphan_penalty + (8.0 * count_ratio * count_ratio) + (
+            slack_ratio * slack_ratio
+        )
 
     # dp[(end, lines)] = (cost, partition)
     dp: dict[tuple[int, int], tuple[float, list[list[int]]]] = {(0, 0): (0.0, [])}

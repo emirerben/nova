@@ -92,7 +92,9 @@ _NORMALIZE_TIMEOUT_S = 600
 # branch waits on the semaphore. The stale-flag fast path (codec-copy
 # remux) is cheap and not gated.
 _MAX_CONCURRENT_NORMALIZE_REENCODES = 2
-_normalize_reencode_semaphore = threading.BoundedSemaphore(_MAX_CONCURRENT_NORMALIZE_REENCODES)
+_normalize_reencode_semaphore = threading.BoundedSemaphore(
+    _MAX_CONCURRENT_NORMALIZE_REENCODES
+)
 
 # Rotations we know how to handle. Phone cameras only emit orthogonal
 # rotations (±90, 180). Non-orthogonal angles (45, etc.) never come from
@@ -302,7 +304,9 @@ def _run_ffmpeg_atomic_replace(
         except OSError:
             pass
         stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-        raise OrientationError(f"ffmpeg {op_label} failed (rc={result.returncode}): {stderr}")
+        raise OrientationError(
+            f"ffmpeg {op_label} failed (rc={result.returncode}): {stderr}"
+        )
 
     os.replace(tmp_path, src)
 

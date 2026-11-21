@@ -14,7 +14,9 @@ ruff step of `scripts/preship-check.sh`:
 - the check runs from the wrong directory or on a narrowed path and passes on
   nothing;
 - CI stops running the format half (it never ran before this file existed and
-  92 files had drifted).
+  92 files had drifted);
+- the list of files left unformatted grows, or keeps a file that is gone, so
+  "formatted" quietly comes to mean less.
 """
 
 import importlib.util
@@ -30,6 +32,18 @@ API = REPO / "src/apps/api"
 spec = importlib.util.spec_from_file_location("api_lint", REPO / "scripts/ci/api-lint.py")
 api_lint = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(api_lint)
+
+# The pipeline files no journey claimed when the format check was added.
+NOT_FORMATTED_ON_2026_11_21 = {
+    "app/pipeline/audio_layout.py",
+    "app/pipeline/intro_voiceover_mix.py",
+    "app/pipeline/lyric_support.py",
+    "app/pipeline/orientation.py",
+    "app/pipeline/prompt_loader.py",
+    "app/pipeline/scene_detect.py",
+    "app/pipeline/text_overlay_v2/tokenize.py",
+    "app/pipeline/text_wrap.py",
+}
 
 LOCK = '[[package]]\nname = "ruff"\nversion = "0.17.6"\nsource = { registry = "x" }\n'
 
@@ -116,6 +130,15 @@ class WiringTests(unittest.TestCase):
         # No second, narrower or forgiving ruff call in the workflow.
         self.assertEqual(re.findall(r"^\s*run: .*\bruff\b.*$", text, re.M), [])
         self.assertNotIn("api-lint.py ||", text)
+
+    def test_the_unformatted_list_only_shrinks(self):
+        listed = tomllib.loads((API / "pyproject.toml").read_text())["tool"]["ruff"]["format"][
+            "exclude"
+        ]
+        self.assertEqual(sorted(set(listed)), sorted(listed))
+        self.assertLessEqual(set(listed), NOT_FORMATTED_ON_2026_11_21)
+        for path in listed:
+            self.assertTrue((API / path).is_file(), f"{path} is gone: delete its line")
 
     def test_preship_uses_the_same_command(self):
         text = (REPO / "scripts/preship-check.sh").read_text()

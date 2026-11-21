@@ -36,7 +36,9 @@ from app.agents._schemas.text_overlay_ocr import FrameDetection, OcrPolygon
 
 def _bbox_to_polygon(x_min: float, y_min: float, x_max: float, y_max: float) -> OcrPolygon:
     """Build a clockwise-from-top-left polygon for an axis-aligned bbox."""
-    return OcrPolygon(points=[(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)])
+    return OcrPolygon(
+        points=[(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
+    )
 
 
 def split_detection_into_words(det: FrameDetection) -> list[FrameDetection]:
@@ -95,7 +97,9 @@ def split_detection_into_words(det: FrameDetection) -> list[FrameDetection]:
         cursor_x = px_min
         for w in words:
             w_width = parent_width * (len(w) / total_chars)
-            word_polygon = _bbox_to_polygon(cursor_x, line_y_min, cursor_x + w_width, line_y_max)
+            word_polygon = _bbox_to_polygon(
+                cursor_x, line_y_min, cursor_x + w_width, line_y_max
+            )
             out.append(
                 FrameDetection(
                     frame_t_s=det.frame_t_s,
