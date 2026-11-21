@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.70.0] - 2026-11-21
+
+### Changed
+- feat(kria): the montage-with-voiceover worker places effects for a general sound-effect ask (KRI-1561) (#2449) <!-- release-pr: 2449 -->
+
 ## [0.89.69.0] - 2026-11-21
 
 ### Changed
