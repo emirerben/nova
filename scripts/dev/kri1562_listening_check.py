@@ -10,7 +10,9 @@ with whisper.cpp, builds its speech windows with the server's own helpers
 - `nomusic`: the edit with no song (the voice reference);
 - `ducked`: the song under the edit, ducking under the windows (what production emits);
 - `control`: the same song with no windows, the duck turned off (the check must catch it);
-- `ref`: the control with the take's own sound at 0 (harness only: the song alone).
+- `ref`: the control with the take's own sound at 0 (harness only: the song alone);
+- `masker`: the control with the song at its full mastered level (harness only), which the
+  word check must flag, so a pass on `ducked` means something.
 
 `AudioParityFixtureTests` renders every case through KriaMediaEngine's production exporter.
 `measure RUN` then reads the exports. Per 20 ms frame, the gain the song plays at is the
@@ -26,7 +28,9 @@ against the no-music export. Criteria (exit 1 when one fails):
 - voice intelligible: against the no-music export's words, the ducked export's word error is
   at most 2 points over the floor (the most whisper changes when nothing that matters does:
   the take before the exporter, the no-music export 1 dB quieter or louder), else 'voice
-  masked, consider separation'.
+  masked, consider separation'. The report also gives the literal reading (at most 2 points
+  over 0, the no-music export against itself);
+- masking caught: the masker's word error is more than 2 points over the floor.
 
 One command runs all three steps: `scripts/dev/kri1562-listening-check.sh`. By hand:
 
@@ -36,8 +40,9 @@ One command runs all three steps: `scripts/dev/kri1562-listening-check.sh`. By h
       KRIA_AUDIO_PARITY_DIR=$RUN swift test --filter AudioParityFixtureTests)
     $PY scripts/dev/kri1562_listening_check.py measure $RUN
 
-Without `--song` the song is the repo's synthesized 3 s `music_02` loop, looped and set to
--14 LUFS; a real catalog song is what the masking decision needs.
+Without `--song` the song is a stand-in: the repo's synthesized 3 s `music_02` drum loop with
+a speech-shaped noise layer for vocals and mid-range instruments, set to -14 LUFS. A real
+catalog song is what the masking decision needs.
 
 Needs ffmpeg/ffprobe and whisper.cpp's `whisper-cli` on PATH. The multilingual ggml-small
 model is fetched once into ~/.cache/kria-listening (or `--model` / KRIA_WHISPER_MODEL) and
@@ -84,7 +89,10 @@ RECOVERY_MAX_S = 0.5
 RECOVERED_DB = -1.0
 WER_MAX_PP = 2.0
 SPEECH_BAND_HZ = (300.0, 4000.0)
-VARIANTS = ("nomusic", "ducked", "control", "ref")
+VARIANTS = ("nomusic", "ducked", "control", "ref", "masker")
+# More words than this share whisper's alignment with their neighbour when the alignment
+# collapses (a run of words all ending at one time), and the windows then miss speech.
+MAX_COLLAPSED_WORDS = 0.05
 
 # The macOS voices the repo's tts_*.m4a fixtures were made with. The fixtures themselves all
 # say ONE sentence, and whisper's alignment mapped one copy of it onto the next (a whole
@@ -109,9 +117,14 @@ SYNTHETIC_LINES = (
         "If you are ever in the neighbourhood, come early, because the cardamom buns "
         "sell out by nine.",
     ),
+    (
+        "Tessa",
+        "Next week I will try their new rye loaf and tell you whether it is worth the queue.",
+    ),
 )
-# Lead silence, the three pauses between the four voices, trailing silence.
-SYNTHETIC_GAPS_S = (1.0, 1.6, 1.5, 2.0, 1.5)
+# Lead silence, the four pauses between the five voices, trailing silence. Past 35 s, so
+# whisper aligns across two 30 s windows like a long real take.
+SYNTHETIC_GAPS_S = (1.0, 1.6, 1.5, 2.0, 1.2, 1.5)
 SYNTHETIC_VOICE_LUFS = -23.0
 SYNTHETIC_SNR_DB = 6.0
 # labels.json marks crowd_03 "pure": babble with no voice of its own on top.
@@ -282,14 +295,21 @@ def build_synthetic(directory: Path) -> Path:
 
 
 def fixture_song(directory: Path) -> Path:
-    """The repo's 3 s `music_02` loop repeated to 2 minutes (one bed clip, no loop joins under
-    the take) and set to a catalog master's -14 LUFS."""
-    song, looped = directory / "fixture_song.m4a", directory / "fixture_song_loop.wav"
-    _ffmpeg("-stream_loop", "-1", "-i", str(FIXTURES / SYNTHETIC_SONG), "-t", "120",
-            "-ac", "2", "-ar", str(SR), str(looped))  # fmt: skip
-    gain_db = SYNTHETIC_SONG_LUFS - _lufs(looped)
-    _ffmpeg("-i", str(looped), "-af", f"volume={gain_db:.3f}dB", "-c:a", "aac", "-b:a", "256k",
-            str(song))  # fmt: skip
+    """The repo's 3 s `music_02` drum loop repeated to 2 minutes (one bed clip, no loop joins
+    under the take), plus an equally loud speech-shaped noise layer standing in for vocals and
+    mid-range instruments, set to a catalog master's -14 LUFS. The drum loop alone has almost
+    nothing in the speech band and could never mask a voice."""
+    song, scratch = directory / "fixture_song.m4a", directory / "fixture_song_mix.wav"
+    drums = np.resize(_pcm(FIXTURES / SYNTHETIC_SONG), 120 * SR)
+    spectrum = np.fft.rfft(np.random.default_rng(1562).standard_normal(drums.size))
+    hz = np.fft.rfftfreq(drums.size, 1 / SR)
+    spectrum *= np.where((hz > 200) & (hz < 5000), np.minimum(1.0, 1000 / np.maximum(hz, 1)), 0)
+    mids = np.fft.irfft(spectrum, drums.size)
+    mids *= np.sqrt(np.mean(drums**2) / np.mean(mids**2))
+    _write_wav(scratch, (drums + mids) / 4)
+    gain_db = SYNTHETIC_SONG_LUFS - _lufs(scratch)
+    _ffmpeg("-i", str(scratch), "-af", f"volume={gain_db:.3f}dB", "-ac", "2", "-c:a", "aac",
+            "-b:a", "256k", str(song))  # fmt: skip
     return song
 
 
@@ -394,6 +414,13 @@ def compile_variants(binding, words: list[list], song: Path) -> dict:  # noqa: A
     recipes["ref"] = control.model_copy(
         update={"audio": control.audio.model_copy(update={"original_volume": 0.0})}
     )
+    bed_track = next(track for track in control.tracks if track.role == "music")
+    full = bed_track.model_copy(
+        update={"clips": [clip.model_copy(update={"volume": 1.0}) for clip in bed_track.clips]}
+    )
+    recipes["masker"] = control.model_copy(
+        update={"tracks": [full if track is bed_track else track for track in control.tracks]}
+    )
     return {"recipes": recipes, "bed": bed, "source_windows": [list(s) for s in spans]}
 
 
@@ -438,6 +465,12 @@ def prepare(run: Path, takes_dir: Path, song: Path | None, model: Path, syntheti
         work = run / name
         work.mkdir(parents=True, exist_ok=True)
         language, words = transcribe(model, media, work / "source", "auto")
+        collapsed = sum(1 for _, start, end in words if end - start < 0.01)
+        if collapsed > MAX_COLLAPSED_WORDS * len(words):
+            raise SystemExit(
+                f"{media}: whisper's alignment collapsed on {collapsed} of {len(words)} words "
+                f"(see {work / 'source.json'}); its windows would miss speech"
+            )
         compiled = compile_variants(_binding(media), words, song)
         for variant, recipe in compiled["recipes"].items():
             _write_case(run / "cases" / f"{name}__{variant}", recipe, media, song)
@@ -612,7 +645,7 @@ def measure_take(run: Path, take: dict, model: Path) -> dict:
     floor_pct = round(100 * max(floor.values()) / max(1, len(reference)), 2)
 
     rows, gains = {}, {}
-    for variant in ("ducked", "control"):
+    for variant in ("ducked", "control", "masker"):
         diff = pcm[variant] - pcm["nomusic"]
         frames = _frames(diff)
         gain = np.where(audible, np.sum(frames * ref_frames, axis=1) / ref_energy, np.nan)
@@ -656,7 +689,7 @@ def measure_take(run: Path, take: dict, model: Path) -> dict:
             "reference_words": len(reference),
             "wer_pct": round(100 * word_errors(reference, hyp) / max(1, len(reference)), 2),
         }
-    ducked, control = rows["ducked"], rows["control"]
+    ducked, control, masker = rows["ducked"], rows["control"], rows["masker"]
     measured = [t for t in ducked["recovery_s"] if t is not None]
     criteria = {
         "duck": {
@@ -680,7 +713,13 @@ def measure_take(run: Path, take: dict, model: Path) -> dict:
             "ducked_wer_pct": ducked["wer_pct"],
             "floor_pct": floor_pct,
             "max_pp_over_floor": WER_MAX_PP,
+            "literal_ok": ducked["wer_pct"] <= WER_MAX_PP,
             "ok": ducked["wer_pct"] - floor_pct <= WER_MAX_PP,
+        },
+        "masking_caught": {
+            "masker_wer_pct": masker["wer_pct"],
+            "floor_pct": floor_pct,
+            "ok": masker["wer_pct"] - floor_pct > WER_MAX_PP,
         },
     }
     result = {
@@ -764,8 +803,8 @@ def _markdown(meta: dict, results: list[dict]) -> str:
     lines += [
         "",
         "| take | duck >= 9 dB | recovery <= 0.5 s | control caught "
-        "| voice intelligible (<= floor + 2 pp) |",
-        "| --- | --- | --- | --- | --- |",
+        "| voice intelligible (<= floor + 2 pp) | literal reading (<= 2 pp) | masking caught |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for r in results:
         c = r["criteria"]
@@ -775,6 +814,8 @@ def _markdown(meta: dict, results: list[dict]) -> str:
         ]
         if not c["recovery"]["pauses_over_1s"]:
             cells = [f"{cell} (no pause over 1 s)" for cell in cells[:3]] + cells[3:]
+        cells.append("PASS" if c["voice_intelligible"]["literal_ok"] else "FAIL (informative)")
+        cells.append("PASS" if c["masking_caught"]["ok"] else "FAIL")
         lines.append(f"| {r['take']} | " + " | ".join(cells) + " |")
     masked = [r["take"] for r in results if not r["criteria"]["voice_intelligible"]["ok"]]
     lines += [
