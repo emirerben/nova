@@ -393,6 +393,25 @@ download is faster than a cache restore of that size.
   test stopped running, an outcome changed, a test newly reaches the 60 s
   timeout, or more samples per run sit above 45 s.
 
+### Skips in the API shards
+
+A skipped test is a check that did not run. After pytest, each API shard reads
+its own per-test rows and fails if a test skipped for a reason that is not on
+`scripts/ci/api-expected-skips.json` (`check_skips` in `scripts/ci/api-tests.py`).
+Each entry names a file, a pattern the skip reason must match, and why the skip
+is acceptable. An entry whose `why` starts with `GAP` is a check that should run
+and does not yet.
+
+- A new skip in CI: make the test run, or add an entry with the reason. Do not
+  widen an existing pattern to cover it.
+- Tests that need the repository's history (`tests/git_history_required.py`)
+  skip in the shards, which clone one commit, and run in
+  `creator-contract-replay` with `NOVA_REQUIRE_GIT_HISTORY=1`, where a missing
+  commit or merge base is a failure.
+- First measured 2026-11-21: 115 skips per run in 26 files. 26 of them were
+  checks that never ran on pull requests (25 reliability-gate fix-commit tests
+  and the copy-catalog codemod test) and one needed an uninstalled package.
+
 ## When a PR gets a Mac (KRI-1534)
 
 A pull request starts a Mac only when it changes an iPhone input

@@ -162,7 +162,7 @@ jobs:
           NOVA_REQUIRE_GIT_HISTORY: "1"
         run: |
           pytest -q -rs -p no:cacheprovider \
-            tests/gates/test_reliability_gates.py \
+            tests/gates/test_reliability_gates.py::test_fix_commits_are_on_this_branch \
             tests/kria/test_copy_catalog.py::test_codemod_kept_every_en_tr_pair
       - name: Resolve immutable comparison base
         id: comparison-base
