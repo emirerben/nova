@@ -20,6 +20,15 @@ Ways the weight-packed shards can go wrong, written before the packing (KRI-1544
 11. The per-test recorder (tests/_ci_times.py) is never switched on, is not
     loaded by the suite, or writes where the workflow does not keep it, so
     every later measurement is silently empty.
+12. A test that used to run starts skipping in CI (a missing package, a
+    service that is not there, a shallow clone) and the shard stays green.
+13. An expected-skip entry is so broad that a new reason in the same file is
+    excused with it.
+14. The recorder wrote no rows, and "no rows" is read as "no skips".
+15. The expected-skip list is unreadable and every skip is waved through.
+16. Rows left by an earlier run in the same directory are judged as this run's.
+17. A test that needs git history is added, skips in the shards as allowed, and
+    is never added to the job that has the history, so it runs nowhere.
 """
 
 import importlib.util
@@ -243,6 +252,99 @@ class ApiTestShardTests(unittest.TestCase):
             "          name: api-times-${{ github.run_id }}-${{ matrix.shard }}-${{ github.run_attempt }}\n",
             upload.group(),
         )
+
+    def skip_rows(self, *skips):
+        rows = [{"kind": "test", "nodeid": "tests/test_alpha.py::test_ok",
+                 "file": "tests/test_alpha.py", "outcome": "passed", "reason": ""}]
+        for nodeid, reason in skips:
+            rows.append({"kind": "test", "nodeid": nodeid, "file": nodeid.split("::")[0],
+                         "outcome": "skipped", "reason": reason})
+        directory = self.api_root / api_tests.TIMES
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "gw0.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def expected(self, entries):
+        path = self.api_root / "expected-skips.json"
+        path.write_text(entries if isinstance(entries, str) else json.dumps({"skips": entries}))
+        return path
+
+    def test_a_skip_that_is_not_on_the_list_fails_the_shard(self):
+        self.skip_rows(("tests/test_alpha.py::test_new", "Skipped: nova_test Postgres not reachable"))
+        expected = self.expected(
+            [{"file": "tests/test_delta.py", "reason": "live only", "why": "paid"}]
+        )
+        self.assertEqual(
+            api_tests.unexpected_skips(self.api_root, expected),
+            [("tests/test_alpha.py::test_new", "Skipped: nova_test Postgres not reachable")],
+        )
+        self.assertEqual(api_tests.check_skips(self.api_root, expected), 1)
+
+    def test_a_listed_skip_passes_but_a_new_reason_in_the_same_file_does_not(self):
+        expected = self.expected(
+            [{"file": "tests/test_alpha.py", "reason": "needs --eval-mode=live", "why": "paid"}]
+        )
+        self.skip_rows(("tests/test_alpha.py::test_live", "Skipped: needs --eval-mode=live"))
+        self.assertEqual(api_tests.check_skips(self.api_root, expected), 0)
+        self.skip_rows(
+            ("tests/test_alpha.py::test_live", "Skipped: needs --eval-mode=live"),
+            ("tests/test_alpha.py::test_other", "Skipped: ffmpeg not installed"),
+        )
+        self.assertEqual(
+            api_tests.unexpected_skips(self.api_root, expected),
+            [("tests/test_alpha.py::test_other", "Skipped: ffmpeg not installed")],
+        )
+
+    def test_no_recorded_rows_is_a_failure_not_a_clean_run(self):
+        expected = self.expected([])
+        with self.assertRaisesRegex(ValueError, "no per-test rows"):
+            api_tests.unexpected_skips(self.api_root, expected)
+        self.assertEqual(api_tests.check_skips(self.api_root, expected), 1)
+
+    def test_an_unreadable_or_malformed_list_fails_closed(self):
+        self.skip_rows()
+        for payload in ("{not json", json.dumps({"skips": [{"file": "tests/a.py"}]}),
+                        json.dumps({"skips": [{"file": "tests/a.py", "reason": "(", "why": "x"}]}),
+                        json.dumps({"skips": [{"file": "tests/a.py", "reason": "", "why": "x"}]})):
+            with self.assertRaises(ValueError, msg=payload):
+                api_tests.unexpected_skips(self.api_root, self.expected(payload))
+        self.assertEqual(
+            api_tests.check_skips(self.api_root, self.api_root / "missing.json"), 1
+        )
+
+    def test_rows_from_an_earlier_run_are_cleared_before_the_shard_starts(self):
+        self.skip_rows(("tests/test_alpha.py::test_old", "Skipped: stale"))
+        api_tests.clear_rows(self.api_root)
+        self.assertFalse((self.api_root / api_tests.TIMES).exists())
+
+    def test_the_committed_list_is_well_formed_and_names_real_files(self):
+        entries = api_tests.expected_skips()
+        self.assertTrue(entries)
+        api_root = SCRIPT.parents[2] / "src/apps/api"
+        for file, _ in entries:
+            self.assertTrue((api_root / file).is_file(), file)
+
+    def test_every_file_that_asks_for_git_history_runs_in_the_history_job(self):
+        (self.api_root / "tests/nested/test_bravo.py").write_text(
+            "import pytest\n\n@pytest.mark.needs_git_history\ndef test_x(): ...\n"
+        )
+        self.assertEqual(
+            api_tests.history_files(self.api_root), [Path("tests/nested/test_bravo.py")]
+        )
+        command, env = api_tests.history_command(self.api_root, {"PATH": "/bin"})
+        self.assertIn("tests/nested/test_bravo.py", command)
+        self.assertEqual(command[command.index("-m") + 1], "needs_git_history")
+        self.assertEqual(env["NOVA_REQUIRE_GIT_HISTORY"], "1")
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
+        self.assertIn("python3 scripts/ci/api-tests.py history\n", workflow)
+
+    def test_a_history_job_with_nothing_to_run_fails(self):
+        with self.assertRaisesRegex(ValueError, "no test file asks for git history"):
+            api_tests.history_command(self.api_root, {})
+
+    def test_the_real_suite_has_history_tests(self):
+        api_root = SCRIPT.parents[2] / "src/apps/api"
+        names = {path.name for path in api_tests.history_files(api_root)}
+        self.assertLessEqual({"test_reliability_gates.py", "test_copy_catalog.py"}, names)
 
     def test_pytest_command_executes_each_selected_file_once(self):
         selected = api_tests.shard_files(self.api_root, 0)

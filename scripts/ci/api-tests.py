@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +31,10 @@ MAX_SECONDS = 3600
 JUNIT = "test-results/api-junit.xml"
 # Where tests/_ci_times.py writes one row per test; ci.yml uploads it.
 TIMES = "test-results/ci-times"
+# Every skip CI is allowed to report: a file, a pattern its reason must match,
+# and why. A skip that matches no entry fails the shard, so a check cannot
+# stop running without someone writing down the reason.
+EXPECTED_SKIPS = Path(__file__).resolve().with_name("api-expected-skips.json")
 
 
 def test_files(api_root: Path) -> list[Path]:
@@ -128,24 +134,122 @@ def pytest_env(environ: dict[str, str]) -> dict[str, str]:
     return {**environ, "NOVA_CI_TIMES_DIR": TIMES}
 
 
+def expected_skips(path: Path = EXPECTED_SKIPS) -> list[tuple[str, re.Pattern[str]]]:
+    """(file, reason pattern) pairs. Anything malformed raises: a list that
+    cannot be read must not excuse a single skip."""
+    try:
+        entries = json.loads(path.read_text())["skips"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ValueError(f"cannot read expected skips from {path}: {error}") from error
+    pairs = []
+    for entry in entries:
+        try:
+            file, reason, why = entry["file"], entry["reason"], entry["why"]
+            if not (isinstance(file, str) and file and isinstance(reason, str) and reason):
+                raise ValueError("file and reason must be non-empty text")
+            if not (isinstance(why, str) and why):
+                raise ValueError("why must say why the skip is acceptable")
+            pairs.append((file, re.compile(reason)))
+        except (KeyError, TypeError, ValueError, re.error) as error:
+            raise ValueError(f"bad expected-skip entry {entry!r}: {error}") from error
+    return pairs
+
+
+def clear_rows(api_root: Path) -> None:
+    """Drop rows an earlier run left behind, so only this run's are judged."""
+    shutil.rmtree(api_root / TIMES, ignore_errors=True)
+
+
+def unexpected_skips(api_root: Path, expected: Path = EXPECTED_SKIPS) -> list[tuple[str, str]]:
+    """Skipped tests of this shard that no expected-skip entry covers."""
+    allowed = expected_skips(expected)
+    rows = []
+    for path in sorted((api_root / TIMES).glob("*.jsonl")):
+        for line in path.read_text().splitlines():
+            row = json.loads(line)
+            if row.get("kind") == "test":
+                rows.append(row)
+    if not rows:
+        raise ValueError(f"no per-test rows under {api_root / TIMES}; cannot check skips")
+    return sorted(
+        (row["nodeid"], row.get("reason", ""))
+        for row in rows
+        if row["outcome"] == "skipped"
+        and not any(
+            row["file"] == file and pattern.search(row.get("reason", ""))
+            for file, pattern in allowed
+        )
+    )
+
+
+def check_skips(api_root: Path, expected: Path = EXPECTED_SKIPS) -> int:
+    try:
+        unexpected = unexpected_skips(api_root, expected)
+    except ValueError as error:
+        print(f"::error::{error}")
+        return 1
+    if not unexpected:
+        print("Skips: every skipped test is on scripts/ci/api-expected-skips.json.")
+        return 0
+    print(f"::error::{len(unexpected)} test(s) skipped that are not on the expected-skip list.")
+    print(
+        "A skipped test is a check that did not run. Make it run in CI, or add an entry to"
+        " scripts/ci/api-expected-skips.json saying why it cannot."
+    )
+    for nodeid, reason in unexpected:
+        print(f"  {nodeid}: {reason}")
+    return 1
+
+
+HISTORY_MARKER = "needs_git_history"
+
+
+def history_files(api_root: Path) -> list[Path]:
+    """Test files with a test marked as needing git history: those tests skip
+    on the shards' one-commit clone, so they must also run where it exists."""
+    return [
+        path
+        for path in test_files(api_root)
+        if f"mark.{HISTORY_MARKER}" in (api_root / path).read_text(encoding="utf-8")
+    ]
+
+
+def history_command(api_root: Path, environ: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    """pytest over the history files, with a missing commit made a failure."""
+    files = history_files(api_root)
+    if not files:
+        raise ValueError("no test file asks for git history; the history job would check nothing")
+    # Only the marked tests: this job lacks libraries other tests in the same
+    # files need (skia's libEGL).
+    command = ["pytest", *(str(path) for path in files), "-m", HISTORY_MARKER, "-q", "-rs"]
+    return command, {**environ, "NOVA_REQUIRE_GIT_HISTORY": "1"}
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:
-        raise ValueError("usage: api-tests.py SHARD")
+        raise ValueError("usage: api-tests.py SHARD | history")
+    api_root = Path(__file__).resolve().parents[2] / "src/apps/api"
+    if argv[0] == "history":
+        command, env = history_command(api_root, dict(os.environ))
+        print("Tests that need git history:", *command[1 : command.index("-m")])
+        return subprocess.run(command, cwd=api_root, env=env, check=False).returncode
     try:
         shard = int(argv[0])
     except ValueError as error:
         raise ValueError(f"shard must be an integer, got {argv[0]!r}") from error
 
-    api_root = Path(__file__).resolve().parents[2] / "src/apps/api"
     selected = shard_files(api_root, shard)
     print(f"API test shard {shard}/{SHARD_COUNT}: {len(selected)} files")
-    return subprocess.run(
+    clear_rows(api_root)
+    status = subprocess.run(
         pytest_command(selected),
         cwd=api_root,
         env=pytest_env(dict(os.environ)),
         check=False,
     ).returncode
+    # Checked even when pytest failed, so one run reports both.
+    return status or check_skips(api_root)
 
 
 if __name__ == "__main__":

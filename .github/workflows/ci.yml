@@ -153,6 +153,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/api-env
+      # The API shards clone one commit, so these tests skip there (listed in
+      # scripts/ci/api-expected-skips.json). This job has every commit: here a
+      # missing commit or merge base fails instead of skipping.
+      # Every test marked needs_git_history, found by the script, so a new
+      # one cannot be left out.
+      - name: Run the tests that need git history
+        run: python3 scripts/ci/api-tests.py history
       - name: Resolve immutable comparison base
         id: comparison-base
         run: |
@@ -286,6 +293,10 @@ jobs:
         with:
           packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
       - uses: ./.github/actions/api-env
+        with:
+          # analysis: pytesseract, so the OCR engine test runs against the
+          # tesseract binary installed above instead of skipping.
+          extras: dev analysis
       - name: Verify Alembic upgrade-downgrade roundtrip
         working-directory: src/apps/api
         env:
