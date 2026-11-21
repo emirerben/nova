@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.62.0] - 2026-11-21
+
+### Changed
+- test(kria): one lane-targets guard test per fixture (KRI-1534) (#2443) <!-- release-pr: 2443 -->
+
 ## [0.89.61.0] - 2026-11-21
 
 ### Changed
