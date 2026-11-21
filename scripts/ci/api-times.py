@@ -12,8 +12,10 @@ the newest run. Stdlib only. Guard: scripts/ci/test_api_times.py.
 
 `compare` is the side-by-side check for a CI change (install, shard layout,
 runner): OLD and NEW each hold the rows of one or more runs. It fails when a
-test stopped running, an outcome changed, a test newly reaches the 60 s
-timeout, or more samples per run sit above 45 s than before. Every attempt of
+test stopped running, an outcome changed, a test newly reaches its timeout,
+or more samples per run sit above three quarters of their timeout than
+before. Each test is judged against its own timeout (rows carry it; a row
+without one is taken as the suite's 60 s). Every attempt of
 a shard counts as a sample. Tests only in NEW are listed, not failed: the
 arms are usually a few commits apart.
 """
@@ -32,10 +34,11 @@ ARTIFACT_NAME = re.compile(r"api-times-([0-9]+)-([0-9]+)-([0-9]+)")
 PHASES = ("setup", "call", "teardown")
 SLOW_FILE_SECONDS = 20
 SLOW_TEST_SECONDS = 10
-# The suite's per-test timeout in CI, and the margin the layout bar watches
+# The suite's per-test timeout in CI, used for rows that carry none, and the
+# share of a test's timeout the layout bar watches: 45 s of 60 s
 # (docs/runbooks/change-based-ci.md).
 TIMEOUT_SECONDS = 60
-NEAR_TIMEOUT_SECONDS = 45
+NEAR_TIMEOUT_SHARE = 0.75
 
 
 def load(root: Path, attempts_as_runs: bool = False) -> list[dict]:
@@ -122,7 +125,7 @@ def summarize(shards: list[dict]) -> dict:
 
 
 def arm_samples(shards: list[dict]) -> dict:
-    """Per test: every outcome and every whole-test duration seen in one arm."""
+    """Per test: every outcome and, per sample, the share of its timeout it used."""
     outcomes: dict[str, set] = collections.defaultdict(set)
     seconds: dict[str, list[float]] = collections.defaultdict(list)
     for shard in shards:
@@ -130,7 +133,8 @@ def arm_samples(shards: list[dict]) -> dict:
             if row.get("kind") != "test":
                 continue
             outcomes[row["nodeid"]].add(row["outcome"])
-            seconds[row["nodeid"]].append(sum(row.get(phase, 0) for phase in PHASES))
+            used = sum(row.get(phase, 0) for phase in PHASES)
+            seconds[row["nodeid"]].append(used / (row.get("timeout") or TIMEOUT_SECONDS))
     distinct_shards = len({shard["shard"] for shard in shards}) or 1
     return {
         "outcomes": outcomes,
@@ -145,8 +149,10 @@ def compare(old_shards: list[dict], new_shards: list[dict]) -> dict:
     old, new = arm_samples(old_shards), arm_samples(new_shards)
     shared = sorted(set(old["outcomes"]) & set(new["outcomes"]))
 
-    def above(arm, limit):
-        return sum(value > limit for values in arm["seconds"].values() for value in values)
+    def near(arm):
+        return sum(
+            share > NEAR_TIMEOUT_SHARE for shares in arm["seconds"].values() for share in shares
+        )
 
     result = {
         "samples": {"old": old["samples"], "new": new["samples"]},
@@ -161,25 +167,25 @@ def compare(old_shards: list[dict], new_shards: list[dict]) -> dict:
         "newly_at_timeout": sorted(
             node
             for node, values in new["seconds"].items()
-            if max(values) >= TIMEOUT_SECONDS
-            and max(old["seconds"].get(node, [0])) < TIMEOUT_SECONDS
+            if max(values) >= 1
+            and max(old["seconds"].get(node, [0])) < 1
         ),
-        "above_45_per_run": {
-            "old": round(above(old, NEAR_TIMEOUT_SECONDS) / old["runs"], 2),
-            "new": round(above(new, NEAR_TIMEOUT_SECONDS) / new["runs"], 2),
+        "near_timeout_per_run": {
+            "old": round(near(old) / old["runs"], 2),
+            "new": round(near(new) / new["runs"], 2),
         },
     }
     result["ok"] = not (
         result["only_old"]
         or result["outcome_changes"]
         or result["newly_at_timeout"]
-        or result["above_45_per_run"]["new"] > result["above_45_per_run"]["old"]
+        or result["near_timeout_per_run"]["new"] > result["near_timeout_per_run"]["old"]
     )
     return result
 
 
 def render_compare(result: dict, top: int = 40) -> str:
-    rate = result["above_45_per_run"]
+    rate = result["near_timeout_per_run"]
     lines = [
         f"# API suite, old against new: {'PASS' if result['ok'] else 'FAIL'}",
         f"Shard samples: old {result['samples']['old']}, new {result['samples']['new']};"
@@ -191,9 +197,10 @@ def render_compare(result: dict, top: int = 40) -> str:
             f"- {node}: {', '.join(change['old'])} -> {', '.join(change['new'])}"
             for node, change in list(result["outcome_changes"].items())[:top]
         ),
-        f"Tests newly at the {TIMEOUT_SECONDS} s timeout: {len(result['newly_at_timeout'])}",
+        f"Tests newly at their timeout: {len(result['newly_at_timeout'])}",
         *(f"- {node}" for node in result["newly_at_timeout"][:top]),
-        f"Samples above {NEAR_TIMEOUT_SECONDS} s per run: old {rate['old']}, new {rate['new']}",
+        f"Samples above {NEAR_TIMEOUT_SHARE:.0%} of their timeout, per run:"
+        f" old {rate['old']}, new {rate['new']}",
         f"Tests only in the new arm (not a failure): {len(result['only_new'])}",
         *(f"- {node}" for node in result["only_new"][:top]),
     ]

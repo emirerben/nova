@@ -18,6 +18,8 @@ change the run it is measuring:
 - a test that starts its own pytest (several in this suite do) passes the
   switch on to it, so the child's tests, including ones meant to fail, are
   added to the suite's rows;
+- a test with its own, longer timeout is judged against the suite default, so
+  a 90 s test with a 300 s allowance looks like it is past the limit;
 - the recorder changes pytest's exit code, or writes files when it is not
   asked to.
 """
@@ -44,6 +46,11 @@ import pytest
 
 def test_pass():
     time.sleep(0.05)
+
+
+@pytest.mark.timeout(300)
+def test_own_timeout():
+    pass
 
 
 def test_fail():
@@ -92,6 +99,7 @@ def test_runs_its_own_pytest(tmp_path):
 
 NODES = {
     "checks/test_sample.py::test_pass": "passed",
+    "checks/test_sample.py::test_own_timeout": "passed",
     "checks/test_sample.py::test_fail": "failed",
     "checks/test_sample.py::test_skip": "skipped",
     "checks/test_sample.py::test_known_gap": "xfailed",
@@ -126,6 +134,7 @@ def run_sample(root: Path, *args: str, record: bool = True):
             "-p",
             "no:cacheprovider",
             "-q",
+            "--timeout=45",
             "checks",
             *args,
         ],
@@ -182,6 +191,13 @@ def test_cpu_spent_in_a_child_process_is_counted(plain):
     # Sleeping is wall time, not CPU.
     assert by_node["test_pass"]["call"] >= 0.05
     assert by_node["test_pass"]["cpu"] < by_node["test_pass"]["call"]
+
+
+def test_each_row_carries_the_timeout_that_applies_to_that_test(plain):
+    by_node = {row["nodeid"].rsplit("::", 1)[-1]: row for row in only_tests(plain[1])}
+    assert by_node["test_own_timeout"]["timeout"] == 300
+    # The sample run passes --timeout=45 on the command line.
+    assert by_node["test_pass"]["timeout"] == 45
 
 
 def test_a_parametrised_id_with_colons_stays_in_its_file(plain):

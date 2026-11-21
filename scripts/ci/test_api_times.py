@@ -24,7 +24,10 @@ have been stopped (a new install, shard layout or runner):
   samples sit above 45 s than before, and the layout is adopted anyway;
 - a re-run of one shard (a second attempt) is read as a run that lost every
   other shard's tests;
-- arms with different numbers of runs are compared count for count.
+- arms with different numbers of runs are compared count for count;
+- a test that sets its own longer timeout is judged against the suite's 60 s,
+  so a render test at 90 s of its 300 s reads as a failure and the real signal
+  (a default-timeout test drifting toward 60 s) is lost in the noise.
 """
 
 import importlib.util
@@ -40,8 +43,11 @@ assert spec.loader is not None
 spec.loader.exec_module(api_times)
 
 
-def test_row(nodeid, call, outcome="passed", reason="", setup=0.0, teardown=0.0, cpu=None):
-    return {
+def test_row(
+    nodeid, call, outcome="passed", reason="", setup=0.0, teardown=0.0, cpu=None, timeout=None
+):
+    extra = {} if timeout is None else {"timeout": timeout}
+    return extra | {
         "kind": "test",
         "worker": "gw0",
         "nodeid": nodeid,
@@ -213,19 +219,38 @@ class CompareTests(unittest.TestCase):
         # test_long already ran past 60 s before (it sets its own timeout).
         self.assertEqual(result["newly_at_timeout"], ["tests/test_a.py::test_x"])
 
+    def test_a_test_is_judged_against_its_own_timeout(self):
+        result = self.compare(
+            {"1-0-1": [test_row("tests/test_a.py::test_render", 40, timeout=300),
+                       test_row("tests/test_a.py::test_x", 30, timeout=60)]},
+            {"2-0-1": [test_row("tests/test_a.py::test_render", 95, timeout=300),
+                       test_row("tests/test_a.py::test_x", 30, timeout=60)]},
+        )
+        # 95 s of a 300 s allowance is neither at the timeout nor near it.
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["near_timeout_per_run"], {"old": 0.0, "new": 0.0})
+
+    def test_a_long_timeout_test_near_its_own_limit_still_counts(self):
+        result = self.compare(
+            {"1-0-1": [test_row("tests/test_a.py::test_render", 100, timeout=300)]},
+            {"2-0-1": [test_row("tests/test_a.py::test_render", 240, timeout=300)]},
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["near_timeout_per_run"], {"old": 0.0, "new": 1.0})
+
     def test_more_samples_above_45_seconds_fail_the_comparison(self):
         result = self.compare(
             {"1-0-1": [test_row("tests/test_a.py::test_x", 44), test_row("tests/test_a.py::test_y", 46)]},
             {"2-0-1": [test_row("tests/test_a.py::test_x", 47), test_row("tests/test_a.py::test_y", 46)]},
         )
         self.assertFalse(result["ok"])
-        self.assertEqual(result["above_45_per_run"], {"old": 1.0, "new": 2.0})
+        self.assertEqual(result["near_timeout_per_run"], {"old": 1.0, "new": 2.0})
 
     def test_slow_samples_are_compared_per_run_not_count_for_count(self):
         rows = [test_row("tests/test_a.py::test_y", 46)]
         result = self.compare({"1-0-1": rows}, {"2-0-1": rows, "3-0-1": rows})
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["above_45_per_run"], {"old": 1.0, "new": 1.0})
+        self.assertEqual(result["near_timeout_per_run"], {"old": 1.0, "new": 1.0})
 
 
 if __name__ == "__main__":
