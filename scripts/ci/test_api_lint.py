@@ -22,7 +22,11 @@ ruff step of `scripts/preship-check.sh`:
   directory, and a path outside the API would be linted with the API's rules;
 - the editor's format-on-save hook formats with whatever `ruff` is first on
   PATH (Homebrew's was 0.15.20 on 2026-11-21), so a saved file fails CI's check;
-- the hooks are defined but never installed, or installed without the checks.
+- the hooks are defined but never installed, or installed without the checks;
+- deleting a remote branch runs the push hook with an all-zero commit; a check
+  that reads that commit fails and the deletion is refused (seen with hk
+  2.13.0 in a scratch repository), and a check of the working tree would judge
+  files that are not being pushed.
 """
 
 import importlib.util
@@ -189,7 +193,18 @@ class WiringTests(unittest.TestCase):
 
     def test_the_push_hook_lints_the_whole_api_tree(self):
         push = (REPO / "hk.pkl").read_text().split('["pre-push"]', 1)[1]
-        self.assertIn('check = "python3 scripts/ci/api-lint.py"', push)
+        self.assertIn("python3 scripts/ci/api-lint.py\n", push)
+
+    def test_every_push_check_lets_a_branch_deletion_through(self):
+        push = (REPO / "hk.pkl").read_text().split('["pre-push"]', 1)[1]
+        checks = re.findall(r'check = """\n(.*?)"""', push, re.S)
+        self.assertEqual(len(checks), push.count("check = "), "write each check as a block")
+        self.assertGreaterEqual(len(checks), 4)
+        for check in checks:
+            self.assertTrue(check.lstrip().startswith("\(notADeletion)"), check)
+        self.assertIn(
+            'case "${HK_TO_REF:-}" in 0000000*) exit 0 ;; esac', (REPO / "hk.pkl").read_text()
+        )
 
     def test_a_new_worktree_installs_the_hooks(self):
         text = (REPO / "scripts/worktree-setup.sh").read_text()
