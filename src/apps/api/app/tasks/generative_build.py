@@ -5488,31 +5488,130 @@ def _talking_speech_source_windows(speakers: Sequence[tuple[Any, Sequence[Any]]]
     return {binding.media_id: speech_spans_from_words(words) for binding, words in speakers}
 
 
-def _talking_music_bed(job_id: str) -> tuple[Any, dict[str, Any] | None]:
-    """KRI-1562: ``(PhoneMusicBed, treatment)`` for a phone Talking render, else ``(None, None)``.
+def _talking_music_bed(
+    job_id: str,
+    *,
+    snapshot: Mapping[str, Any],
+    client_protocol: int | None,
+    spoken_text: str,
+    take_s: float,
+) -> tuple[Any, dict[str, Any] | None, dict[str, Any] | None]:
+    """KRI-1562: ``(PhoneMusicBed, treatment, receipt)`` for a phone Talking render.
 
-    Only a treatment already on the variant (the creator's choice) makes a bed (KRI-20). A song
-    that can no longer be served is dropped (traced) instead of failing the talk itself.
+    The song comes from the creator: one already on the variant (chosen in the editor or in
+    chat), else, for the approved brief's typed music ask, the library song the matcher picks
+    for the talk (KRI-20: never unasked). A live "no music" in that brief plays none, whatever is
+    stored. ``receipt`` (`talking_music.RECEIPT_FIELD`) answers a music ask: whether a song plays,
+    or why not. A song that can no longer be served is dropped (traced), never failing the talk.
     """
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.draft_sound_carry import asks_music, asks_no_music  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.phone_recipe_shared import music_bed_from_treatment  # noqa: PLC0415
-    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+    from app.services import talking_music  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speech_duck_planned_for,
+        talking_music_supported,
+    )
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     if not talking_music_supported(require_client=False):
-        return None, None
-    treatment = _persisted_music_treatment(job_id=job_id, variant_id="subtitled")
-    if treatment is None:
-        return None, None
+        return None, None, None
     try:
-        return music_bed_from_treatment(treatment, _pin_catalog_music), treatment
+        brief = BriefBinding.model_validate(snapshot.get("creator_brief_binding")).resolve()
+    except (ValueError, TypeError):
+        brief = None
+    if asks_no_music(brief):
+        return None, None, None
+    ask = asks_music(brief)
+
+    def missing(reason: str) -> tuple[None, None, dict[str, Any] | None]:
+        receipt = {"status": talking_music.NOT_PLAYED, "reason": reason}
+        return None, None, receipt if ask is not None else None
+
+    treatment = _persisted_music_treatment(job_id=job_id, variant_id="subtitled")
+    if treatment is None and ask is not None:
+        if not speech_duck_planned_for(client_protocol):
+            return missing(talking_music.APP_TOO_OLD)
+        treatment, reason = _match_talking_song(
+            job_id, mood=ask.mood, spoken_text=spoken_text, take_s=take_s
+        )
+        if treatment is None:
+            return missing(reason)
+    if treatment is None:
+        return None, None, None
+    try:
+        bed = music_bed_from_treatment(treatment, _pin_catalog_music)
     except (UnsupportedPhonePlan, ValueError, KeyError, TypeError) as exc:
         record_pipeline_event(
             "phone",
             "talking_music_dropped",
             {"track_id": str(treatment.get("track_id")), "reason": str(exc)[:200]},
         )
-        return None, None
+        return missing(talking_music.SONG_UNAVAILABLE)
+    receipt = {"status": talking_music.PLAYED, "track_id": str(treatment.get("track_id"))}
+    return bed, treatment, receipt if ask is not None else None
+
+
+def _match_talking_song(
+    job_id: str, *, mood: str | None, spoken_text: str, take_s: float
+) -> tuple[dict[str, Any] | None, str]:
+    """KRI-1562: the library song the matcher ranks first for this talk (and the mood the
+    creator named), as a treatment; else ``(None, reason)``. Every song offered is one the pin
+    and the Save accept (`talking_music.song_eligible`)."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.services import talking_music  # noqa: PLC0415
+    from app.tasks.auto_music_orchestrate import _run_music_matcher  # noqa: PLC0415
+
+    tracks = _talking_library_tracks()
+    if not tracks:
+        return None, talking_music.EMPTY_LIBRARY
+    talk = spoken_text.strip()
+    clip_meta = SimpleNamespace(
+        clip_id="subtitled",
+        duration_s=take_s,
+        detected_subject=talk[:160],
+        hook_text=talk[:160],
+        hook_score=7.0,
+        energy=5.0,
+        summary=talk[:400],
+        is_image=False,
+    )
+    ranked = _run_music_matcher(
+        clip_metas=[clip_meta],
+        candidate_tracks=tracks,
+        n_variants=1,
+        job_id=job_id,
+        music_ask=mood or "",
+    )
+    by_id = {str(track.id): track for track in tracks}
+    winner = next(
+        (by_id[str(row["track_id"])] for row in ranked if str(row.get("track_id")) in by_id),
+        None,
+    )
+    if winner is None:
+        return None, talking_music.NO_MATCH
+    return talking_music.song_treatment(winner), ""
+
+
+def _talking_library_tracks() -> list[Any]:
+    """KRI-1562: the library songs a phone Talking edit may play (`talking_music.song_eligible`)."""
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    from app.services import talking_music  # noqa: PLC0415
+
+    with _sync_session() as db:
+        return [
+            track
+            for track in db.execute(
+                _select(MusicTrack)
+                .where(*talking_music.library_filter())
+                .order_by(MusicTrack.created_at.desc(), MusicTrack.id)
+                .limit(talking_music.LIBRARY_SCAN_LIMIT)
+            ).scalars()
+            if talking_music.song_eligible(track)
+        ]
 
 
 def _pin_catalog_music(track_id: str, _path: str | None = None) -> tuple[Any, float | None]:
@@ -11127,6 +11226,7 @@ def _run_phone_subtitled_job(
             # the video refuses the render with `music_section_too_short` (never shortened).
             speech_source_windows: dict[str, Any] | None = None
             talking_music_treatment: dict[str, Any] | None = None
+            talking_music_receipt: dict[str, Any] | None = None
             talking_music_compile: dict[str, Any] = {}
             if settings.talking_music_enabled:
                 speech_source_windows = _talking_speech_source_windows(
@@ -11146,7 +11246,17 @@ def _run_phone_subtitled_job(
                         ),
                     ]
                 )
-                talking_bed, talking_music_treatment = _talking_music_bed(job_id)
+                talking_bed, talking_music_treatment, talking_music_receipt = _talking_music_bed(
+                    job_id,
+                    snapshot=snapshot,
+                    client_protocol=stamped_client_protocol(
+                        all_candidates.get("creator_client_protocol")
+                    ),
+                    spoken_text=" ".join(
+                        str(cue.get("text") or "") for cue in cues or [] if isinstance(cue, dict)
+                    ),
+                    take_s=float(binding.original.duration_s or 0.0),
+                )
                 if talking_bed is not None:
                     talking_music_compile.update(
                         music=talking_bed, speech_source_windows=speech_source_windows
@@ -13272,6 +13382,10 @@ def _run_phone_subtitled_job(
         if talking_music_compile:
             # KRI-20: the creator's own choice, kept only when the recipe really plays it.
             new_entry["smart_music_treatment"] = talking_music_treatment
+        if talking_music_receipt is not None:
+            from app.services.talking_music import RECEIPT_FIELD  # noqa: PLC0415
+
+            new_entry[RECEIPT_FIELD] = talking_music_receipt
         if engine_noise_receipt is not None:
             new_entry["engine_noise_reduction"] = engine_noise_receipt
         if processed_audio_receipt is not None:
