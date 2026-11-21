@@ -53,7 +53,7 @@ final class SongRangeUITests: XCTestCase {
         let row = app.buttons["song-range-row"]
         XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertEqual(row.label, "Where in the song did you film?")
-        XCTAssertGreaterThanOrEqual(row.frame.height, 44)
+        assertTouchTarget(row.frame.height)
         row.tap()
 
         XCTAssertTrue(app.staticTexts["Where in the song did you film?"].waitForExistence(timeout: 5))

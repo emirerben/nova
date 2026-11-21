@@ -14,7 +14,7 @@ import XCTest
         XCTAssertEqual(record.frame.size.width, upload.frame.size.width, accuracy: 1, "Record and Upload are the same size")
         XCTAssertEqual(record.frame.size.height, upload.frame.size.height, accuracy: 1)
         XCTAssertLessThan(typeRow.frame.minY, record.frame.minY, "The video type reads first in the transcript")
-        XCTAssertGreaterThanOrEqual(app.buttons["change-video-type"].frame.height, 44)
+        assertTouchTarget(app.buttons["change-video-type"].frame.height)
         capture(app, "S3.02 Chat, Talk to camera, empty")
 
         app.buttons["change-video-type"].tap()

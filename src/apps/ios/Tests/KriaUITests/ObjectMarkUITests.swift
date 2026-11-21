@@ -77,7 +77,7 @@ final class ObjectMarkUITests: XCTestCase {
         waitForTheCard(app)
         XCTAssertFalse(element(app, "direction-stage").exists, "no approval while the plate is unmarked")
         XCTAssertEqual(boxValue(app), "0.2500,0.4000,0.7500,0.7000", "the default box, as [left, top, right, bottom]")
-        XCTAssertGreaterThanOrEqual(app.buttons["object-mark-send"].frame.height, 44)
+        assertTouchTarget(app.buttons["object-mark-send"].frame.height)
         attach(app, "Mark card")
 
         // Move the box down and to the left, then grow it from its corner.

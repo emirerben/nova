@@ -171,8 +171,8 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         timeline.pinch(withScale: 0.35, velocity: -1)
         let end = app.descendants(matching: .any)["native-editor-split-end-1"].firstMatch
         XCTAssertTrue(end.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(end.frame.width, 44, "An unselected end handle keeps a full 44 pt touch target")
-        XCTAssertGreaterThanOrEqual(end.frame.height, 44)
+        assertTouchTarget(end.frame.width, "An unselected end handle keeps a full 44 pt touch target")
+        assertTouchTarget(end.frame.height)
         attach(app, name: "Zoomed-out panel end handles")
     }
 
