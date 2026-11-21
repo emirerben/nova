@@ -507,7 +507,9 @@ jobs:
           KRIA_JOURNEY_HEAD_SHA: ${{ github.sha }}
         run: |
           tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-492-length-ownership)"
-          python3 -m pytest $tests -q
+          # Four workers: tests/integration/test_actual_export_verification.py is
+          # 215 s of this step when run serially. Measured in docs/runbooks/change-based-ci.md.
+          python3 -m pytest $tests -q -n 4
           python3 ../../../scripts/ci/replay-creator-contracts.py \
             --snapshot ../../../scripts/ci/fixtures/kri492-creator-contracts.json \
             --candidate-sha "$KRIA_JOURNEY_HEAD_SHA" --export-outcomes \
@@ -1053,7 +1055,8 @@ jobs:
         run: |
           set -o pipefail
           tests="$(python3 ../../../scripts/ci/journey_registry.py tests kri-729-camera-roll-recommendations)"
-          python3 -m pytest $tests -q \
+          # Four workers, for the same file as the KRI-492 step above.
+          python3 -m pytest $tests -q -n 4 \
             | tee ../../../test-results/kri-559/camera-roll-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'

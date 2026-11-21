@@ -182,6 +182,33 @@ branch, holding the API job with a `layout` and a `repeat` matrix dimension,
 `max-parallel: 10` so real pull requests keep runners, and an environment
 override for the shard count. Do not reduce `ci.yml` itself: a test reads it.
 
+Order the matrix so the arms take turns (repeat 1 of every arm, then repeat 2),
+never one whole arm after the other. Runner speed drifts over an hour, and a
+run on 2026-11-21 that listed all "disk" jobs before all "memory" jobs showed a
+7% gain for an in-memory test database that was not real: tests that never touch
+the database were 10% faster in that arm too. Read a difference under about 10%
+at five repeats as noise unless it shows up only in the tests the change
+should affect. That experiment is neither adopted nor disproven; all time spent
+off the CPU is about 1,100 s per run across six shards, so the most a faster
+database could save is about 45 s per shard.
+
+`journey-offline` runs its two slowest steps (the KRI-492 prerequisites and the
+camera-roll tests) on four xdist workers. Both spend about 215 s in
+`tests/integration/test_actual_export_verification.py` when run serially.
+Measured on 2026-11-21 on a throwaway branch, six repeats per arm, arms taking
+turns, same commit:
+
+| Workers | KRI-492 step, median | Camera-roll step, median | Outcomes against serial |
+| --- | --- | --- | --- |
+| serial | 230 s | 232 s | |
+| two | 179 s | 163 s | identical, 262 and 180 tests |
+| four | 153 s | 151 s | identical, 262 and 180 tests |
+
+Four workers only gain a third because the tests already use every core
+(FFmpeg): summed test time doubles. The slowest test used 26% of its timeout.
+The same file runs in both steps and in an API shard; running it once per job
+would save more and is not done yet.
+
 The `iPhone validation` matrix has a `unit` leg (build, unit tests, selected UI
 subset, named-unit gate) plus `creation` and `screens` legs that compile from
 the same cache and split the fixture-driven journeys by measured duration. The
