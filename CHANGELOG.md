@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.65.0] - 2026-11-21
+
+### Changed
+- feat(kria): the Talking and Voiceover workers place effects for a general sound-effect ask (KRI-1561) (#2442) <!-- release-pr: 2442 -->
+
 ## [0.89.64.0] - 2026-11-21
 
 ### Changed
