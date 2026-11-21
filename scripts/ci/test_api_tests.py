@@ -27,6 +27,8 @@ Ways the weight-packed shards can go wrong, written before the packing (KRI-1544
 14. The recorder wrote no rows, and "no rows" is read as "no skips".
 15. The expected-skip list is unreadable and every skip is waved through.
 16. Rows left by an earlier run in the same directory are judged as this run's.
+17. A test that needs git history is added, skips in the shards as allowed, and
+    is never added to the job that has the history, so it runs nowhere.
 """
 
 import importlib.util
@@ -320,6 +322,28 @@ class ApiTestShardTests(unittest.TestCase):
         api_root = SCRIPT.parents[2] / "src/apps/api"
         for file, _ in entries:
             self.assertTrue((api_root / file).is_file(), file)
+
+    def test_every_file_that_asks_for_git_history_runs_in_the_history_job(self):
+        (self.api_root / "tests/nested/test_bravo.py").write_text(
+            "from tests.git_history_required import git_history_required\n"
+        )
+        self.assertEqual(
+            api_tests.history_files(self.api_root), [Path("tests/nested/test_bravo.py")]
+        )
+        command, env = api_tests.history_command(self.api_root, {"PATH": "/bin"})
+        self.assertIn("tests/nested/test_bravo.py", command)
+        self.assertEqual(env["NOVA_REQUIRE_GIT_HISTORY"], "1")
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci.yml").read_text()
+        self.assertIn("python3 scripts/ci/api-tests.py history\n", workflow)
+
+    def test_a_history_job_with_nothing_to_run_fails(self):
+        with self.assertRaisesRegex(ValueError, "no test file asks for git history"):
+            api_tests.history_command(self.api_root, {})
+
+    def test_the_real_suite_has_history_tests(self):
+        api_root = SCRIPT.parents[2] / "src/apps/api"
+        names = {path.name for path in api_tests.history_files(api_root)}
+        self.assertLessEqual({"test_reliability_gates.py", "test_copy_catalog.py"}, names)
 
     def test_pytest_command_executes_each_selected_file_once(self):
         selected = api_tests.shard_files(self.api_root, 0)

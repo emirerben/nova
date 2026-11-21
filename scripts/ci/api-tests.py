@@ -201,16 +201,39 @@ def check_skips(api_root: Path, expected: Path = EXPECTED_SKIPS) -> int:
     return 1
 
 
+def history_files(api_root: Path) -> list[Path]:
+    """Test files that ask whether git history is required: they skip on the
+    shards' one-commit clone, so they must also run where the history is."""
+    return [
+        path
+        for path in test_files(api_root)
+        if "git_history_required" in (api_root / path).read_text(encoding="utf-8")
+    ]
+
+
+def history_command(api_root: Path, environ: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    """pytest over the history files, with a missing commit made a failure."""
+    files = history_files(api_root)
+    if not files:
+        raise ValueError("no test file asks for git history; the history job would check nothing")
+    command = ["pytest", *(str(path) for path in files), "-q", "-rs", "-p", "no:cacheprovider"]
+    return command, {**environ, "NOVA_REQUIRE_GIT_HISTORY": "1"}
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:
-        raise ValueError("usage: api-tests.py SHARD")
+        raise ValueError("usage: api-tests.py SHARD | history")
+    api_root = Path(__file__).resolve().parents[2] / "src/apps/api"
+    if argv[0] == "history":
+        command, env = history_command(api_root, dict(os.environ))
+        print("Tests that need git history:", *command[1 : command.index("-q")])
+        return subprocess.run(command, cwd=api_root, env=env, check=False).returncode
     try:
         shard = int(argv[0])
     except ValueError as error:
         raise ValueError(f"shard must be an integer, got {argv[0]!r}") from error
 
-    api_root = Path(__file__).resolve().parents[2] / "src/apps/api"
     selected = shard_files(api_root, shard)
     print(f"API test shard {shard}/{SHARD_COUNT}: {len(selected)} files")
     clear_rows(api_root)
