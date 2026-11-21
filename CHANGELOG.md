@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.53.0] - 2026-11-21
+
+### Changed
+- feat(kria): one sound-effect chooser that returns placements or a named reason (KRI-1561) (#2433) <!-- release-pr: 2433 -->
+
 ## [0.89.52.0] - 2026-11-21
 
 ### Changed
