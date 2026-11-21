@@ -2296,6 +2296,7 @@ async def _copilot_clip_context(
             context["visible_text"] = visible_text
     except Exception:  # noqa: BLE001 - fail open to no descriptions
         log.warning("kria_copilot_clip_seen_unavailable", thread_id=str(thread_id), exc_info=True)
+    brief = None
     try:
         if settings.creative_brief_for(thread.creator_id):
             async with db.begin_nested():
@@ -2339,6 +2340,24 @@ async def _copilot_clip_context(
     except Exception:  # noqa: BLE001 - fail closed: no beat marks, never a failed turn
         log.warning("kria_copilot_beat_marks_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
+        # KRI-1562: the library songs a phone Talking edit may play, none while the brief says
+        # "no music". No query while the lane is closed, so every other turn reads the same.
+        from app.services.kria_editor_ops import talking_song_open  # noqa: PLC0415
+
+        if talking_song_open(job, variant):
+            from app.kria.draft_sound_carry import asks_no_music  # noqa: PLC0415
+
+            # What the creator asked this turn (`_turn_brief`) decides, else the saved brief.
+            turn_brief = _turn_brief.get()
+            if asks_no_music(turn_brief if turn_brief is not None else brief):
+                context["no_music"] = True
+            else:
+                context["music_library"] = await _talking_song_rows(db)
+    except Exception:  # noqa: BLE001 - fail closed: no candidates => no swap_music
+        log.warning(
+            "kria_copilot_music_library_unavailable", thread_id=str(thread_id), exc_info=True
+        )
+    try:
         # KRI-1117: the photos and videos a Talking edit's background can be. No query while
         # the lane is closed for this variant, so every other turn reads exactly what it read.
         # KRI-1139: the same pool backs a tilt's media backdrop, so that edit reads it too.
@@ -2369,6 +2388,28 @@ async def _copilot_clip_context(
             exc_info=True,
         )
     return context
+
+
+async def _talking_song_rows(db: AsyncSession) -> list[dict]:
+    """KRI-1562: the library songs chat may put under a phone Talking edit, newest first."""
+    from app.models import MusicTrack  # noqa: PLC0415
+    from app.services import talking_music  # noqa: PLC0415
+
+    async with db.begin_nested():
+        rows = (
+            (
+                await db.execute(
+                    select(MusicTrack)
+                    .where(*talking_music.library_filter())
+                    .order_by(MusicTrack.created_at.desc(), MusicTrack.id)
+                    .limit(talking_music.LIBRARY_SCAN_LIMIT)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    eligible = [talking_music.candidate_row(t) for t in rows if talking_music.song_eligible(t)]
+    return eligible[: talking_music.CANDIDATE_LIMIT]
 
 
 async def _music_beats(db: AsyncSession, track_id: str) -> list[float]:
@@ -2575,6 +2616,11 @@ turn_left_out_visuals: contextvars.ContextVar[tuple[frozenset[str], str] | None]
 # Why the last `_load_editor_target` in this task returned None (None = it did not miss).
 _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "kria_editor_target_miss", default=None
+)
+# KRI-1562: the brief with this turn's updates folded in, while a follow-up loads its editor
+# target: a "no music" (or its withdrawal) said this turn decides what chat may do with a song.
+_turn_brief: contextvars.ContextVar[CreativeBrief | None] = contextvars.ContextVar(
+    "kria_turn_brief", default=None
 )
 
 # `time.monotonic()` by which the running turn must have planned (set by the turn task
@@ -8105,9 +8151,13 @@ async def _plan_live_turn(
             route = "replan"
             if semantic_request_scope != "rebuild":
                 item = await _refetch_item(db, item_id)
-                target = await _load_editor_target(
-                    db, thread_id=thread_id, item=item, **_state_kw(editor_state)
-                )
+                turn_brief = _turn_brief.set(effective)
+                try:
+                    target = await _load_editor_target(
+                        db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+                    )
+                finally:
+                    _turn_brief.reset(turn_brief)
                 if target is None and _editor_target_miss.get() != "source_replaced":
                     if failed_editor_correction and _editor_target_miss.get() == "no_render":
                         _editor_target_miss.set("failed_draft_unavailable")

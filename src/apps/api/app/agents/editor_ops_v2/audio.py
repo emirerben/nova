@@ -122,7 +122,9 @@ def _op_set_mix(state: Any, op: dict[str, Any]) -> None:
         if not track_id:
             raise KriaEditorOpError("There is no background music bed to adjust")
         state.music_gain_db = max(MIN_GAIN_DB, min(MAX_GAIN_DB, float(op["music_gain_db"])))
-        state.background_track_id = str(track_id)
+        if not state.song_changed:
+            # KRI-1562: a swap in the same request keeps its new song at this level.
+            state.background_track_id = str(track_id)
     state.changed.add("mix")
 
 

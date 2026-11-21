@@ -6611,14 +6611,29 @@ def _resolve_background_music_treatment(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "music_track_unavailable"},
         )
+    from app.services.music_sections import current_best_section_for_track  # noqa: PLC0415
+
     video_duration_s = visual_block_variant_duration(variant)
     track_duration_s = _track_duration(track)
     current = variant.get("smart_music_treatment") or {}
+    # KRI-1562: another song (a chat swap names only the track) never inherits the old song's
+    # part; it starts on its own best section.
+    window = (
+        current
+        if str(current.get("track_id")) == str(track.id)
+        else dict(
+            zip(
+                ("section_start_s", "section_end_s"),
+                current_best_section_for_track(track) or (),
+                strict=False,
+            )
+        )
+    )
     try:
         start_s = (
             float(payload.start_s)
             if payload.start_s is not None
-            else float(current.get("section_start_s", 0.0) or 0.0)
+            else float(window.get("section_start_s", 0.0) or 0.0)
         )
     except (TypeError, ValueError):
         start_s = 0.0
@@ -6627,7 +6642,7 @@ def _resolve_background_music_treatment(
         end_s = (
             float(payload.end_s)
             if payload.end_s is not None
-            else float(current.get("section_end_s", default_end) or default_end)
+            else float(window.get("section_end_s", default_end) or default_end)
         )
     except (TypeError, ValueError):
         end_s = default_end
@@ -6655,6 +6670,8 @@ def _resolve_background_music_treatment(
         "gain_db": min(0.0, max(-40.0, float(gain_db))),
         "speech_duck_db": float(current.get("speech_duck_db", -12.0) or -12.0),
         "final_lufs": float(current.get("final_lufs", -14.0) or -14.0),
+        # KRI-1562: the phone bed keeps its export margin for a song first chosen at Save.
+        "duration_s": round(track_duration_s, 3),
     }
 
 
