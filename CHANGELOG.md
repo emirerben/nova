@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.67.0] - 2026-11-21
+
+### Changed
+- ci(journeys): run the two slowest journey-offline steps on four workers (KRI-1534) (#2447) <!-- release-pr: 2447 -->
+
 ## [0.89.66.0] - 2026-11-21
 
 ### Changed
