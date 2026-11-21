@@ -65,6 +65,52 @@ jobs:
         working-directory: src/apps/api
         run: ruff check .
 
+  # Side by side while the locked environment is introduced (uv.lock, installed
+  # by .github/actions/api-env). It installs the lock, checks it still matches
+  # pyproject.toml, then installs the old unlocked way and reports every package
+  # whose version differs. No suite uses the locked environment yet; they
+  # switch in a follow-up once this report is clean.
+  api-env:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/api-env
+      - name: Check the lock matches pyproject.toml
+        working-directory: src/apps/api
+        run: uv lock --check
+      - name: Verify the locked environment imports, lints and collects
+        working-directory: src/apps/api
+        run: |
+          python - <<'PYTHON'
+          # skia is left out: it needs libEGL, which this job does not install.
+          import cv2, open_clip, torch, torchvision
+          assert not torch.cuda.is_available()
+          assert "+cpu" in torch.__version__, torch.__version__
+          print("torch", torch.__version__, "torchvision", torchvision.__version__)
+          PYTHON
+          ruff check .
+          pytest --collect-only -q tests/schemas tests/cli | tail -1
+      - name: Compare with the unlocked pip install
+        working-directory: src/apps/api
+        run: |
+          uv pip freeze --exclude-editable | sort > "$RUNNER_TEMP/locked.txt"
+          uv venv --quiet --seed --python 3.11 "$RUNNER_TEMP/unlocked"
+          "$RUNNER_TEMP/unlocked/bin/pip" install --quiet -e ".[dev]"
+          "$RUNNER_TEMP/unlocked/bin/pip" freeze --exclude-editable | sort > "$RUNNER_TEMP/unlocked.txt"
+          {
+            echo "### Locked environment compared with the unlocked pip install"
+            echo "Locked: $(wc -l < "$RUNNER_TEMP/locked.txt") packages, $(du -sm .venv | cut -f1) MB."
+            echo "Unlocked: $(wc -l < "$RUNNER_TEMP/unlocked.txt") packages, $(du -sm "$RUNNER_TEMP/unlocked" | cut -f1) MB."
+            echo
+            echo "Lines starting with < are only in the locked environment, > only in the unlocked one:"
+            echo '```'
+            diff "$RUNNER_TEMP/locked.txt" "$RUNNER_TEMP/unlocked.txt" || [ "$?" -eq 1 ]
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   # This gate remains present on every PR, including docs-only changes.
   # Waiting on `needs:` happens before a job starts and doesn't count toward
   # its timeout. PR request evidence is checked only by pr-evidence.yml.
@@ -1535,7 +1581,7 @@ jobs:
   # test_nightly_alert.py holds that and the schedule-only condition.
   nightly-alert:
     if: always() && github.event_name == 'schedule'
-    needs: [changes, ci-selftests, lint-suites, lint, test-api, ios-contracts, build-and-test, creator-contract-replay, shared-motion-runtime, test-api-suite, journey-mapping, journey-library, journey-offline, journey-native, journey]
+    needs: [api-env, changes, ci-selftests, lint-suites, lint, test-api, ios-contracts, build-and-test, creator-contract-replay, shared-motion-runtime, test-api-suite, journey-mapping, journey-library, journey-offline, journey-native, journey]
     runs-on: ubuntu-latest
     # Reads a few job logs and makes three or four API calls.
     timeout-minutes: 10
