@@ -171,6 +171,26 @@ analysis = [
     "pytesseract>=0.3.10",
 ]
 
+[dependency-groups]
+# CI and local `uv sync` take torch from the CPU-only index, as the Dockerfile
+# does. torch is only a transitive dependency (open-clip-torch), and uv applies
+# an index source to direct dependencies only, so it is named here. Without
+# this the default index serves the CUDA build: about 2 GB of nvidia wheels
+# that no CI job can use.
+cpu-torch = [
+    "torch>=2.4,<3",
+    "torchvision<1",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]

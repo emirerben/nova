@@ -1,0 +1,50 @@
+name: Install the API's locked Python environment
+description: >-
+  Installs exactly what src/apps/api/uv.lock pins into src/apps/api/.venv and
+  puts it on PATH. The built environment and its Python are restored from the
+  Actions cache when the lock has not changed; only runs on main save it, so
+  pull requests read main's copy. torch comes from the CPU-only index
+  (pyproject.toml [tool.uv.sources]). Guard: scripts/ci/test_api_lock.py.
+inputs:
+  extras:
+    description: Space-separated optional-dependency groups to install.
+    required: false
+    default: dev
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v10
+      with:
+        version: "0.13.9"
+        # The built environment is cached below; a second copy of the wheels
+        # would double the cache size for no gain.
+        enable-cache: false
+    - name: Restore the built environment
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          src/apps/api/.venv
+          ~/.local/share/uv/python
+        key: api-env-v1-${{ runner.os }}-${{ runner.arch }}-uv0.13.9-py3.11-${{ inputs.extras }}-${{ hashFiles('src/apps/api/uv.lock') }}
+    - name: Install API dependencies
+      shell: bash
+      working-directory: src/apps/api
+      env:
+        EXTRAS: ${{ inputs.extras }}
+      run: |
+        extras=()
+        for extra in $EXTRAS; do extras+=(--extra "$extra"); done
+        # --frozen: install the lock as written, never resolve again.
+        uv sync --frozen --python 3.11 --group cpu-torch "${extras[@]}"
+        echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+    - name: Save the built environment
+      if: steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          src/apps/api/.venv
+          ~/.local/share/uv/python
+        key: ${{ steps.restore.outputs.cache-primary-key }}
