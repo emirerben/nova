@@ -16,7 +16,7 @@ $moments_json
 SFX CATALOG (the ONLY allowed effect_id values; roles are closed-vocabulary fit hints):
 $effects_json
 
-VIDEO DURATION: $duration_s seconds.
+VIDEO DURATION: $duration_s seconds.$request_block$beats_block
 
 ## Rules
 

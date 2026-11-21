@@ -1,0 +1,137 @@
+{
+  "agent": "nova.compose.sfx_placement",
+  "prompt_version": "2026-11-20-v3",
+  "input": {
+    "words": [
+      {
+        "word": "Bugün",
+        "start_s": 0.5,
+        "end_s": 0.9
+      },
+      {
+        "word": "size",
+        "start_s": 1.05,
+        "end_s": 1.45
+      },
+      {
+        "word": "yeni",
+        "start_s": 1.6,
+        "end_s": 2.0
+      },
+      {
+        "word": "kahve",
+        "start_s": 2.15,
+        "end_s": 2.55
+      },
+      {
+        "word": "dükkanımı",
+        "start_s": 2.7,
+        "end_s": 3.1
+      },
+      {
+        "word": "gösteriyorum",
+        "start_s": 3.25,
+        "end_s": 3.65
+      },
+      {
+        "word": "önce",
+        "start_s": 3.8,
+        "end_s": 4.2
+      },
+      {
+        "word": "kapıdan",
+        "start_s": 4.35,
+        "end_s": 4.75
+      },
+      {
+        "word": "giriyoruz",
+        "start_s": 4.9,
+        "end_s": 5.3
+      },
+      {
+        "word": "sonra",
+        "start_s": 5.45,
+        "end_s": 5.85
+      },
+      {
+        "word": "tezgaha",
+        "start_s": 6.0,
+        "end_s": 6.4
+      },
+      {
+        "word": "bakıyoruz",
+        "start_s": 6.55,
+        "end_s": 6.95
+      },
+      {
+        "word": "ve",
+        "start_s": 7.1,
+        "end_s": 7.5
+      },
+      {
+        "word": "en",
+        "start_s": 7.65,
+        "end_s": 8.05
+      },
+      {
+        "word": "sonunda",
+        "start_s": 8.2,
+        "end_s": 8.6
+      },
+      {
+        "word": "ilk",
+        "start_s": 8.75,
+        "end_s": 9.15
+      },
+      {
+        "word": "fincanı",
+        "start_s": 9.3,
+        "end_s": 9.7
+      },
+      {
+        "word": "hazırlıyoruz",
+        "start_s": 9.85,
+        "end_s": 10.25
+      }
+    ],
+    "pauses": [],
+    "moments": [],
+    "effects": [
+      {
+        "effect_id": "sfx-whoosh",
+        "name": "Whoosh",
+        "role_tags": [
+          "motion",
+          "transition"
+        ],
+        "duration_s": 0.6
+      },
+      {
+        "effect_id": "sfx-pop",
+        "name": "Pop",
+        "role_tags": [
+          "appear",
+          "reaction"
+        ],
+        "duration_s": 0.3
+      },
+      {
+        "effect_id": "sfx-click",
+        "name": "UI click",
+        "role_tags": [
+          "ui"
+        ],
+        "duration_s": 0.2
+      }
+    ],
+    "duration_s": 11.8,
+    "request_text": "Uygun yerlere ses efekti ekle"
+  },
+  "raw_text": "{\"placements\": [{\"effect_id\": \"sfx-whoosh\", \"at_s\": 3.25, \"gain\": 0.7, \"anchor\": \"word_start\", \"reason\": \"whoosh as we walk in\"}, {\"effect_id\": \"sfx-pop\", \"at_s\": 6.95, \"gain\": 0.7, \"anchor\": \"word_start\", \"reason\": \"pop on the counter\"}, {\"effect_id\": \"sfx-click\", \"at_s\": 10.25, \"gain\": 0.7, \"anchor\": \"word_end\", \"reason\": \"click on the first cup\"}]}",
+  "output": {},
+  "meta": {
+    "source": "hand-authored-golden",
+    "contract": "a general request places effects only on supplied word marks, at least 1.5s apart, none in the last 0.5s"
+  },
+  "prompt_sha": "ef38f842bd4596f6"
+}
