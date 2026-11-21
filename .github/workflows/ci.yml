@@ -85,7 +85,8 @@ jobs:
         working-directory: src/apps/api
         run: |
           python - <<'PYTHON'
-          import cv2, open_clip, skia, torch, torchvision
+          # skia is left out: it needs libEGL, which this job does not install.
+          import cv2, open_clip, torch, torchvision
           assert not torch.cuda.is_available()
           assert "+cpu" in torch.__version__, torch.__version__
           print("torch", torch.__version__, "torchvision", torchvision.__version__)

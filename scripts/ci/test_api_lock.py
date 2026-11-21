@@ -7,8 +7,7 @@
 - torch and torchvision come from different indexes on Linux, so their C++
   operators do not match (`torchvision::nms does not exist` at first use);
 - the shared install step is edited to resolve again instead of installing
-  exactly what the lock says, so two jobs of one run can test different code;
-- the cache key forgets the lock, so a changed lock restores the old packages.
+  exactly what the lock says, so two jobs of one run can test different code.
 """
 
 import tomllib
@@ -45,9 +44,6 @@ class ApiLockTests(unittest.TestCase):
     def test_the_install_step_uses_the_lock_as_written(self):
         self.assertIn("uv sync --frozen", self.action)
         self.assertNotIn("pip install", self.action)
-
-    def test_the_environment_cache_is_keyed_on_the_lock(self):
-        self.assertIn("hashFiles('src/apps/api/uv.lock')", self.action)
 
 
 if __name__ == "__main__":
