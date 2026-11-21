@@ -660,6 +660,22 @@ jobs:
           tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-586-hook-copy)"
           python3 -m pytest $tests -q \
             | tee ../../../test-results/kri-559/hook-copy-api-tests.log
+      - name: Verify KRI-1560 opening titles are offered from her words, never applied
+        if: contains(needs.changes.outputs.journey_ids, 'kri-1560-opening-titles')
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_journey_test
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          INTERNAL_API_KEY: test
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+        run: |
+          set -o pipefail
+          # This is the disposable PostgreSQL service for this CI job, not rollout.
+          python3 -m alembic upgrade head
+          tests="$(python3 ../../../scripts/ci/journey_registry.py step kri-1560-opening-titles)"
+          python3 -m pytest $tests -q \
+            | tee ../../../test-results/kri-559/opening-titles-api-tests.log
       - name: Verify spoken voiceover cues follow the narration and replay fixtures
         if: contains(needs.changes.outputs.journey_ids, 'kri-590-voiceover-cues')
         working-directory: src/apps/api
