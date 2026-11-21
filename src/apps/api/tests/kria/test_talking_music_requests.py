@@ -176,6 +176,7 @@ def _receipt(job, variant, req: BriefRequirement, *, language: str = "en"):
 # --- the first request: "a talking video with some chill music" --------------------------------
 
 
+@pytest.mark.usefixtures("prod_profile")
 @pytest.mark.parametrize(("ask", "mood"), [(MUSIC_EN, "chill"), (MUSIC_TR, "sakin")])
 def test_the_first_request_plays_the_song_the_matcher_picks_for_her_mood(monkeypatch, ask, mood):
     job, variant, recipe, matcher = _render(
@@ -199,6 +200,7 @@ def test_the_first_request_plays_the_song_the_matcher_picks_for_her_mood(monkeyp
     assert receipt.status == "met"
 
 
+@pytest.mark.usefixtures("prod_profile")
 def test_a_receipt_never_says_met_when_the_recipe_has_no_song(monkeypatch):
     """Negative control: the same render with the song taken out of the pinned recipe."""
     job, variant, _recipe, _matcher = _render(
@@ -224,6 +226,7 @@ def test_a_receipt_never_says_met_when_the_recipe_has_no_song(monkeypatch):
     assert receipt.reason == "The finished video has no music"
 
 
+@pytest.mark.usefixtures("prod_profile")
 @pytest.mark.parametrize(
     ("library", "ranked", "protocol", "reason", "tr"),
     [
@@ -266,6 +269,7 @@ def test_a_song_that_cannot_be_had_renders_the_talk_and_says_why(
         assert (receipt.status, receipt.reason) == ("not_possible", text)
 
 
+@pytest.mark.usefixtures("prod_profile")
 def test_no_music_wins_over_a_music_ask_and_a_stored_song(monkeypatch):
     stored = {
         "track_id": "song-bright",
@@ -288,6 +292,7 @@ def test_no_music_wins_over_a_music_ask_and_a_stored_song(monkeypatch):
     assert receipt.status == "met", receipt.reason
 
 
+@pytest.mark.usefixtures("prod_profile")
 def test_flag_off_a_music_ask_changes_nothing_and_asks_no_matcher(monkeypatch):
     _job, plain, plain_recipe, _ = _render(monkeypatch, reqs=(), library=[CALM], flag=False)
     job, variant, recipe, matcher = _render(
@@ -301,14 +306,51 @@ def test_flag_off_a_music_ask_changes_nothing_and_asks_no_matcher(monkeypatch):
     assert receipt.reason == "A Talking video can't do this, so it stays as filmed"
 
 
-def test_a_music_ask_on_footage_that_is_not_talking_never_reaches_the_talking_check():
-    facts = PlanFacts(edit_format="montage", audio_strategy="licensed_music")
-    [receipt] = build_receipts([MUSIC_EN], facts, include_unchecked=True)
-    assert (
-        receipt.reason
-        != "I'll pick a song from the music library and play it quietly under your voice"
+@pytest.mark.parametrize(
+    "facts",
+    [
+        PlanFacts(edit_format="montage", audio_strategy="licensed_music"),
+        PlanFacts(edit_format="montage", audio_strategy="voiceover"),
+        PlanFacts(edit_format="voiceover", audio_strategy="voiceover", voiceover_edit=True),
+    ],
+    ids=["montage", "montage_voiceover", "voiceover"],
+)
+def test_a_music_ask_on_footage_that_is_not_talking_reads_as_it_did_untyped(facts):
+    from app.kria.brief_checks import is_judged  # noqa: PLC0415
+
+    untyped = BriefRequirement(
+        id="m1", kind="audio", scope="global", description="add some chill music"
     )
-    assert receipt.reason != "The finished video has no music"
+    typed = untyped.model_copy(update={"facts": {"audio_intent": "music", "music_mood": "chill"}})
+    [before] = build_receipts([untyped], facts, include_unchecked=True)
+    [after] = build_receipts([typed], facts, include_unchecked=True)
+    assert after.model_dump() == before.model_dump()
+    assert is_judged(typed, after) == is_judged(untyped, before)
+
+
+@pytest.mark.usefixtures("prod_profile")
+def test_a_library_that_cannot_be_read_renders_the_talk_and_says_no_song(monkeypatch):
+    def unreadable():
+        raise RuntimeError("database went away")
+
+    job, _snapshot, _session, _binding_ = _setup_subtitled(
+        monkeypatch, transcript_words=_words(*WORDS)
+    )
+    monkeypatch.setattr(gb.settings, "talking_music_enabled", True)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [*gb.settings.phone_render_verified_features, *VERIFIED],
+    )
+    job.assembly_plan["creator_brief_binding"] = _binding(MUSIC_EN)
+    job.all_candidates["creator_client_protocol"] = SPEECH_DUCK_PROTOCOL
+    monkeypatch.setattr(gb, "_talking_library_tracks", unreadable)
+    monkeypatch.setattr(gb, "_persisted_music_treatment", lambda **_: None)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert _music(device_status(job, "subtitled").request.recipe) == []
+    assert variant["talking_music"] == {"status": "not_played", "reason": "no_match"}
 
 
 def test_a_draft_promises_the_song_without_holding_approval(monkeypatch):
@@ -388,8 +430,9 @@ class _Copilot(ModelClient):
 
 
 @pytest.fixture
-def phone(monkeypatch):
-    """A published phone Talking edit with the rollout open and a protocol 53 build sending."""
+def phone(monkeypatch, prod_profile):
+    """A published phone Talking edit, production settings with the rollout open, and a
+    protocol 53 build sending."""
     from app.services.client_protocol import clear_request_context, set_client_protocol
     from tests.routes.test_phone_subtitled_editor_commit import phone_job
     from tests.routes.test_phone_talking_music_save import SPOKEN, _flag, _hashes
@@ -713,3 +756,141 @@ async def test_a_first_request_for_music_stays_a_talking_edit_with_the_typed_ask
     assert "music library" not in apply.arguments["summary"], "never the withheld-song line"
     [ask] = [update for update in planned.brief_updates if update.kind == "audio"]
     assert ask.facts == {"audio_intent": "music", "music_mood": mood}
+
+
+# --- the planner's library read and the chat Save's track (real Postgres / the claim path) -----
+
+
+def _seed_track(*, published: bool) -> str:
+    from app.database import sync_session  # noqa: PLC0415
+    from app.models import MusicTrack  # noqa: PLC0415
+
+    track_id = f"kri1562-{uuid.uuid4().hex[:12]}"
+    row = _track(track_id, mood="calm and warm", start_s=30.0, end_s=56.0)
+    with sync_session() as db:
+        db.add(
+            MusicTrack(
+                id=track_id,
+                title=row.title,
+                artist=row.artist,
+                source_url=f"https://example.test/{track_id}",
+                audio_gcs_path=row.audio_gcs_path,
+                duration_s=row.duration_s,
+                analysis_status="ready",
+                published_at=row.published_at if published else None,
+                ai_labels=row.ai_labels,
+                label_version=row.label_version,
+                best_sections=row.best_sections,
+                section_version=row.section_version,
+            )
+        )
+        db.commit()
+    return track_id
+
+
+@pytest.mark.asyncio
+async def test_the_planner_lists_published_songs_and_none_while_this_turn_says_no_music(
+    monkeypatch,
+):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: PLC0415
+    from sqlalchemy.pool import NullPool  # noqa: PLC0415
+
+    from app.config import settings  # noqa: PLC0415
+    from app.kria import planner  # noqa: PLC0415
+    from app.services import kria_editor_ops  # noqa: PLC0415
+
+    published = _seed_track(published=True)
+    hidden = _seed_track(published=False)
+    monkeypatch.setattr(kria_editor_ops, "talking_song_open", lambda *_: True)
+    thread = SimpleNamespace(creator_id=uuid.uuid4())
+    job = SimpleNamespace(
+        id=uuid.uuid4(), user_id=thread.creator_id, all_candidates={}, assembly_plan={}
+    )
+    item = SimpleNamespace(id=uuid.uuid4(), clip_assignments=[])
+    variant = {"variant_id": "subtitled", "render_destination": "device"}
+
+    async def context(turn_brief):
+        token = planner._turn_brief.set(turn_brief)
+        engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                return await planner._copilot_clip_context(
+                    db, thread=thread, thread_id=uuid.uuid4(), job=job, variant=variant, item=item
+                )
+        finally:
+            planner._turn_brief.reset(token)
+            await engine.dispose()
+
+    asked = await context(CreativeBrief(version=2, requirements=[MUSIC_EN]))
+    ids = [row["id"] for row in asked["music_library"]]
+    assert published in ids and hidden not in ids
+    row = next(row for row in asked["music_library"] if row["id"] == published)
+    assert row["mood"] == "calm and warm" and "no_music" not in asked
+    held = await context(CreativeBrief(version=2, requirements=[NO_MUSIC]))
+    assert held.get("no_music") is True and "music_library" not in held
+
+
+def test_the_chat_save_hands_the_new_songs_track_to_the_editor_commit():
+    from contextlib import contextmanager  # noqa: PLC0415
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.models import MusicTrack  # noqa: PLC0415
+    from app.services.device_render import pin_device_request  # noqa: PLC0415
+    from app.tasks import kria_runtime  # noqa: PLC0415
+    from tests.kria.test_runtime_phone_v2 import (  # noqa: PLC0415
+        _RECIPE,
+        _claim_fixture,
+        _device_job,
+        _publish,
+    )
+
+    job = _device_job(status="variants_ready")
+    _publish(job)
+    db, approval, _execution, _ = _claim_fixture(job)
+    db._gets[MusicTrack] = CALM
+    seen: dict = {}
+
+    def prepare(current_job, variant_id, *_args, **kwargs):
+        seen.update(kwargs)
+        pin_device_request(
+            current_job,
+            make_device_request(
+                job_id=current_job.id, variant_id=variant_id, revision=2, recipe=_RECIPE
+            ),
+            base_generation="edit-gen-2",
+        )
+        return {
+            "generation": "edit-gen-2",
+            "has_render_section": True,
+            "render_destination": "device",
+            "sections": {},
+        }
+
+    @contextmanager
+    def sessions():
+        yield db
+
+    document = SimpleNamespace(
+        brief_binding=None,
+        kind="editor",
+        editor_payload={"base_generation": approval.target_generation_id},
+        strategy=None,
+        intent="x",
+    )
+    payload = SimpleNamespace(
+        music_track_id=None, background_music=SimpleNamespace(track_id="song-calm")
+    )
+    with (
+        patch.object(kria_runtime, "sync_session", sessions),
+        patch.object(
+            kria_runtime, "_append_sync_event", lambda *_a, **_k: SimpleNamespace(id=uuid.uuid4())
+        ),
+        patch.object(kria_runtime.KriaDraftDocument, "model_validate", return_value=document),
+        patch.object(kria_runtime.EditorCommitRequest, "model_validate", return_value=payload),
+        patch.object(kria_runtime, "phone_subtitled_sfx_paths_sync", lambda *_: {}),
+        patch.object(kria_runtime, "prepare_editor_commit", prepare),
+    ):
+        claim = kria_runtime._claim_approval_dispatch(approval.id)
+    assert claim is not None
+    assert seen["background_music_track"] is CALM
