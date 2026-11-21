@@ -78,6 +78,8 @@ _PORTABLE_FAMILIES = {
     "effect",
     "history",
     "music",
+    # KRI-1562: the library song under a phone Talking edit (`talking_song_open`).
+    "music_library",
     "overlay",
     "sfx",
     "text",
@@ -1046,11 +1048,57 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         # KRI-1394: the creator's own song, where the editor's Sounds tab offers it.
         if song_state(job, variant) is not None:
             families.append("user_song")
+    if talking_song_open(job, variant):
+        families.extend(("music", "music_library"))
     from app.services.kria_editor_undo import available as undo_available  # noqa: PLC0415
 
     if undo_available(variant):
         families.append("history")
     return sorted(set(families) & _PORTABLE_FAMILIES)
+
+
+def talking_song_open(job: Any, variant: dict[str, Any]) -> bool:
+    """KRI-1562: may chat add, swap or remove the library song on this phone Talking edit?
+
+    The editor capability its Save compiles (`background_music`, open only on a subtitled-path
+    Talking edit with the rollout on) and an app build that ducks the song under speech: a
+    chat turn's worker sees the sending build, never a request (`bind_sending_build`).
+    """
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return bool(
+        variant.get("render_destination") == "device"
+        and is_phone_subtitled_editor_variant(variant)
+        and variant.get("editor_timeline_mode") != "authored"
+        and _editor_capabilities(job, variant).get("background_music") is True
+        and talking_music_supported(require_client=True)
+    )
+
+
+def _talking_song_snapshot(variant: dict[str, Any], clip_context: dict[str, Any]) -> dict:
+    """The MUSIC block of a phone Talking edit: its song (the stored treatment, never
+    ``music_track_id``) and the library songs chat may pick, none while "no music" holds."""
+    from app.services.talking_music import CANDIDATE_LIMIT  # noqa: PLC0415
+
+    treatment = variant.get("smart_music_treatment")
+    current = treatment.get("track_id") if isinstance(treatment, dict) else None
+    current = current if isinstance(current, str) and current else None
+    no_music = clip_context.get("no_music") is True
+    candidates = (
+        []
+        if no_music
+        else [dict(row) for row in clip_context.get("music_library") or []][:CANDIDATE_LIMIT]
+    )
+    return {
+        "swappable": bool(candidates),
+        "removable": current is not None,
+        "current_track_id": current,
+        "current_track_title": next(
+            (row.get("title") for row in candidates if row.get("id") == current), None
+        ),
+        "candidates": candidates,
+        **({"no_music": True} if no_music else {}),
+    }
 
 
 def color_moments_open(job: Any, variant: dict[str, Any]) -> bool:
@@ -1954,7 +2002,15 @@ def build_editor_snapshot(
             for row in _removable_visual_media(job, variant)
         ]
     current_track_id = variant.get("music_track_id")
-    if "music" in snapshot["allowed_op_families"]:
+    talking_song = "music_library" in snapshot["allowed_op_families"]
+    if talking_song:
+        snapshot["music"] = _talking_song_snapshot(variant, clip_context)
+        # A Talking Save has no `mix` section: only the song's own level is editable.
+        snapshot["mix"] = {"music_level_locked": True}
+        bed = _background_bed(caps, variant, guided_native=False)
+        if bed is not None:
+            snapshot["mix"]["background_music"] = bed
+    elif "music" in snapshot["allowed_op_families"]:
         snapshot["music"] = {
             # A real swap candidate list needs a DB-backed music-library
             # lookup this pure (job, variant) function cannot make today —
@@ -2269,6 +2325,28 @@ def unknown_editor_render_query(session: Any, job: Any, variant: dict[str, Any])
     )
 
 
+def _project_song(projected: dict[str, Any], bed: Mapping[str, Any]) -> None:
+    """The draft's background-music section on the projected variant: a level for the stored
+    song, or (KRI-1562, a phone Talking chat edit) another song or none. The Save resolves the
+    new song's part; the projection carries only what chat reads back (its id and level)."""
+    current = projected.get("smart_music_treatment")
+    track_id = bed.get("track_id") if bed.get("enabled", True) is not False else None
+    if isinstance(current, dict) and current.get("track_id") == track_id:
+        if bed.get("gain_db") is not None:
+            current["gain_db"] = bed["gain_db"]
+    elif track_id is None:
+        if isinstance(current, dict):
+            projected["smart_music_treatment"] = None
+    else:
+        from app.services.talking_music import GAIN_DB  # noqa: PLC0415
+
+        gain = bed.get("gain_db")
+        projected["smart_music_treatment"] = {
+            "track_id": str(track_id),
+            "gain_db": float(gain if gain is not None else GAIN_DB),
+        }
+
+
 def project_editor_draft(
     variant: dict[str, Any], payload: dict[str, Any], job: Any = None
 ) -> dict[str, Any]:
@@ -2405,9 +2483,8 @@ def project_editor_draft(
         if mix.get("original_level") is not None:
             projected["original_audio_level"] = mix["original_level"]
     bed = payload.get("background_music")
-    if isinstance(bed, dict) and isinstance(projected.get("smart_music_treatment"), dict):
-        if bed.get("gain_db") is not None:
-            projected["smart_music_treatment"]["gain_db"] = bed["gain_db"]
+    if isinstance(bed, dict):
+        _project_song(projected, bed)
     if payload.get("remove_music"):
         projected["music_track_id"] = None
     for key, value in (payload.get("caption_meta") or {}).items():
@@ -2872,6 +2949,8 @@ class _DraftState:
     original_level: float | None = None
     music_gain_db: float | None = None
     background_track_id: str | None = None
+    # KRI-1562: a phone Talking song added, swapped or removed (`background_track_id` None).
+    song_changed: bool = False
     remove_music: bool = False
     music_track_id: str | None = None
     title: str | None = None
@@ -3481,13 +3560,31 @@ def _op_set_mix(state: _DraftState, op: dict[str, Any]) -> None:
     state.changed.add("mix")
 
 
+def _talking_song_variant(variant: dict[str, Any]) -> bool:
+    """KRI-1562: a phone Talking edit, whose song is its background-music section."""
+    return (
+        variant.get("render_destination") == "device"
+        and is_phone_subtitled_editor_variant(variant)
+        and variant.get("editor_timeline_mode") != "authored"
+    )
+
+
 def _op_remove_music(state: _DraftState, op: dict[str, Any]) -> None:
-    state.remove_music = True
+    if _talking_song_variant(state.variant):
+        state.background_track_id = None
+        state.song_changed = True
+    else:
+        state.remove_music = True
     state.changed.add("music")
 
 
 def _op_swap_music(state: _DraftState, op: dict[str, Any]) -> None:
-    state.music_track_id = str(op["track_id"])
+    if _talking_song_variant(state.variant):
+        # Adds a song where there is none, too; the Save gives it its best section.
+        state.background_track_id = str(op["track_id"])
+        state.song_changed = True
+    else:
+        state.music_track_id = str(op["track_id"])
     state.changed.add("music")
 
 
@@ -4014,9 +4111,11 @@ def compile_editor_ops(
         ),
         background_music=(
             EditorCommitBackgroundMusic(
-                track_id=state.background_track_id, gain_db=state.music_gain_db
+                track_id=state.background_track_id,
+                enabled=state.background_track_id is not None,
+                gain_db=state.music_gain_db,
             )
-            if state.music_gain_db is not None
+            if state.music_gain_db is not None or state.song_changed
             else None
         ),
         music_track_id=state.music_track_id,
@@ -4153,7 +4252,12 @@ def _before_lanes(
         gain = treatment.get("gain_db") if isinstance(treatment, dict) else None
         if gain is not None:
             before["background_music"] = {"track_id": state.background_track_id, "gain_db": gain}
-    if "music" in changed:
+    if state.song_changed:
+        treatment = variant.get("smart_music_treatment")
+        before["background_music"] = {
+            "track_id": treatment.get("track_id") if isinstance(treatment, dict) else None
+        }
+    elif "music" in changed:
         before["music_track_id"] = variant.get("music_track_id")
     if "title" in changed and isinstance(variant.get("intro_text"), str):
         before["title"] = variant["intro_text"]

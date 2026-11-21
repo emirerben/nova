@@ -1371,6 +1371,35 @@ def with_long_request_cap(section: str) -> str:
     return section.replace(_BRIEF_CAP_ANCHOR, f"at most {LONG_REQUEST_MAX_UPDATES} objects")
 
 
+_BRIEF_MUSIC_ASK_ANCHOR = '{"audio_intent": "no_music"}; it never mutes the footage\'s own sound.'
+_BRIEF_MUSIC_ASK_SENTENCE = (
+    '\nBackground music asked for ("talking video with some chill music", "add calm music",'
+    ' "arkada sakin bir müzik olsun", "müzik ekle") => an `audio` requirement with'
+    ' {"audio_intent": "music"} plus "music_mood": "<the mood or kind of music in the creator\'s'
+    ' own words, never translated>" only when they name one ("chill", "sakin"); the server picks'
+    " the song from its library, so never name one in `summary`. The two are opposites: when the"
+    " contract holds a no_music requirement and the creator now asks for music, `remove` it, and"
+    " when they now ask for no music, `remove` the music requirement."
+)
+
+
+def music_ask_taught() -> bool:
+    """KRI-1562: may a phone Talking edit play a library song right now (the worker decides the
+    app build)? Closed, the brief section keeps the bytes it had before the music fact."""
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return talking_music_supported(require_client=False)
+
+
+def with_music_ask_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the music
+    fact added after the no-music one. Only called while `music_ask_taught`."""
+    assert section.count(_BRIEF_MUSIC_ASK_ANCHOR) == 1, "brief music anchor moved"
+    return section.replace(
+        _BRIEF_MUSIC_ASK_ANCHOR, _BRIEF_MUSIC_ASK_ANCHOR + _BRIEF_MUSIC_ASK_SENTENCE
+    )
+
+
 def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: bool = False) -> str:
     section = (
         with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
@@ -1379,6 +1408,8 @@ def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: boo
     )
     if settings.brief_long_request_enabled:
         section = with_long_request_cap(section)
+    if music_ask_taught():
+        section = with_music_ask_brief(section)
     return with_full_opening_brief(section) if full_opening_open else section
 
 

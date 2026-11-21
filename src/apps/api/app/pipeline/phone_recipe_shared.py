@@ -615,6 +615,12 @@ def speech_duck_gain(duck_db: float) -> float:
 MusicPin = Callable[[str, str], tuple[LibraryRenderAsset, float | None]]
 
 
+def _treatment_duration(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and 0 < value <= 1800 else None
+
+
 def music_bed_from_treatment(treatment: object, pin: MusicPin) -> PhoneMusicBed | None:
     """The creator's chosen song (a variant's ``smart_music_treatment``) as a phone bed.
 
@@ -629,6 +635,10 @@ def music_bed_from_treatment(treatment: object, pin: MusicPin) -> PhoneMusicBed 
 
     chosen = MusicBedTreatment.from_value(dict(treatment))
     asset, duration_s = pin(chosen.track_id, chosen.src_gcs_path)
+    if duration_s is None:
+        # A song first chosen at Save has no pinned recipe length; the treatment carries the
+        # catalog's (`talking_music.song_treatment`) so the bed keeps its export margin.
+        duration_s = _treatment_duration(treatment.get("duration_s"))
     return PhoneMusicBed(
         catalog_id=chosen.track_id,
         generation=asset.generation,
