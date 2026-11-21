@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.57.0] - 2026-11-21
+
+### Changed
+- ci: install the API from the lock in every CI job (KRI-1534) (#2436) <!-- release-pr: 2436 -->
+
 ## [0.89.56.0] - 2026-11-21
 
 ### Changed
