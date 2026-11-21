@@ -100,7 +100,7 @@ def main(
         if code:
             failed.append(name)
     if "format" in failed:
-        say("api-lint: fix formatting with: cd src/apps/api && ruff format <the files listed>")
+        say(f"api-lint: fix formatting with: cd src/apps/api && {ruff} format <the files listed>")
     return 1 if failed else 0
 
 

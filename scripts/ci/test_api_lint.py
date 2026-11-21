@@ -116,7 +116,8 @@ class ApiLintTests(unittest.TestCase):
     def test_a_format_failure_alone_fails_and_names_the_fix(self):
         code, _, out = run(fmt=1)
         self.assertEqual(code, 1)
-        self.assertIn("ruff format", out)
+        # The pinned ruff by its path: a bare `ruff` may be another version.
+        self.assertIn("/venv/bin/ruff format", out)
 
     def test_another_ruff_version_refuses_to_run_and_names_the_install(self):
         code, calls, out = run(version="ruff 0.15.20")

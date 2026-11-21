@@ -463,8 +463,9 @@ problem. First measured 2026-11-21 on a laptop: 0.06 s lint, 0.03 s format,
   92 files had drifted.
 - To move to a new ruff: change the pin, run `cd src/apps/api && uv lock`,
   run `ruff format .` with the new version and commit the three together.
-- Format one file, never a directory you did not change:
-  `cd src/apps/api && ruff format path/to/file.py`.
+- Format one file, never a directory you did not change, and with the pinned
+  ruff (a bare `ruff` on PATH may be another version):
+  `cd src/apps/api && "$(python3 ../../../scripts/ci/api-lint.py --ruff-path)" format path/to/file.py`.
 
 ### Local git hooks
 
