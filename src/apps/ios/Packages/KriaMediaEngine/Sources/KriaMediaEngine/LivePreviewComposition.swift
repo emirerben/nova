@@ -81,8 +81,8 @@ public struct LivePreviewExportSnapshot: Sendable {
               let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: timescale)) }),
               instruction.showsFramedSpeaker(at: time),
               let layer = instruction.layers.first(where: { $0.speakerRole == .speaker && $0.start <= time && time < $0.end
-                  && (clipID == nil || $0.clipID == clipID) && $0.effectiveSpeakerFrame(instruction.speakerFrame) != nil }),
-              let frame = layer.effectiveSpeakerFrame(instruction.speakerFrame) else { return nil }
+                  && (clipID == nil || $0.clipID == clipID) && $0.effectiveSpeakerFrame(instruction.speakerFrame(at: time)) != nil }),
+              let frame = layer.effectiveSpeakerFrame(instruction.speakerFrame(at: time)) else { return nil }
         return (composition, instructions, instruction, frame)
     }
 
@@ -91,14 +91,14 @@ public struct LivePreviewExportSnapshot: Sendable {
     /// speaker picture, the same box `RecipeVideoCompositor.framed` draws into.
     public func activeSpeakerClipIDs(time: Double) -> [String] {
         guard let found = framedSpeakerInstruction(at: time) else { return [] }
-        return found.instruction.layers.filter { $0.speakerRole == .speaker && $0.start <= time && time < $0.end && $0.effectiveSpeakerFrame(found.instruction.speakerFrame) != nil }.compactMap(\.clipID)
+        return found.instruction.layers.filter { $0.speakerRole == .speaker && $0.start <= time && time < $0.end && $0.effectiveSpeakerFrame(found.instruction.speakerFrame(at: time)) != nil }.compactMap(\.clipID)
     }
 
     public func speakerViewport(time: Double, clipID: String? = nil) -> CGRect? {
         guard let found = framedSpeakerInstruction(at: time, clipID: clipID),
               let layer = found.instruction.layers.first(where: {
                   $0.speakerRole == .speaker && $0.start <= time && time < $0.end && (clipID == nil || $0.clipID == clipID)
-                      && $0.effectiveSpeakerFrame(found.instruction.speakerFrame) != nil
+                      && $0.effectiveSpeakerFrame(found.instruction.speakerFrame(at: time)) != nil
               }) else { return nil }
         guard let viewport = layer.panelViewport else { return CGRect(x: 0, y: 0, width: 1, height: 1) }
         let canvas = found.instruction.canvas
@@ -191,6 +191,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                     subjectMatte: above ? nil : original.subjectMatte, speakerMatte: above ? nil : original.speakerMatte,
                     speakerFrame: above ? nil : original.speakerFrame,
                     fullScreenWindows: above ? [] : original.fullScreenWindows,
+                    layoutWindows: above ? [] : original.layoutWindows,
                     colorMoments: above ? nil : original.colorMoments)
             }
             return copy
@@ -226,6 +227,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                     subjectMatte: transparent ? nil : original.subjectMatte, speakerMatte: transparent ? nil : original.speakerMatte,
                     speakerFrame: transparent ? nil : original.speakerFrame,
                     fullScreenWindows: transparent ? [] : original.fullScreenWindows,
+                    layoutWindows: transparent ? [] : original.layoutWindows,
                     colorMoments: transparent ? nil : original.colorMoments)
             }
             return copy
@@ -457,7 +459,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                 // The background is unchanged apart from a moved frame (guarded above), so its layer, its matte and its
                 // full-screen windows carry over.
                 speakerMatte: first.speakerMatte, speakerFrame: movesSpeakerFrame ? next.speakerBackground?.speakerFrame : first.speakerFrame,
-                fullScreenWindows: first.fullScreenWindows, playbackRevision: playbackRevision,
+                fullScreenWindows: first.fullScreenWindows, layoutWindows: first.layoutWindows, playbackRevision: playbackRevision,
                 colorMoments: ColorMomentProgram(recipe: next, total: total))
         }
         // Publish only after every layer validates successfully. Never touch

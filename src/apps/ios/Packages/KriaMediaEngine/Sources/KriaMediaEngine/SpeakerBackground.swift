@@ -15,6 +15,8 @@ public enum SpeakerBackgroundLimits {
     public static let maxWindows = 40
     /// Qendresa item 16: full-screen openings/endings (capability `speakerFrameWindows`).
     public static let maxFullScreenWindows = 4
+    /// KRI-1558: the speaker's layout per section (capability `speakerSections`).
+    public static let maxLayoutWindows = 40
     public static let maxTimeline = 1800.0
     public static let minWindowSeconds = 0.5
     public static let minFrameWidthFraction = 0.2
@@ -130,6 +132,59 @@ public struct SpeakerFullScreenWindow: Codable, Equatable, Sendable {
     }
 }
 
+/// KRI-1558: how the speaker is drawn in one span of the edit (capability `speakerSections`, protocol 54).
+public enum SpeakerLayoutMode: String, Codable, Equatable, Sendable {
+    /// The speaker's own take, full-frame and untouched (as inside a full-screen window).
+    case own
+    /// The cut-out speaker at full size over the picture.
+    case full
+    /// The cut-out speaker small at the window's `frame`, over the picture.
+    case small
+    /// The picture alone: the speaker is not drawn (her voice plays on).
+    case picture
+}
+
+/// KRI-1558: one span of the edit (output seconds, `start <= t < end`) drawn with one layout. Same bounds as a background
+/// window; `frame` is present exactly when `layout == .small`. A full-screen window wins over a layout window; a layout
+/// window replaces the layer's `speakerFrame` (a clip's own `full`/`custom` frame still wins over `full`/`small`).
+public struct SpeakerLayoutWindow: Codable, Equatable, Sendable {
+    public let start: Double
+    public let end: Double
+    public let layout: SpeakerLayoutMode
+    public let frame: SpeakerFrame?
+
+    public init(start: Double, end: Double, layout: SpeakerLayoutMode, frame: SpeakerFrame? = nil) {
+        self.start = start; self.end = end; self.layout = layout; self.frame = frame
+    }
+
+    private enum CodingKeys: String, CodingKey { case start, end, layout, frame }
+
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["start", "end", "layout", "frame"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        start = try c.decode(Double.self, forKey: .start)
+        end = try c.decode(Double.self, forKey: .end)
+        layout = try c.decode(SpeakerLayoutMode.self, forKey: .layout)
+        frame = try c.decodeIfPresent(SpeakerFrame.self, forKey: .frame)
+        try validate()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(start, forKey: .start); try c.encode(end, forKey: .end); try c.encode(layout, forKey: .layout)
+        try c.encodeIfPresent(frame, forKey: .frame)
+    }
+
+    public func validate() throws {
+        guard start.isFinite, end.isFinite, (0...SpeakerBackgroundLimits.maxTimeline).contains(start),
+              end > 0, end <= SpeakerBackgroundLimits.maxTimeline,
+              end - start >= SpeakerBackgroundLimits.minWindowSeconds,
+              (layout == .small) == (frame != nil)
+        else { throw RecipeError.invalidTimeline }
+        try frame?.validate()
+    }
+}
+
 /// KRI-1162: where the matted speaker is drawn. The speaker layer (after its own crop and zoom) is scaled
 /// uniformly so its width is `widthFraction` of the canvas width and centred at (`xFraction`, `yFraction`),
 /// canvas fractions with the origin at the top-left, the convention of `VisualMediaPlacement`.
@@ -215,15 +270,23 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
     public let fullScreenWindows: [SpeakerFullScreenWindow]?
     /// Qendresa item 18: where the photo/video FILL is aimed; nil = today's centre cover-fit (key absent). Never with a colour fill.
     public let focus: SpeakerBackgroundFocus?
+    /// KRI-1558: the speaker's layout per section. Sorted, disjoint, 1...40; nil while unused (never empty).
+    public let layoutWindows: [SpeakerLayoutWindow]?
 
     public init(assetID: String?, mediaKind: SpeakerBackgroundFillKind, sourceStart: Double = 0, loop: Bool = true,
                 subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
                 windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil, color: String? = nil,
-                fullScreenWindows: [SpeakerFullScreenWindow]? = nil, focus: SpeakerBackgroundFocus? = nil, subjectClipIDs: [String]? = nil) {
+                fullScreenWindows: [SpeakerFullScreenWindow]? = nil, focus: SpeakerBackgroundFocus? = nil, subjectClipIDs: [String]? = nil,
+                layoutWindows: [SpeakerLayoutWindow]? = nil) {
         self.assetID = assetID; self.mediaKind = mediaKind; self.sourceStart = sourceStart
         self.loop = loop; self.subjectTrackID = subjectTrackID; self.subjectClipIDs = subjectClipIDs
         self.windows = windows; self.speakerFrame = speakerFrame; self.color = color
-        self.fullScreenWindows = fullScreenWindows; self.focus = focus
+        self.fullScreenWindows = fullScreenWindows; self.focus = focus; self.layoutWindows = layoutWindows
+    }
+
+    /// KRI-1558: the layout window containing `time`, if any.
+    static func layout(_ windows: [SpeakerLayoutWindow], at time: Double) -> SpeakerLayoutWindow? {
+        windows.first { $0.start <= time && time < $0.end }
     }
 
     /// True when the speaker's own take is drawn full-frame, unmasked, at `time` (output seconds; `start <= time < end`).
@@ -240,26 +303,29 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
     public init(assetID: String, mediaKind: VisualMediaKind, sourceStart: Double = 0, loop: Bool = true,
                 subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
                 windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil,
-                fullScreenWindows: [SpeakerFullScreenWindow]? = nil, focus: SpeakerBackgroundFocus? = nil, subjectClipIDs: [String]? = nil) {
+                fullScreenWindows: [SpeakerFullScreenWindow]? = nil, focus: SpeakerBackgroundFocus? = nil, subjectClipIDs: [String]? = nil,
+                layoutWindows: [SpeakerLayoutWindow]? = nil) {
         self.init(assetID: assetID, mediaKind: mediaKind == .video ? SpeakerBackgroundFillKind.video : .image, sourceStart: sourceStart,
                   loop: loop, subjectTrackID: subjectTrackID, windows: windows, speakerFrame: speakerFrame, color: nil,
-                  fullScreenWindows: fullScreenWindows, focus: focus, subjectClipIDs: subjectClipIDs)
+                  fullScreenWindows: fullScreenWindows, focus: focus, subjectClipIDs: subjectClipIDs, layoutWindows: layoutWindows)
     }
 
     /// A solid-colour fill; `hex` is `#RRGGBB` in uppercase (checked by `validate()`).
     public static func color(_ hex: String, subjectTrackID: String = SpeakerBackgroundLimits.defaultSubjectTrackID,
                              windows: [SpeakerBackgroundWindow]? = nil, speakerFrame: SpeakerFrame? = nil,
                              fullScreenWindows: [SpeakerFullScreenWindow]? = nil,
-                             focus: SpeakerBackgroundFocus? = nil, subjectClipIDs: [String]? = nil) -> SpeakerBackgroundLayer {
+                             focus: SpeakerBackgroundFocus? = nil, subjectClipIDs: [String]? = nil,
+                             layoutWindows: [SpeakerLayoutWindow]? = nil) -> SpeakerBackgroundLayer {
         SpeakerBackgroundLayer(assetID: nil, mediaKind: .color, subjectTrackID: subjectTrackID, windows: windows,
-                               speakerFrame: speakerFrame, color: hex, fullScreenWindows: fullScreenWindows, focus: focus, subjectClipIDs: subjectClipIDs)
+                               speakerFrame: speakerFrame, color: hex, fullScreenWindows: fullScreenWindows, focus: focus, subjectClipIDs: subjectClipIDs,
+                               layoutWindows: layoutWindows)
     }
 
     /// The same background with the speaker drawn at `frame` (nil = full-frame). Every other field is kept.
     public func replacingSpeakerFrame(_ frame: SpeakerFrame?) -> SpeakerBackgroundLayer {
         SpeakerBackgroundLayer(assetID: assetID, mediaKind: mediaKind, sourceStart: sourceStart, loop: loop,
                                subjectTrackID: subjectTrackID, windows: windows, speakerFrame: frame, color: color,
-                               fullScreenWindows: fullScreenWindows, focus: focus, subjectClipIDs: subjectClipIDs)
+                               fullScreenWindows: fullScreenWindows, focus: focus, subjectClipIDs: subjectClipIDs, layoutWindows: layoutWindows)
     }
 
     /// `next` differs from this background only by MOVING or RESIZING an existing speaker frame (SF5): both carry a
@@ -279,11 +345,11 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case assetID = "assetId", mediaKind, sourceStart, loop, subjectTrackID = "subjectTrackId", windows, speakerFrame, color, fullScreenWindows, focus, subjectClipIDs = "subjectClipIds"
+        case assetID = "assetId", mediaKind, sourceStart, loop, subjectTrackID = "subjectTrackId", windows, speakerFrame, color, fullScreenWindows, focus, subjectClipIDs = "subjectClipIds", layoutWindows
     }
 
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["assetId", "mediaKind", "sourceStart", "loop", "subjectTrackId", "windows", "speakerFrame", "color", "fullScreenWindows", "focus", "subjectClipIds"])
+        try rejectUnknownAssetFields(decoder, allowed: ["assetId", "mediaKind", "sourceStart", "loop", "subjectTrackId", "windows", "speakerFrame", "color", "fullScreenWindows", "focus", "subjectClipIds", "layoutWindows"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         // KRI-1173: `assetId` / `color` are absent when unused. A JSON `null` is INVALID for both (it is not "absent" here).
         assetID = c.contains(.assetID) ? try c.decode(String.self, forKey: .assetID) : nil
@@ -298,6 +364,7 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
         speakerFrame = try c.decodeIfPresent(SpeakerFrame.self, forKey: .speakerFrame)
         fullScreenWindows = try c.decodeIfPresent([SpeakerFullScreenWindow].self, forKey: .fullScreenWindows)
         focus = try c.decodeIfPresent(SpeakerBackgroundFocus.self, forKey: .focus)
+        layoutWindows = try c.decodeIfPresent([SpeakerLayoutWindow].self, forKey: .layoutWindows)
         try validate()
     }
 
@@ -343,6 +410,11 @@ public struct SpeakerBackgroundLayer: Codable, Equatable, Sendable {
             guard (1...SpeakerBackgroundLimits.maxFullScreenWindows).contains(fullScreenWindows.count) else { throw RecipeError.invalidTimeline }
             for window in fullScreenWindows { try window.validate() }
             for (earlier, later) in zip(fullScreenWindows, fullScreenWindows.dropFirst()) where later.start < earlier.end { throw RecipeError.invalidTimeline }
+        }
+        if let layoutWindows {
+            guard (1...SpeakerBackgroundLimits.maxLayoutWindows).contains(layoutWindows.count) else { throw RecipeError.invalidTimeline }
+            for window in layoutWindows { try window.validate() }
+            for (earlier, later) in zip(layoutWindows, layoutWindows.dropFirst()) where later.start < earlier.end { throw RecipeError.invalidTimeline }
         }
     }
 }

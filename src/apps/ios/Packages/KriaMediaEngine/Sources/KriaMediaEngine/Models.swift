@@ -250,6 +250,20 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         "NotoSansKR-Regular.ttf", "NotoSansKR-Bold.ttf", "NotoSansArabic-Regular.ttf", "NotoSansArabic-Bold.ttf",
     ]
 
+    /// KRI-1558: two back-to-back pieces of one take with nothing removed between them (`sameShotJoin` with no source
+    /// gap) that draw the speaker differently. Split-screen pieces have their own gate.
+    static func changesSpeakerLayoutOnASplit(_ tracks: [TimelineTrack]) -> Bool {
+        tracks.contains { track in
+            guard track.kind == .video else { return false }
+            let clips = track.clips.sorted { $0.timelineStart < $1.timelineStart }
+            return zip(clips, clips.dropFirst()).contains { outgoing, incoming in
+                sameShotJoin(outgoing, incoming) && outgoing.splitScreen == nil && incoming.splitScreen == nil
+                    && abs(incoming.sourceStart - (outgoing.sourceStart + outgoing.sourceDuration)) <= sourceContinuityTolerance
+                    && (outgoing.speakerFrameOverride ?? .init(mode: .inherit)) != (incoming.speakerFrameOverride ?? .init(mode: .inherit))
+            }
+        }
+    }
+
     /// Derive requirements from content too: an omitted server capability must not drop an effect.
     public var effectiveCapabilities: Set<MediaCapability> {
         var result = requiredCapabilities
@@ -270,6 +284,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil || tracks.flatMap(\.clips).contains(where: { $0.speakerFrameOverride?.mode == .custom }) { result.insert(.speakerBackgroundWindows) }
         // Qendresa item 16 (protocol 41): a full-screen opening/ending is a layer property an older build would silently ignore.
         if speakerBackground?.fullScreenWindows != nil { result.insert(.speakerFrameWindows) }
+        // KRI-1558: the take split where the speaker's layout changes (nothing removed between the pieces). An older build
+        // declicks the join to silence and restarts the cut-out there, so such a recipe needs the seamless-split engine.
+        if speakerBackground?.layoutWindows != nil || (speakerBackground != nil && Self.changesSpeakerLayoutOnASplit(tracks)) {
+            result.insert(.speakerSections)
+        }
         // Qendresa item 18 (protocol 42): an aimed background (fill or any window) is a layer property an older build would silently ignore.
         if speakerBackground?.focus != nil || speakerBackground?.windows?.contains(where: { $0.focus != nil }) == true { result.insert(.backgroundFocus) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
@@ -616,7 +635,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
          speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse, splitBlankPanel,
-         colorMoments, speechDuck
+         colorMoments, speechDuck, speakerSections
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
