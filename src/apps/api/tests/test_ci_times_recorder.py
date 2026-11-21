@@ -15,6 +15,9 @@ change the run it is measuring:
 - a parametrised id containing "::" is attributed to the wrong file;
 - the time before the first test (imports and collection) is not recorded per
   process, which is the part more cores do not shrink;
+- a test that starts its own pytest (several in this suite do) passes the
+  switch on to it, so the child's tests, including ones meant to fail, are
+  added to the suite's rows;
 - the recorder changes pytest's exit code, or writes files when it is not
   asked to.
 """
@@ -74,6 +77,17 @@ def test_child_cpu():
 @pytest.mark.parametrize("value", ["a::b", "c"])
 def test_param(value):
     pass
+
+
+def test_runs_its_own_pytest(tmp_path):
+    (tmp_path / "test_inner.py").write_text("def test_inner_fails():\\n    assert False\\n")
+    inner = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "tests._ci_times", "-p", "no:cacheprovider",
+         "-q", str(tmp_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert inner.returncode == 1, inner.stdout + inner.stderr
 """
 
 NODES = {
@@ -85,6 +99,7 @@ NODES = {
     "checks/test_sample.py::test_child_cpu": "passed",
     "checks/test_sample.py::test_param[a::b]": "passed",
     "checks/test_sample.py::test_param[c]": "passed",
+    "checks/test_sample.py::test_runs_its_own_pytest": "passed",
 }
 
 

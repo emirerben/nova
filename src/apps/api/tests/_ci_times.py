@@ -121,4 +121,7 @@ def pytest_configure(config) -> None:
         # The xdist controller sees every worker's reports; the workers write them.
         return
     worker = worker_input["workerid"] if worker_input else "main"
+    # This process runs tests. Several of them start their own pytest; without
+    # this, each child would add its tests (some meant to fail) to these rows.
+    del os.environ[ENV]
     config.pluginmanager.register(Recorder(Path(directory).resolve(), worker), "nova-ci-times")
