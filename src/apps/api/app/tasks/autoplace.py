@@ -2676,7 +2676,6 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
     """
     from app.config import settings  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
-    from app.services.sfx_autoplace import resolve_sfx_suggestions  # noqa: PLC0415
     from app.services.speech_map import build_speech_map  # noqa: PLC0415
     from app.services.transcript_source import (  # noqa: PLC0415
         compute_transcript_hash,
@@ -2755,62 +2754,55 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
                         )
                     cursor += slot_dur
 
-            # 4. One agent call; validation is the server's job.
+            # 4. One chooser call; validation is the server's job. Pauses and
+            # moment edges are marks; the chooser owns the catalogue slice
+            # (voice-free one-shots, role-tagged first, KRI-173).
             from app.agents._model_client import default_client  # noqa: PLC0415
             from app.agents._runtime import RunContext  # noqa: PLC0415
-            from app.agents.sfx_placement import (  # noqa: PLC0415
-                _MAX_EFFECTS,
-                SfxCatalogEffect,
-                SfxPlacementAgent,
-                SfxPlacementInput,
+            from app.agents.sfx_placement import SfxPlacementAgent  # noqa: PLC0415
+            from app.services.sfx_chooser import (  # noqa: PLC0415
+                Placed,
+                SfxAsk,
+                SfxEvidence,
+                choose_sfx,
             )
-            from app.services.sfx_catalog import placement_catalog  # noqa: PLC0415
 
             if not settings.gemini_api_key:
                 _record("sfx_autoplace_skipped", reason="no_gemini_key", variant_id=variant_id)
                 return
-            agent_out = SfxPlacementAgent(default_client()).run(
-                SfxPlacementInput(
-                    words=words,
-                    pauses=speech_map["pauses"],
-                    moments=moments,
-                    # Slice BEFORE constructing the input: the schema caps
-                    # effects at _MAX_EFFECTS and an oversized glossary would
-                    # fail Pydantic validation and silently kill the task.
-                    # placement_catalog keeps it deterministic and diverse:
-                    # voice-free one-shots, role-tagged first (KRI-173).
-                    effects=[
-                        SfxCatalogEffect(
-                            effect_id=entry.id,
-                            name=entry.name,
-                            role_tags=list(entry.role_tags),
-                            duration_s=entry.duration_s,
-                        )
-                        for entry in placement_catalog(glossary, _MAX_EFFECTS)
-                    ],
+            agent = SfxPlacementAgent(default_client())
+            choice = choose_sfx(
+                SfxAsk(request_text=""),
+                SfxEvidence(
+                    words=tuple(words),
+                    pauses=tuple(speech_map["pauses"]),
+                    moments=tuple(moments),
                     duration_s=duration_s,
                 ),
-                ctx=RunContext(job_id=job_id),
+                glossary,
+                run_agent=lambda payload: agent.run(payload, ctx=RunContext(job_id=job_id)),
             )
             # Hash with the SAME duration input the read path will use
             # (`variant_duration_s`, possibly None) — hashing the local
             # fallback duration would mismatch the serializer's recompute and
             # permanently stale-filter suggestions on duration-less variants.
             transcript_hash = compute_transcript_hash(words, variant_duration_s(variant))
-            # The verbatim-copy discipline, enforced: at_s must land on a
-            # supplied mark (word start/end, pause start, moment edge) or the
-            # suggestion is dropped as an invented time.
-            allowed_marks = [w["s"] for w in speech_map["words"]]
-            allowed_marks += [w["e"] for w in speech_map["words"]]
-            allowed_marks += [pz["s"] for pz in speech_map["pauses"]]
-            for m in moments:
-                allowed_marks.extend((m["start_s"], m["end_s"]))
-            suggestions = resolve_sfx_suggestions(
-                agent_out.placements,
-                glossary,
-                duration_s,
-                transcript_hash,
-                allowed_marks=allowed_marks,
+            suggestions = (
+                [
+                    {
+                        "id": p.id,
+                        "effect_id": p.effect_id,
+                        "at_s": p.at_s,
+                        "gain": p.gain,
+                        "anchor": p.anchor,
+                        "reason": p.reason,
+                        "name": p.name,
+                        "transcript_hash": transcript_hash,
+                    }
+                    for p in choice.placements
+                ]
+                if isinstance(choice, Placed)
+                else []
             )
 
             # 5. Persist under the row lock; trace AFTER the lock releases
@@ -2825,7 +2817,7 @@ def autoplace_sfx_suggestions(job_id: str, variant_id: str) -> None:
             _record(
                 "sfx_autoplace_suggested",
                 variant_id=variant_id,
-                proposed=len(agent_out.placements),
+                declined=None if suggestions else choice.limit.value,
                 accepted=len(suggestions),
             )
         except Exception as exc:  # noqa: BLE001
