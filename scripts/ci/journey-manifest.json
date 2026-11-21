@@ -3945,6 +3945,17 @@
         "src/apps/api/tests/kria/test_pending_visual_go_ahead_postgres.py",
         "src/apps/api/tests/integration/test_pool_asset_unclaimed_resend_postgres.py"
       ]
+    },
+    {
+      "id": "kri-1562-talking-music",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_talking_music_bed.py tests/tasks/test_phone_talking_music_worker.py tests/routes/test_phone_talking_music_save.py",
+      "paths": [
+        "src/apps/api/app/pipeline/sound_effects.py",
+        "src/apps/api/tests/pipeline/test_talking_music_bed.py",
+        "src/apps/api/tests/tasks/test_phone_talking_music_worker.py",
+        "src/apps/api/tests/routes/test_phone_talking_music_save.py"
+      ]
     }
   ]
 }

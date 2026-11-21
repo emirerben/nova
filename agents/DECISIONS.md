@@ -4086,3 +4086,17 @@ entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STR
 **What it holds:** `FLY_API_TOKEN` in that cloud environment's variables, a deploy token for `nova-video` only (`fly tokens create deploy -a nova-video`). The environment's network settings must allow `nova-video.fly.dev` and `api.machines.dev`; without them the proxy refuses the request and the routine reports "could not reach" (this happened on its first run). Anyone who can edit the environment can read the token, and every routine on it gets it. To revoke: `fly tokens list -a nova-video`, then `fly tokens revoke`.
 **Limits:** hourly is the fastest a routine can run, so worst-case detection is the staleness threshold plus about an hour. The start call has never been exercised (that needs a stopped production machine), and the routine's own permission check may refuse it; the Slack message then gives the manual commands. A machine that stops again each hour is started again each hour, with a message each time. The routine lives outside this repository: its prompt is the source of truth for its behaviour.
 **Reversal condition:** false alarms, or a restart that hides a crash loop. Pause the routine; `beat-health.yml` keeps working without it.
+
+## [2026-11-20] CLAUDE.md flag detail moved out for `TALKING_MUSIC_ENABLED` (KRI-1562)
+
+CLAUDE.md was already 77 bytes over its 38,000 budget on main when KRI-1562 needed its flag line. The two music-bed lines were merged with the new one and three other flag lines were shortened; their full original text, preserved verbatim:
+
+- `SMART_MUSIC_BED_ENABLED` — default `true`. Kill switch for the v2 music bed; off = no new treatments, reburns skip it.
+
+- `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` — default `true` (KRI-20). Bed resolver only returns a creator-selected treatment; never auto-matches. `false` = pre-fix.
+
+- `PLAN_SYNC_DISPATCH_ENABLED` — default `true`. Generate mints the Job in-request (`dispatch_item_render_for`: FOR-UPDATE lock; duplicate ⇒ 200; publish-fail ⇒ `processing_failed`). `false` ⇒ legacy `.delay()`+409. plans/014; apply: fly secret + restart.
+
+- `NARRATIVE_CLIP_ORDER_ENABLED` — default `true`. Plan-item edits follow the filming guide's shot order (`content_plan_build._narrative_clip_order`), read at render time. `false` ⇒ greedy matching. Apply: fly secret + restart.
+
+- `TIKTOK_DEEP_ANALYSIS_ENABLED` — default `true`; `false` ⇒ no TikTok analysis in persona/plan/hook prompts (byte-identical). Apply: fly secret + restart.
