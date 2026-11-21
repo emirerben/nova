@@ -54,7 +54,9 @@ jobs:
         id: touched
         run: |
           chmod +x scripts/ci/check-touched-paths.sh
-          matched=$(scripts/ci/check-touched-paths.sh local-test < /tmp/changed.txt || true)
+          # The matcher exits 0 whether or not a path matches; a non-zero exit is
+          # a crash and must fail the step, not read as "nothing touched".
+          matched=$(scripts/ci/check-touched-paths.sh local-test < /tmp/changed.txt)
           if [[ -n "$matched" ]]; then
             echo "touched=true" >> "$GITHUB_OUTPUT"
             echo "Layer-2 paths touched:"
