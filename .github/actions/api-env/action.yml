@@ -14,7 +14,8 @@ runs:
   using: composite
   steps:
     - name: Set up uv
-      uses: astral-sh/setup-uv@v10
+      # setup-uv publishes no moving major tag; this commit is v10.4.0.
+      uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
       with:
         version: "0.13.9"
         # The built environment is cached below; a second copy of the wheels
