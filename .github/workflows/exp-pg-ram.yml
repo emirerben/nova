@@ -1,0 +1,122 @@
+name: Experiment - test database in memory
+
+# EXPERIMENT ONLY (throwaway branch, never merged): the API suite against the
+# usual Postgres service and against one on tmpfs with durability off.
+on:
+  push:
+    branches: [codex/exp-pg-ram]
+
+jobs:
+  test-api-suite:
+    name: ${{ matrix.arm }} r${{ matrix.repeat }} s${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # Leave half of the account's 20 concurrent jobs for real pull requests.
+      max-parallel: 10
+      matrix:
+        include: [{"arm": "disk", "code": 1, "repeat": 1, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 1, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 1, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 1, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 1, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 1, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 2, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 2, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 2, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 2, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 2, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 2, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 3, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 3, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 3, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 3, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 3, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 3, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 4, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 4, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 4, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 4, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 4, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 4, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 5, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 5, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 5, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 5, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 5, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "disk", "code": 1, "repeat": 5, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5"}, {"arm": "ram", "code": 2, "repeat": 1, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 1, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 1, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 1, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 1, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 1, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 2, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 2, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 2, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 2, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 2, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 2, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 3, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 3, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 3, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 3, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 3, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 3, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 4, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 4, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 4, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 4, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 4, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 4, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 5, "shard": 0, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 5, "shard": 1, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 5, "shard": 2, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 5, "shard": 3, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 5, "shard": 4, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}, {"arm": "ram", "code": 2, "repeat": 5, "shard": 5, "pgoptions": "--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5 --tmpfs /var/lib/postgresql/data:rw"}]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nova_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: ${{ matrix.pgoptions }}
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Turn off durability for the throwaway test database
+        if: matrix.arm == 'ram'
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d nova_test -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()"
+          psql -h localhost -U postgres -d nova_test -Atc "SHOW fsync; SHOW synchronous_commit; SHOW full_page_writes"
+          docker ps --format '{{.Image}} {{.Mounts}}' | head -3
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
+      - name: Install FFmpeg and Skia runtime libs
+        # libegl1 + libgl1 are needed by skia-python (used by
+        # app/pipeline/text_overlay_skia.py). On macOS these ship with the OS;
+        # the Ubuntu runner needs them installed explicitly or the module
+        # import fails with `libEGL.so.1: cannot open shared object file`.
+        # apt-install.sh kills and retries a stalled mirror within minutes; the
+        # step cap sits above the slowest green install (32 min, slow mirror).
+        # The composite action caches the .debs so that cost is paid once.
+        timeout-minutes: 40
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
+      - uses: ./.github/actions/api-env
+        with:
+          # analysis: pytesseract, so the OCR engine test runs against the
+          # tesseract binary installed above instead of skipping.
+          extras: dev analysis
+      - name: Verify Alembic upgrade-downgrade roundtrip
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
+          REDIS_URL: redis://localhost:6379
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          OPENAI_API_KEY: sk-test
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+          ALLOWED_ORIGINS: '["http://localhost:3000"]'
+        run: |
+          python -m alembic upgrade 0072
+          python scripts/verify_content_plan_owner_constraint.py seed-mismatch
+          if python -m alembic upgrade 0073; then
+            echo "0073 unexpectedly accepted a cross-owner plan/persona row"
+            exit 1
+          fi
+          python scripts/verify_content_plan_owner_constraint.py repair-mismatch
+          python -m alembic upgrade 0073
+          python scripts/verify_content_plan_owner_constraint.py verify-installed
+          python -m alembic downgrade -1
+          python -m alembic upgrade 0103
+          python scripts/verify_0103_downgrade_state.py seed
+          python -m alembic downgrade -1
+          python scripts/verify_0103_downgrade_state.py verify
+          python -m alembic upgrade head
+      - name: Run API test shard with timing reports
+        env:
+          NOVA_REQUIRE_POSTGRES_TESTS: "1"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
+          REDIS_URL: redis://localhost:6379
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          OPENAI_API_KEY: sk-test
+          WHISPER_BACKEND: local
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+          WAITLIST_ADMIN_SECRET: test-admin-secret
+          ALLOWED_ORIGINS: '["http://localhost:3000"]'
+        run: python3 scripts/ci/api-tests.py "${{ matrix.shard }}"
+      # One row per test from tests/_ci_times.py: setup, call and teardown
+      # seconds, CPU seconds and outcome. scripts/ci/api-times.py reads them.
+      - name: Keep per-test times by phase
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-times-${{ matrix.code }}${{ matrix.repeat }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: src/apps/api/test-results/ci-times
+          retention-days: 30
+          if-no-files-found: ignore
+
