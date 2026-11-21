@@ -821,6 +821,7 @@ def _classify_phone_plan_failure(exc: BaseException) -> tuple[str, _PlanFailureK
     """
     from app.agents._runtime import (  # noqa: PLC0415
         AiBudgetExceededError,
+        PaidCallAlreadySettledError,
         ProviderOutcomeUnknownError,
         ProviderQuotaExceededError,
     )
@@ -846,6 +847,10 @@ def _classify_phone_plan_failure(exc: BaseException) -> tuple[str, _PlanFailureK
         return "ai_quota_exhausted", "ai_quota"
     if isinstance(exc, CreationTextCompositionError):
         return "creation_text_failed", "typed"
+    if any(isinstance(link, PaidCallAlreadySettledError) for link in chain):
+        # A finished call re-sent under its own key: nothing timed out and the same plan would
+        # be refused again, so it is a bug to fix, not an `ai_timeout` to retry.
+        return "phone_plan_failed", "bug"
     if any(isinstance(link, ProviderOutcomeUnknownError) for link in chain):
         # Also when wrapped (prod 1e79ff4f: the text composer's timeout surfaced as an
         # unclassified `phone_plan_failed`).

@@ -25,6 +25,7 @@ from app.agents._runtime import (
     AiBudgetExceededError,
     AiCostControlPolicyError,
     CostControlUnavailableError,
+    PaidCallAlreadySettledError,
     ProviderOutcomeUnknownError,
     RunContext,
 )
@@ -906,7 +907,12 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                     or existing["expires_at"] > now
                 )
             ):
-                raise ProviderOutcomeUnknownError(
+                refused = (
+                    PaidCallAlreadySettledError
+                    if existing["status"] == "settled"
+                    else ProviderOutcomeUnknownError
+                )
+                raise refused(
                     f"paid call {request.idempotency_key[:12]} already {existing['status']}"
                 )
 
