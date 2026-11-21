@@ -11,15 +11,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Three shards, packed by measured file time (KRI-1544). Four shards split by
-# file position were tried on 2026-11-19 (#2389) and reverted the same day:
-# position put test_phone_text_fit_never_fails.py beside the carousel renders
-# and other CPU-heavy tests, and its 40-cue case went from 24-41 s to 53-60 s
-# against this runner's 60 s timeout, failing an unrelated PR. Before raising
-# the count, run the old and the new layout side by side for several repeats
-# and compare every slow test against the timeout (change-based-ci.md).
+# Six shards, packed by measured file time (KRI-1544). The count has a history:
+# - Four shards split by file position (#2389, 2026-11-19) were reverted the
+#   same day: position put test_phone_text_fit_never_fails.py beside the
+#   carousel renders, and its 40-cue case went from 24-41 s to 53-60 s against
+#   this runner's 60 s timeout, failing an unrelated PR.
+# - Three shards packed by time: slowest shard job a median 987 s.
+# - Six shards packed by time: 589 s, measured side by side with three on one
+#   commit, five repeats each (2026-11-21).
+# Before changing the count, run old and new side by side for five repeats and
+# compare them with `api-times.py compare` (change-based-ci.md).
 # test_api_tests.py keeps ci.yml's matrix equal to this count.
-SHARD_COUNT = 3
+SHARD_COUNT = 6
 
 # Seconds per test file, measured in CI (scripts/ci/api-test-timings.py writes
 # it). Only the heavy files are listed; any other file weighs DEFAULT_SECONDS.

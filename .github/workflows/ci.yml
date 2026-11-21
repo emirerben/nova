@@ -252,7 +252,7 @@ jobs:
       # (test_api_tests.py fails otherwise).
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3, 4, 5]
     services:
       postgres:
         image: postgres:16-alpine
