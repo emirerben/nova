@@ -223,3 +223,14 @@ def test_a_layout_swapped_between_two_sections_is_caught(prod_profile) -> None:
     assert any(
         "not a section boundary" in problem for problem in layout_mismatches(sections, shifted, [])
     )
+
+
+def test_sections_come_from_the_recorded_list_when_the_edit_has_no_caption_words() -> None:
+    from app.services.kria_editor_ops import speaker_sections_for  # noqa: PLC0415
+
+    rows = [
+        {"index": 1, "start_s": 0.0, "end_s": 6.0, "text": "a"},
+        {"index": 2, "start_s": 6.0, "end_s": 12.0, "text": "b"},
+    ]
+    sections = speaker_sections_for({"caption_cues": [], "speaker_sections": rows})
+    assert [(s.index, s.start_s, s.end_s) for s in sections] == [(1, 0.0, 6.0), (2, 6.0, 12.0)]

@@ -1307,9 +1307,28 @@ def speaker_sections_for(variant: dict[str, Any]) -> list[Any]:
 
     duration = background_duration_s(variant)
     cues = variant.get("caption_cues")
-    if duration <= 0 or not isinstance(cues, list):
-        return []
-    return sections_from_cues(cues, duration)
+    if duration > 0 and isinstance(cues, list) and cues:
+        return sections_from_cues(cues, duration)
+    # No caption words (captions never made, or cleared): the sections the worker recorded.
+    from app.pipeline.talking_sections import TalkingSection  # noqa: PLC0415
+
+    stored = variant.get("speaker_sections")
+    out: list[Any] = []
+    for row in stored if isinstance(stored, list) else ():
+        try:
+            out.append(
+                TalkingSection(
+                    int(row["index"]),
+                    float(row["start_s"]),
+                    float(row["end_s"]),
+                    str(row.get("text") or ""),
+                    int(row.get("sentence_first") or 0),
+                    int(row.get("sentence_last") or 0),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return []
+    return out
 
 
 def background_color_reason(job: Any, variant: dict[str, Any]) -> str | None:
