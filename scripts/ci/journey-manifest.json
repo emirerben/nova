@@ -631,6 +631,7 @@
         "src/apps/api/app/tasks/speech_cleanup_analysis.py",
         "src/apps/api/prompts/clip_intent_planner.txt",
         "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/prompts/sfx_placement.txt",
         "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri612_explain_the_footages.json",
         "src/apps/api/tests/fixtures/prompt_coverage/kri651_approved_hook.json",
         "src/apps/api/tests/kria/test_brief_provider_recovery_postgres.py",
