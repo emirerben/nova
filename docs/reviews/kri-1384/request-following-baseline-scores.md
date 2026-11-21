@@ -4,16 +4,16 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 
 ## Headline
 
-- **Requirements met: 74%** (91/123; partial 7, unmet 25), over every recorded thread and the per-action set.
+- **Requirements met: 75%** (91/122; partial 7, unmet 24), over every recorded thread and the per-action set.
 - **Replies that overclaimed: 14** (a requirement was missed and the reply never said so: where the requirement names claim terms, the reply names one; otherwise the turn applied ops and the reply has no 'not done' marker. A turn that applied nothing claims nothing).
-- **Turn time: p50 10.9s, p95 28.2s** over 87 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
+- **Turn time: p50 10.2s, p95 28.2s** over 86 recorded copilot calls (wall time of the live model call, retries included; planner routing, queueing and render are not in it).
 
 | Set | Threads | Requirements | Met | Partial | Unmet | Met share | Overclaims |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Conversation threads | 31 | 77 | 52 | 7 | 18 | 68% | 13 |
-| Per-action set | 46 | 46 | 39 | 0 | 7 | 85% | 1 |
+| Per-action set | 45 | 45 | 39 | 0 | 6 | 87% | 1 |
 
-Threads measured from recordings: 77. Threads awaiting recordings (not in the KPI): 2.
+Threads measured from recordings: 76. Threads awaiting recordings (not in the KPI): 3.
 
 ## Provenance
 
@@ -40,7 +40,7 @@ Threads measured from recordings: 77. Threads awaiting recordings (not in the KP
 | readability | 2 | 1 | 0 | 1 | 50% | 1 |
 | restructure | 3 | 1 | 0 | 2 | 33% | 0 |
 | style | 9 | 7 | 0 | 2 | 78% | 0 |
-| action_parity | 46 | 39 | 0 | 7 | 85% | 1 |
+| action_parity | 45 | 39 | 0 | 6 | 87% | 1 |
 
 ## Per-action set (one plain request per `agent_ops` parity group, phone snapshot)
 
@@ -74,7 +74,7 @@ Threads measured from recordings: 77. Threads awaiting recordings (not in the KP
 | action_layer_order | Put the second photo in front of the first one. | reaches | ['set_layer_order'] | met | parser accepted ['set_layer_order'] |
 | action_media_overlays | Make the photo on top bigger. | reaches | ['patch_overlay'] | met | parser accepted ['patch_overlay'] |
 | action_music | Lower the music volume. | reaches | ['set_mix'] | met | parser accepted ['set_mix'] |
-| action_music_swap | Swap the music for something calmer. | blocked at parse | no op | unmet | blocked on the phone (swap_music: operation values are invalid); model emitted no op |
+| action_music_swap | Swap the music for something calmer. | reaches | no op | unrecorded |  |
 | action_sound_effects | Add a whoosh at 2 seconds. | reaches | ['add_sfx'] | met | parser accepted ['add_sfx'] |
 | action_speaker_background | Put the beach photo behind me. | reaches | ['set_background'] | met | parser accepted ['set_background'] |
 | action_speaker_frame_by_hand | Move me to the small bottom left corner. | reaches | ['set_speaker_frame'] | met | parser accepted ['set_speaker_frame'] |
