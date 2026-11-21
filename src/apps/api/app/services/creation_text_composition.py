@@ -354,6 +354,13 @@ class CreationTextCompositionError(ValueError):
         self.op_index = op_index
 
 
+class ResearchSourcesUnavailable(CreationTextCompositionError):
+    """The search for an asked research text found no source the rules accept.
+
+    The caller renders the rest of the creator's text and says which asked text it could not
+    add; it fails only when nothing asked is left on screen."""
+
+
 class CreationTextClarification(CreationTextCompositionError):
     """The text composer asked the creator a question instead of composing.
 
@@ -1889,6 +1896,7 @@ def _compose_from_research(
     writer's answer then skipped the evidence checks and the claim review.
     """
     from app.services.researched_text import (  # noqa: PLC0415
+        NoUsableSources,
         ResearchUnavailable,
         layer_operations,
         pinned_layer_operations,
@@ -1923,6 +1931,8 @@ def _compose_from_research(
                 retrieved_at=evidence.retrieved_at,
                 search_entry_html=evidence.search_entry_html,
             )
+    except NoUsableSources as exc:
+        raise ResearchSourcesUnavailable(str(exc), reason="incomplete") from exc
     except ResearchUnavailable as exc:
         raise CreationTextCompositionError(str(exc)) from exc
     uncovered = _uncovered_layer_requirements(layers, text_requirements)
@@ -2315,23 +2325,44 @@ def _compose_creation_text(
         and pinned_research is None
         and research_needs_text_layers(text_requirements)
     ):
-        output, then, shaping_lane, researched, shapes, uncovered = _compose_from_research(
-            output.research_request,
-            approved=approved_layers,
-            snapshot=snapshot,
-            creator_request=creator_request,
-            plan=plan,
-            base_digest=_digest(texts, slots),
-            lane=texts_for_model,
-            slots=slots,
-            pinned_ops=pinned_ops,
-            constraints=constraints,
-            text_requirements=text_requirements,
-            ctx=ctx,
-        )
-        constraints = {**constraints, **researched}
-        drops.extend(uncovered)
-        full_lane_ops = True
+        try:
+            output, then, shaping_lane, researched, shapes, uncovered = _compose_from_research(
+                output.research_request,
+                approved=approved_layers,
+                snapshot=snapshot,
+                creator_request=creator_request,
+                plan=plan,
+                base_digest=_digest(texts, slots),
+                lane=texts_for_model,
+                slots=slots,
+                pinned_ops=pinned_ops,
+                constraints=constraints,
+                text_requirements=text_requirements,
+                ctx=ctx,
+            )
+        except ResearchSourcesUnavailable as exc:
+            # No qualifying source for the creator's topic: the rest of her approved text
+            # renders and the note names each asked text it could not add (prod 2e76b62f).
+            log.info(
+                "creation_text_research_sources_unavailable",
+                job_id=getattr(ctx, "job_id", None),
+                reason=str(exc)[:300],
+            )
+            research_failure = exc
+            drops.extend(
+                shrink(
+                    CreationTextCompositionError(
+                        "Text composition is incomplete: no researched text", reason="incomplete"
+                    ),
+                    text=req.description or None,
+                )
+                for req in _uncovered_layer_requirements([], text_requirements)
+            )
+            output = output.model_copy(update={"research_request": None})
+        else:
+            constraints = {**constraints, **researched}
+            drops.extend(uncovered)
+            full_lane_ops = True
     elif output.research_request is not None and pinned_research is not None:
         # The creator approved this research before render: it is never searched again.
         log.info(

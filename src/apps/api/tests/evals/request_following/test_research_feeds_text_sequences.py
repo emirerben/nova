@@ -983,3 +983,104 @@ def test_caption_review_prompt_is_unchanged_without_layers() -> None:
     assert "object identification. Return ONE JSON OBJECT for the ENTIRE revision" in prompt
     assert "text layers" not in prompt
     assert '"layers"' not in prompt
+
+
+# --- a search with no qualifying source (prod 2e76b62f, 2026-11-20) ----------------------
+#
+# Failure modes written down before the fix:
+#  1. the search finds only operator/travel sources and a title was also asked: the title
+#     renders, one `incomplete` drop per asked layer names what was not added;
+#  2. nothing else was asked: still a typed failure, and it carries the research reason;
+#  3. a malformed search answer (not a source limit) keeps failing as it did.
+
+_TITLE = "Founders Day"
+
+
+def _search_with_only_travel_sources(monkeypatch, raw: dict | str | None = None) -> None:
+    from app.agents._runtime import SchemaError, TerminalSchemaError
+
+    answer = raw or {
+        "facts": [
+            {
+                "id": "fact-0",
+                "text": "Founders Day is celebrated on 12 May.",
+                "sources": [
+                    {
+                        "title": "travel-guide.example.com",
+                        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/Z",
+                    }
+                ],
+            }
+        ],
+        "retrieved_at": "2026-11-20T14:08:54+00:00",
+        "search_entry_html": "<div>Search</div>",
+    }
+
+    def run(agent, request, *, ctx=None):  # noqa: ARG001
+        try:
+            return agent.parse(answer if isinstance(answer, str) else json.dumps(answer), request)
+        except SchemaError as exc:
+            raise TerminalSchemaError(f"{agent.spec.name}: schema — {exc}") from exc
+
+    monkeypatch.setattr(GroundedResearchAgent, "run", run)
+
+
+def _titled_plan_and_requirements():
+    from app.kria.brief import CreativeBrief
+    from app.pipeline.unified_montage import brief_view
+
+    requirements = [
+        *REQUIREMENTS,
+        BriefRequirement(id="r5", kind="text", scope="title", literal=_TITLE),
+    ]
+    clips = [
+        UnifiedClip(
+            media_id=f"archive-{index}",
+            proxy_path=f"private/archive-{index}.mp4",
+            generation="1",
+            duration_s=5,
+            analysis={"understanding": {"summary": "Archival footage of a crowd"}},
+        )
+        for index in range(3)
+    ]
+    brief = CreativeBrief(requirements=requirements)
+    return plan_unified_montage(clips, brief_view(brief)), brief.live()
+
+
+def test_no_qualifying_source_renders_the_title_and_names_each_unadded_layer(
+    provider, monkeypatch
+) -> None:
+    _search_with_only_travel_sources(monkeypatch)
+    plan, requirements = _titled_plan_and_requirements()
+    drops: list = []
+
+    composed = compose_creation_text(
+        plan.snapshot, creator_request=REQUEST, text_requirements=requirements, drops=drops
+    )
+
+    shown = [row["text"] for row in compile_proposal_execution_plan(composed)["text_elements"]]
+    assert _TITLE in shown
+    assert not set(LOCAL.split()) & set(shown)
+    assert [drop.reason for drop in drops] == ["incomplete", "incomplete"]
+    assert provider.written == []
+
+
+def test_no_qualifying_source_with_nothing_else_asked_fails_with_the_research_reason(
+    provider, monkeypatch
+) -> None:
+    _search_with_only_travel_sources(monkeypatch)
+
+    with pytest.raises(CreationTextCompositionError, match="institutional sources"):
+        _compose()
+
+
+def test_a_malformed_search_answer_is_not_a_source_limit(provider, monkeypatch) -> None:
+    from app.agents._runtime import TerminalSchemaError
+
+    _search_with_only_travel_sources(monkeypatch, "not json")
+    plan, requirements = _titled_plan_and_requirements()
+
+    with pytest.raises(TerminalSchemaError):
+        compose_creation_text(
+            plan.snapshot, creator_request=REQUEST, text_requirements=requirements, drops=[]
+        )

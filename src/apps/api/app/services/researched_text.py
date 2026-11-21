@@ -45,6 +45,14 @@ class ResearchUnavailable(ValueError):
     """No safe researched revision can be offered; retain the current draft."""
 
 
+class NoUsableSources(ResearchUnavailable):
+    """The grounded search ran and found nothing the source rules accept.
+
+    Not a malformed answer and not a validation of written text: the creator's topic has no
+    qualifying source, so no later step can fix it. Callers that ship the rest of the creator's
+    video (`creation_text_composition`) degrade on exactly this."""
+
+
 class ResearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     topic: str = Field(min_length=3, max_length=500)
@@ -824,10 +832,24 @@ def research_facts(
     """Primary-source facts for the creator's own research ask, for the text composer to write.
 
     Same authorization and grounded search as ``run_researched_revision``; no copy is written.
+    A search with no qualifying source raises ``NoUsableSources``; any other agent failure
+    (a truncated or malformed answer, a provider error) is raised as it is.
     """
+    from app.agents._runtime import TerminalSchemaError  # noqa: PLC0415
+
     request.authorize(utterance)
     research_ctx = replace(ctx, thought_summary_callback=None) if ctx else None
-    return GroundedResearchAgent(GroundedGeminiClient()).run(request, ctx=research_ctx)
+    try:
+        return GroundedResearchAgent(GroundedGeminiClient()).run(request, ctx=research_ctx)
+    except TerminalSchemaError as exc:
+        # `GroundedResearchAgent.parse` turns "no qualifying source" into a SchemaError; the
+        # typed reason is on the cause.
+        seen: BaseException | None = exc
+        while seen is not None:
+            if isinstance(seen, ResearchUnavailable):
+                raise NoUsableSources(str(seen)) from exc
+            seen = seen.__cause__
+        raise
 
 
 _NUMBER = re.compile(r"\d+")
