@@ -1558,39 +1558,115 @@ def test_still_footage_below_the_exact_bar_has_no_profile_to_pass_on(exports, so
     assert (picture["status"], picture["profile_samples"]) == ("failed", 0), picture
 
 
-# --- Held frames and the whole-window shift rule (CI repeat run, 2026-11-21) ---
+# --- Held frames and the late-window rule (v6; found by a CI repeat run, 2026-11-21) ---
 #
-# Failure modes written before any verifier change:
+# Failure modes written before the verifier change:
 # - a 30 fps proxy of a 25 fps original holds every sixth picture for two frames; a sample
 #   on a held frame matches its displayed frame AND its next frame, so it says nothing
-#   about timing, yet it counts as "in place" and switches the whole-window rule off;
+#   about timing, yet v5 counted it as "in place" and switched the whole-window rule off;
 # - the held sample can be first, in the middle or last, and there can be two of them;
 # - a low-motion sample does the same without being a held frame: displayed and next
-#   both clear the exact bar (phase 1, sample 1);
-# - a correct export of the same footage has held samples too and must keep passing.
+#   both clear the exact bar (handheld phase 1, sample 1; calm footage, two per window);
+# - a sample in a long hold of a variable-rate proxy has no next frame to compare at all;
+# - a correct export of the same footage has held and low-motion samples too and must
+#   keep passing, on sharp and on soft proxies;
+# - near-still footage: codec noise alone can tip one sample to its next frame while
+#   every other sample matches either frame. That is not a late export;
+# - a window where every sample needed its next frame stays rejected (v3, KRI-831),
+#   whatever its lead;
+# - off the source grid a correct export legitimately needs next frames (KRI-810): the
+#   rule applies only on the grid, as before.
 #
 # The proxy here is sharp, so every neighbour clears the 0.95 bar by a wide margin and the
 # verdict does not depend on encoder noise. The soft-proxy case above
-# (handheld25-1-frame-late) reaches the same hole in about 1 CI run in 240, when the
-# rate-capped proxy encode happens to lift four neighbours over the bar.
+# (handheld25-1-frame-late) reached the same hole in about 1 CI run in 240, when the
+# rate-capped proxy encode happened to lift four neighbours over the bar.
 HELD_PHASES = [0.5 + k / 30 for k in range(6)]
+LATE_WINDOWS = [
+    *(("handheld_25", start) for start in HELD_PHASES),
+    # Calm pan: two samples of five match either frame, held or not.
+    ("calm_25", HELD_PHASES[0]),
+    ("calm_25", HELD_PHASES[1]),
+    ("still_grain_25", HELD_PHASES[0]),
+]
+CORRECT_WINDOWS = [
+    *LATE_WINDOWS,
+    # Slow zoom: most samples match either frame, with no sample needing the next one.
+    ("zoom_25", HELD_PHASES[0]),
+    ("zoom_25", HELD_PHASES[4]),
+]
 
 
-@pytest.mark.parametrize("start", HELD_PHASES)
-def test_one_frame_late_is_rejected_when_samples_land_on_held_frames(exports, soft_proxy, start):
+def _window_id(window):
+    return f"{window[0]}-phase{HELD_PHASES.index(window[1])}"
+
+
+@pytest.mark.parametrize("footage,start", LATE_WINDOWS, ids=map(_window_id, LATE_WINDOWS))
+def test_one_frame_late_is_rejected_when_samples_match_either_frame(
+    exports, soft_proxy, footage, start
+):
     root, _, recipe = exports
-    proxy, cut = soft_proxy("handheld_25", SHARP_PROXY_QUALITY)
+    proxy, cut = soft_proxy(footage, SHARP_PROXY_QUALITY)
     report = verify_actual_export(
         cut([(start + 1 / 30, 1.9)]), status(_portrait(recipe, [(start, 1.9)])), {"a": proxy}
     )
     assert report["status"] == "rejected", report
+    (picture,) = [c for c in report["checks"] if c["kind"] == "picture"]
+    assert picture["status"] == "failed" and picture["on_source_grid"], picture
+    assert picture["reason"] in {"whole_window_neighbour_shift", "no_sample_holds_displayed_frame"}
 
 
-@pytest.mark.parametrize("start", HELD_PHASES)
-def test_correct_export_with_held_frames_passes_against_a_sharp_proxy(exports, soft_proxy, start):
+@pytest.mark.parametrize("footage,start", CORRECT_WINDOWS, ids=map(_window_id, CORRECT_WINDOWS))
+def test_correct_export_with_either_frame_samples_passes_against_a_sharp_proxy(
+    exports, soft_proxy, footage, start
+):
     root, _, recipe = exports
-    proxy, cut = soft_proxy("handheld_25", SHARP_PROXY_QUALITY)
+    proxy, cut = soft_proxy(footage, SHARP_PROXY_QUALITY)
     report = verify_actual_export(
         cut([(start, 1.9)]), status(_portrait(recipe, [(start, 1.9)])), {"a": proxy}
     )
     assert report["status"] == "checked", report
+
+
+def _sample(displayed, following=None, *, repeat=False):
+    """Stored evidence of one sample: (error, ssim) against displayed and next."""
+    row = {"error_displayed": displayed[0], "ssim_displayed": displayed[1]}
+    if following is not None:
+        row |= {"error_next": following[0], "ssim_next": following[1]}
+    return row | ({"repeats": ["next"]} if repeat else {})
+
+
+MATCH, MISS = (0.01, 0.99), (0.04, 0.80)
+ON_DISPLAYED = _sample(MATCH, MISS)
+ON_NEXT = _sample(MISS, MATCH)
+ON_EITHER = _sample(MATCH, MATCH)
+ON_HELD = _sample(MATCH, MATCH, repeat=True)
+IN_A_LONG_HOLD = _sample(MATCH)
+
+
+@pytest.mark.parametrize(
+    "samples,lead_next,reason",
+    [
+        ([ON_NEXT] * 5, -0.19, "whole_window_neighbour_shift"),
+        # The v3 control never depends on the lead.
+        ([ON_NEXT] * 5, 0.0, "whole_window_neighbour_shift"),
+        ([ON_HELD, *[ON_NEXT] * 4], -0.19, "no_sample_holds_displayed_frame"),
+        ([ON_NEXT, ON_EITHER, *[ON_NEXT] * 3], -0.19, "no_sample_holds_displayed_frame"),
+        ([ON_EITHER, ON_NEXT, ON_NEXT, ON_HELD, ON_HELD], -0.05, "no_sample_holds_displayed_frame"),
+        ([IN_A_LONG_HOLD, *[ON_NEXT] * 4], -0.19, "no_sample_holds_displayed_frame"),
+        # One sample that holds the displayed frame is positive proof of timing.
+        ([ON_DISPLAYED, *[ON_NEXT] * 4], -0.12, None),
+        # Noise tips one sample of near-still footage; the window does not lean late.
+        ([ON_NEXT, *[ON_EITHER] * 4], 0.0, None),
+        ([ON_NEXT, *[ON_EITHER] * 4], 0.004, None),
+        ([ON_EITHER] * 5, -0.03, None),
+        ([ON_DISPLAYED] * 5, 0.2, None),
+    ],
+)
+def test_late_window_rule_reads_only_samples_that_tell_the_two_frames_apart(
+    samples, lead_next, reason
+):
+    from app.services.actual_export_verification import _late_window
+
+    neighbours = sum(sample is ON_NEXT for sample in samples)
+    assert _late_window(samples, neighbours, lead_next) == reason
