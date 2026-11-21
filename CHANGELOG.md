@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.61.0] - 2026-11-21
+
+### Changed
+- ci(api): write opencv-contrib last so cv2 always has the cascade classifier (KRI-1534) (#2441) <!-- release-pr: 2441 -->
+
 ## [0.89.60.0] - 2026-11-21
 
 ### Changed
