@@ -30,9 +30,22 @@ def locked_version(lock: str) -> str:
     return match.group(1)
 
 
-def find_ruff() -> str | None:
-    local = API / ".venv/bin/ruff"
-    return str(local) if local.exists() else shutil.which("ruff")
+def ruff_candidates() -> list[str]:
+    """Every ruff worth asking for its version: this checkout's environment, the
+    primary checkout's (a worktree made with `git worktree add` has none of its
+    own), then PATH."""
+    found = [API / ".venv/bin/ruff"]
+    common = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if common:
+        found.append(Path(common).parent / "src/apps/api/.venv/bin/ruff")
+    on_path = shutil.which("ruff")
+    if on_path:
+        found.append(Path(on_path))
+    return list(dict.fromkeys(str(path) for path in found if path.exists()))
 
 
 def installed_version(ruff: str, run=subprocess.run) -> str:
@@ -53,21 +66,23 @@ def main(
     argv,
     *,
     run=subprocess.run,
-    ruff="find",
+    ruff=None,
     lock=None,
     say=print,
     exists=lambda path: (API / path).exists(),
 ) -> int:
     lock = (API / "uv.lock").read_text() if lock is None else lock
     want = locked_version(lock)
-    ruff = find_ruff() if ruff == "find" else ruff
-    install = f"Install it: src/apps/api/.venv/bin/python -m pip install ruff=={want}"
+    candidates = ruff_candidates() if ruff is None else ruff
+    versions = {path: installed_version(path, run) for path in candidates}
+    ruff = next((path for path, version in versions.items() if version == want), None)
     if ruff is None:
-        say(f"api-lint: no ruff found. CI uses ruff {want}. {install}")
-        return 2
-    have = installed_version(ruff, run)
-    if have != want:
-        say(f"api-lint: {ruff} is ruff {have}, CI uses ruff {want}. {install}")
+        for path, version in versions.items():
+            say(f"api-lint: {path} is ruff {version}")
+        say(
+            f"api-lint: CI uses ruff {want} and no such ruff is installed here. "
+            f"Install it: src/apps/api/.venv/bin/python -m pip install ruff=={want}"
+        )
         return 2
     if argv == ["--ruff-path"]:
         say(ruff)

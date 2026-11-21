@@ -23,6 +23,9 @@ ruff step of `scripts/preship-check.sh`:
 - the editor's format-on-save hook formats with whatever `ruff` is first on
   PATH (Homebrew's was 0.15.20 on 2026-11-21), so a saved file fails CI's check;
 - the hooks are defined but never installed, or installed without the checks;
+- a worktree made with `git worktree add` has no environment of its own, so
+  the lookup lands on Homebrew's older ruff and every push from it is refused,
+  although the primary checkout has the pinned one;
 - deleting a remote branch runs the push hook with an all-zero commit; a check
   that reads that commit fails and the deletion is refused (seen with hk
   2.13.0 in a scratch repository), and a check of the working tree would judge
@@ -67,17 +70,18 @@ class FakeRun:
     def __call__(self, argv, **kwargs):
         self.calls.append((list(argv), kwargs.get("cwd")))
         if argv[1] == "--version":
-            return SimpleNamespace(returncode=0, stdout=self.version + "\n")
+            version = self.version.get(argv[0]) if isinstance(self.version, dict) else self.version
+            return SimpleNamespace(returncode=0, stdout=version + "\n")
         return SimpleNamespace(returncode=self.codes[argv[1]], stdout="")
 
 
-def run(argv=(), missing=(), **fake):
+def run(argv=(), missing=(), ruff=("/venv/bin/ruff",), **fake):
     calls = FakeRun(**fake)
     out = []
     code = api_lint.main(
         list(argv),
         run=calls,
-        ruff="/venv/bin/ruff",
+        ruff=list(ruff),
         lock=LOCK,
         say=out.append,
         exists=lambda path: path not in missing,
@@ -122,10 +126,24 @@ class ApiLintTests(unittest.TestCase):
         self.assertIn("ruff==0.17.6", out)
 
     def test_a_missing_ruff_fails_instead_of_skipping(self):
-        out = []
-        code = api_lint.main([], run=FakeRun(), ruff=None, lock=LOCK, say=out.append)
+        code, calls, out = run(ruff=())
+        self.assertEqual((code, calls), (2, []))
+        self.assertIn("ruff==0.17.6", out)
+
+    def test_the_first_ruff_of_the_pinned_version_is_used_wherever_it_is(self):
+        versions = {"/brew/ruff": "ruff 0.15.20", "/primary/venv/ruff": "ruff 0.17.6"}
+        code, calls, _ = run(ruff=("/brew/ruff", "/primary/venv/ruff"), version=versions)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[-2][0], ["/primary/venv/ruff", "check", "."])
+        self.assertEqual(calls[-1][0], ["/primary/venv/ruff", "format", "--check", "."])
+
+    def test_no_ruff_of_the_pinned_version_names_every_one_it_found(self):
+        versions = {"/brew/ruff": "ruff 0.15.20", "/other/ruff": "ruff 0.16.1"}
+        code, calls, out = run(ruff=("/brew/ruff", "/other/ruff"), version=versions)
         self.assertEqual(code, 2)
-        self.assertIn("ruff==0.17.6", "\n".join(out))
+        self.assertEqual(len(calls), 2, "only the two version questions")
+        self.assertIn("/brew/ruff is ruff 0.15.20", out)
+        self.assertIn("/other/ruff is ruff 0.16.1", out)
 
     def test_paths_from_the_repository_root_are_read_as_api_paths(self):
         _, calls, _ = run(["src/apps/api/app/a.py", "tests/b.py"])
