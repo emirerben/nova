@@ -254,3 +254,46 @@ def test_one_row_changes_every_talking_reader(monkeypatch: pytest.MonkeyPatch) -
         )
     )
     assert resolution.source is None and resolution.reason == "source_too_long"
+
+
+def test_a_long_voiceover_is_accepted_and_only_cleanup_is_limited() -> None:
+    """Tadic/Yasin 2026-11-21: 5 minutes limits speech cleanup, not the voiceover upload. A creator
+    may record longer and use a shorter part; the 240 s cap is on the finished edit."""
+
+    from app.routes import creation_threads as routes
+    from app.services.active_narration_source import (
+        ActiveNarrationRequest,
+        RegisteredNarrationMedia,
+        resolve_active_narration_source,
+    )
+
+    six_minutes = 360.0
+    for edit_format in ("narrated_planned", "subtitled", "montage"):
+        assert policy.exceeded_pick_rule(six_minutes, edit_format, "voiceover") is None
+        assert policy.pick_limit_s(edit_format, "voiceover") == policy.library_max_s()
+    item = SimpleNamespace(
+        edit_format="narrated_planned",
+        audio_mode="voiceover",
+        voiceover_gcs_path=None,
+        song_gcs_path=None,
+    )
+    contract = routes._media_capabilities(item=item, clip_count=0, visual_count=0)
+    assert contract["voiceover"]["max_duration_s"] == policy.library_max_s()
+
+    voiceover = RegisteredNarrationMedia(
+        media_id="vo",
+        storage_path="users/u/vo.m4a",
+        generation="1",
+        media_kind="audio",
+        duration_s=six_minutes,
+        has_audio=True,
+    )
+    resolution = resolve_active_narration_source(
+        ActiveNarrationRequest(
+            edit_format="narrated_planned",
+            audio_mode="voiceover",
+            detector_policy="test",
+            voiceover=voiceover,
+        )
+    )
+    assert resolution.source is None and resolution.reason == "source_too_long"

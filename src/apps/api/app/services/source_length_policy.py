@@ -17,6 +17,8 @@ A row "binds at pick" when the format and source kind are both known the moment 
 a file, so the iPhone can refuse it before anything uploads. ``speech_cut_speaker`` binds at plan
 time: a montage only becomes a speech-cut montage once the planner reads what its clips say, so the
 same 6-minute clip is fine as montage footage and too long as the speaking clip.
+``speech_analysis_window`` limits speech cleanup only, never an upload: a voiceover longer than it
+is accepted and plays in full, and cleanup says it cannot cover it (``source_too_long``).
 
 This module imports nothing from the app: ``app.kria.media_sources`` reads it at class definition.
 """
@@ -116,10 +118,6 @@ SOURCE_LENGTH_POLICY: dict[str, SourceLengthRule] = {
     )
 }
 
-# A voiceover in a format speech cleanup analyses is refused at pick when cleanup could not
-# analyse all of it: the voice track is the whole video, so the window is the voiceover limit.
-_VOICEOVER_RULE_KEY: Final = "speech_analysis_window"
-
 
 def rule(key: str) -> SourceLengthRule:
     return SOURCE_LENGTH_POLICY[key]
@@ -150,14 +148,13 @@ def pick_rule(edit_format: str | None, role: PickRole) -> SourceLengthRule:
     """The tightest limit the iPhone can check when the creator picks a file for ``role``.
 
     Every source is bounded by the library limit; a format adds a tighter row when one binds at
-    pick time for that role.
+    pick time for that role. A voiceover has none: the speech-cleanup window limits cleanup, not
+    the recording (a creator may use a shorter part of a longer one).
     """
 
     candidates = [rule("library_media")]
     if role == "clip" and rule("talking_clip").applies_to(edit_format):
         candidates.append(rule("talking_clip"))
-    elif role == "voiceover" and rule(_VOICEOVER_RULE_KEY).applies_to(edit_format):
-        candidates.append(rule(_VOICEOVER_RULE_KEY))
     elif role == "song":
         candidates.append(rule("creator_song"))
     elif role == "visual_video" and rule("slide_video").applies_to(edit_format):

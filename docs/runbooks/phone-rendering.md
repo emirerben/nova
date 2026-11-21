@@ -109,7 +109,8 @@ reader follows:
   probed length, so a build without the pick-time check is refused before any plan exists.
 - The dispatch gate, the phone compilers and the workers read the same rows.
 - Speech cleanup never analyses part of a source it plays in full: a voiceover or Talking take
-  longer than the analysis window is `source_too_long`. A talking-head spine's cut window is
+  longer than the analysis window is `source_too_long`. The window limits cleanup only: a
+  voiceover longer than it is still accepted at pick and registration. A talking-head spine's cut window is
   reported as `window_clamp`.
 
 `tests/test_source_length_policy.py` fails when a compiler, gate or preflight writes one of

@@ -18,7 +18,7 @@ final class SourceLengthLimitTests: XCTestCase {
         let json = """
         {"formats": [
             {"id": "talking_to_camera", "edit_format": "subtitled", "max_clips": 10,
-             "max_duration_s": {"clip": 300, "voiceover": 300, "song": 600, "visual_video": 1800}},
+             "max_duration_s": {"clip": 300, "voiceover": 1800, "song": 600, "visual_video": 1800}},
             {"id": "montage", "edit_format": "montage", "max_clips": 50,
              "max_duration_s": {"clip": 1800, "voiceover": 1800, "song": 600, "visual_video": 1800}},
             {"id": "slides", "edit_format": "slides", "max_clips": 50,
