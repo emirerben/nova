@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.51.0] - 2026-11-21
+
+### Changed
+- ci(baseline): report waiting, setup and running per job (KRI-1534) (#2430) <!-- release-pr: 2430 -->
+
 ## [0.89.50.0] - 2026-11-21
 
 ### Changed
