@@ -39,20 +39,23 @@ LAYER2_PATHS=(
   "src/apps/api/prompts/classify_overlay.txt"
 )
 
-changed_files="$(git diff --name-only "$BASE" "$HEAD_REF" 2>/dev/null || true)"
+# A diff that cannot be read (unknown base, shallow clone) must stop the guard:
+# an empty result here would read as "nothing changed" and pass.
+changed_files="$(git diff --name-only "$BASE" "$HEAD_REF")"
 if [ -z "$changed_files" ]; then
   echo "Layer-2 cache guard: no diff against $BASE — nothing to check."
   exit 0
 fi
 
-layer2_hits="$(printf '%s\n' "$changed_files" | grep -F -f <(printf '%s\n' "${LAYER2_PATHS[@]}") || true)"
+# grep exits 1 for "no match"; anything else is an error and stops the guard.
+layer2_hits="$(printf '%s\n' "$changed_files" | grep -F -f <(printf '%s\n' "${LAYER2_PATHS[@]}") || [ "$?" -eq 1 ])"
 if [ -z "$layer2_hits" ]; then
   echo "Layer-2 cache guard: no Layer-2 stage/agent/prompt files changed — OK."
   exit 0
 fi
 
 # Escape hatch: a commit on the PR opts out for non-semantic edits.
-commit_msgs="$(git log --format='%B' "$BASE..$HEAD_REF" 2>/dev/null || true)"
+commit_msgs="$(git log --format='%B' "$BASE..$HEAD_REF")"
 if printf '%s' "$commit_msgs" | grep -qF '[skip-layer2-cache-bump]'; then
   echo "Layer-2 cache guard: [skip-layer2-cache-bump] found in a commit message — bypassing."
   echo "Changed Layer-2 files:"
