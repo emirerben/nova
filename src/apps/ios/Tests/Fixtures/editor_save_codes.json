@@ -48,6 +48,8 @@
     "split_screen_requires_atomic_commit",
     "split_screen_unavailable",
     "speaker_full_opening_invalid",
+    "speaker_sections_disabled",
+    "speaker_sections_invalid",
     "talking_range_captions_missing",
     "talking_range_cut_mismatch",
     "talking_range_multi_clip",

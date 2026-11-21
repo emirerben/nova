@@ -16,6 +16,8 @@ struct NativeSpeakerPanel: View {
     let onDone: () -> Void
     @State private var tab = Tab.speaker
     @State private var sliderTarget: EditorSelection?
+    /// KRI-1558: the section under the playhead (`NativeSpeakerSectionTracking`), nil outside one.
+    @State private var playheadSection: Int?
 
     private var target: EditorSelection {
         guard let selected = session.selection, selected.kind == .speaker else { return .speaker }
@@ -33,10 +35,18 @@ struct NativeSpeakerPanel: View {
         let scoped = session.usesScopedSpeakerFrame(for: selected)
         let inPanel = session.document.clips.first { $0.id == selected.id }?.splitSectionID != nil
         let width = session.speakerEditingFrame(for: selected)?.widthFraction ?? 1
+        // KRI-1558: the whole-video target with the playhead inside a section offers "This part / Whole video".
+        let inSection = !scoped && playheadSection != nil && session.speakerLayoutWindowAtPlayhead != nil
+        let sectionOnly = inSection && !session.speakerFrameAppliesToWholeVideo
+        // An `own` / `picture` section draws no cut-out, so no spot is lit there (Full would claim one).
+        let drawsCutOut = !inSection || session.speakerLayoutWindowAtPlayhead.map { $0.layout == .small || $0.layout == .full } == true
         NativeEditorLanePanel(title: "You", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }, heading: String(localized: "You", comment: "Panel title for the speaker (the creator) in the video")) {
             VStack(alignment: .leading, spacing: 12) {
+                if inSection { NativeSpeakerSectionScope(session: session) }
                 Text(scoped
                     ? String(localized: "Drag yourself to move. Pinch, or drag a corner, to resize. Changes affect only this clip.")
+                    : sectionOnly
+                    ? String(localized: "Drag yourself to move. Pinch, or drag a corner, to resize. Changes affect only this part of the video.")
                     : String(localized: "Drag yourself on the video to move. Pinch, or drag a corner, to resize. One spot and size for the whole video."))
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -57,8 +67,8 @@ struct NativeSpeakerPanel: View {
                 }
                 HStack(spacing: 4) {
                     ForEach(Self.spots, id: \.preset) { spot in
-                        let active = spot.preset == "full" ? session.speakerFrame(for: selected) == nil
-                            : session.speakerFrame(for: selected)?.presetName == spot.preset
+                        let active = drawsCutOut && (spot.preset == "full" ? session.speakerFrame(for: selected) == nil
+                            : session.speakerFrame(for: selected)?.presetName == spot.preset)
                         Button { session.setSpeakerFrame(preset: spot.preset, for: selected) } label: {
                             Image(systemName: spot.symbol).font(.system(size: 15, weight: .semibold))
                                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -83,6 +93,44 @@ struct NativeSpeakerPanel: View {
             panelLifecycle?.register(owner: lifecycleOwner) { session.endTransaction() }
         }
         .onDisappear { panelLifecycle?.unregister(owner: lifecycleOwner); session.endTransaction() }
+        .modifier(NativeSpeakerSectionTracking(session: session, index: $playheadSection))
+    }
+}
+
+/// KRI-1558: what the speaker controls change while the playhead is inside a section: that part ("This part", default)
+/// or the whole video, which also sends every corner / full-size section back to the one frame. Shown only for the
+/// whole-video target while the section controls are open. Identifier: `native-editor-speaker-scope`.
+struct NativeSpeakerSectionScope: View {
+    @ObservedObject var session: NativeEditorSession
+
+    var body: some View {
+        Picker("Size and position apply to", selection: $session.speakerFrameAppliesToWholeVideo) {
+            Text("This part", comment: "Speaker size and position: only the part of the video under the playhead").tag(false)
+            Text("Whole video").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("native-editor-speaker-scope")
+    }
+}
+
+/// KRI-1558: keeps `index` on the section under the playhead (nil outside one, or while the section controls are closed).
+/// It changes when the playhead crosses a section edge or the lane changes, never on every clock tick, so a panel that
+/// reads it re-renders only then.
+struct NativeSpeakerSectionTracking: ViewModifier {
+    @ObservedObject var session: NativeEditorSession
+    @Binding var index: Int?
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { update(session.currentTime) }
+            // The clock publishes before it stores the new time, so the emitted value is the one to read.
+            .onReceive(session.playbackClock.$currentTime) { update($0) }
+            .onChange(of: session.document.speakerBackground) { _, _ in update(session.currentTime) }
+    }
+
+    private func update(_ time: Double) {
+        let now = session.canEditSpeakerSections ? session.document.speakerBackground?.layoutWindowIndex(at: time) : nil
+        if now != index { index = now }
     }
 }
 

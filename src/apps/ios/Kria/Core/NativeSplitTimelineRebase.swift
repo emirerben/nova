@@ -104,6 +104,19 @@ enum NativeSplitTimelineRebase {
             background.windows.removeAll { !$0.isValid }
             background.fullScreenWindows.removeAll { !$0.isValid }
             background.windows.sort { $0.startS < $1.startS }; background.fullScreenWindows.sort { $0.startS < $1.startS }
+            // KRI-1558: section layouts follow their words like the full-screen windows. Two that now overlap keep the
+            // earlier one whole (the later starts where it ends); one left under half a second goes, so the lane still validates.
+            for i in background.layoutWindows.indices {
+                let span = interval(background.layoutWindows[i].startS, background.layoutWindows[i].endS)
+                background.layoutWindows[i].startS = span.0; background.layoutWindows[i].endS = span.1
+            }
+            background.layoutWindows.sort { $0.startS < $1.startS }
+            var layouts: [EditorLayoutWindow] = []
+            for var window in background.layoutWindows {
+                if let previous = layouts.last, window.startS < previous.endS { window.startS = previous.endS }
+                if window.isValid { layouts.append(window) }
+            }
+            background.layoutWindows = layouts
             next.speakerBackground = background
         }
         next.captionCues.removeAll { $0.endS <= $0.startS }

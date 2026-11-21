@@ -152,6 +152,10 @@ enum EditorOpenIntent { case warm, open }
     @Published private(set) var selectionRequest = 0
     /// KRI-1162: bumped to ask the editor view to open the Background tool (from the lane or an inspector).
     @Published private(set) var backgroundToolRequest = 0
+    /// KRI-1558: the speaker controls' "This part / Whole video" choice. Read only while the section layouts are editable and
+    /// the playhead is inside one: false = a preset, the size or a drag changes that section; true = the whole-video frame
+    /// (and every `small` / `full` section goes back to it).
+    @Published var speakerFrameAppliesToWholeVideo = false
     /// A new text item is staged separately until Done. Cancel must not roll
     /// back unrelated edits or leave a placeholder in the persisted document.
     @Published private(set) var pendingText: EditorTextElement? {
@@ -7500,7 +7504,8 @@ enum EditorOpenIntent { case warm, open }
         let value = EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart,
                                             windows: current?.windows ?? [], speakerFrame: current?.speakerFrame,
                                             fullScreenWindows: current?.fullScreenWindows ?? [],
-                                            focus: current?.mediaID == mediaID && current?.kind == kind ? current?.focus : nil)
+                                            focus: current?.mediaID == mediaID && current?.kind == kind ? current?.focus : nil,
+                                            layoutWindows: current?.layoutWindows ?? [])
         transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
         return true
     }
@@ -7524,7 +7529,7 @@ enum EditorOpenIntent { case warm, open }
         guard canEditSpeakerBackgroundColor, let color = EditorSpeakerBackground.normalizedColor(hex) else { return false }
         let current = document.speakerBackground
         let value = EditorSpeakerBackground(color: color, windows: current?.windows ?? [], speakerFrame: current?.speakerFrame,
-                                            fullScreenWindows: current?.fullScreenWindows ?? [])
+                                            fullScreenWindows: current?.fullScreenWindows ?? [], layoutWindows: current?.layoutWindows ?? [])
         transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
         return true
     }
@@ -7540,10 +7545,42 @@ enum EditorOpenIntent { case warm, open }
     var speakerBackgroundWindows: [EditorSpeakerBackgroundWindow] { document.speakerBackground?.windows ?? [] }
     var speakerFrame: EditorSpeakerFrame? { document.speakerBackground?.speakerFrame }
 
+    // MARK: Speaker layout per section (KRI-1558)
+
+    /// The section controls exist only while the server advertises `speaker_sections` (gate open, this build speaks
+    /// protocol 54) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
+    /// and the speaker controls act on the whole-video frame exactly as before.
+    var canEditSpeakerSections: Bool {
+        canEditSpeakerBackgroundWindows && document.capabilities["speaker_sections"]?.editable == true
+    }
+    var speakerLayoutWindows: [EditorLayoutWindow] { document.speakerBackground?.layoutWindows ?? [] }
+    /// The layout window under the playhead the speaker controls read and write (nil outside every one, inside a full-screen
+    /// window, or while the section controls are closed). The "This part / Whole video" choice shows only while it is set.
+    var speakerLayoutWindowAtPlayhead: EditorLayoutWindow? { speakerSectionLayout(at: currentTime) }
+
+    private func speakerSectionLayout(at time: Double) -> EditorLayoutWindow? {
+        guard canEditSpeakerSections, let background = document.speakerBackground,
+              let index = background.layoutWindowIndex(at: time) else { return nil }
+        return background.layoutWindows[index]
+    }
+
+    /// Ticket step 5: with the section controls open and the timeline editable, a take cut into two or more speaker
+    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 54).
+    private var scopesSpeakerPieces: Bool {
+        guard canEditSpeakerSections, canEditTimeline else { return false }
+        return document.clips.filter { !$0.removed && $0.splitSectionID == nil && isFramableSpeakerPiece($0) }.count >= 2
+    }
+
+    private func isFramableSpeakerPiece(_ slot: EditorTimelineSlot) -> Bool {
+        isSpeakerSubject(slot) && slot.raw["media_kind"]?.stringValue != "image"
+    }
+
     private func speakerOccurrenceIndex(for selected: EditorSelection) -> Int? {
         guard selected.kind == .speaker, selected.id != EditorSelection.speakerID,
-              let index = document.clips.firstIndex(where: { $0.id == selected.id && !$0.removed }),
-              document.clips[index].splitSectionID != nil || document.clips[index].raw["speaker_frame_override"] != nil else { return nil }
+              let index = document.clips.firstIndex(where: { $0.id == selected.id && !$0.removed }) else { return nil }
+        let slot = document.clips[index]
+        guard slot.splitSectionID != nil || slot.raw["speaker_frame_override"] != nil
+            || (isFramableSpeakerPiece(slot) && scopesSpeakerPieces) else { return nil }
         return index
     }
 
@@ -7564,17 +7601,33 @@ enum EditorOpenIntent { case warm, open }
             && document.clips.contains { $0.id == selected.id })
     }
 
+    /// The frame the speaker is drawn at under the playhead (see `speakerFrame(for:at:)`).
     func speakerFrame(for selected: EditorSelection) -> EditorSpeakerFrame? {
+        speakerFrame(for: selected, at: currentTime)
+    }
+
+    /// The frame the speaker is drawn at, at `time` (edit seconds). KRI-1558: while the section controls are open, the
+    /// layout window covering `time` replaces the whole-video frame (`small` = its frame, `full` = full size) and an
+    /// `own` / `picture` section draws no cut-out at all (nil, never selectable); a clip's own `custom` / `full` frame still
+    /// wins over the default, as in the export. Nil = full size or not drawn small.
+    func speakerFrame(for selected: EditorSelection, at time: Double) -> EditorSpeakerFrame? {
         guard selected.kind == .speaker else { return nil }
-        if selected.id == EditorSelection.speakerID { return speakerFrame }
+        var defaultFrame = speakerFrame
+        if let section = speakerSectionLayout(at: time) {
+            guard section.layout == .small || section.layout == .full else { return nil }
+            defaultFrame = section.speakerFrame
+        }
+        if selected.id == EditorSelection.speakerID { return defaultFrame }
         guard let slot = document.clips.first(where: { $0.id == selected.id }) else { return nil }
-        guard let raw = slot.raw["speaker_frame_override"] else { return speakerFrame }
-        return EditorSpeakerFrameOverride(json: raw)?.resolved(defaultFrame: speakerFrame)
+        guard let raw = slot.raw["speaker_frame_override"] else { return defaultFrame }
+        return EditorSpeakerFrameOverride(json: raw)?.resolved(defaultFrame: defaultFrame)
     }
 
     func speakerEditingFrame(for selected: EditorSelection) -> EditorSpeakerFrame? {
-        speakerFrame(for: selected) ?? (usesScopedSpeakerFrame(for: selected)
-            ? EditorSpeakerFrame(widthFraction: 1, xFraction: 0.5, yFraction: 0.5) : nil)
+        // A section drawn full size (or as the own take / the picture alone) resizes from the whole frame, like a clip's own.
+        let seedsFullSize = usesScopedSpeakerFrame(for: selected)
+            || (isGlobalSpeakerFrameTarget(selected) && speakerLayoutWindowAtPlayhead != nil)
+        return speakerFrame(for: selected) ?? (seedsFullSize ? EditorSpeakerFrame(widthFraction: 1, xFraction: 0.5, yFraction: 0.5) : nil)
     }
 
     func speakerSelection(forClip selected: EditorSelection) -> EditorSelection? {
@@ -7693,10 +7746,16 @@ enum EditorOpenIntent { case warm, open }
 
     /// Draws the speaker small in a corner (`small_bottom_right`, `small_bottom_left`, `small_top_right`,
     /// `small_top_left`) or full-frame (`full`). Free geometry comes only from the preview gesture
-    /// (`setSpeakerFrameCenter` / `setSpeakerFrameWidth`).
+    /// (`setSpeakerFrameCenter` / `setSpeakerFrameWidth`). KRI-1558: with the playhead inside a section (section controls
+    /// open) it changes that section, or the whole video when "Whole video" is picked (`writeSpeakerSectionFrame`).
     @discardableResult
     func setSpeakerFrame(preset: String) -> Bool {
         guard canEditSpeakerBackgroundWindows, var background = document.speakerBackground else { return false }
+        if speakerLayoutWindowAtPlayhead != nil {
+            if preset == "full" { return writeSpeakerSectionFrame(nil) }
+            guard let frame = EditorSpeakerFrame.preset(preset) else { return false }
+            return writeSpeakerSectionFrame(frame)
+        }
         if preset == "full" { return clearSpeakerFrame() }
         guard let frame = EditorSpeakerFrame.preset(preset) else { return false }
         background.speakerFrame = frame
@@ -7704,32 +7763,58 @@ enum EditorOpenIntent { case warm, open }
         return true
     }
 
+    /// KRI-1558: the global speaker controls with the playhead inside a section. "This part" rewrites only that section
+    /// (`small` at `frame`, or `full` for nil); "Whole video" sets the whole-video frame and sends every `small` / `full`
+    /// section back to it (`own` / `picture` sections stay). One undo step; nothing changes outside a section.
+    @discardableResult
+    private func writeSpeakerSectionFrame(_ frame: EditorSpeakerFrame?) -> Bool {
+        guard canEditSpeakerSections, var background = document.speakerBackground,
+              let index = background.layoutWindowIndex(at: currentTime) else { return false }
+        if speakerFrameAppliesToWholeVideo {
+            background.speakerFrame = frame
+            background.layoutWindows.removeAll { $0.layout == .small || $0.layout == .full }
+        } else {
+            background.layoutWindows[index].layout = frame == nil ? .full : .small
+            background.layoutWindows[index].speakerFrame = frame
+        }
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
+        return true
+    }
+
     /// The speaker can be selected, moved and resized on the preview: the frame controls are open and the speaker is
-    /// drawn small. A full-frame speaker is never selectable: it would cover the canvas and swallow tap-to-expand.
+    /// drawn small somewhere (the whole-video frame, a clip's own frame, or KRI-1558 a `small` section). A full-frame speaker
+    /// is never selectable: it would cover the canvas and swallow tap-to-expand. Where it is drawn at a given time is
+    /// `speakerFrameRect(for:at:)`.
     var canMoveSpeakerOnPreview: Bool {
         canEditSpeakerBackgroundWindows && document.speakerBackground != nil && (speakerFrame != nil || document.clips.contains {
             guard let raw = $0.raw["speaker_frame_override"] else { return false }
             return EditorSpeakerFrameOverride(json: raw)?.resolved(defaultFrame: nil) != nil
-        })
+        } || (canEditSpeakerSections && speakerLayoutWindows.contains { $0.layout == .small }))
     }
 
     /// Moves the framed speaker's centre (canvas fractions, top-left origin), clamped to the wire's range (SF3).
     /// A same-value sample is not an edit. The preview gesture wraps its samples in one direct-manipulation
-    /// transaction, so a whole drag is one undo step (SF6).
+    /// transaction, so a whole drag is one undo step (SF6). KRI-1558: moves the frame drawn under the playhead.
     func setSpeakerFrameCenter(x: Double, y: Double) {
-        guard let frame = speakerFrame else { return }
+        guard let frame = speakerFrame(for: .speaker) else { return }
         setSpeakerFrameValue(EditorSpeakerFrame.clamped(widthFraction: frame.widthFraction, xFraction: x, yFraction: y))
     }
 
     /// Resizes the framed speaker about its centre: `width` is the fraction of the canvas width, clamped to
-    /// [0.2, 1] (SF3).
+    /// [0.2, 1] (SF3). KRI-1558: inside a section drawn full size, it starts from the whole frame.
     func setSpeakerFrameWidth(_ width: Double) {
-        guard let frame = speakerFrame else { return }
+        guard let frame = speakerEditingFrame(for: .speaker) else { return }
         setSpeakerFrameValue(EditorSpeakerFrame.clamped(widthFraction: width, xFraction: frame.xFraction, yFraction: frame.yFraction))
     }
 
     private func setSpeakerFrameValue(_ next: EditorSpeakerFrame?) {
-        guard canMoveSpeakerOnPreview, let next, var background = document.speakerBackground,
+        guard let next else { return }
+        if speakerLayoutWindowAtPlayhead != nil {
+            guard speakerFrame(for: .speaker) != next else { return }
+            writeSpeakerSectionFrame(next)
+            return
+        }
+        guard canMoveSpeakerOnPreview, var background = document.speakerBackground,
               background.speakerFrame != next else { return }
         background.speakerFrame = next
         transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
@@ -11889,7 +11974,9 @@ enum EditorOpenIntent { case warm, open }
 
     private func selectionExists(_ value: EditorSelection) -> Bool {
         if value.kind == .speaker {
+            // KRI-1558: a speaker drawn small in some section stays selected while the playhead is in another one.
             return speakerFrame(for: value) != nil || usesScopedSpeakerFrame(for: value)
+                || (value == .speaker && canEditSpeakerSections && canMoveSpeakerOnPreview)
         }
         if value.kind == .clip, let id = UUID(uuidString: value.id) { return draft.clips.contains { $0.id == id } }
         return timelineItems.contains { $0.selection == value }
@@ -12793,26 +12880,38 @@ extension NativeEditorSession {
 }
 
 extension NativeEditorSession {
+    /// The speaker's preview objects. Whole-edit unless clips are framed one by one (split screen, a clip's own frame, or
+    /// KRI-1558 a cut take). Listed when the speaker is drawn small anywhere in its span; where it is drawn at a given time
+    /// is `speakerFrameRect(for:at:)` (the list does not follow the playhead).
     var previewSpeakerItems: [NativeEditorTimelineItem] {
         guard canMoveSpeakerOnPreview else { return [] }
-        guard !document.splitScreenSections.isEmpty || document.clips.contains(where: { $0.raw["speaker_frame_override"] != nil }) else {
+        guard !document.splitScreenSections.isEmpty || document.clips.contains(where: { $0.raw["speaker_frame_override"] != nil })
+            || scopesSpeakerPieces else {
             return [.init(selection: .speaker, start: 0, end: SpeakerBackgroundLimits.maxTimeline, zIndex: -1_000)]
         }
+        let smallSections = canEditSpeakerSections && speakerLayoutWindows.contains { $0.layout == .small }
         return timelineProjection.clipWindows.compactMap { window in
             let slot = document.clips[window.sourceIndex]
             let subject = isSpeakerSubject(slot)
-            guard subject, let id = slot.id, speakerFrame(for: .init(kind: .speaker, id: id)) != nil else { return nil }
+            guard subject, let id = slot.id else { return nil }
+            let raw = slot.raw["speaker_frame_override"]
+            guard let own = raw == nil ? EditorSpeakerFrameOverride.inherit : raw.flatMap(EditorSpeakerFrameOverride.init(json:)),
+                  own == .inherit ? (speakerFrame != nil || smallSections) : own.resolved(defaultFrame: nil) != nil else { return nil }
             return .init(selection: .init(kind: .speaker, id: id), start: window.start, end: window.end, zIndex: -1_000, sourceIndex: window.sourceIndex)
         }
     }
 
     func speakerViewport(for selected: EditorSelection, at time: Double) -> CGRect? {
-        guard selected.kind == .speaker, canEditSpeakerBackgroundWindows, speakerFrame(for: selected) != nil else { return nil }
+        guard selected.kind == .speaker, canEditSpeakerBackgroundWindows, speakerFrame(for: selected, at: time) != nil else { return nil }
         return sourcePreview?.speakerViewport(time: time, clipID: selected.id == EditorSelection.speakerID ? nil : selected.id)
     }
 
+    /// Where the speaker is drawn at `time` (canvas fractions), for the preview's box and handles. KRI-1558: the section
+    /// covering `time` decides (`speakerFrame(for:at:)`); while the section controls are closed a section's frame is not
+    /// editable, so the speaker is not a preview object inside one.
     func speakerFrameRect(for selected: EditorSelection, at time: Double) -> CGRect? {
-        guard let frame = speakerFrame(for: selected), let viewport = speakerViewport(for: selected, at: time) else { return nil }
+        if !canEditSpeakerSections, document.speakerBackground?.layoutWindowIndex(at: time) != nil { return nil }
+        guard let frame = speakerFrame(for: selected, at: time), let viewport = speakerViewport(for: selected, at: time) else { return nil }
         let local = frame.layerFrame.canvasRect
         return CGRect(x: viewport.minX + local.minX * viewport.width, y: viewport.minY + local.minY * viewport.height,
                       width: local.width * viewport.width, height: local.height * viewport.height)

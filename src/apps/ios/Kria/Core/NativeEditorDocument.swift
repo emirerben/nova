@@ -194,6 +194,9 @@ struct EditorUserSongState: Equatable, Sendable {
 /// Qendresa item 16 adds `full_screen_windows` (`[{start_s, end_s}]`, cut-timeline seconds, key absent while empty): spans in
 /// which the speaker's own take is drawn full-frame with no mask, background or corner frame. A strategy opening is the one
 /// starting at 0; the editor keeps the list through every background change and only ever removes the opening.
+/// KRI-1558 adds `layout_windows` (`[{start_s, end_s, layout, speaker_frame?}]`, cut-timeline seconds, key absent while empty):
+/// how the speaker is drawn per section (`own` / `full` / `small` at `speaker_frame` / `picture`). A full-screen window wins
+/// over a layout window, which wins over `speaker_frame`. Kept through every background change like `full_screen_windows`.
 struct EditorSpeakerBackground: Equatable, Sendable {
     /// What fills the layer wherever no window covers the time.
     enum Fill: Equatable, Sendable {
@@ -212,20 +215,24 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     var fullScreenWindows: [EditorFullScreenWindow]
     /// Qendresa item 18: where a photo/video FILL is aimed (nil = the centre cover-fit, key absent). Never set while the fill is a colour.
     var focus: SpeakerBackgroundFocus?
+    /// KRI-1558: sorted by `startS`, non-overlapping, at most `SpeakerBackgroundLimits.maxLayoutWindows`; empty = key absent.
+    var layoutWindows: [EditorLayoutWindow]
 
     init(mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0,
          windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil,
-         fullScreenWindows: [EditorFullScreenWindow] = [], focus: SpeakerBackgroundFocus? = nil) {
+         fullScreenWindows: [EditorFullScreenWindow] = [], focus: SpeakerBackgroundFocus? = nil,
+         layoutWindows: [EditorLayoutWindow] = []) {
         self.fill = .media(mediaID: mediaID, kind: kind, sourceStartS: kind == .video ? sourceStartS : 0)
         self.windows = windows; self.speakerFrame = speakerFrame; self.fullScreenWindows = fullScreenWindows; self.focus = focus
+        self.layoutWindows = layoutWindows
     }
 
     /// A solid-colour fill. `color` is stored as given; `init?(json:)` and `isValid` hold the `#RRGGBB` rule, and
     /// the session normalises a picked colour (`Self.normalizedColor`) before it gets here.
     init(color: String, windows: [EditorSpeakerBackgroundWindow] = [], speakerFrame: EditorSpeakerFrame? = nil,
-         fullScreenWindows: [EditorFullScreenWindow] = []) {
+         fullScreenWindows: [EditorFullScreenWindow] = [], layoutWindows: [EditorLayoutWindow] = []) {
         self.fill = .color(color); self.windows = windows; self.speakerFrame = speakerFrame; self.fullScreenWindows = fullScreenWindows
-        self.focus = nil
+        self.focus = nil; self.layoutWindows = layoutWindows
     }
 
     /// The pool visual behind the speaker; nil while the fill is a colour.
@@ -255,8 +262,9 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     init?(json: JSONValue) {
         guard case .object(let fields) = json, case .string(let rawKind)? = fields["kind"] else { return nil }
         let isColor = rawKind == "color"
-        let allowed: Set<String> = isColor ? ["kind", "color", "windows", "speaker_frame", "full_screen_windows"]
-                                           : ["media_id", "kind", "source_start_s", "windows", "speaker_frame", "full_screen_windows", "focus"]
+        let allowed: Set<String> = isColor ? ["kind", "color", "windows", "speaker_frame", "full_screen_windows", "layout_windows"]
+                                           : ["media_id", "kind", "source_start_s", "windows", "speaker_frame", "full_screen_windows", "focus",
+                                              "layout_windows"]
         guard Set(fields.keys).isSubset(of: allowed) else { return nil }
         var windows: [EditorSpeakerBackgroundWindow] = []
         if let raw = fields["windows"] {
@@ -281,6 +289,15 @@ struct EditorSpeakerBackground: Equatable, Sendable {
             }
             guard Self.fullScreenWindowsAreOrdered(fullScreen) else { return nil }
         }
+        var layouts: [EditorLayoutWindow] = []
+        if let raw = fields["layout_windows"] {
+            guard case .array(let rows) = raw, !rows.isEmpty, rows.count <= SpeakerBackgroundLimits.maxLayoutWindows else { return nil }
+            for row in rows {
+                guard let window = EditorLayoutWindow(json: row) else { return nil }
+                layouts.append(window)
+            }
+            guard Self.layoutWindowsAreOrdered(layouts) else { return nil }
+        }
         var fillFocus: SpeakerBackgroundFocus?
         if let raw = fields["focus"] {
             guard let value = SpeakerBackgroundFocus(json: raw) else { return nil }
@@ -288,7 +305,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         }
         if isColor {
             guard case .string(let hex)? = fields["color"], Self.isStrictHexColor(hex) else { return nil }
-            self.init(color: hex, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen)
+            self.init(color: hex, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen, layoutWindows: layouts)
             return
         }
         guard let kind = VisualMediaKind(rawValue: rawKind),
@@ -301,7 +318,8 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         default: return nil
         }
         guard start.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(start), kind == .video || start == 0 else { return nil }
-        self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen, focus: fillFocus)
+        self.init(mediaID: id, kind: kind, sourceStartS: start, windows: windows, speakerFrame: frame, fullScreenWindows: fullScreen, focus: fillFocus,
+                  layoutWindows: layouts)
     }
 
     var json: JSONValue {
@@ -316,6 +334,7 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         if let speakerFrame { fields["speaker_frame"] = speakerFrame.json }
         if !fullScreenWindows.isEmpty { fields["full_screen_windows"] = .array(fullScreenWindows.map(\.json)) }
         if case .media = fill, let focus { fields["focus"] = focus.json }
+        if !layoutWindows.isEmpty { fields["layout_windows"] = .array(layoutWindows.map(\.json)) }
         return .object(fields)
     }
 
@@ -326,16 +345,28 @@ struct EditorSpeakerBackground: Equatable, Sendable {
     func layer(subjectClipIDs: [String]?) -> SpeakerBackgroundLayer {
         let layerWindows = windows.isEmpty ? nil : windows.map(\.layerWindow)
         let layerFullScreen = fullScreenWindows.isEmpty ? nil : fullScreenWindows.map(\.layerWindow)
+        // KRI-1558: the same seconds the recipe draws on (cut timeline = output), as `full_screen_windows`.
+        let layerLayouts = layoutWindows.isEmpty ? nil : layoutWindows.map(\.layerWindow)
         switch fill {
         case .media(let mediaID, let kind, let sourceStartS):
             return SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
                                           loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
                                           windows: layerWindows, speakerFrame: speakerFrame?.layerFrame,
-                                          fullScreenWindows: layerFullScreen, focus: focus, subjectClipIDs: subjectClipIDs)
+                                          fullScreenWindows: layerFullScreen, focus: focus, subjectClipIDs: subjectClipIDs,
+                                          layoutWindows: layerLayouts)
         case .color(let hex):
             return .color(hex, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID,
-                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame, fullScreenWindows: layerFullScreen, subjectClipIDs: subjectClipIDs)
+                          windows: layerWindows, speakerFrame: speakerFrame?.layerFrame, fullScreenWindows: layerFullScreen, subjectClipIDs: subjectClipIDs,
+                          layoutWindows: layerLayouts)
         }
+    }
+
+    /// KRI-1558: the index of the layout window drawing `time` (edit seconds, `start <= time < end`). Nil outside every
+    /// layout window and inside a full-screen window, which wins over it (the engine's `RecipeVideoInstruction.layout(at:)`).
+    func layoutWindowIndex(at time: Double) -> Int? {
+        guard !layoutWindows.isEmpty, time.isFinite,
+              !fullScreenWindows.contains(where: { $0.startS <= time && time < $0.endS }) else { return nil }
+        return layoutWindows.firstIndex { $0.startS <= time && time < $0.endS }
     }
 
     /// Every pool visual the lane needs bytes for: the fill (none for a colour) and each window, once per media id.
@@ -367,6 +398,57 @@ struct EditorSpeakerBackground: Equatable, Sendable {
         for window in windows where !window.isValid { return false }
         for (earlier, later) in zip(windows, windows.dropFirst()) where later.startS < earlier.endS { return false }
         return true
+    }
+
+    /// KRI-1558: the same rule for layout windows (1...40, each valid, sorted, touching is fine).
+    static func layoutWindowsAreOrdered(_ windows: [EditorLayoutWindow]) -> Bool {
+        guard (1...SpeakerBackgroundLimits.maxLayoutWindows).contains(windows.count) else { return false }
+        for window in windows where !window.isValid { return false }
+        for (earlier, later) in zip(windows, windows.dropFirst()) where later.startS < earlier.endS { return false }
+        return true
+    }
+}
+
+/// KRI-1558: one span (cut-timeline seconds) drawn with one speaker layout. `speakerFrame` is set exactly when
+/// `layout == .small` (the wire's `speaker_frame`, same bounds as the layer's).
+struct EditorLayoutWindow: Equatable, Sendable {
+    var startS: Double
+    var endS: Double
+    var layout: SpeakerLayoutMode
+    var speakerFrame: EditorSpeakerFrame?
+
+    init(startS: Double, endS: Double, layout: SpeakerLayoutMode, speakerFrame: EditorSpeakerFrame? = nil) {
+        self.startS = startS; self.endS = endS; self.layout = layout; self.speakerFrame = speakerFrame
+    }
+
+    init?(json: JSONValue) {
+        guard case .object(let fields) = json, case .number(let start)? = fields["start_s"], case .number(let end)? = fields["end_s"],
+              case .string(let raw)? = fields["layout"], let layout = SpeakerLayoutMode(rawValue: raw) else { return nil }
+        let keys: Set<String> = ["start_s", "end_s", "layout"]
+        guard Set(fields.keys) == (layout == .small ? keys.union(["speaker_frame"]) : keys) else { return nil }
+        var frame: EditorSpeakerFrame?
+        if layout == .small {
+            guard let rawFrame = fields["speaker_frame"], let value = EditorSpeakerFrame(json: rawFrame) else { return nil }
+            frame = value
+        }
+        let window = EditorLayoutWindow(startS: start, endS: end, layout: layout, speakerFrame: frame)
+        guard window.isValid else { return nil }
+        self = window
+    }
+
+    var isValid: Bool {
+        startS.isFinite && endS.isFinite && startS >= 0 && endS <= SpeakerBackgroundLimits.maxTimeline
+            && endS - startS >= SpeakerBackgroundLimits.minWindowSeconds && (layout == .small) == (speakerFrame != nil)
+    }
+
+    var json: JSONValue {
+        var fields: [String: JSONValue] = ["start_s": .number(startS), "end_s": .number(endS), "layout": .string(layout.rawValue)]
+        if let speakerFrame { fields["speaker_frame"] = speakerFrame.json }
+        return .object(fields)
+    }
+
+    var layerWindow: SpeakerLayoutWindow {
+        SpeakerLayoutWindow(start: startS, end: endS, layout: layout, frame: speakerFrame?.layerFrame)
     }
 }
 

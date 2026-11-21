@@ -19,6 +19,8 @@ struct NativeBackgroundPanel: View {
     let projectID: UUID
     let onDone: () -> Void
     @State private var tab = Tab.background
+    /// KRI-1558: the section under the playhead (`NativeSpeakerSectionTracking`), nil outside one.
+    @State private var playheadSection: Int?
 
     var body: some View {
         NativeEditorLanePanel(title: "Background", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }, heading: String(localized: "Background")) {
@@ -50,6 +52,7 @@ struct NativeBackgroundPanel: View {
         }
         .onAppear { panelLifecycle?.register(owner: lifecycleOwner) { session.endTransaction() } }
         .onDisappear { panelLifecycle?.unregister(owner: lifecycleOwner); session.endTransaction() }
+        .modifier(NativeSpeakerSectionTracking(session: session, index: $playheadSection))
     }
 
     // MARK: Full-screen opening (Qendresa item 16)
@@ -241,8 +244,17 @@ struct NativeBackgroundPanel: View {
         ("small_top_right", String(localized: "Top right")), ("small_top_left", String(localized: "Top left")),
     ]
 
+    /// KRI-1558: the section under the playhead whose frame the choices show and change, while the section controls are open.
+    private var playheadLayout: EditorLayoutWindow? { playheadSection == nil ? nil : session.speakerLayoutWindowAtPlayhead }
+
     /// Which choice is lit: no frame is Full, a preset frame is that preset, anything else is Custom (kept untouched).
+    /// KRI-1558: inside a section, that section's frame; an own-take or picture-only section lights none.
     private var speakerSelection: String {
+        if let section = playheadLayout {
+            guard section.layout == .small || section.layout == .full else { return "" }
+            guard let frame = section.speakerFrame else { return "full" }
+            return frame.presetName ?? "custom"
+        }
         guard let frame = session.speakerFrame else { return "full" }
         return frame.presetName ?? "custom"
     }
@@ -250,6 +262,7 @@ struct NativeBackgroundPanel: View {
     private var speakerSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionTitle("Speaker", id: "native-editor-background-speaker-title")
+            if playheadLayout != nil { NativeSpeakerSectionScope(session: session) }
             HStack(spacing: 4) {
                 ForEach(Self.speakerChoices, id: \.preset) { choice in
                     let selected = speakerSelection == choice.preset
