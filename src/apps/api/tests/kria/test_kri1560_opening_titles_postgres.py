@@ -87,6 +87,10 @@ INVENTED = MODEL_ANSWER["candidates"][2]["text"]  # she never says Paris
 def _job(user_id, item_id):  # noqa: ANN001, ANN202
     job_id = uuid.uuid4()
     variants = copy.deepcopy([FIXTURE["variant"]])
+    # Her Talking draft had no title (the incident); a draft that has one keeps wordless title
+    # asks with the editor ("show the title word by word", 29 Ekim T5 in
+    # test_compose_unmet_with_ops).
+    variants[0]["text_elements"] = []
     for slot in variants[0]["ai_timeline"]["slots"]:
         slot["source_gcs_path"] = slot["source_gcs_path"].replace(
             FIXTURE["ids"]["ready_job_id"], str(job_id)

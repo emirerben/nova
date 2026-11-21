@@ -5930,6 +5930,22 @@ async def _chat_title_turn(
     )
 
 
+def _draft_has_title(target: Any) -> bool:
+    """The finished draft already shows an opening title (the suggestion engine's own test).
+
+    A wordless title ask on such a draft is about that title ("show the title word by word",
+    29 Ekim T5), not a request for a new one, so it stays with the editor.
+    """
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.services.suggestions.context import title_bar  # noqa: PLC0415
+
+    snapshot = getattr(target, "snapshot", None)
+    if not isinstance(snapshot, Mapping):
+        return False
+    return title_bar(SimpleNamespace(snapshot=snapshot)) is not None
+
+
 def _asks_title_without_words(requirements: Iterable[Any]) -> bool:
     """A requirement asks for a title and gives no words ("başlık koy", "add a title")."""
     from app.kria.brief_checks import title_off  # noqa: PLC0415
@@ -8367,6 +8383,7 @@ async def _plan_live_turn(
             if (
                 route == "editor_ops"
                 and _asks_title_without_words(fresh)
+                and not _draft_has_title(target)
                 and not any(
                     state.target == "opening_title" and (state.approved or state.cancelled)
                     for state in creative_copy_states.values()

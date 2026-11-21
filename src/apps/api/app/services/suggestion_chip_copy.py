@@ -112,7 +112,18 @@ _LEXICON_SRC: dict[str, dict[str, tuple[str, ...]]] = {
             "together",
             "begin",
         ),
-        "hook": ("hook", "open", "intro", "start", "title", "grab", "catch", "line", "first"),
+        "hook": (
+            "hook",
+            "open",
+            "intro",
+            "start",
+            "title",
+            "grab",
+            "catch",
+            "line",
+            "first",
+            "find",
+        ),
         "captions": ("caption", "subtitle", "word", "speech", "spoken", "say", "talk", "line"),
         "sfx": ("sound", "effect", "sfx", "whoosh", "pop", "hit", "punch", "accent"),
         "transition": (
@@ -186,6 +197,7 @@ _LEXICON_SRC: dict[str, dict[str, tuple[str, ...]]] = {
             "başlı",
             "yakala",
             "aç",
+            "bul",
         ),
         "captions": (
             "altyaz",

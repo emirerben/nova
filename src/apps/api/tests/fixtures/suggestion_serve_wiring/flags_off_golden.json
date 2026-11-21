@@ -20,9 +20,9 @@
         "default_edit": false,
         "id": "sc_5fdac413f372",
         "kind": "hook",
-        "label": "Add a hook to the opening",
+        "label": "Find an opening title",
         "label_source": "template",
-        "message": "Add a hook that matches the video",
+        "message": "Find an opening title for my video",
         "rank": 1,
         "requires_protocol": null,
         "why": "There is no title yet"
