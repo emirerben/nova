@@ -7084,11 +7084,8 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     else None
                 )
                 # KRI-1562: a chat song on a phone Talking edit is the background-music section.
-                bed_track_id = (
-                    editor_payload.background_music.track_id
-                    if editor_payload.background_music is not None
-                    else None
-                )
+                bed = getattr(editor_payload, "background_music", None)
+                bed_track_id = bed.track_id if bed is not None else None
                 background_music_track = db.get(MusicTrack, bed_track_id) if bed_track_id else None
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
                 plan_before_background_pin = current_job.assembly_plan
