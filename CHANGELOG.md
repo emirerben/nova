@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.59.0] - 2026-11-21
+
+### Changed
+- feat(kria): the montage sound-effect line comes from its gates; reword the Turkish catch-all (KRI-1561) (#2437) <!-- release-pr: 2437 -->
+
 ## [0.89.58.0] - 2026-11-21
 
 ### Changed
