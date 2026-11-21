@@ -17,6 +17,9 @@ Ways the weight-packed shards can go wrong, written before the packing (KRI-1544
 9. The workflow matrix and SHARD_COUNT disagree.
 10. A failed API job's existing artifact blocks a retry, or optional timing
     upload failure turns passing tests red.
+11. The per-test recorder (tests/_ci_times.py) is never switched on, is not
+    loaded by the suite, or writes where the workflow does not keep it, so
+    every later measurement is silently empty.
 """
 
 import importlib.util
@@ -220,6 +223,26 @@ class ApiTestShardTests(unittest.TestCase):
             "      - name: Run API test shard with timing reports\n", 1
         )[1].split(upload.group(), 1)[0]
         self.assertNotIn("continue-on-error", suite_step)
+
+    def test_the_shard_run_records_per_test_rows_and_the_workflow_keeps_them(self):
+        env = api_tests.pytest_env({"PATH": "/bin"})
+        self.assertEqual(env, {"PATH": "/bin", "NOVA_CI_TIMES_DIR": api_tests.TIMES})
+        repo = SCRIPT.parents[2]
+        conftest = (repo / "src/apps/api/tests/conftest.py").read_text()
+        self.assertIn('pytest_plugins = ("tests._ci_times",)\n', conftest)
+        workflow = (repo / ".github/workflows/ci.yml").read_text()
+        upload = re.search(
+            r"^      - name: Keep per-test times by phase\n(?:^ {8,}[^\n]*\n)+",
+            workflow,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(upload, "test-api-suite must keep the recorder's rows")
+        self.assertIn("        if: always()\n", upload.group())
+        self.assertIn(f"          path: src/apps/api/{api_tests.TIMES}\n", upload.group())
+        self.assertIn(
+            "          name: api-times-${{ github.run_id }}-${{ matrix.shard }}-${{ github.run_attempt }}\n",
+            upload.group(),
+        )
 
     def test_pytest_command_executes_each_selected_file_once(self):
         selected = api_tests.shard_files(self.api_root, 0)
