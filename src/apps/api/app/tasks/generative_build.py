@@ -7428,6 +7428,30 @@ def _composed_plan(
     return fallback
 
 
+def _creation_text_request_id(generation: Any, call_index: int) -> str:
+    """The paid-call ledger request id for one text compose of a unified-montage plan.
+
+    The ledger refuses a key it has already settled. A story plan whose text could not be
+    placed is composed again as the fast montage, and a worker retry composes the plan again;
+    both send the same research search (it carries only the topic) under the same key, and the
+    refusal reached the creator as "the AI took too long" (prod cc3e380b). Each later compose
+    and each worker retry is a new logical call, so its id says so. The first compose of the
+    first delivery keeps the bare id, and a redelivery of the same retry keeps its id.
+    """
+    from celery import current_task  # noqa: PLC0415
+
+    try:
+        retries = int(getattr(current_task.request, "retries", 0) or 0)
+    except Exception:  # noqa: BLE001 - no task context outside a worker
+        retries = 0
+    parts = [f"creation-text:{generation}"]
+    if retries:
+        parts.append(f"r{retries}")
+    if call_index:
+        parts.append(f"c{call_index}")
+    return ":".join(parts)
+
+
 @phone_text_generation
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -7620,14 +7644,18 @@ def _run_phone_unified_montage_job(
     text_drops: list = []
 
     text_requirements = brief.live() if brief is not None else None
+    compose_calls = 0
 
     def compose(candidate: Any) -> Any:
+        nonlocal compose_calls
         text_drops.clear()
+        request_id = _creation_text_request_id(generation, compose_calls)
+        compose_calls += 1
         try:
             return compose_creation_text(
                 candidate.snapshot,
                 creator_request=str(request or ""),
-                ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+                ctx=RunContext(job_id=job_id, request_id=request_id),
                 copy_constraints=snapshot_copy_constraints(candidate.snapshot),
                 text_requirements=text_requirements,
                 # KRI-881: sourced wording the creator approved, replayed without a new search.
