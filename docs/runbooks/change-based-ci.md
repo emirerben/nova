@@ -466,6 +466,24 @@ problem. First measured 2026-11-21 on a laptop: 0.06 s lint, 0.03 s format,
 - Format one file, never a directory you did not change:
   `cd src/apps/api && ruff format path/to/file.py`.
 
+### Local git hooks
+
+`hk.pkl` defines two git hooks, run by [hk](https://hk.jdx.dev). Install once
+per clone: `brew install hk && hk install` (`scripts/worktree-setup.sh` does the
+second part). The install is in the repository's git config, so every worktree
+has it; a branch without `hk.pkl` runs no hk checks. They repeat checks CI
+runs anyway, to save the CI round trip.
+
+| Hook | Checks | Measured 2026-11-21 |
+| --- | --- | --- |
+| commit | `api-lint.py` on the staged API Python files (check only, nothing is rewritten) | 0.08 s |
+| push | `api-lint.py` on the whole API tree, the CLAUDE.md size limit, the journey and UI test registries, and unmapped journey paths against main | 2.0-2.3 s |
+
+The budget for both together is 9 s. Time them with
+`HK_TIMING_JSON=/tmp/hk.json hk run pre-push --from-ref origin/main --to-ref HEAD </dev/null`.
+The editor's format-on-save hook (`scripts/hooks/format-on-save.sh`) formats
+only with the pinned ruff; with any other version it does nothing.
+
 ### Skips in the API shards
 
 A skipped test is a check that did not run. After pytest, each API shard reads

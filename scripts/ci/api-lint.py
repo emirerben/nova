@@ -2,7 +2,9 @@
 """Lint and format-check the API with the ruff version CI installs.
 
     python3 scripts/ci/api-lint.py                 # the whole API tree
-    python3 scripts/ci/api-lint.py app/a.py ...    # paths relative to src/apps/api
+    python3 scripts/ci/api-lint.py app/a.py ...    # paths under src/apps/api, written
+                                                   # from there or from the repo root
+    python3 scripts/ci/api-lint.py --ruff-path     # print the pinned ruff, for hooks
 
 `lint-suites` in CI and `scripts/preship-check.sh` both run this, so a clean
 local run means a clean CI run. It refuses to run with any ruff other than the
@@ -37,7 +39,25 @@ def installed_version(ruff: str, run=subprocess.run) -> str:
     return run([ruff, "--version"], capture_output=True, text=True).stdout.split()[-1]
 
 
-def main(argv, *, run=subprocess.run, ruff="find", lock=None, say=print) -> int:
+def api_paths(argv, exists) -> tuple[list[str], list[str]]:
+    """Arguments as paths relative to src/apps/api, and the ones that are not API files."""
+    paths, refused = [], []
+    for arg in argv:
+        path = arg.removeprefix("src/apps/api/")
+        outside = path.startswith(("/", "src/")) or ".." in Path(path).parts
+        (refused if outside or not exists(path) else paths).append(arg if outside else path)
+    return paths, refused
+
+
+def main(
+    argv,
+    *,
+    run=subprocess.run,
+    ruff="find",
+    lock=None,
+    say=print,
+    exists=lambda path: (API / path).exists(),
+) -> int:
     lock = (API / "uv.lock").read_text() if lock is None else lock
     want = locked_version(lock)
     ruff = find_ruff() if ruff == "find" else ruff
@@ -49,7 +69,14 @@ def main(argv, *, run=subprocess.run, ruff="find", lock=None, say=print) -> int:
     if have != want:
         say(f"api-lint: {ruff} is ruff {have}, CI uses ruff {want}. {install}")
         return 2
-    targets = list(argv) or ["."]
+    if argv == ["--ruff-path"]:
+        say(ruff)
+        return 0
+    targets, refused = api_paths(argv, exists)
+    if refused:
+        say(f"api-lint: not files under src/apps/api: {' '.join(refused)}")
+        return 2
+    targets = targets or ["."]
     failed = []
     for name, command in (("check", ["check"]), ("format", ["format", "--check"])):
         started = time.monotonic()
