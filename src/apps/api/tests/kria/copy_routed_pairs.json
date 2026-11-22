@@ -2,6 +2,31 @@
  "note": "KRI-1362/KRI-1408: (file, en, tr) pairs this branch adds (pairs) or stops saying (retired); see test_codemod_kept_every_en_tr_pair. KRI-1408 split sentences with English fragments into whole sentences per case, so German gets whole sentences.",
  "pairs": [
   [
+   "app/agents/editor_ops_v2/background.py",
+   "I can't change where you are part by part on this edit yet.",
+   "Bu düzenlemede yerini bölüm bölüm henüz değiştiremiyorum."
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "change where you are part by part",
+   "yerini bölüm bölüm değiştirmek"
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "change where you are in that part",
+   "o bölümde yerini değiştirmek"
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "take that picture away",
+   "o görseli kaldırmak"
+  ],
+  [
+   "app/services/creation_editor_actions.py",
+   "move that picture",
+   "o görselin zamanını değiştirmek"
+  ],
+  [
    "app/agents/edit_copilot.py",
    "Added the filming hour to {count} clip.",
    "{count} klibe çekim saatini ekledim."
@@ -2547,29 +2572,24 @@
    "Bir klibi taşımayı, iki klibin yerini değiştirmeyi ya da bir sıralamayı geri almayı videon hazır olunca yapabilirim. O zamana kadar klipler şu anki sıralarında kalıyor."
   ],
   [
-   "app/agents/editor_ops_v2/background.py",
-   "I can't change where you are part by part on this edit yet.",
-   "Bu düzenlemede yerini bölüm bölüm henüz değiştiremiyorum."
+   "app/kria/brief_checks.py",
+   "I'll place sound effects where your speech and pauses call for them",
+   "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım"
   ],
   [
-   "app/services/creation_editor_actions.py",
-   "change where you are part by part",
-   "yerini bölüm bölüm değiştirmek"
+   "app/kria/brief_checks.py",
+   "The finished video has no sound effects",
+   "Bitmiş videoda ses efekti yok"
   ],
   [
-   "app/services/creation_editor_actions.py",
-   "change where you are in that part",
-   "o bölümde yerini değiştirmek"
+   "app/kria/brief_checks.py",
+   "I added 1 sound effect",
+   "1 ses efekti ekledim"
   ],
   [
-   "app/services/creation_editor_actions.py",
-   "take that picture away",
-   "o görseli kaldırmak"
-  ],
-  [
-   "app/services/creation_editor_actions.py",
-   "move that picture",
-   "o görselin zamanını değiştirmek"
+   "app/kria/brief_checks.py",
+   "I added {count} sound effects",
+   "{count} ses efekti ekledim"
   ]
  ],
  "retired": [

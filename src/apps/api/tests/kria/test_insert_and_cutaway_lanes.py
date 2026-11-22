@@ -102,11 +102,14 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for KRI-1561 (the `sfx_ask` section, appended because these manifests advertise the
 # capability); masking that one section reproduces the values before it: 7cd34ba1 / 7a6d9f5e /
 # b31e1b83 / 2dba7829.
+# Re-pinned again for KRI-1561 PR 6 (the typed `sound_effects` brief fact, taught while a writer's
+# gate is open); masking that one sentence reproduces the values before it: c9391bb9 / 33304ad0 /
+# 98ebf115 / 4cc5fdd1.
 MAIN_PROMPT_SHA = {
-    "neither": "c9391bb99e7d05ff90430753f9c7885a3f61f454262ebbb736836a0a1af88a56",
-    (True, True): "33304ad0256a54062df006766706821fc09cb5c918fb896a748b8c515613ccc3",
-    (True, False): "98ebf115c9360fdbf7ed499451bab38df24286edff7f7d0be638b3f4155d49e2",
-    (False, True): "4cc5fdd1b30ca7c4888f6ce401928ba15f97b38cafb2e896b98061381ceb9f5d",
+    "neither": "caa371d9624d36dd0eb180442b15d75ce09d5de3ec41d18cbf6a930ca386a984",
+    (True, True): "da1d5f1d4608fe70188b5af234bb3060c84b14620cd7ae08109e8d0f019ffc85",
+    (True, False): "a19e6eabab089222c7965b126c17325b9590ea514d0b74e939d0f4faa0ffc520",
+    (False, True): "16e7270fd4a762168dce4e9059079f64ec9dd1c7d8951a2c623b72f707798fe3",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

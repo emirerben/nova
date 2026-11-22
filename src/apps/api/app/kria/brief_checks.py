@@ -1026,6 +1026,9 @@ class PlanFacts:
     # and the worker's record of the song the creator asked for (`talking_music.RECEIPT_FIELD`).
     recipe_music: bool | None = None
     talking_music: Mapping[str, Any] | None = None
+    # KRI-1561: the worker's record of a general sound-effect ask (`phone_sfx_choice_receipt`:
+    # what it placed, or the `SfxLimit` it declined for). None = no ask was served.
+    sfx_choice: Mapping[str, Any] | None = None
     # KRI-1472: untyped whole-video audio rows that restate a typed "only my voice" / "no
     # music" row of the same turn (`voice_only_ask.restated_voice_only_ids`); set by
     # `build_receipts`, which sees the whole brief.
@@ -3320,6 +3323,9 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     talking_music = variant.get("talking_music")
     if isinstance(talking_music, Mapping):
         changes["talking_music"] = talking_music  # KRI-1562: why an asked song is missing
+    sfx_choice = variant.get("phone_sfx_choice_receipt")
+    if isinstance(sfx_choice, Mapping):
+        changes["sfx_choice"] = sfx_choice  # KRI-1561: what the chooser placed, or why not
     receipt = variant.get("clip_sound")
     if isinstance(receipt, Mapping):
         changes["clip_sound"] = receipt  # KRI-842
@@ -7233,6 +7239,10 @@ NO_MUSIC_INTENT = "no_music"
 MUSIC_INTENT = "music"
 # KRI-1405: "No sound effects." typed the same way; `_check_no_sound_effects` judges it.
 NO_SOUND_EFFECTS_INTENT = "no_sound_effects"
+# KRI-1561: "add sound effects where they fit" typed the same way (taught while `sfx_ask_taught`);
+# `_check_sfx_ask` judges it against the worker's `phone_sfx_choice_receipt`. A live
+# `no_sound_effects` is its opposite and is removed by the brief writer, never both live.
+SOUND_EFFECTS_INTENT = "sound_effects"
 
 
 def _typed_audio_intent(req: BriefRequirement) -> str | None:
@@ -7331,6 +7341,13 @@ def wants_music(req: BriefRequirement) -> bool:
     return req.kind == "audio" and _typed_audio_intent(req) == MUSIC_INTENT
 
 
+def wants_sound_effects(req: BriefRequirement) -> bool:
+    """KRI-1561: "add sound effects where they fit" as the brief writer typed it
+    (``audio_intent: sound_effects``, taught while `sfx_ask_taught`). Only the typed fact counts,
+    never the words (KRI-667)."""
+    return req.kind == "audio" and _typed_audio_intent(req) == SOUND_EFFECTS_INTENT
+
+
 def music_mood(req: BriefRequirement) -> str | None:
     """The kind of music the creator named for a `wants_music` ask ("chill"), in their words."""
     value = req.facts.get("music_mood") if isinstance(req.facts, Mapping) else None
@@ -7419,6 +7436,53 @@ def _check_music_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
         }.get(str((facts.talking_music or {}).get("reason") or ""), _MUSIC_NOT_PLAYED)
         return _receipt(req, "not_possible", reason, stage="checked")
     return _receipt(req, "partial", _MUSIC_PLAN)
+
+
+def _sfx_placed(count: int) -> str:
+    if count == 1:
+        return say(en="I added 1 sound effect", tr="1 ses efekti ekledim")
+    return say(en="I added {count} sound effects", tr="{count} ses efekti ekledim", count=count)
+
+
+def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1561: "add sound effects where they fit" on a phone Talking, Voiceover or
+    montage-with-voiceover edit.
+
+    A finished video is judged by the worker's receipt (`sfx_choice`): met only when it placed
+    effects (and says how many), else not possible with the REAL reason, the closed gate or the
+    chooser's decline (`sfx_capability.limit_line`), never "A Talking video can't do this". A
+    Talking or Voiceover render with no receipt had no ask to serve. A draft promises the
+    effects while the writer's gate is open and names the gate when it is not. Any other
+    format has no way to judge it here (neutral, as before).
+    """
+    from app.services.sfx_capability import (  # noqa: PLC0415
+        limit_line,
+        subtitled_sfx_limit,
+        voiceover_sfx_limit,
+    )
+    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+    choice = facts.sfx_choice
+    if facts.rendered_variant and choice is not None:
+        placed = choice.get("placed")
+        if isinstance(placed, list) and placed:
+            return _receipt(req, "met", _sfx_placed(len(placed)), stage="checked")
+        try:
+            reason = limit_line(SfxLimit(str(choice.get("declined"))))
+        except ValueError:
+            reason = _SFX_NOT_PLACED
+        return _receipt(req, "not_possible", reason, stage="checked")
+    if facts.phone_talking:
+        limit = subtitled_sfx_limit()
+    elif facts.phone_narrated:
+        limit = voiceover_sfx_limit()
+    else:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.rendered_variant:
+        return _receipt(req, "not_possible", _SFX_NOT_PLACED, stage="checked")
+    if limit is not None:
+        return _receipt(req, "not_possible", limit_line(limit), stage="checked")
+    return _receipt(req, "partial", _SFX_PLAN)
 
 
 def _check_voice_only(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -7781,6 +7845,9 @@ _TALKING_NO_SPOKEN_TEXT = "A Talking video can't show text at a word you say yet
 # KRI-1562: "with some chill music" on a phone Talking edit. The plan is a render promise; the
 # rest say why the finished video has no song (`talking_music` receipt reasons).
 _MUSIC_PLAN = "I'll pick a song from the music library and play it quietly under your voice"
+# KRI-1561: the sound effects the writer will choose, and the finished video with none.
+_SFX_PLAN = "I'll place sound effects where your speech and pauses call for them"
+_SFX_NOT_PLACED = "The finished video has no sound effects"
 _MUSIC_NOT_PLAYED = "The finished video has no music"
 _MUSIC_APP_TOO_OLD = "Your iPhone app is too old to play music under your voice; update it first"
 _MUSIC_EMPTY_LIBRARY = "The music library has no song I can add yet, so the video has no music"
@@ -7896,6 +7963,8 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _CC_PLAN,
     # KRI-1562: the library song under the talk.
     _MUSIC_PLAN,
+    # KRI-1561: the sound effects the writer chooses for a general ask.
+    _SFX_PLAN,
     # KRI-1322: the picture above the opening title.
     _TITLE_PICTURE_PLAN,
     # KRI-1304 leftover: the zoom onto the recordings' text.
@@ -8229,6 +8298,8 @@ _REASON_TR: dict[str, str] = {
     _TALKING_NO_SUCH_EDIT: "Bu düzenlemede bunu yapamıyorum, o kısım çekildiği gibi kalıyor",
     _TALKING_NO_SPOKEN_TEXT: "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
     _MUSIC_PLAN: "Müzik kütüphanesinden bir şarkı seçip sesinin altında kısık çalarım",
+    _SFX_PLAN: "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım",
+    _SFX_NOT_PLACED: "Bitmiş videoda ses efekti yok",
     _MUSIC_NOT_PLAYED: "Bitmiş videoda müzik yok",
     _MUSIC_APP_TOO_OLD: (
         "iPhone uygulaman sesinin altında müzik çalmak için çok eski; önce güncelle"
@@ -8504,6 +8575,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     *_TALKING_HONEST_EN,
     # KRI-1562: why a requested song is missing is the library's or the app's, not a choice.
     *_MUSIC_MISSING,
+    # KRI-1561: that a finished video has no sound effects is the writer's, not a simpler plan.
+    _SFX_NOT_PLACED,
     _VOICEOVER_SPOKEN_TEXT_PLAN,
     # KRI-1465: that a Voiceover edit always captions is the format's, never a simpler plan.
     _NARRATED_CAPTIONS_PLAN,
@@ -16615,6 +16688,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-1164: judged against the plan's / render's music
     if wants_music(req):
         return True  # KRI-1562: judged on a phone Talking edit against its recipe's song
+    if wants_sound_effects(req):
+        return True  # KRI-1561: judged against the worker's receipt for the ask
     if wants_no_sound_effects(req):
         return True  # KRI-1405: judged against the plan's / render's sound pop-ins
     if caption_look_ask(req) is not None:
@@ -17440,6 +17515,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if wants_music(req) and facts.phone_talking:
         # KRI-1562: the song under a phone Talking edit, read from the recipe it pinned.
         return _check_music_ask(req, facts)
+    if wants_sound_effects(req):
+        return _check_sfx_ask(req, facts)
     if wants_no_sound_effects(req):
         return _check_no_sound_effects(req, facts)
     clip_sound = requirement_clip_sound(req)

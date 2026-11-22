@@ -1398,6 +1398,40 @@ def with_long_request_cap(section: str) -> str:
     return section.replace(_BRIEF_CAP_ANCHOR, f"at most {LONG_REQUEST_MAX_UPDATES} objects")
 
 
+# KRI-1561: a general "add sound effects where they fit" ask, typed the same way as the music ask
+# and judged by `brief_checks._check_sfx_ask` against the worker's receipt. Taught only while a
+# phone writer can place effects (`sfx_ask_taught`), so every prompt with the gates closed keeps
+# the bytes it had before.
+_BRIEF_SFX_ASK_ANCHOR = (
+    '{"audio_intent": "no_sound_effects"}; it never mutes the footage\'s own sound or the music.'
+)
+_BRIEF_SFX_ASK_SENTENCE = (
+    '\nSound effects asked for in general, with no effect and no moment named ("add sound effects'
+    ' where they fit", "put some sound effects in", "make it feel alive with sound design",'
+    ' "uygun yerlere ses efekti ekle", "ses efekti koy") => an `audio` requirement with'
+    ' {"audio_intent": "sound_effects"}; the server chooses the moments, so never name an effect'
+    ' or a time in it. A sound tied to a spoken moment ("a whoosh when I say X") or a named'
+    " effect is not this fact. The two are opposites: when the contract holds a"
+    " no_sound_effects requirement and the creator now asks for sound effects, `remove` it, and"
+    " when they now ask for none, `remove` the sound_effects requirement."
+)
+
+
+def sfx_ask_taught() -> bool:
+    """KRI-1561: can a phone Talking, Voiceover or montage-with-voiceover writer place effects for
+    a general ask right now? Closed, the brief section keeps the bytes it had before."""
+    from app.services.sfx_capability import subtitled_sfx_limit, voiceover_sfx_limit  # noqa: PLC0415
+
+    return subtitled_sfx_limit() is None or voiceover_sfx_limit() is None
+
+
+def with_sfx_ask_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the
+    sound-effects fact added after the no-sound-effects one. Only called while `sfx_ask_taught`."""
+    assert section.count(_BRIEF_SFX_ASK_ANCHOR) == 1, "brief sound-effects anchor moved"
+    return section.replace(_BRIEF_SFX_ASK_ANCHOR, _BRIEF_SFX_ASK_ANCHOR + _BRIEF_SFX_ASK_SENTENCE)
+
+
 _BRIEF_MUSIC_ASK_ANCHOR = '{"audio_intent": "no_music"}; it never mutes the footage\'s own sound.'
 _BRIEF_MUSIC_ASK_SENTENCE = (
     '\nBackground music asked for ("talking video with some chill music", "add calm music",'
@@ -1437,6 +1471,8 @@ def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: boo
         section = with_long_request_cap(section)
     if music_ask_taught():
         section = with_music_ask_brief(section)
+    if sfx_ask_taught():
+        section = with_sfx_ask_brief(section)
     return with_full_opening_brief(section) if full_opening_open else section
 
 
