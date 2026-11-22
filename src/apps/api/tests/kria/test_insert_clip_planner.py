@@ -448,13 +448,20 @@ def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inse
 
 
 def test_the_creator_prompt_with_the_brief_on_changes_only_while_inserts_are_open(monkeypatch):
-    from app.agents.main_creator import _BRIEF_PROMPT_SECTION, brief_prompt_section
+    from app.agents.main_creator import (
+        _BRIEF_PROMPT_SECTION,
+        brief_prompt_section,
+        sfx_ask_taught,
+        with_sfx_ask_brief,
+    )
 
     _open(monkeypatch, insert=False)
     manifest = _julio_manifest()
     closed = _brief_prompt(manifest)
     assert "insert_clip" not in closed and "IN THE MIDDLE of the talk" not in closed
-    assert "\n" + _BRIEF_PROMPT_SECTION in closed
+    # KRI-1561: while a writer's gate is open the shared section carries the sound-effects fact.
+    base = with_sfx_ask_brief(_BRIEF_PROMPT_SECTION) if sfx_ask_taught() else _BRIEF_PROMPT_SECTION
+    assert "\n" + base in closed
     # A montage / single-clip manifest is untouched even with the rollout open.
     monkeypatch.setattr(settings, "phone_talking_insert_clips_enabled", True)
     montage = _manifest(
@@ -467,7 +474,7 @@ def test_the_creator_prompt_with_the_brief_on_changes_only_while_inserts_are_ope
     assert "insert_clip" not in _brief_prompt(montage)
     opened = _brief_prompt(manifest)
     assert "\n" + brief_prompt_section(True) in opened
-    assert opened.replace(brief_prompt_section(True), _BRIEF_PROMPT_SECTION) != opened
+    assert opened.replace(brief_prompt_section(True), base) != opened
 
 
 def test_the_brief_extractor_prompt_teaches_inserts_only_when_told_they_are_open():

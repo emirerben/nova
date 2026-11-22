@@ -37,6 +37,17 @@ def test_brief_extractor_eval(fixture_path: Path, eval_mode: str, live_model_cli
                 result.output.get("request_scope") == "rebuild"
             ), result.output
 
+    sound_effects = fixture.meta.get("sound_effects_brief")
+    if sound_effects:
+        # KRI-1561: a general sound-effect ask is ONE `audio` requirement typed
+        # `audio_intent: sound_effects` (never a named effect, never a time), in the creator's
+        # own words, and it is not the opposite fact.
+        assert result.output is not None
+        rows = [u for u in result.output.get("brief_updates") or [] if u.get("kind") == "audio"]
+        assert len(rows) == 1, rows
+        assert rows[0]["facts"] == {"audio_intent": "sound_effects"}
+        assert rows[0]["description"] == sound_effects["description"]
+
     caption_cleanup = fixture.meta.get("caption_cleanup_brief")
     if caption_cleanup:
         # Qendresa says-done cases 6-8 on a follow-up turn (the extractor shares the section).
