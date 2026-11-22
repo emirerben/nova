@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.86.0] - 2026-11-22
+
+### Changed
+- KRI-1579: research and hook text roles, creator edits always win (KRI-1585 PR1) (#2464) <!-- release-pr: 2464 -->
+
 ## [0.89.85.0] - 2026-11-22
 
 ### Changed
