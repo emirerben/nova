@@ -146,12 +146,14 @@ def setup(monkeypatch, *, edit_format="montage", archetype="voiceover", track=No
         if not decision.music_track_id:
             return None
         from app.kria.render_assets import RenderFingerprint
-        from app.pipeline.phone_recipe_shared import PhoneMusicBed
+        from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed
 
         return PhoneMusicBed(
-            catalog_id=decision.music_track_id,
-            generation="7",
-            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+            source=LibraryMusicSource(
+                catalog_id=decision.music_track_id,
+                generation="7",
+                fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+            ),
             duration_s=60.0,
             start_s=float(decision.music_start_s or 0.0),
             volume=1.0,

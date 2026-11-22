@@ -301,9 +301,11 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # KRI-1562: chat adds, swaps and removes the library song under a phone Talking edit (its
     # Save compiles the `background_music` section) while TALKING_MUSIC_ENABLED and a protocol 53
-    # build hold. Every other phone edit keeps the song it was rendered with: the authored phone
-    # compile only re-plays the pinned music asset, a guided phone plan refuses a music lane
-    # (phone_guided_plan, musicBed) and the Voiceover Save has no music section.
+    # build hold, and (KRI-1578) TALKING_LIBRARY_MUSIC_ENABLED: closed, chat and the editor both
+    # leave a new library song out, and the creator's own song is `creator_song`. Every other
+    # phone edit keeps the song it was rendered with: the authored phone compile only re-plays
+    # the pinned music asset, a guided phone plan refuses a music lane (phone_guided_plan,
+    # musicBed) and the Voiceover Save has no music section.
     "music_swap": _g(
         "agent_ops",
         "setMusic setMusicWindow setBackgroundMusic",

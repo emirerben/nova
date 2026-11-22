@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -37,7 +37,13 @@ from app.kria.recipes import (
     TimelineTrack,
 )
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import LibraryRenderAsset, RenderAssetManifest, RenderFingerprint
+from app.kria.render_assets import (
+    LibraryRenderAsset,
+    RenderAssetManifest,
+    RenderFingerprint,
+    SongRenderAsset,
+)
+from app.schemas.user_song import UserSongPlan
 
 # Mirrors `phone_guided_plan._EXPORT_SAFETY_MARGIN_S` -- see that module's
 # docstring for the full AVFoundation-boundary rationale. Never fit a refit
@@ -562,26 +568,64 @@ def refit_source_window(
     return start, round(fitted_duration, 6)
 
 
-class PhoneMusicBed(BaseModel):
-    """A resolved, immutable music-catalog receipt ready to compile into a
-    phone recipe's audio track.
+class LibraryMusicSource(BaseModel):
+    """A published music-library track, pinned to one generation (`inspect_library_asset`)."""
 
-    Built by `app.tasks.generative_build._resolve_phone_music_bed`, which
-    bridges the sync Celery worker to the (async-shaped) catalog lookup
-    `app.services.render_library.catalog_path` normally uses -- there is no
-    running event loop in a Celery worker, so it re-validates the same
-    publish/ready/path-prefix contract directly against a sync DB session
-    instead of calling that async function. `inspect_library_asset` (already
-    sync) then pins the exact generation + fingerprint. Consumed by
-    `compile_phone_voiceover_montage_plan`, which never touches the database or GCS
-    itself -- it only reads this already-verified value.
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["library"] = "library"
+    catalog_id: str = Field(min_length=1, max_length=160)
+    generation: str = Field(min_length=1, max_length=160)
+    fingerprint: RenderFingerprint
+
+    def render_asset(self) -> LibraryRenderAsset:
+        return LibraryRenderAsset(
+            id=f"music-{self.catalog_id}",
+            catalog="music",
+            catalog_id=self.catalog_id,
+            generation=self.generation,
+            fingerprint=self.fingerprint,
+        )
+
+
+class CreatorSongSource(BaseModel):
+    """The song the creator uploaded to this plan item, pinned to one generation (KRI-1578).
+
+    Private creator media (`SongRenderAsset`): the device grant re-checks that the job's own plan
+    item still carries this generation, so a replaced or removed song fails closed.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    catalog_id: str = Field(min_length=1, max_length=160)
+    kind: Literal["creator_song"] = "creator_song"
+    plan_item_id: str = Field(min_length=1, max_length=160)
     generation: str = Field(min_length=1, max_length=160)
     fingerprint: RenderFingerprint
+
+    def render_asset(self) -> SongRenderAsset:
+        return SongRenderAsset(
+            id=f"song-{self.plan_item_id}",
+            plan_item_id=self.plan_item_id,
+            generation=self.generation,
+            fingerprint=self.fingerprint,
+        )
+
+
+MusicBedSource = Annotated[LibraryMusicSource | CreatorSongSource, Field(discriminator="kind")]
+
+
+class PhoneMusicBed(BaseModel):
+    """A resolved, immutable song ready to compile into a phone recipe's music track.
+
+    ``source`` says whose song it is: a library track (the montage writers' matched track, a
+    Talking edit's legacy library song) or the creator's own upload (KRI-1578). The compilers
+    never touch the database or GCS: the worker or the Save already pinned the generation and
+    hashed the bytes, and they only read this value.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: MusicBedSource
     duration_s: float | None = Field(default=None, gt=0, le=1800)
     start_s: float = Field(default=0.0, ge=0)
     volume: float = Field(default=1.0, ge=0, le=2)
@@ -640,14 +684,38 @@ def music_bed_from_treatment(treatment: object, pin: MusicPin) -> PhoneMusicBed 
         # catalog's (`talking_music.song_treatment`) so the bed keeps its export margin.
         duration_s = _treatment_duration(treatment.get("duration_s"))
     return PhoneMusicBed(
-        catalog_id=chosen.track_id,
-        generation=asset.generation,
-        fingerprint=asset.fingerprint,
+        source=LibraryMusicSource(
+            catalog_id=chosen.track_id, generation=asset.generation, fingerprint=asset.fingerprint
+        ),
         duration_s=duration_s,
         start_s=chosen.section_start_s,
         end_s=chosen.section_end_s,
         volume=round(10 ** (chosen.gain_db / 20), 6),
         speech_duck_gain=speech_duck_gain(chosen.speech_duck_db),
+    )
+
+
+def music_bed_from_user_song(
+    song: UserSongPlan, source: CreatorSongSource, *, speech_duck_db: float
+) -> PhoneMusicBed:
+    """The creator's own song under a Talking edit (its ``talking_song``) as a phone bed.
+
+    It starts at ``window_start_s`` and loops ``window_start_s..window_end_s`` under the whole
+    video, like a library section; an end at the song's own end loops the rest of the song.
+    ``song.volume`` is the absolute gap level. Refuses choices made for another upload.
+    """
+    if song.mode != "background":
+        raise ValueError("a song under a Talking edit plays in the background")
+    if (source.plan_item_id, source.generation) != (song.plan_item_id, str(song.generation)):
+        raise ValueError("the pinned song is not the one these choices were made for")
+    creator_end = song.window_end_s < song.duration_s - 1e-3
+    return PhoneMusicBed(
+        source=source,
+        duration_s=song.duration_s,
+        start_s=song.window_start_s,
+        end_s=song.window_end_s if creator_end else None,
+        volume=song.volume,
+        speech_duck_gain=speech_duck_gain(speech_duck_db),
     )
 
 
@@ -666,13 +734,7 @@ def compile_music_bed_track(
     """
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
 
-    asset = LibraryRenderAsset(
-        id=f"music-{music.catalog_id}",
-        catalog="music",
-        catalog_id=music.catalog_id,
-        generation=music.generation,
-        fingerprint=music.fingerprint,
-    )
+    asset = music.source.render_asset()
     section_end = music.end_s if music.end_s is not None else music.start_s + timeline_end_s
     if music.duration_s is not None:
         section_end = min(section_end, music.duration_s - EXPORT_SAFETY_MARGIN_S)
@@ -709,7 +771,7 @@ def compile_music_bed_track(
         id=asset.id,
         relative_path=asset.id,
         fingerprint=AssetFingerprint(
-            hex=music.fingerprint.sha256, byte_count=music.fingerprint.byte_count
+            hex=asset.fingerprint.sha256, byte_count=asset.fingerprint.byte_count
         ),
         duration=music.duration_s,
     )

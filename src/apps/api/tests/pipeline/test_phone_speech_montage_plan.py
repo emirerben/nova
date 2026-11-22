@@ -7,7 +7,7 @@ import pytest
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.render_assets import RenderFingerprint
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_recipe_shared import PhoneMusicBed
+from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed
 from app.pipeline.phone_speech_montage_plan import (
     MAIN_TRACK_ID,
     MUSIC_TRACK_ID,
@@ -167,9 +167,11 @@ def test_repeated_broll_clip_advances_its_source_window() -> None:
 
 def test_music_plays_only_under_montage_and_resumes_where_it_left_off() -> None:
     music = PhoneMusicBed(
-        catalog_id="song-1",
-        generation="7",
-        fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=500),
+        source=LibraryMusicSource(
+            catalog_id="song-1",
+            generation="7",
+            fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=500),
+        ),
         duration_s=120.0,
         start_s=10.0,
         volume=0.9,
