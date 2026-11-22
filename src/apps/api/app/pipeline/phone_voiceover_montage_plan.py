@@ -41,7 +41,7 @@ from app.kria.recipes import (
     Transition,
 )
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import LibraryRenderAsset, RenderAssetManifest, VoiceoverRenderAsset
+from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
 from app.pipeline.canvas import Canvas as PipelineCanvas
 from app.pipeline.canvas import canvas_for_orientation
 from app.pipeline.generative_decision import GenerativeVariantDecision
@@ -499,20 +499,13 @@ def compile_phone_voiceover_montage_plan(
                 "music bed metadata is required for a music variant",
                 capability="musicBed",
             )
-        music_asset_id = f"music-{music.catalog_id}"
-        music_asset = LibraryRenderAsset(
-            id=music_asset_id,
-            catalog="music",
-            catalog_id=music.catalog_id,
-            generation=music.generation,
-            fingerprint=music.fingerprint,
-        )
+        music_asset = music.source.render_asset()
         manifest[music_asset.id] = music_asset
         assets[music_asset.id] = MediaAsset(
             id=music_asset.id,
             relative_path=music_asset.id,
             fingerprint=AssetFingerprint(
-                hex=music.fingerprint.sha256, byte_count=music.fingerprint.byte_count
+                hex=music_asset.fingerprint.sha256, byte_count=music_asset.fingerprint.byte_count
             ),
             duration=music.duration_s,
         )

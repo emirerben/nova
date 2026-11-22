@@ -977,6 +977,31 @@ def test_song_download_rejects_replaced_or_removed_songs(fixture, monkeypatch, m
     assert signer.call_count == int(mutation in {"removed", "unsignable"})
 
 
+def test_a_talking_items_song_is_granted_while_its_audio_policy_stays_original(
+    fixture, monkeypatch
+):
+    """KRI-1578: a Talking item keeps `original` (the speech fingerprint its cleanup consent is
+    bound to), and its uploaded song still reaches the iPhone; a replaced one still fails closed."""
+    asset, item, signer = song_recipe(fixture, monkeypatch)
+    item.audio_mode = "original"
+    item.edit_format = "subtitled"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(item.song_gcs_path, generation="42")
+    item.song_generation = 43
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+
+
+def test_a_montage_items_song_out_of_song_mode_is_not_granted(fixture, monkeypatch):
+    asset, item, signer = song_recipe(fixture, monkeypatch)
+    item.audio_mode = "original"
+    item.edit_format = "montage"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    signer.assert_not_called()
+
+
 def test_a_voiceover_item_cannot_be_used_to_fetch_a_song_asset(fixture, monkeypatch):
     """The two private-audio kinds do not share a grant: a song asset needs the
     item to be in ``song`` mode even when a voiceover with the same generation exists."""

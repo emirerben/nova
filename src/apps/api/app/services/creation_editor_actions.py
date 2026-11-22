@@ -40,6 +40,7 @@ from app.services.phone_speaker_background import (
     BACKGROUND_REFUSALS,
     pin_background_for_commit,
 )
+from app.services.talking_music import UploadedSongRead, uploaded_song
 
 log = structlog.get_logger()
 
@@ -851,6 +852,14 @@ async def execute_copilot_edit(
             plan_item_id=str(thread.active_plan_item_id),
             visual_assets=visual_assets,
             phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(db, job, variant),
+            # KRI-1578: a chat change to the creator's own song re-pins it from the item.
+            uploaded_song=UploadedSongRead(
+                uploaded_song(
+                    await db.get(PlanItem, job.content_plan_item_id)
+                    if job.content_plan_item_id is not None
+                    else None
+                )
+            ),
             # KRI-1562: a chat song on a phone Talking edit is the background-music section.
             background_music_track=(
                 await db.get(MusicTrack, payload.background_music.track_id)

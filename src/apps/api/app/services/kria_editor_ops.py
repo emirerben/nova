@@ -1058,19 +1058,23 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
 
 
 def talking_song_open(job: Any, variant: dict[str, Any]) -> bool:
-    """KRI-1562: may chat add, swap or remove the library song on this phone Talking edit?
+    """KRI-1562: may chat talk about the song on this phone Talking edit?
 
-    The editor capability its Save compiles (`background_music`, open only on a subtitled-path
-    Talking edit with the rollout on) and an app build that ducks the song under speech: a
-    chat turn's worker sees the sending build, never a request (`bind_sending_build`).
+    A subtitled-path Talking edit (its Save compiles the song) with the rollout on, and an app
+    build that ducks the song under speech: a chat turn's worker sees the sending build, never a
+    request (`bind_sending_build`). KRI-1578: open even while the library is closed to new
+    songs, so a music ask is answered "send me the song" (`library_closed`) instead of nothing.
     """
+    from app.routes.generative_jobs import (  # noqa: PLC0415
+        _phone_subtitled_editor_lanes_available,
+    )
     from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
 
     return bool(
         variant.get("render_destination") == "device"
         and is_phone_subtitled_editor_variant(variant)
         and variant.get("editor_timeline_mode") != "authored"
-        and _editor_capabilities(job, variant).get("background_music") is True
+        and _phone_subtitled_editor_lanes_available(job, variant)
         and talking_music_supported(require_client=True)
     )
 
@@ -1098,6 +1102,8 @@ def _talking_song_snapshot(variant: dict[str, Any], clip_context: dict[str, Any]
         ),
         "candidates": candidates,
         **({"no_music": True} if no_music else {}),
+        # KRI-1578: the planner read no library: a new song is the creator's upload.
+        **({"library_closed": True} if clip_context.get("music_library_closed") is True else {}),
     }
 
 

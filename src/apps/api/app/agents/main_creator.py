@@ -874,6 +874,20 @@ explicitly.
 """.strip("\n")
 
 
+# KRI-1578: the song section on a phone Talking manifest (`edit_format == "subtitled"`), in place
+# of the montage one above; a manifest offers it only while the Talking song lane is rolled out.
+_USER_SONG_TALKING_PROMPT_SECTION = """
+UPLOADED SONG (iPhone Talking edit)
+The creator attached their own song; the manifest's `user_song` gives its `duration_s`. On a
+Talking edit it plays quietly under their voice for the whole video and drops lower while they
+speak: nothing in `strategy` places it. Keep `audio_strategy` "original_audio" and leave
+`song_sync` null, and never pick a catalog track. Lip-sync is not possible on a Talking edit: if
+the creator asks to lip sync or sing along, still keep the Talking edit and say in `summary`
+that lip-sync needs a Lip-sync video. Otherwise `summary` says in plain words that their song
+plays quietly under their voice.
+""".strip("\n")
+
+
 # KRI-815: rendered into `$voiceover_script_section` (same line-suffix trick as the sections
 # above) ONLY when the server says a script can be drafted (footage attached, no voiceover,
 # flag on); "" otherwise, so every other prompt is byte-identical.
@@ -1760,15 +1774,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             ),
             # KRI-374: "" (no usable song) adds no bytes; same line-suffix trick.
             user_song_section=(
-                "\n"
+                ""
+                if not input.capability_manifest.has_user_song
+                else "\n" + _USER_SONG_TALKING_PROMPT_SECTION
+                if input.capability_manifest.edit_format == "subtitled"
+                else "\n"
                 + _USER_SONG_PROMPT_SECTION
                 + (
                     "\n" + _USER_SONG_LIPSYNC_CARD_SECTION
                     if input.capability_manifest.chosen_format == "lipsync"
                     else ""
                 )
-                if input.capability_manifest.has_user_song
-                else ""
             ),
             # KRI-479: "" (no `phone_source_audio`) adds no bytes; same line-suffix trick.
             voice_mode_section=_camera_audio_mode_section(input.capability_manifest),

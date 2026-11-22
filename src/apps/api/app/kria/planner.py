@@ -2389,10 +2389,15 @@ async def _copilot_clip_context(
 
             # What the creator asked this turn (`_turn_brief`) decides, else the saved brief.
             turn_brief = _turn_brief.get()
+            from app.services.talking_music import library_music_enabled  # noqa: PLC0415
+
             if asks_no_music(turn_brief if turn_brief is not None else brief):
                 context["no_music"] = True
-            else:
+            elif library_music_enabled():
                 context["music_library"] = await _talking_song_rows(db)
+            else:
+                # KRI-1578: a new song is the creator's own upload; no library read.
+                context["music_library_closed"] = True
     except Exception:  # noqa: BLE001 - fail closed: no candidates => no swap_music
         log.warning(
             "kria_copilot_music_library_unavailable", thread_id=str(thread_id), exc_info=True

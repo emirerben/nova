@@ -156,7 +156,10 @@ log = structlog.get_logger()
 # MUSIC shows no_music=True (prompts/edit_copilot_ops/talking_music.txt), printed only where the
 # snapshot offers the `music_library` family (TALKING_MUSIC_ENABLED and a protocol 53 build), so
 # every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-21-v131"
+# v132 (KRI-1578): a phone Talking edit's song is the creator's own upload (YOUR SONG,
+# set_user_song); MUSIC shows library_closed=True while TALKING_LIBRARY_MUSIC_ENABLED is off, and
+# then a music ask is answered "send me the song you want", never swap_music.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-22-v132"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2491,6 +2494,7 @@ def _format_snapshot(snapshot: dict) -> str:
             f"removable={music.get('removable', True) is not False} "
             f"removed={bool(music.get('removed'))}"
             + (" no_music=True" if music.get("no_music") is True else "")
+            + (" library_closed=True" if music.get("library_closed") is True else "")
         )
         lines.append("CANDIDATES (use track_id exactly as shown):")
         if candidates:
@@ -6316,6 +6320,21 @@ def _coerce_payload(
                 note=say(
                     en="you asked for no music, so I won't add a song",
                     tr="müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum",
+                )
+            )
+            return None
+        if isinstance(music, dict) and music.get("library_closed") is True:
+            # KRI-1578: songs come only from the creator; the music library adds none.
+            state.invalid_value(
+                note=say(
+                    en=(
+                        "I can't add songs from the music library. Send me the song you want "
+                        "and I'll play it quietly under your voice"
+                    ),
+                    tr=(
+                        "Müzik kütüphanesinden şarkı ekleyemiyorum. İstediğin şarkıyı gönder, "
+                        "sesinin altında kısık çalayım"
+                    ),
                 )
             )
             return None

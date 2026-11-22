@@ -5470,16 +5470,16 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     needed). Raises `UnsupportedPhonePlan` when the track can no longer be
     published/served (`_pin_catalog_music`).
     """
-    from app.pipeline.phone_recipe_shared import PhoneMusicBed  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed  # noqa: PLC0415
 
     track_id = decision.music_track_id
     if not track_id:
         return None
     asset, duration_s = _pin_catalog_music(track_id)
     return PhoneMusicBed(
-        catalog_id=track_id,
-        generation=asset.generation,
-        fingerprint=asset.fingerprint,
+        source=LibraryMusicSource(
+            catalog_id=track_id, generation=asset.generation, fingerprint=asset.fingerprint
+        ),
         duration_s=duration_s,
         start_s=float(decision.music_start_s or 0.0),
         # `_mix_template_audio`'s song-variant path uses `audio_gain=1.0`
@@ -5495,6 +5495,19 @@ def _talking_speech_source_windows(speakers: Sequence[tuple[Any, Sequence[Any]]]
     return {binding.media_id: speech_spans_from_words(words) for binding, words in speakers}
 
 
+@dataclass(frozen=True)
+class _TalkingMusic:
+    """What a phone Talking render plays under the talk, and what the variant keeps of it."""
+
+    bed: Any = None
+    # The library song the bed plays (`smart_music_treatment`), None for the creator's own.
+    treatment: dict[str, Any] | None = None
+    # The answer to a typed music ask (`talking_music.RECEIPT_FIELD`), None when none was asked.
+    receipt: dict[str, Any] | None = None
+    # The variant's `talking_song` (the creator's song choices, or her removal), None: no record.
+    song_record: dict[str, Any] | None = None
+
+
 def _talking_music_bed(
     job_id: str,
     *,
@@ -5502,14 +5515,16 @@ def _talking_music_bed(
     client_protocol: int | None,
     spoken_text: str,
     take_s: float,
-) -> tuple[Any, dict[str, Any] | None, dict[str, Any] | None]:
-    """KRI-1562: ``(PhoneMusicBed, treatment, receipt)`` for a phone Talking render.
+) -> _TalkingMusic:
+    """KRI-1562 / KRI-1578: the song under a phone Talking render.
 
-    The song comes from the creator: one already on the variant (chosen in the editor or in
-    chat), else, for the approved brief's typed music ask, the library song the matcher picks
-    for the talk (KRI-20: never unasked). A live "no music" in that brief plays none, whatever is
-    stored. ``receipt`` (`talking_music.RECEIPT_FIELD`) answers a music ask: whether a song plays,
-    or why not. A song that can no longer be served is dropped (traced), never failing the talk.
+    The creator's own uploaded song plays (`talking_music.talking_bed_choice`): with the choices
+    she made on this variant, from its start at the Talking level on a first render. Else a
+    library song already stored on the variant (chosen before KRI-1578). Else, for the approved
+    brief's typed music ask, the library song the matcher picks, only while
+    ``TALKING_LIBRARY_MUSIC_ENABLED``; closed, the ask is answered ``no_upload`` ("send me the
+    song"). KRI-20: never unasked. A live "no music" plays none, whatever is stored or uploaded.
+    A song that can no longer be served is dropped (traced), never failing the talk.
     """
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
     from app.kria.draft_sound_carry import asks_music, asks_no_music  # noqa: PLC0415
@@ -5523,21 +5538,50 @@ def _talking_music_bed(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     if not talking_music_supported(require_client=False):
-        return None, None, None
+        return _TalkingMusic()
     try:
         brief = BriefBinding.model_validate(snapshot.get("creator_brief_binding")).resolve()
     except (ValueError, TypeError):
         brief = None
+    stored = _persisted_variant(job_id=job_id, variant_id="subtitled") or {}
+    removed = (
+        {talking_music.TALKING_SONG_FIELD: {"removed": True}}
+        if talking_music.talking_song_removed(stored)
+        else {}
+    )
+    song_record = removed.get(talking_music.TALKING_SONG_FIELD)
     if asks_no_music(brief):
-        return None, None, None
+        return _TalkingMusic(song_record=song_record)
     ask = asks_music(brief)
 
-    def missing(reason: str) -> tuple[None, None, dict[str, Any] | None]:
+    def missing(reason: str) -> _TalkingMusic:
         receipt = {"status": talking_music.NOT_PLAYED, "reason": reason}
-        return None, None, receipt if ask is not None else None
+        return _TalkingMusic(receipt=receipt if ask is not None else None, song_record=song_record)
 
-    treatment = _persisted_music_treatment(job_id=job_id, variant_id="subtitled")
+    uploaded = _job_uploaded_song(job_id)
+    choice = talking_music.talking_bed_choice(stored, uploaded, no_music=False, adopt=True)
+    if choice.song is not None:
+        if not speech_duck_planned_for(client_protocol):
+            return missing(talking_music.APP_TOO_OLD)
+        try:
+            bed = _creator_song_bed(choice.song, uploaded)
+        except (UnsupportedPhonePlan, ValueError, FileNotFoundError) as exc:
+            record_pipeline_event(
+                "phone",
+                "talking_music_dropped",
+                {"source": "creator_song", "reason": str(exc)[:200]},
+            )
+            return missing(talking_music.SONG_UNAVAILABLE)
+        receipt = {"status": talking_music.PLAYED, "source": talking_music.SOURCE_CREATOR_SONG}
+        return _TalkingMusic(
+            bed=bed,
+            receipt=receipt if ask is not None else None,
+            song_record=choice.song.model_dump(mode="json"),
+        )
+    treatment = dict(choice.treatment) if choice.treatment is not None else None
     if treatment is None and ask is not None:
+        if not talking_music.library_music_enabled():
+            return missing(talking_music.NO_UPLOAD)
         if not speech_duck_planned_for(client_protocol):
             return missing(talking_music.APP_TOO_OLD)
         try:
@@ -5550,7 +5594,7 @@ def _talking_music_bed(
         if treatment is None:
             return missing(reason)
     if treatment is None:
-        return None, None, None
+        return _TalkingMusic(song_record=song_record)
     try:
         bed = music_bed_from_treatment(treatment, _pin_catalog_music)
     except (UnsupportedPhonePlan, ValueError, KeyError, TypeError) as exc:
@@ -5561,7 +5605,64 @@ def _talking_music_bed(
         )
         return missing(talking_music.SONG_UNAVAILABLE)
     receipt = {"status": talking_music.PLAYED, "track_id": str(treatment.get("track_id"))}
-    return bed, treatment, receipt if ask is not None else None
+    return _TalkingMusic(
+        bed=bed,
+        treatment=treatment,
+        receipt=receipt if ask is not None else None,
+        song_record=song_record,
+    )
+
+
+def _job_uploaded_song(job_id: str) -> Any:
+    """KRI-1578: the song uploaded to this job's plan item now (`talking_music.uploaded_song`)."""
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.services.talking_music import uploaded_song  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        item_id = getattr(job, "content_plan_item_id", None) if job is not None else None
+        return uploaded_song(db.get(PlanItem, item_id) if item_id is not None else None)
+
+
+def _creator_song_bed(song: Any, uploaded: Any) -> Any:
+    """KRI-1578: pin and hash the uploaded generation, then play ``song``'s choices over it."""
+    from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+        CreatorSongSource,
+        music_bed_from_user_song,
+    )
+    from app.services.phone_voiceover import inspect_song_asset  # noqa: PLC0415
+    from app.services.talking_music import SPEECH_DUCK_DB  # noqa: PLC0415
+
+    asset = inspect_song_asset(
+        uploaded.gcs_path,
+        asset_id=f"song-{uploaded.plan_item_id}",
+        plan_item_id=uploaded.plan_item_id,
+        expected_generation=uploaded.generation,
+    )
+    source = CreatorSongSource(
+        plan_item_id=asset.plan_item_id, generation=asset.generation, fingerprint=asset.fingerprint
+    )
+    return music_bed_from_user_song(song, source, speech_duck_db=SPEECH_DUCK_DB)
+
+
+def _persisted_variant(*, job_id: str, variant_id: str) -> dict[str, Any] | None:
+    """This variant as an earlier run of the job stored it; None on a first render or any read
+    failure (a lost read must never block a render)."""
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            plan = (job.assembly_plan or {}) if job is not None else {}
+            existing = next(
+                (
+                    v
+                    for v in plan.get("variants") or []
+                    if isinstance(v, dict) and v.get("variant_id") == variant_id
+                ),
+                None,
+            )
+            return dict(existing) if existing is not None else None
+    except Exception:  # noqa: BLE001 - fail open, never block a render on this read
+        return None
 
 
 def _match_talking_song(
@@ -6498,7 +6599,7 @@ def _run_phone_voiceover_montage_job(
         }
         if voice_windows is not None:
             # KRI-1562: a later cut Save re-lays the bed's duck from these.
-            from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+            from app.pipeline.phone_recipe_shared import (
                 speech_source_windows_json,
             )
 
@@ -11425,8 +11526,7 @@ def _run_phone_subtitled_job(
             # wherever a cut, an insert or Range later puts them. A song whose section can't cover
             # the video refuses the render with `music_section_too_short` (never shortened).
             speech_source_windows: dict[str, Any] | None = None
-            talking_music_treatment: dict[str, Any] | None = None
-            talking_music_receipt: dict[str, Any] | None = None
+            talking_music = _TalkingMusic()
             talking_music_compile: dict[str, Any] = {}
             if settings.talking_music_enabled:
                 speech_source_windows = _talking_speech_source_windows(
@@ -11446,7 +11546,7 @@ def _run_phone_subtitled_job(
                         ),
                     ]
                 )
-                talking_bed, talking_music_treatment, talking_music_receipt = _talking_music_bed(
+                talking_music = _talking_music_bed(
                     job_id,
                     snapshot=snapshot,
                     client_protocol=stamped_client_protocol(
@@ -11457,9 +11557,9 @@ def _run_phone_subtitled_job(
                     ),
                     take_s=float(binding.original.duration_s or 0.0),
                 )
-                if talking_bed is not None:
+                if talking_music.bed is not None:
                     talking_music_compile.update(
-                        music=talking_bed, speech_source_windows=speech_source_windows
+                        music=talking_music.bed, speech_source_windows=speech_source_windows
                     )
 
             # KRI-1015: the review says when the captions were translated -- the spoken language
@@ -13632,12 +13732,17 @@ def _run_phone_subtitled_job(
         if speech_source_windows is not None:
             new_entry["speech_source_windows"] = speech_source_windows_json(speech_source_windows)
         if talking_music_compile:
-            # KRI-20: the creator's own choice, kept only when the recipe really plays it.
-            new_entry["smart_music_treatment"] = talking_music_treatment
-        if talking_music_receipt is not None:
+            # KRI-20: the creator's own choice, kept only when the recipe really plays it. Her
+            # own upload playing clears a library song: it no longer describes what plays.
+            new_entry["smart_music_treatment"] = talking_music.treatment
+        if talking_music.receipt is not None:
             from app.services.talking_music import RECEIPT_FIELD  # noqa: PLC0415
 
-            new_entry[RECEIPT_FIELD] = talking_music_receipt
+            new_entry[RECEIPT_FIELD] = talking_music.receipt
+        if talking_music.song_record is not None:
+            from app.services.talking_music import TALKING_SONG_FIELD  # noqa: PLC0415
+
+            new_entry[TALKING_SONG_FIELD] = talking_music.song_record
         if engine_noise_receipt is not None:
             new_entry["engine_noise_reduction"] = engine_noise_receipt
         if processed_audio_receipt is not None:

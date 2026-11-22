@@ -1,4 +1,8 @@
-"""KRI-1562: the editor Save of a phone Talking edit with the creator's song.
+"""KRI-1562: the editor Save of a phone Talking edit with a LIBRARY song.
+
+KRI-1578 moved a new library song behind ``TALKING_LIBRARY_MUSIC_ENABLED`` (on for the whole
+module); the creator's own song and the closed library are in
+`tests/kria/test_talking_creator_song.py`.
 
 Real boundaries: the commit route's own validator (`gj.prepare_editor_commit`) stages the
 `background_music` section, the real `compile_phone_subtitled_plan` recompiles, the real
@@ -54,6 +58,11 @@ def _no_request_context():
     clear_request_context()
     yield
     clear_request_context()
+
+
+@pytest.fixture(autouse=True)
+def _library_music_open(monkeypatch):
+    monkeypatch.setattr(gj.settings, "talking_library_music_enabled", True)
 
 
 def _flag(monkeypatch, on: bool):

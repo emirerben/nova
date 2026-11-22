@@ -44,6 +44,9 @@ from app.agents._schemas.creator_policy import (
     USER_SONG_MISSING_MESSAGE,
     USER_SONG_PHONE_ONLY_CODE,
     USER_SONG_PHONE_ONLY_MESSAGE,
+    USER_SONG_TALKING_LIPSYNC_CODE,
+    USER_SONG_TALKING_LIPSYNC_MESSAGE,
+    USER_SONG_TALKING_NOTICE,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
     PhoneMediaUnavailableError,
@@ -219,6 +222,11 @@ _KNOWN_TR: dict[str, str] = {
     USER_SONG_MISSING_MESSAGE: (
         "Önce şarkıyı yükle, düzenlemeyi ona göre kurarım. Ya da lisanslı müzik kullanayım mı?"
     ),
+    USER_SONG_TALKING_LIPSYNC_MESSAGE: (
+        "Dudak senkronu için Lip-sync videosu gerekiyor: konuşmalı videoda şarkın sesinin "
+        "altında kısık çalar. Sesinin altında çalayım mı?"
+    ),
+    USER_SONG_TALKING_NOTICE: "Şarkını sesinin altında kısık çalacağım.",
     TALKING_CLIP_INTENTS_DROPPED_NOTICE: (
         "Konuşmalı düzenlemeler söylediklerini altyazıya çevirir, o yüzden tek tek "
         "kliplere ayrı etiket ya da altyazı eklemedim."
@@ -433,6 +441,7 @@ def localize_known_message(text: str) -> str:
 _USER_SONG_REFUSALS = {
     USER_SONG_PHONE_ONLY_CODE: USER_SONG_PHONE_ONLY_MESSAGE,
     USER_SONG_MISSING_CODE: USER_SONG_MISSING_MESSAGE,
+    USER_SONG_TALKING_LIPSYNC_CODE: USER_SONG_TALKING_LIPSYNC_MESSAGE,
 }
 
 
