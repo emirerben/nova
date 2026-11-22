@@ -6611,14 +6611,30 @@ def _resolve_background_music_treatment(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "music_track_unavailable"},
         )
+    from app.services.music_sections import current_best_section_for_track  # noqa: PLC0415
+
     video_duration_s = visual_block_variant_duration(variant)
     track_duration_s = _track_duration(track)
     current = variant.get("smart_music_treatment") or {}
+    # KRI-1562: another song under a phone Talking edit (a chat swap names only the track)
+    # never inherits the old song's part; it starts on its own best section.
+    window = (
+        current
+        if str(current.get("track_id")) == str(track.id)
+        or not is_phone_subtitled_editor_variant(variant)
+        else dict(
+            zip(
+                ("section_start_s", "section_end_s"),
+                current_best_section_for_track(track) or (),
+                strict=False,
+            )
+        )
+    )
     try:
         start_s = (
             float(payload.start_s)
             if payload.start_s is not None
-            else float(current.get("section_start_s", 0.0) or 0.0)
+            else float(window.get("section_start_s", 0.0) or 0.0)
         )
     except (TypeError, ValueError):
         start_s = 0.0
@@ -6627,7 +6643,7 @@ def _resolve_background_music_treatment(
         end_s = (
             float(payload.end_s)
             if payload.end_s is not None
-            else float(current.get("section_end_s", default_end) or default_end)
+            else float(window.get("section_end_s", default_end) or default_end)
         )
     except (TypeError, ValueError):
         end_s = default_end
@@ -6655,6 +6671,12 @@ def _resolve_background_music_treatment(
         "gain_db": min(0.0, max(-40.0, float(gain_db))),
         "speech_duck_db": float(current.get("speech_duck_db", -12.0) or -12.0),
         "final_lufs": float(current.get("final_lufs", -14.0) or -14.0),
+        # KRI-1562: a phone Talking bed keeps its export margin for a song first chosen at Save.
+        **(
+            {"duration_s": round(track_duration_s, 3)}
+            if is_phone_subtitled_editor_variant(variant)
+            else {}
+        ),
     }
 
 
@@ -7441,8 +7463,13 @@ def _clamp_phone_editor_capabilities(
     shape: Any = None,
     subtitled_text: bool = False,
     guided_sfx: bool = False,
+    background_music: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
+
+    ``background_music`` (KRI-1562): a phone Talking variant whose Save compiles the creator's
+    song (`talking_music_supported`) keeps the song controls; every other device Save would
+    refuse the section or drop the song, so it is closed.
 
     ``guided_sfx`` (KRI-608): a guided / montage device variant with the guided-SFX
     rollout on and a canonical v2 revision keeps `sfx` (only) open; its Save
@@ -7642,6 +7669,8 @@ def _clamp_phone_editor_capabilities(
             "source_registration": True,
         }
         clamped["visual_block_kinds"] = ["media"]
+    if "background_music" in clamped:
+        clamped["background_music"] = clamped["background_music"] is True and background_music
     return clamped
 
 
@@ -8222,6 +8251,9 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             shape=shape,
             subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
             guided_sfx=_phone_guided_sfx_available(job, variant),
+            background_music=_phone_talking_music_available(
+                variant, subtitled_lanes=subtitled_lanes
+            ),
             source_crop=(
                 "sourceCrop" in settings.phone_render_verified_features
                 and (
@@ -8238,6 +8270,24 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             ),
         )
     return capabilities
+
+
+def _phone_talking_music_hidden(variant: dict) -> bool:
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return is_phone_subtitled_editor_variant(variant) and not talking_music_supported()
+
+
+def _phone_talking_music_available(variant: dict, *, subtitled_lanes: bool) -> bool:
+    """KRI-1562: does this device variant's Save compile the creator's song? Only a phone Talking
+    edit on the subtitled Save path (an authored one Saves through the authored compiler)."""
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return (
+        subtitled_lanes
+        and variant.get("editor_timeline_mode") != "authored"
+        and talking_music_supported()
+    )
 
 
 def _phone_authored_media_available(job: Job, variant: dict) -> bool:
@@ -12553,6 +12603,26 @@ def _validate_landscape_fit_section(job: Job, variant: dict, value: str) -> str:
     return value
 
 
+def _record_creator_text_edits(job: Job, variant: dict, rows: list[dict]) -> list[dict]:
+    """KRI-1585: on a job stamped with informative text designs, every style field a Save
+    changes (the iPhone editor's or a chat edit's draft, both commit here) becomes the
+    creator's, so no later style pass can take it back. Unstamped jobs are untouched."""
+    from app.pipeline.informative_text import policy_enabled, record_creator_edits
+    from app.services.phone_text_styling import PHONE_TEXT_STYLE_FIELD
+
+    policy = variant.get(PHONE_TEXT_STYLE_FIELD) or (job.assembly_plan or {}).get(
+        PHONE_TEXT_STYLE_FIELD
+    )
+    if not policy_enabled(policy):
+        return rows
+    # The guided revision, when there is one, is the authoritative copy of each row.
+    previous = [
+        *(variant.get("text_elements") or []),
+        *((_guided_v2_revision(job, variant) or {}).get("text_elements") or []),
+    ]
+    return record_creator_edits(previous, copy.deepcopy(rows))
+
+
 def _prepare_editor_commit(
     job: Job,
     variant_id: str,
@@ -12856,6 +12926,7 @@ def _prepare_editor_commit(
                 # exact-ID guard.
                 append_projection_tombstones=not guided_v2 and not phone_talking_text,
             )
+        validated_elements = _record_creator_text_edits(job, variant, validated_elements)
         if not guided_v2:
             _require_guided_story_text_ids(variant, validated_elements)
 
@@ -14672,6 +14743,9 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession, *, job:
             if isinstance(treatment, dict)
             else None
         )
+        if treatment_track is not None and _phone_talking_music_hidden(variant):
+            # KRI-1562: the editor previews a phone Talking song only while its export plays one.
+            treatment_track = None
         if treatment_track is not None:
             variant["background_music"] = _background_music_response(
                 variant,

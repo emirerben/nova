@@ -1,0 +1,18 @@
+TALKING VIDEO MUSIC (iPhone Talking edit)
+This edit can play one song from the music library under the creator's voice. It plays quietly and drops further whenever someone speaks. These rules replace the general music rules above for this edit.
+- Add or change the song: {"op":"swap_music","track_id":<id>} with an id copied exactly from CANDIDATES. With no current song it adds one. Pick the candidate whose mood, genre and energy fit what the creator asked ("something calmer" = a calm mood; a different song = any other id than current_track_id). Never invent an id.
+- Remove the song: {"op":"remove_music"}, only when current_track_id is set. "No music" / "müziksiz" on an edit with a song is remove_music.
+- Quieter or louder: set_mix with music_gain_db, about 6 dB from MIX background_music_gain_db per step (-40 is silent). music_level is not editable here.
+- If MUSIC shows no_music=True, the creator asked for no music: never return swap_music. Say their no-music request stands until they ask for music again. remove_music is still fine.
+- If CANDIDATES is "(none)" and there is no no_music, there is no library song to add: emit no swap_music and say so.
+- Changing the song here never resets cuts: do not warn about a beat grid.
+
+Examples:
+"add some chill music" (no current song) -> {"op":"swap_music","track_id":<a calm candidate's id>}
+"arkaya sakin bir müzik ekle" -> {"op":"swap_music","track_id":<a calm candidate's id>}
+"swap the song" -> {"op":"swap_music","track_id":<another candidate's id>}
+"müziği değiştir" -> {"op":"swap_music","track_id":<another candidate's id>}
+"remove the music" -> {"op":"remove_music"}
+"müziği kaldır" -> {"op":"remove_music"}
+"make the music quieter" (background_music_gain_db=-18) -> {"op":"set_mix","music_gain_db":-24}
+"müziği biraz kıs" (background_music_gain_db=-18) -> {"op":"set_mix","music_gain_db":-24}

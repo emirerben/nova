@@ -3,6 +3,115 @@ import UIKit
 
 @MainActor
 final class SplitScreenAcceptanceUITests: XCTestCase {
+    func testHoldAndDragFootageIntoEmptySplitPanel() throws {
+        let app = launch(reset: true)
+        let first = clip(1, in: app)
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        first.tap()
+        createSplit(panels: 2, in: app)
+        app.buttons["native-editor-split-done"].tap()
+        let gap = app.descendants(matching: .any)["native-editor-split-gap-1-0"].firstMatch
+        XCTAssertTrue(gap.waitForExistence(timeout: 5))
+        let start = first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: gap.frame.midY - first.frame.midY)))
+        let slots = try XCTUnwrap(try sections(app)["timeline_slots"] as? [[String: Any]])
+        XCTAssertEqual(slots.first { $0["split_section_id"] is String }?["split_panel_index"] as? Int, 1)
+    }
+
+    func testDroppingOntoOccupiedPanelSwapsBothClips() throws {
+        let app = launch(reset: true)
+        let first = clip(1, in: app)
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        first.tap()
+        createSplit(panels: 2, in: app)
+        fillEmptyPanel("Bottom", withFootage: "Clip 1", in: app)
+        app.buttons["native-editor-split-done"].tap()
+        func members() throws -> [String: Int] {
+            let slots = try XCTUnwrap(try sections(app)["timeline_slots"] as? [[String: Any]])
+            var panels = [String: Int]()
+            for slot in slots where slot["split_section_id"] is String {
+                panels[try XCTUnwrap(slot["slot_id"] as? String)] = try XCTUnwrap(slot["split_panel_index"] as? Int)
+            }
+            return panels
+        }
+        let before = try members()
+        XCTAssertEqual(before.count, 2)
+        let bottom = clip(2, in: app)
+        let start = bottom.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: first.frame.midY - bottom.frame.midY)))
+        XCTAssertEqual(try members(), before.mapValues { 1 - $0 })
+    }
+
+    func testUnequalSwapUsesAvailableRoomAndUndoesInOneStep() throws {
+        let app = launch(reset: true, fixture: "-ui-testing-editor-split-swap-room")
+        let before = try dropTopClipOntoBottom(in: app)
+        var expected = try XCTUnwrap(before["timeline_slots"] as? [[String: Any]])
+        XCTAssertEqual(expected.count, 3)
+        expected[0]["split_panel_index"] = 1
+        expected[1]["split_panel_index"] = 0
+        XCTAssertEqual(try canonical(sections(app)["timeline_slots"]), try canonical(expected))
+        app.buttons["native-editor-undo"].tap()
+        XCTAssertEqual(try canonical(sections(app)), try canonical(before))
+    }
+
+    func testUnequalSwapBlockedByNeighborExplainsAndPreservesEdit() throws {
+        let app = launch(reset: true, fixture: "-ui-testing-editor-split-swap-blocked")
+        let before = try dropTopClipOntoBottom(in: app)
+        let alert = app.alerts["This clip won’t fit here."]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        alert.buttons["OK"].tap()
+        XCTAssertEqual(try canonical(sections(app)), try canonical(before))
+        XCTAssertFalse(app.buttons["native-editor-undo"].isEnabled)
+    }
+
+    private func dropTopClipOntoBottom(in app: XCUIApplication) throws -> [String: Any] {
+        let top = clip(1, in: app), bottom = clip(2, in: app)
+        XCTAssertTrue(top.waitForExistence(timeout: 30))
+        let before = try sections(app)
+        let start = top.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.7, thenDragTo: start.withOffset(CGVector(dx: 0, dy: bottom.frame.midY - top.frame.midY)))
+        return before
+    }
+
+    func testRemoveEmptyEndingKeepsFootageAndCanBeUndone() throws {
+        let app = launch(reset: true, emptyEnding: true)
+        XCTAssertTrue(clip(1, in: app).waitForExistence(timeout: 30))
+        let before = try sections(app)
+        let authored = try XCTUnwrap((before["split_screen_sections"] as? [[String: Any]])?.first)
+        XCTAssertEqual(try XCTUnwrap(authored["duration_s"] as? Double), 13.566667, accuracy: 0.000001)
+        clip(1, in: app).tap()
+        let tool = app.buttons["native-editor-tool-split"]
+        let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        for _ in 0..<3 where !tool.isHittable { rail.swipeLeft() }
+        tool.tap()
+        reveal(app.buttons["native-editor-split-trim-empty-end"], in: app).tap()
+        app.buttons["native-editor-split-done"].tap()
+        let after = try sections(app)
+        let section = try XCTUnwrap((after["split_screen_sections"] as? [[String: Any]])?.first)
+        XCTAssertEqual(try XCTUnwrap(section["duration_s"] as? Double), 10, accuracy: 0.001)
+        XCTAssertEqual(try canonical(after["timeline_slots"]), try canonical(before["timeline_slots"]))
+        app.buttons["native-editor-undo"].tap()
+        XCTAssertEqual(try canonical(sections(app)["split_screen_sections"]), try canonical(before["split_screen_sections"]))
+    }
+
+    func testVerticalSwipeFromTimelineContentScrollsInBothDirections() throws {
+        let app = launch(reset: true, globalLayers: true)
+        let first = clip(1, in: app)
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        let lanes = app.scrollViews["native-editor-lane-scroll"]
+        let top = first.frame.midY
+        let touch = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: lanes.frame.midX + 60, dy: top))
+        touch.press(forDuration: 0.05, thenDragTo: touch.withOffset(CGVector(dx: 0, dy: -60)))
+        XCTAssertTrue(first.exists)
+        XCTAssertLessThan(first.frame.midY, top - 15)
+        for _ in 0..<4 {
+            touch.press(forDuration: 0.05, thenDragTo: touch.withOffset(CGVector(dx: 0, dy: 75)))
+            if first.exists && abs(first.frame.midY - top) < 5 { break }
+        }
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        XCTAssertEqual(first.frame.midY, top, accuracy: 5)
+    }
+
     func testCustomThreePanelLayoutSaveReopenAndFullscreenBoundary() throws {
         let app = launch(reset: true)
         let first = clip(1, in: app)
@@ -171,8 +280,8 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
         timeline.pinch(withScale: 0.35, velocity: -1)
         let end = app.descendants(matching: .any)["native-editor-split-end-1"].firstMatch
         XCTAssertTrue(end.waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(end.frame.width, 44, "An unselected end handle keeps a full 44 pt touch target")
-        XCTAssertGreaterThanOrEqual(end.frame.height, 44)
+        assertTouchTarget(end.frame.width, "An unselected end handle keeps a full 44 pt touch target")
+        assertTouchTarget(end.frame.height)
         attach(app, name: "Zoomed-out panel end handles")
     }
 
@@ -299,11 +408,13 @@ final class SplitScreenAcceptanceUITests: XCTestCase {
                        "Global text, green overlay and magenta drawing keep independently authored canvas positions")
     }
 
-    private func launch(reset: Bool, globalLayers: Bool = false) -> XCUIApplication {
+    private func launch(reset: Bool, globalLayers: Bool = false, emptyEnding: Bool = false, fixture: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-split-screen",
             "-ui-testing-editor-split-persistence", "-ui-testing-editor-document-snapshot",
             "-ui-testing-editor-live-preview", "-ui-testing-editor-color-cuts"]
+        if let fixture { app.launchArguments.append(fixture) }
+        if emptyEnding { app.launchArguments.append("-ui-testing-editor-split-empty-ending") }
         if globalLayers { app.launchArguments.append("-ui-testing-editor-split-global-layers") }
         if reset { app.launchArguments.append("-ui-testing-editor-split-persistence-reset") }
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"

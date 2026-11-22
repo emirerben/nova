@@ -49,9 +49,9 @@ def current_detector_policy() -> str:
     """Return the stable policy token included in every source fingerprint."""
 
     from app.config import settings  # noqa: PLC0415
+    from app.services.source_length_policy import speech_analysis_window_s
     from app.services.speech_cleanup_preflight import (
         SPEECH_CLEANUP_ENGINE_VERSION,
-        SPEECH_CLEANUP_MAX_DURATION_S,
         SPEECH_CLEANUP_MIXED_GAP_MODE,
         SPEECH_CLEANUP_OVER_BUDGET_POLICY,
     )
@@ -63,7 +63,7 @@ def current_detector_policy() -> str:
             DETECTOR_VERSION,
             f"mixed-gap={SPEECH_CLEANUP_MIXED_GAP_MODE}",
             f"over-budget={SPEECH_CLEANUP_OVER_BUDGET_POLICY}",
-            f"max-duration={SPEECH_CLEANUP_MAX_DURATION_S:g}",
+            f"max-duration={speech_analysis_window_s():g}",
             # The removal cap changes the plan for identical media, so it is
             # policy identity: flipping the operator switch must invalidate
             # every analysis produced under the previous value.
@@ -77,6 +77,9 @@ def current_detector_policy() -> str:
             f"filler-check={'enabled' if settings.speech_cleanup_filler_check_enabled else 'off'}",
             # Moving late-stamped words changes the cut and the stored words (KRI-1506).
             f"late-words={'enabled' if settings.speech_cleanup_late_words_enabled else 'off'}",
+            # Trimming stretched heads and straddling runs changes them too (KRI-1512).
+            "stretched-words="
+            f"{'enabled' if settings.speech_cleanup_stretched_words_enabled else 'off'}",
         )
     )
 

@@ -284,7 +284,7 @@ class EvidenceWorkflowTests(unittest.TestCase):
     def test_required_lint_gate_does_not_repeat_the_evidence_check(self):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         lint = ci.split("  lint:\n", 1)[1].split("  test-api:\n", 1)[0]
-        self.assertIn("needs: [changes, lint-suites]", lint)
+        self.assertIn("needs: [changes, lint-suites, ci-selftests]", lint)
         self.assertIn("scripts/ci/select-tests.py gate lint lint-suites", lint)
         for fragment in ("evidence", "pr-evidence", "gh api", "pull-requests"):
             self.assertNotIn(

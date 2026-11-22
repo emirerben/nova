@@ -26,6 +26,7 @@ stale env file can't accidentally seed staging/prod).
 
 Run: cd src/apps/api && .venv/bin/python scripts/seed_dimples_passport_brazil.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -82,30 +83,30 @@ REQUIRED_INPUTS = [
 # Tuned values from the standalone tuning UI at
 # src/apps/web/public/position-tool.html. Open that file in a browser to
 # re-tune; the Output Values panel exports the same names below.
-PERU_SIZE_PX = 170              # tuned to frame width via brazil.mp4 frame diff
-                                # (2026-05-10): previous 265 overflowed the 1080px
-                                # frame for every font in the cycle — the "L"
-                                # clipped past the right edge. Reference glyphs
-                                # span 35-55% frame width; 170px reproduces that
-                                # range with the runtime PlayfairDisplay/Permanent
-                                # Marker font set. position-tool.html's preview
-                                # font has different metrics than the renderer,
-                                # so the tool's default of 265 looked correct
-                                # in-browser but rendered ~2x wider on output.
-PERU_Y_FRAC = 0.45              # position-tool.html:114 default
-PERU_COLOR = "#F4D03F"          # position-tool.html:15 (Montserrat 800 yellow)
-WELCOME_SIZE_PX = 36            # tuned to REF welcome height via
-                                # analyze_text_overlays.py (2026-05-10):
-                                # REF welcome bbox height median 26px vs
-                                # OURS 36px at WELCOME_SIZE_PX=48 → REF is
-                                # using ~36px font. position-tool.html's
-                                # default of 48 produces a rendered welcome
-                                # ~35% bigger than the reference's tiny
-                                # serif tag. Cap height ≈ 0.72 × font_size
-                                # for Playfair Regular, so 36 → ~26px bbox
-                                # matches REF exactly.
-WELCOME_Y_FRAC = 0.4779         # position-tool.html:95 default
-WELCOME_COLOR = "#FFFFFF"       # position-tool.html:23 (Playfair Display white)
+PERU_SIZE_PX = 170  # tuned to frame width via brazil.mp4 frame diff
+# (2026-05-10): previous 265 overflowed the 1080px
+# frame for every font in the cycle — the "L"
+# clipped past the right edge. Reference glyphs
+# span 35-55% frame width; 170px reproduces that
+# range with the runtime PlayfairDisplay/Permanent
+# Marker font set. position-tool.html's preview
+# font has different metrics than the renderer,
+# so the tool's default of 265 looked correct
+# in-browser but rendered ~2x wider on output.
+PERU_Y_FRAC = 0.45  # position-tool.html:114 default
+PERU_COLOR = "#F4D03F"  # position-tool.html:15 (Montserrat 800 yellow)
+WELCOME_SIZE_PX = 36  # tuned to REF welcome height via
+# analyze_text_overlays.py (2026-05-10):
+# REF welcome bbox height median 26px vs
+# OURS 36px at WELCOME_SIZE_PX=48 → REF is
+# using ~36px font. position-tool.html's
+# default of 48 produces a rendered welcome
+# ~35% bigger than the reference's tiny
+# serif tag. Cap height ≈ 0.72 × font_size
+# for Playfair Regular, so 36 → ~26px bbox
+# matches REF exactly.
+WELCOME_Y_FRAC = 0.4779  # position-tool.html:95 default
+WELCOME_COLOR = "#FFFFFF"  # position-tool.html:23 (Playfair Display white)
 
 
 def _hook_overlay(
@@ -127,7 +128,7 @@ def _hook_overlay(
         "end_s": end_s,
         "effect": effect,
         "position": "center",
-        "text_size": "medium",          # fallback when text_size_px is None
+        "text_size": "medium",  # fallback when text_size_px is None
         "text_size_px": text_size_px,
         "font_style": font_style,
         "text_color": text_color,
@@ -164,21 +165,39 @@ def build_recipe() -> dict:
             # 3.49s — between beats 4 (3.14) and 5 (3.76), in dead air. The
             # title missed the drop entirely, breaking the hook feel. New
             # values push the cuts to beat 1, beat 3, and beat 5 respectively.
-            "position": 1, "target_duration_s": 1.0, "priority": 7, "slot_type": "hook",
-            "transition_in": "none", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 1,
+            "target_duration_s": 1.0,
+            "priority": 7,
+            "slot_type": "hook",
+            "transition_in": "none",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
         {
             # Cut at t=2.5s lands within 80ms of beat 3 (2.42s).
-            "position": 2, "target_duration_s": 1.5, "priority": 6, "slot_type": "hook",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 2,
+            "target_duration_s": 1.5,
+            "priority": 6,
+            "slot_type": "hook",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
         {
             # Cut at t=4.0s falls between beats 5 (3.76) and 6 (4.39).
-            "position": 3, "target_duration_s": 1.5, "priority": 7, "slot_type": "hook",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 3,
+            "target_duration_s": 1.5,
+            "priority": 7,
+            "slot_type": "hook",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
         {
             # Slot 4 — short "Welcome to" intro on a hook clip. Was 3.5s; cut
@@ -187,8 +206,13 @@ def build_recipe() -> dict:
             # location title takes over. Trimmed further to 1.1s to compensate
             # for slot 1's +0.4s growth (0.1 → 0.5 above) so total template
             # duration stays close to the 21.4s music length.
-            "position": 4, "target_duration_s": 1.1, "priority": 10, "slot_type": "hook",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "position": 4,
+            "target_duration_s": 1.1,
+            "priority": 10,
+            "slot_type": "hook",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
             "energy": 2.1,
             "text_overlays": [
                 # Welcome appears at slot start (was 0.5s offset) so the
@@ -221,8 +245,13 @@ def build_recipe() -> dict:
             # felt rushed. Extending to 5.5s gives the cycling 5+ seconds of
             # uncovered screen time and aligns the curtain-as-fraction with
             # the reference.
-            "position": 5, "target_duration_s": 5.5, "priority": 10, "slot_type": "hook",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "position": 5,
+            "target_duration_s": 5.5,
+            "priority": 10,
+            "slot_type": "hook",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
             "energy": 1.8,
             "text_overlays": [
                 # "Welcome to" co-renders with BRAZIL for the first 3.5s of
@@ -283,13 +312,18 @@ def build_recipe() -> dict:
             # Slot 6 was 0.96s; shrunk to 0.5s to keep total template duration
             # close to the music length (21.4s) after extending slot 5 by 2.77s
             # and shortening slot 4 by 2.0s.
-            "position": 6, "target_duration_s": 0.5, "priority": 9, "slot_type": "broll",
+            "position": 6,
+            "target_duration_s": 0.5,
+            "priority": 9,
+            "slot_type": "broll",
             # Hard-cut after the curtain: the orchestrator force-overrides any
             # transition that follows an interstitial-bearing slot to "none"
             # (template_orchestrate.py:1677). Declaring "hard-cut" here keeps
             # the recipe honest about what actually renders. Reference video
             # also shows the bars reopen straight to b-roll with no fade.
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
             "energy": 6.34,
             # No joint caption after the curtain — the reference goes straight
             # to b-roll with no "Welcome to {LOCATION}" follow-up text.
@@ -299,59 +333,125 @@ def build_recipe() -> dict:
         # values to absorb the +1.61s budget that slots 1-3 took to land
         # BRAZIL on beat 8. Total recipe stays within 21.4s music length.
         {
-            "position": 7, "target_duration_s": 0.86, "priority": 8, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 7,
+            "target_duration_s": 0.86,
+            "priority": 8,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
         {
-            "position": 8, "target_duration_s": 0.93, "priority": 8, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 4.8, "text_overlays": [],
+            "position": 8,
+            "target_duration_s": 0.93,
+            "priority": 8,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 4.8,
+            "text_overlays": [],
         },
         {
-            "position": 9, "target_duration_s": 0.89, "priority": 9, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 8.5, "text_overlays": [],
+            "position": 9,
+            "target_duration_s": 0.89,
+            "priority": 9,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 8.5,
+            "text_overlays": [],
         },
         {
-            "position": 10, "target_duration_s": 0.86, "priority": 8, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 5.3, "text_overlays": [],
+            "position": 10,
+            "target_duration_s": 0.86,
+            "priority": 8,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 5.3,
+            "text_overlays": [],
         },
         {
-            "position": 11, "target_duration_s": 0.98, "priority": 9, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 11,
+            "target_duration_s": 0.98,
+            "priority": 9,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
         {
-            "position": 12, "target_duration_s": 0.78, "priority": 8, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 4.5, "text_overlays": [],
+            "position": 12,
+            "target_duration_s": 0.78,
+            "priority": 8,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 4.5,
+            "text_overlays": [],
         },
         {
-            "position": 13, "target_duration_s": 0.89, "priority": 9, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 10.0, "text_overlays": [],
+            "position": 13,
+            "target_duration_s": 0.89,
+            "priority": 9,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 10.0,
+            "text_overlays": [],
         },
         {
-            "position": 14, "target_duration_s": 0.93, "priority": 8, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 14,
+            "target_duration_s": 0.93,
+            "priority": 8,
+            "slot_type": "broll",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
         {
-            "position": 15, "target_duration_s": 0.83, "priority": 8, "slot_type": "outro",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 3.6, "text_overlays": [],
+            "position": 15,
+            "target_duration_s": 0.83,
+            "priority": 8,
+            "slot_type": "outro",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 3.6,
+            "text_overlays": [],
         },
         {
-            "position": 16, "target_duration_s": 1.15, "priority": 8, "slot_type": "outro",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 16,
+            "target_duration_s": 1.15,
+            "priority": 8,
+            "slot_type": "outro",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
         {
-            "position": 17, "target_duration_s": 1.15, "priority": 8, "slot_type": "outro",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "position": 17,
+            "target_duration_s": 1.15,
+            "priority": 8,
+            "slot_type": "outro",
+            "transition_in": "hard-cut",
+            "color_hint": "none",
+            "speed_factor": 1.0,
+            "energy": 0.0,
+            "text_overlays": [],
         },
     ]
 
@@ -409,9 +509,7 @@ def build_recipe() -> dict:
 async def seed() -> None:
     recipe = build_recipe()
     async with AsyncSessionLocal() as db:
-        existing = await db.execute(
-            select(VideoTemplate).where(VideoTemplate.id == TEMPLATE_ID)
-        )
+        existing = await db.execute(select(VideoTemplate).where(VideoTemplate.id == TEMPLATE_ID))
         row = existing.scalars().first()
         now = datetime.now(UTC)
         if row:

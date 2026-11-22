@@ -1777,7 +1777,11 @@ private struct ClipReorderDrag {
     let windows: [(start: TimeInterval, end: TimeInterval)]
     var preview: [(start: TimeInterval, end: TimeInterval)]
 
-    func isLifted(_ id: UUID) -> Bool { units[from].clipIDs.contains(id) }
+    var member: EditorClip?
+    var verticalTravel: CGFloat = 0
+    var withinSection = false
+
+    func isLifted(_ id: UUID) -> Bool { withinSection ? clipID == id : units[from].clipIDs.contains(id) }
 
     /// The position a clip originally at `index` occupies once `from` has moved to `target`.
     func previewPosition(of index: Int) -> Int {
@@ -1916,6 +1920,7 @@ struct NativeSplitGap: Identifiable, Equatable {
     let end: TimeInterval
     let row: Int
     let canAdd: Bool
+    let containsEmptyEnding: Bool
     var id: String { "\(sectionID)-\(panel)-\(index)" }
 }
 
@@ -1936,6 +1941,7 @@ enum NativeSplitGaps {
             }
             guard let origin = members.map({ $0.start - $0.offset }).min() else { continue }
             let sectionEnd = origin + section.durationS
+            let occupiedEnd = members.map(\.end).max() ?? sectionEnd
             for panel in 0..<section.panelCount {
                 guard let row = rows.row(panel: panel, count: section.panelCount) else { continue }
                 let addable = canAdd(section.id, panel)
@@ -1944,7 +1950,7 @@ enum NativeSplitGaps {
                 func record(_ start: TimeInterval, _ end: TimeInterval) {
                     guard end - start >= minimumDuration else { return }
                     gaps.append(NativeSplitGap(sectionID: section.id, panel: panel, index: index, start: start, end: end,
-                                               row: row, canAdd: addable))
+                                               row: row, canAdd: addable, containsEmptyEnding: end == sectionEnd && sectionEnd - occupiedEnd >= minimumDuration))
                     index += 1
                 }
                 for member in members.filter({ $0.panel == panel }).sorted(by: { $0.start < $1.start }) {
@@ -1997,8 +2003,12 @@ struct NativeMiniStrip: View {
     @State private var alignmentHaptic = UIImpactFeedbackGenerator(style: .medium)
     @State private var lastBoundaryFeedbackAt = Date.distantPast
     @State private var cachedClips: [EditorClip] = []
+    @State private var lanePosition = ScrollPosition(edge: .top)
+    @State private var verticalPanOrigin: CGFloat?
     @State private var laneScrollOffset: CGFloat = 0
     @State private var footageRows = NativeSplitScreenRows(document: EditorDocument())
+    @State private var showsSplitDropError = false
+    @State private var endingGap: NativeSplitGap?
     @State private var splitGaps: [NativeSplitGap] = []
     @State private var didCacheItems = false
     @State private var isPresentingAddClip = false
@@ -2181,6 +2191,7 @@ struct NativeMiniStrip: View {
                             timeline
                                 .simultaneousGesture(timelinePanGesture)
                                 .onChange(of: panActive) { _, active in
+                                    if !active { verticalPanOrigin = nil }
                                     if !active, panStartTime != nil { lastPanAt = .now; panStartTime = nil }
                                 }
                                 .onChange(of: playheadActive) { _, active in
@@ -2191,6 +2202,7 @@ struct NativeMiniStrip: View {
                         .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
                         .contentShape(Rectangle())
                     }
+                    .scrollPosition($lanePosition)
                     .contentMargins(.bottom, bottomClearance, for: .scrollContent)
                     .contentMargins(.bottom, bottomClearance, for: .scrollIndicators)
                     .scrollBounceBehavior(.basedOnSize)
@@ -2219,6 +2231,18 @@ struct NativeMiniStrip: View {
             // cancellation, and this must never leave the timeline scrolling
             // with no finger attached.
             if phase != .active { endAutoScroll(); cancelClipReorder() }
+        }
+        .alert("This clip won’t fit here.", isPresented: $showsSplitDropError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Shorten a clip or choose another spot.")
+        }
+        .confirmationDialog("Remove empty ending", isPresented: Binding(
+            get: { endingGap != nil }, set: { if !$0 { endingGap = nil } }
+        ), presenting: endingGap) { gap in
+            Button("Remove empty ending") { session.trimEmptySplitEnd(sectionID: gap.sectionID) }
+            if gap.canAdd { Button("Add footage") { openSplitGap(gap) } }
+            Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $isPresentingAddClip) { NativeEditorAddClipSheet(session: session) }
         // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
@@ -2746,7 +2770,11 @@ struct NativeMiniStrip: View {
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { openSplitGap(gap) }
+                    .onTapGesture {
+                        if session.canEditSplitScreen && gap.containsEmptyEnding {
+                            endingGap = gap
+                        } else { openSplitGap(gap) }
+                    }
                     .position(x: visible.midX, y: visible.midY)
                     // Above the unselected blocks: a panel end handle's overhang must not swallow the add target at its edge.
                     .zIndex(1)
@@ -2778,7 +2806,7 @@ struct NativeMiniStrip: View {
                     pixelsPerSecond: pixelsPerSecond,
                     onSelect: { select(clip) },
                     onReorderStart: { beginClipReorder(clip, index: index, viewportGlobalRange: viewportGlobalRange) },
-                    onReorderChange: { travel, x in updateClipReorder(travel: travel, globalX: x) },
+                    onReorderChange: { travel, x, dy in updateClipReorder(travel: travel, globalX: x, verticalTravel: dy) },
                     onReorderEnd: { commit in endClipReorder(commit: commit) },
                     onTrimStart: { edge, token in
                         guard session.beginTrim(clipID: clip.id, edge: edge, gestureID: token) else { return false }
@@ -2927,12 +2955,16 @@ struct NativeMiniStrip: View {
         for (_, clip) in visibleClips(playheadX: playheadX) {
             let frame = clipFrame(clip, playheadX: playheadX)
             let hitWidth = max(44, frame.width)
-            let hitFrame = CGRect(
+            var hitFrame = CGRect(
                 x: frame.midX - hitWidth / 2,
                 y: filmstripOriginY + frame.minY,
                 width: hitWidth,
                 height: filmstripHeight
             )
+            if session.selectedClipID == clip.id {
+                let leading = NativeTrimHandleGeometry.selected(edge: .leading, blockWidth: hitWidth)
+                hitFrame = hitFrame.insetBy(dx: leading.originX, dy: 0)
+            }
             frames.append(hitFrame)
         }
         for gap in visibleSplitGaps(playheadX: playheadX) where gap.canAdd {
@@ -3368,6 +3400,9 @@ struct NativeMiniStrip: View {
         let base = clipFrame(clip, playheadX: playheadX)
         guard let drag = clipReorder,
               let unit = drag.units.firstIndex(where: { $0.clipIDs.contains(clip.id) }) else { return base }
+        if drag.withinSection {
+            return clip.id == drag.clipID ? base.offsetBy(dx: CGFloat(drag.travel) * pixelsPerSecond, dy: drag.verticalTravel) : base
+        }
         if unit == drag.from { return base.offsetBy(dx: CGFloat(drag.travel) * pixelsPerSecond, dy: 0) }
         let destination = drag.previewPosition(of: unit)
         let displacement = drag.preview[destination].start - drag.windows[unit].start
@@ -3384,6 +3419,18 @@ struct NativeMiniStrip: View {
         let lower = (drag.windows.first?.start ?? origin.start) - origin.start
         let upper = (drag.windows.last?.end ?? origin.end) - origin.end
         drag.travel = min(max(raw, lower), max(lower, upper))
+        drag.withinSection = false
+        if let member = drag.member {
+            let center = (member.start + member.end) / 2 + raw
+            if center >= origin.start && center <= origin.end {
+                drag.withinSection = true
+                drag.travel = raw
+                drag.target = drag.from
+                drag.preview = drag.windows
+                clipReorder = drag
+                return center
+            }
+        }
         let requestedCenter = (origin.start + origin.end) / 2 + raw
         let target = NativeEditorInteraction.clipReorderTarget(windows: drag.windows, from: drag.from, liftedCenter: requestedCenter)
         if target != drag.target {
@@ -3410,13 +3457,16 @@ struct NativeMiniStrip: View {
         let units = NativeSplitScreenReorderUnit.make(document: session.document, clips: clips)
         guard let from = units.firstIndex(where: { $0.clipIDs.contains(clip.id) }) else { return }
         let windows = units.map { (start: $0.start, end: $0.end) }
-        clipReorder = ClipReorderDrag(clipID: clip.id, units: units, from: from, travel: 0, target: from, windows: windows, preview: windows)
+        let member = session.canEditSplitScreen && footageRows.isMember(slotID: clip.slotID) ? clip : nil
+        clipReorder = ClipReorderDrag(clipID: clip.id, units: units, from: from, travel: 0, target: from,
+                                      windows: windows, preview: windows, member: member, withinSection: member != nil)
         reorderHaptic.impactOccurred()
         beginAutoScroll(viewportGlobalRange: viewportGlobalRange, applyRaw: { applyClipReorder(raw: $0) })
     }
 
-    private func updateClipReorder(travel: TimeInterval, globalX: CGFloat) {
+    private func updateClipReorder(travel: TimeInterval, globalX: CGFloat, verticalTravel: CGFloat) {
         guard clipReorder != nil else { return }
+        clipReorder?.verticalTravel = verticalTravel
         applyCompensatedDrag(raw: travel, applyRaw: { applyClipReorder(raw: $0) })
         updateAutoScrollX(globalX)
     }
@@ -3427,7 +3477,21 @@ struct NativeMiniStrip: View {
         guard let drag = clipReorder else { return }
         clipReorder = nil
         endAutoScroll()
-        guard commit, drag.target != drag.from else { return }
+        guard commit else { return }
+        if drag.withinSection, let member = drag.member,
+           let slot = session.document.clips.first(where: { $0.id == member.slotID }),
+           let section = session.document.splitScreenSections.first(where: { $0.id == slot.splitSectionID }) {
+            let row = footageRows.row(slotID: member.slotID) + Int((drag.verticalTravel / (filmstripHeight + rowGap)).rounded())
+            if let panel = (0..<section.panelCount).first(where: { footageRows.row(panel: $0, count: section.panelCount) == row }) {
+                if session.dropSplitClip(member.id, panel: panel, travel: drag.travel) {
+                    refreshItems()
+                } else {
+                    showsSplitDropError = true
+                }
+            }
+            return
+        }
+        guard drag.target != drag.from else { return }
         guard let targetID = drag.units[drag.target].clipIDs.first,
               let target = clips.firstIndex(where: { $0.id == targetID }) else { return }
         session.moveClip(id: drag.clipID, toIndex: target)
@@ -3445,8 +3509,15 @@ struct NativeMiniStrip: View {
         DragGesture(minimumDistance: 10, coordinateSpace: .global)
             .updating($panActive) { _, active, _ in active = true }
             .onChanged { value in
-                guard abs(value.translation.width) > abs(value.translation.height),
-                      !session.isTimingGestureActive, clipReorder == nil, !isPinching, playheadStartTime == nil else { return }
+                guard !session.isTimingGestureActive, clipReorder == nil, !isPinching, playheadStartTime == nil else { return }
+                if panStartTime == nil, verticalPanOrigin != nil || abs(value.translation.height) >= abs(value.translation.width) {
+                    if verticalPanOrigin == nil { stopCoast() }
+                    lastPanAt = .now
+                    let origin = verticalPanOrigin ?? laneScrollOffset
+                    verticalPanOrigin = origin
+                    lanePosition.scrollTo(y: max(0, origin - value.translation.height))
+                    return
+                }
                 if panStartTime == nil { stopCoast() }
                 let start = panStartTime ?? clock.currentTime
                 panStartTime = start
@@ -3454,6 +3525,7 @@ struct NativeMiniStrip: View {
                 seek(to: start - Double(value.translation.width / pixelsPerSecond))
             }
             .onEnded { value in
+                verticalPanOrigin = nil
                 let wasPanning = panStartTime != nil
                 if wasPanning { lastPanAt = .now }
                 panStartTime = nil
@@ -3694,7 +3766,6 @@ private struct NativeTimelineBar: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(isSelected ? KriaColor.sky : .clear, lineWidth: isSelected ? 2 : 0)
             }
-            .offset(x: (hitWidth - frame.width) / 2)
             .allowsHitTesting(false)
 
             Button(action: onSelect) {
@@ -3747,30 +3818,32 @@ private struct NativeTimelineBar: View {
             )
 
             if canTrim && isSelected {
+                let leading = NativeTrimHandleGeometry.selected(edge: .leading, blockWidth: frame.width)
+                let trailing = NativeTrimHandleGeometry.selected(edge: .trailing, blockWidth: frame.width)
                 NativeTrimHandle(
                     edge: .leading,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: -min(44, hitWidth / 3) / 2 + 6,
-                    touchWidth: min(44, hitWidth / 3),
+                    visualOffset: leading.capsuleOffset,
+                    touchWidth: leading.touchWidth,
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
-                .offset(x: -(hitWidth - min(44, hitWidth / 3)) / 2)
+                .offset(x: leading.originX + leading.touchWidth / 2 - frame.width / 2)
                 NativeTrimHandle(
                     edge: .trailing,
                     height: frame.height,
                     pixelsPerSecond: pixelsPerSecond,
-                    visualOffset: min(44, hitWidth / 3) / 2 - 6,
-                    touchWidth: min(44, hitWidth / 3),
+                    visualOffset: trailing.capsuleOffset,
+                    touchWidth: trailing.touchWidth,
                     onTrimStart: onTrimStart,
                     onTrimChange: { _, seconds, token in onTrimChange(seconds, token) },
                     onTrimEnd: onTrimEnd,
                     onDragXChange: onDragXChange
                 )
-                .offset(x: (hitWidth - min(44, hitWidth / 3)) / 2)
+                .offset(x: trailing.originX + trailing.touchWidth / 2 - frame.width / 2)
             }
         }
         .frame(width: hitWidth, height: 44)
@@ -3808,7 +3881,7 @@ private struct NativeClipSurface: View {
     /// Long press, then drag, moves the block to a new position. `onReorderChange` reports the finger's travel in
     /// seconds and its global x (for edge auto-scroll); `onReorderEnd(false)` is a cancelled gesture.
     let onReorderStart: () -> Void
-    let onReorderChange: (TimeInterval, CGFloat) -> Void
+    let onReorderChange: (TimeInterval, CGFloat, CGFloat) -> Void
     let onReorderEnd: (Bool) -> Void
     let onTrimStart: (NativeTrimEdge, NativeTimelineGestureID) -> Bool
     let onTrimChange: (NativeTrimEdge, TimeInterval, NativeTimelineGestureID) -> Void
@@ -3870,7 +3943,7 @@ private struct NativeClipSurface: View {
                             }
                             if let drag {
                                 let travel = drag.location.x - (reorderAnchorX ?? drag.startLocation.x)
-                                onReorderChange(TimeInterval(travel / max(1, pixelsPerSecond)), drag.location.x)
+                                onReorderChange(TimeInterval(travel / max(1, pixelsPerSecond)), drag.location.x, drag.translation.height)
                             }
                         }
                         .onEnded { _ in
@@ -3918,7 +3991,7 @@ private struct NativeClipSurface: View {
             } else if showsEndHandle {
                 // A narrow block keeps its middle for selecting and reordering it: only this much of the handle's
                 // touch surface lies over the block, the rest hangs past its end.
-                let end = NativeTrimHandleGeometry.unselectedEnd(blockWidth: max(44, frame.width), insideWidth: min(44, max(14, frame.width * 0.3)))
+                let end = NativeTrimHandleGeometry.unselectedEnd(blockWidth: max(44, frame.width), insideWidth: min(NativeTrimHandleGeometry.target / 2, max(14, frame.width * 0.3)))
                 NativeTrimHandle(
                     edge: .trailing,
                     height: frame.height,
@@ -4123,7 +4196,8 @@ struct NativeTrimHandleGeometry: Equatable {
     static let target: CGFloat = 44
 
     static func selected(edge: NativeTrimEdge, blockWidth: CGFloat) -> NativeTrimHandleGeometry {
-        let inside = min(target, blockWidth / 2)
+        // Keep both sides of the grip easy to catch and leave the middle available for moving the block.
+        let inside = min(target / 2, blockWidth / 3)
         switch edge {
         case .leading:
             return .init(touchWidth: target, originX: inside - target, capsuleOffset: target / 2 - inside)

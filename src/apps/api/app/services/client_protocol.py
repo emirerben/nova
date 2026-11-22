@@ -97,6 +97,13 @@ SPLIT_BLANK_PANEL_PROTOCOL = 51
 # build would drop the line on Save, so `dual_captions_planned_for` offers it only to this build.
 DUAL_CAPTIONS_PROTOCOL = 52
 
+# KRI-1562: the first build that ducks a music-role track under `audio.speech_windows` (the
+# `speechDuck` capability). An older build would decode the recipe, ignore the windows and play
+# full-level music over the creator's voice, so it is told to update instead.
+SPEECH_DUCK_PROTOCOL = 53
+
+CLIP_ORDER_CARD_PROTOCOL = 54
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

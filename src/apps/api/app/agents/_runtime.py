@@ -221,6 +221,16 @@ class ProviderOutcomeUnknownError(TerminalError):
     """Provider work may still be running; retrying could double-charge."""
 
 
+class PaidCallAlreadySettledError(ProviderOutcomeUnknownError):
+    """The ledger already holds this exact call, and it finished.
+
+    Nothing is running at the provider, so this is not a timeout: the caller re-sent a call it
+    already paid for under an unchanged key (prod cc3e380b: a second text compose and a worker
+    retry sent the same research search). Same fence as its parent, but it is our defect, so
+    chat must not say "the AI took too long" and the worker must not retry it unchanged.
+    """
+
+
 class ProviderDeadlineExceededError(ProviderOutcomeUnknownError):
     """Our own per-call deadline fired while the provider was still working.
 

@@ -1954,6 +1954,141 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.sourcePreviewState, .ready)
     }
 
+    func testPublishedSpeechMontagePreviewsItsPinnedPictureAndSpeechTracks() async throws {
+        let (session, fake, threadID, recipe, _) = try await speechMontagePreviewFixture()
+        await session.load(api: fake, threadID: threadID)
+
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(session.displayedSourcePreviewRecipe?.tracks, recipe.tracks)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertFalse(session.isShowingRenderedFallback)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testSpeechMontagePreviewHonorsAccountBrandingAndKeepsOutro() async throws {
+        let owner = String(repeating: "a", count: 64)
+        for exempt in [false, true] {
+            let (session, fake, threadID, recipe, urls) = try await speechMontagePreviewFixture()
+            defer { session.setObserversVisible(false) }
+            fake.mediaLibraryOwner = owner
+            fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+                verifiedFeatures: [], watermarkExemption: exempt ? WatermarkExemption(ownerHash: owner) : nil)
+            await session.load(api: fake, threadID: threadID)
+            XCTAssertEqual(session.sourcePreviewState, .ready)
+            let item = try XCTUnwrap(session.player?.currentItem)
+            let clean = try await AVPlayerPreviewComposer(branding: .none).makePreview(recipe: recipe, assetURLs: urls)
+            let actual = try await speechMontageFrame(item)
+            let unbranded = try await speechMontageFrame(clean.playerItem)
+            XCTAssertEqual(actual == unbranded, exempt, "Only the entitled account sees an unmarked picture")
+            let outro = try await AVURLAsset(url: XCTUnwrap(KriaBranding.outroURL())).load(.duration).seconds
+            XCTAssertEqual(session.playbackDuration, TimelineMath.totalDuration(of: recipe) + outro, accuracy: 0.01)
+            XCTAssertEqual(session.displayedSourcePreviewRecipe?.tracks, recipe.tracks)
+        }
+    }
+
+    func testSpeechMontagePreviewDiscardsARecipeLoadedAcrossAccountChange() async throws {
+        let (session, fake, threadID, _, _) = try await speechMontagePreviewFixture()
+        defer { session.setObserversVisible(false) }
+        fake.mediaLibraryOwner = String(repeating: "a", count: 64)
+        fake.suspendNextDeviceRender = true
+        let load = Task { await session.load(api: fake, threadID: threadID) }
+        let suspended = await waitUntil(timeout: .seconds(5)) { fake.deviceRenderIsSuspended }
+        XCTAssertTrue(suspended)
+        fake.mediaLibraryOwner = String(repeating: "b", count: 64)
+        fake.resumeDeviceRender()
+        await load.value
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+        XCTAssertFalse(session.hasSourcePreview)
+    }
+
+    func testSpeechMontagePreviewDiscardsARecipeLoadedAcrossExemptionRevocation() async throws {
+        let (session, fake, threadID, _, _) = try await speechMontagePreviewFixture()
+        defer { session.setObserversVisible(false) }
+        let owner = String(repeating: "a", count: 64)
+        fake.mediaLibraryOwner = owner
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [2],
+            verifiedFeatures: [], watermarkExemption: WatermarkExemption(ownerHash: owner))
+        fake.suspendNextDeviceRender = true
+        let load = Task { await session.load(api: fake, threadID: threadID) }
+        let suspended = await waitUntil(timeout: .seconds(5)) { fake.deviceRenderIsSuspended }
+        XCTAssertTrue(suspended)
+        fake.phoneRenderingCapabilities = .disabled
+        _ = try? await session.prepareVideoDownloadRoute(deviceLocalFile: nil)
+        fake.resumeDeviceRender()
+        await load.value
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+        XCTAssertFalse(session.hasSourcePreview)
+    }
+
+    private func speechMontageFrame(_ item: AVPlayerItem) async throws -> Data {
+        let generator = AVAssetImageGenerator(asset: item.asset)
+        generator.videoComposition = item.videoComposition
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let image = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        return try XCTUnwrap(UIImage(cgImage: image).pngData())
+    }
+
+    private func speechMontagePreviewFixture() async throws -> (NativeEditorSession, EditorCommitSpy, UUID, KriaMediaEngine.EditRecipe, [String: URL]) {
+        let threadID = UUID(), jobID = UUID()
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let video = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        let speech = input.deletingPathExtension().appendingPathExtension("wav")
+        try FileManager.default.copyItem(at: video, to: input)
+        defer { try? FileManager.default.removeItem(at: input) }
+        try Self.silentWAV(seconds: 4).write(to: speech)
+        defer { try? FileManager.default.removeItem(at: speech) }
+        let original = try await AssetImportCoordinator(project: project).importAsset(from: input)
+        let originalSpeech = try await AssetImportCoordinator(project: project).importAsset(from: speech)
+        let store = SourceAssetStore(project: project)
+        try store.bind(mediaID: "source", original: original)
+        try store.bind(mediaID: "speech", original: originalSpeech)
+        let fingerprint = try XCTUnwrap(original.fingerprint)
+        let speechFingerprint = try XCTUnwrap(originalSpeech.fingerprint)
+        var recipe = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a").recipe
+        recipe.schemaVersion = 2
+        recipe.rendererVersion = "kria-ios-2"
+        recipe.assets = [
+            MediaAsset(id: "source", relativePath: "source", fingerprint: fingerprint),
+            MediaAsset(id: "speech", relativePath: "speech", fingerprint: speechFingerprint),
+        ]
+        recipe.assetManifest = RenderAssetManifest(assets: [
+            RenderAssetReference(id: "source", fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: "source")),
+            RenderAssetReference(id: "speech", fingerprint: try RenderFingerprint(speechFingerprint), source: .original(mediaID: "speech")),
+        ])
+        recipe.tracks = [
+            TimelineTrack(id: "speech-montage", kind: .video, clips: [
+                TimelineClip(id: "picture", sourceAssetID: "source", sourceStart: 0.5, sourceDuration: 1, volume: 0),
+            ]),
+            TimelineTrack(id: "speech-audio", kind: .audio, clips: [
+                TimelineClip(id: "excerpt", sourceAssetID: "speech", sourceStart: 1.5, sourceDuration: 1),
+            ]),
+        ]
+        try recipe.validate()
+        let request = DeviceRenderRequest(
+            identity: .init(jobID: jobID, variantID: "speech_montage", recipeRevision: 1, recipeDigest: String(repeating: "a", count: 64)),
+            recipe: recipe)
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "speech_montage", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "variant_id": .string("speech_montage"), "resolved_archetype": .string("speech_montage"),
+                "render_destination": .string("device"), "render_status": .string("ready"),
+                "render_generation_id": .string("generation-1"), "output_url": .string(video.absoluteString),
+                "editor_capabilities": .object(["timeline": .bool(false), "text_elements": .bool(false), "mix": .bool(false)]),
+            ])
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        fake.deviceRenderResponse = .init(phase: "published", request: request, publishedGeneration: "generation-1")
+
+        let session = NativeEditorSession()
+        return (session, fake, threadID, recipe, [
+            "source": project.root.appendingPathComponent(original.relativePath),
+            "speech": project.root.appendingPathComponent(originalSpeech.relativePath),
+        ])
+    }
+
     /// Cards and sounds closed (their rollout flag off): the server sends no
     /// lanes, so a live preview would drop what the finished MP4 shows. The
     /// editor keeps playing the finished MP4.
@@ -9555,6 +9690,10 @@ final class EditorCommitSpy: KriaAPIClient {
     var playbackURLQueue: [URL] = []
     var playbackURLCallCount = 0
     var playbackFailureReports: [PlaybackFailureReport] = []
+    var suspendNextDeviceRender = false
+    private(set) var deviceRenderIsSuspended = false
+    private var deviceRenderContinuation: CheckedContinuation<Void, Never>?
+    func resumeDeviceRender() { deviceRenderContinuation?.resume(); deviceRenderContinuation = nil }
     func playbackURL(jobID: UUID) async throws -> URL {
         playbackURLCallCount += 1
         if !playbackURLQueue.isEmpty { return playbackURLQueue.removeFirst() }
@@ -9564,6 +9703,12 @@ final class EditorCommitSpy: KriaAPIClient {
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { playbackFailureReports.append(report) }
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse {
         deviceRenderCallCount += 1
+        if suspendNextDeviceRender {
+            suspendNextDeviceRender = false
+            deviceRenderIsSuspended = true
+            await withCheckedContinuation { deviceRenderContinuation = $0 }
+            deviceRenderIsSuspended = false
+        }
         guard let deviceRenderResponse else { throw APIError.unsupported }
         return deviceRenderResponse
     }

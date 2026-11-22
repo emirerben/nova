@@ -803,3 +803,21 @@ characters; it never silently keeps the first label. Generic overlays use the
 registered Inter font and a bounded width so combined values wrap safely. Single-label identity and
 flag-off rendering remain unchanged. Narrated guided edits also retain these
 generic visual labels alongside their narration labels.
+
+## Main Creator clip evidence (KRI-1430)
+
+Set `MAIN_CREATOR_FULL_CLIP_EVIDENCE_ENABLED=true` on a local evaluation run to send each stored moment, including its start, end and full description, to Main Creator. This also retains the complete stored transcript (up to 1,200 characters) and all stored timed sentences (up to 60 per clip) when timed speech is enabled. The shared clip record allows eight moments per source and 160 characters per description. The default projection sends the first two with up to 80 characters each. The setting applies to attached clips and Visuals.
+
+### Offline before-and-after score sheet
+
+The evaluation request is “Use the part with the cattle at the trough.” Source inspection at 7, 115 and 227 seconds identified guests at a table, visitors near poultry pens, and cattle by a feeding trough. The replay supplies those three timestamped observations as a stored clip analysis, plus an unrelated clip with no analysis. The export benchmark covers a separate typed-order path. This comparison measures the evidence reaching the actual Main Creator prompt. [Forest Farm film on Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Atat%C3%BCrk%27s_Reception_of_US_Ambassador_Joseph_C._Grew_at_the_Forest_Farm_(1930).webm)
+
+| Measure | Default | Expanded |
+| --- | ---: | ---: |
+| Source observations available to the planner | 2/3 | 3/3 |
+| Requested 222–233 s cattle observation in planner input | Absent | Present |
+| Observations attributed to the unrelated clip | 0 | 0 |
+| Rendered prompt size, characters (local configuration) | 47,419 | 47,577 |
+| Provider calls | 0 | 0 |
+
+Run `pytest tests/services/test_creator_speech_budget.py -k expanded_moments` from the API directory. Actual model selection of the requested shot, price and turn latency require a live evaluation. A separate multi-speaker replay verifies that the last timed sentence reaches the prompt on the correct clip and a legacy untimed transcript retains its ending. Storage bounds still apply. KRI-1430 also tracks contact sheets and copilot image input.

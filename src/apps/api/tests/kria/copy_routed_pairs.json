@@ -2007,6 +2007,11 @@
    "{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha geride kalıyor."
   ],
   [
+   "app/tasks/kria_runtime.py",
+   "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under {limit_minutes:g} minutes) and try again. No fallback edit was rendered.",
+   "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
    "app/kria/brief_checks.py",
    "This video is made from the one video you attached",
    "Bu video eklediğin tek videodan yapılıyor"
@@ -2400,6 +2405,221 @@
    "app/kria/landscape_fit_ask.py",
    "; the other {middle} keep the middle of the picture",
    "; diğer {middle} tanesinde görüntünün ortası korunuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "A Talking video can't do this, so it stays as filmed",
+   "Bu düzenlemede bunu yapamıyorum, o kısım çekildiği gibi kalıyor"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects on iPhone are placed only at spoken moments you name (for example: “when I say no, play a buzzer”). No moment was named, so no sound was added.",
+   "iPhone'da ses efektleri sadece söylediğin anlara konuyor (örneğin: “diyince buzzer çal”). Bir an söylemedin, o yüzden ses eklemedim."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Picture and video overlays aren't available for this edit yet; left them out.",
+   "Resim ve video katmanları bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects aren't available for this edit yet; left them out.",
+   "Ses efektleri bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Transitions aren't available for this edit yet; left them out.",
+   "Geçişler bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Wide looks aren't available for this edit yet; left them out.",
+   "Geniş görünümler bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "Sound effects are switched off right now, so none will be played",
+   "Ses efektleri şu an kapalı, o yüzden hiçbiri çalmayacak"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "This version of the app can't play sound effects yet, so none will be played",
+   "Uygulamanın bu sürümü henüz ses efekti çalamıyor, o yüzden hiçbiri çalmayacak"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "There are no sound effects to choose from right now, so I added none",
+   "Şu an seçilebilecek ses efekti yok, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "Sound effects need one speaker in the video, so I added none",
+   "Ses efektleri videoda tek konuşmacı gerektiriyor, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "I couldn't find a spoken word or a clear moment to put sound effects on, so I added none",
+   "Ses efektlerini koyacak bir söz ya da net bir an bulamadım, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "You asked for no sound effects, so I added none",
+   "Ses efekti istemedin, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "Nothing in this video clearly called for a sound effect, so I added none",
+   "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't pick a song from the music library, so the video has no music",
+   "Müzik kütüphanesinden bir şarkı seçemedim, o yüzden videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll pick a song from the music library and play it quietly under your voice",
+   "Müzik kütüphanesinden bir şarkı seçip sesinin altında kısık çalarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The finished video has no music",
+   "Bitmiş videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The music library has no song I can add yet, so the video has no music",
+   "Müzik kütüphanesinde henüz ekleyebileceğim bir şarkı yok, o yüzden videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The song I picked is no longer available, so the video has no music",
+   "Seçtiğim şarkı artık kullanılamıyor, o yüzden videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your iPhone app is too old to play music under your voice; update it first",
+   "iPhone uygulaman sesinin altında müzik çalmak için çok eski; önce güncelle"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "you asked for no music, so I won't add a song",
+   "müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "where you didn't say, the clips play in the order you added them",
+   "söylemediğin yerlerde klipler eklediğin sırayla oynar"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects chosen for your edit aren't available for it yet; left them out.",
+   "Senin için seçilen ses efektleri bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "A clip you named is no longer in the edit, so I left it out.",
+   "Adını verdiğin bir klip artık videoda yok, onu dışarıda bıraktım."
+  ],
+  [
+   "app/kria/planner.py",
+   "I left your clip order as it was.",
+   "Klip sıranı olduğu gibi bıraktım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {count} clips, starting with {first}.",
+   "{count} klibi taşıdım, ilki {first}."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {moved} before {anchor}.",
+   "{moved} klibini {anchor} klibinin önüne aldım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {moved} to the end.",
+   "{moved} klibini sona aldım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {moved} to the start.",
+   "{moved} klibini başa aldım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "The clips are already in that order.",
+   "Klipler zaten bu sırada."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Your clips play in this order:",
+   "Kliplerin şu sırayla oynuyor:"
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "a clip",
+   "bir klip"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "where you didn't say, the clips play in the order you have them now",
+   "söylemediğin yerlerde klipler şu an olduğu sırayla oynar"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you set the order yourself since, and the order you set is the one that plays",
+   "sırayı sonradan kendin belirledin, oynayan senin belirlediğin sıra"
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "your clip {position}",
+   "{position}. klibin"
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "your clip {position}, “{label}”",
+   "{position}. klibin, “{label}”"
+  ],
+  [
+   "app/kria/planner.py",
+   "I can move a clip, swap two clips or undo a reorder once your video is made. Until then your clips stay in the order they are in now.",
+   "Bir klibi taşımayı, iki klibin yerini değiştirmeyi ya da bir sıralamayı geri almayı videon hazır olunca yapabilirim. O zamana kadar klipler şu anki sıralarında kalıyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll place sound effects where your speech and pauses call for them",
+   "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The finished video has no sound effects",
+   "Bitmiş videoda ses efekti yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I added 1 sound effect",
+   "1 ses efekti ekledim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I added {count} sound effects",
+   "{count} ses efekti ekledim"
+  ],
+  [
+   "app/services/clip_order_card.py",
+   "I can't change the clip order from here right now. Tell me the order in the chat.",
+   "Klip sırasını şu an buradan değiştiremiyorum. Sırayı bana sohbette yaz."
+  ],
+  [
+   "app/kria/runtime.py",
+   "You changed the clip order after I prepared this plan, so I cancelled it. Nothing was rendered. Tell me to go ahead and I'll prepare it again in your order.",
+   "Bu planı hazırladıktan sonra klip sırasını değiştirdin, o yüzden planı iptal ettim. Hiçbir video oluşturulmadı. Devam etmemi söylersen planı senin sıranla yeniden hazırlarım."
+  ],
+  [
+   "app/services/clip_order_card.py",
+   "Updated your clip order.",
+   "Klip sıranı güncelledim."
   ]
  ],
  "retired": [
@@ -2809,9 +3029,19 @@
    "{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; editörde kontrol et."
   ],
   [
+   "app/tasks/kria_runtime.py",
+   "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under 5 minutes) and try again. No fallback edit was rendered.",
+   "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+  ],
+  [
    "app/kria/landscape_fit_ask.py",
    "I'll crop the sideways clips to fill the vertical frame, keeping faces in it, and check it on the finished video",
    "Yatay klipleri dikey ekranı dolduracak şekilde kırpacağım, yüzleri kadrajda tutacağım ve bitmiş videoda kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "A Talking video can't do this, so it stays as filmed",
+   "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır"
   ]
  ]
 }

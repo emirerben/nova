@@ -1013,6 +1013,7 @@
         "src/apps/api/app/services/phone_reaction_grounding.py",
         "src/apps/api/app/services/nova_steps.py",
         "src/apps/api/app/services/sfx_catalog.py",
+        "src/apps/api/prompts/sfx_placement.txt",
         "src/apps/api/app/services/creator_capabilities.py",
         "src/apps/api/app/pipeline/narrated_photo_sequence.py",
         "src/apps/api/app/pipeline/phone_narrated_plan.py",
@@ -2279,6 +2280,52 @@
         "tone changes (about 8 codes brightness, saturation, mild blur) that keep SSIM >= 0.93 pass on soft-proxy footage, as v4 passed them on sharp-proxy footage",
         "one-frame-late export on calm footage passes through the unchanged v4 next-frame tolerance",
         "calibrated on one real export plus generated footage, no replay corpus"
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-831-late-export-held-frame",
+      "tickets": [
+        "KRI-831",
+        "KRI-1042"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-831",
+      "symptom": "phone-simple-cut-v5 answered checked for an export one frame late. The late-window rule fired only when every picture sample needed its next source frame; a sample on a held frame (25 fps original in a 30 fps proxy) or on slow footage matches both frames, counted as in place and switched the rule off. Found by a CI test that failed 2 of 480 repeats.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/services/export_verification_admin.py",
+        "src/apps/api/app/cli/replay_export_verdicts.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/integration/test_admin_export_verification.py",
+        "tests/routes/test_actual_export_publication.py",
+        "tests/cli/test_replay_export_verdicts.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "The six sharp-proxy phases of a one-frame-late handheld export were committed first and 5 of 6 were accepted by v5. CI run 44956879640 judged 720 generated windows by both rules on the same media: 138 of 144 correct windows pass in both (the 6 others already fail the exact bar), one-frame-late windows accepted drop from 115 to 68 of 144, and no window v5 rejects passes in v6.",
+        "live_model": "No model calls or paid evaluation.",
+        "native_output": "No phone render. The rule reads stored per-sample scores; 36 passing picture windows stored in production since 2026-10-25 were replayed with app.cli.replay_export_verdicts and all still pass.",
+        "production": "Not deployed. Requests pinned to v5 accept a v6 report after deploy."
+      },
+      "neighbours_covered": [
+        "held sample first, in the middle, last, and two per window",
+        "a low-motion sample that matches both frames without a held frame",
+        "calm pan, slow zoom and grain over a still, correct and one frame late",
+        "near-still footage where noise tips one sample to its next frame",
+        "an all-next window still fails whatever its lead",
+        "a sample with no next frame"
+      ],
+      "neighbours_gap": [
+        "footage where every sample matches both frames (a still, a slow drift, part of a slow zoom) cannot show a one-frame shift: 68 of 144 generated one-frame-late windows still pass",
+        "36 real passing windows replayed, a small sample",
+        "v5 reports do not store the source-grid flag, so their replay is an upper bound"
       ],
       "follow_ups": [],
       "red_control": "not_applicable"

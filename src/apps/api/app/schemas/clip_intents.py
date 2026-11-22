@@ -354,6 +354,12 @@ class ClipIntent(BaseModel):
     # Only for op="order", and never together with `position`.
     order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
     ordered_members: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Only for op="order" (KRIA_CLIP_ORDER_LEDGER_ENABLED): an earlier turn already seated this
+    # row and the creator did not restate it, so it seats nothing now; a later drag or message
+    # replaces it instead of being undone by it. Server-stamped by the planner's order hook, never
+    # model output. Omitted from dumps when false, so every intent written before this field loads
+    # and re-dumps byte-identically.
+    already_seated: bool = Field(default=False, exclude_if=lambda value: not value)
     # KRI-993: only for op="include". "Only about the steak": the edit is limited to the
     # clips this intent resolves to (plus what the creator pinned or the strategy places),
     # not just guaranteed to contain them. Omitted from dumps when false, so every intent

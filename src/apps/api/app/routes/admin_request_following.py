@@ -152,7 +152,7 @@ async def list_cases(
             else None,
             "last_run": collector.summary if collector else None,
         },
-        "regression_runs_url": "https://github.com/emirerben/nova/actions/workflows/request-following-regressions.yml",
+        "regression_runs_url": "https://github.com/Kria-AI/kria/actions/workflows/request-following-regressions.yml",
         "coverage_note": (
             "Runtime diagnostics are not intent verdicts. "
             "Offline replay does not verify unseen live understanding or rendered video."

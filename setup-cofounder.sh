@@ -15,7 +15,7 @@ if [ -d "$NOVA_DIR" ]; then
 else
   echo "Cloning nova code repo into ~/projects/nova ..."
   mkdir -p "$HOME/projects"
-  git clone git@github.com:emirerben/nova.git "$NOVA_DIR"
+  git clone git@github.com:Kria-AI/kria.git "$NOVA_DIR"
 fi
 (cd "$NOVA_DIR" && git checkout dev)
 echo "✓ On branch: dev"

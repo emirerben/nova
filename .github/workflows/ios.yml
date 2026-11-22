@@ -4,7 +4,11 @@ name: iOS
 # PR coverage shares one build with selected native journeys in CI.
 on:
   schedule:
-    - cron: "23 3 * * *"
+    # Nightly, for the UK night. GitHub starts this repo's scheduled runs 7 to 9
+    # hours after the time written here (2026-11: 03:23 UTC started at 10:39-12:04),
+    # so the time is set that much early. If the delay goes away the run starts in
+    # the evening. Re-tune rule: docs/runbooks/change-based-ci.md (KRI-1552).
+    - cron: "23 18 * * *"
   workflow_dispatch:
     inputs:
       benchmark_ui_group:
@@ -42,8 +46,18 @@ jobs:
     # cancelled at the 75-minute limit (KRI-1379, run 43009921809).
     # Each regression leg builds from the warm cache; shard 1 runs unit tests
     # and saves the cache. Main's one-leg smoke lane owns TestFlight dispatch.
+    #
+    # max-parallel: the plan gives five hosted Macs at once. Uncapped, the
+    # regression legs (four, then five) and main's own lane kept all of them
+    # busy for 65 minutes (2026-11-21) and two PRs waited 43 and 53 minutes for
+    # an iPhone job. Three legs at a time leaves two
+    # Macs; the other legs queue, so a full regression takes two rounds (about
+    # 2.5 hours), not one. The limit counts every leg, so the Linux contracts leg
+    # (last in the matrix) starts in the second round. Main's lane has two legs
+    # and is not affected.
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '5' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/5"},{"lane":"native","runner":"macos-15","shard":"2/5"},{"lane":"native","runner":"macos-15","shard":"3/5"},{"lane":"native","runner":"macos-15","shard":"4/5"},{"lane":"native","runner":"macos-15","shard":"5/5"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '4' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/4"},{"lane":"native","runner":"macos-15","shard":"2/4"},{"lane":"native","runner":"macos-15","shard":"3/4"},{"lane":"native","runner":"macos-15","shard":"4/4"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
     runs-on: ${{ matrix.runner }}
     # Green native runs on main took 31-54 minutes (median 42) in September
@@ -72,6 +86,9 @@ jobs:
         if: matrix.lane == 'contracts'
         working-directory: src/apps/api
         run: pip install -e .
+      - name: Leave one OpenCV distribution
+        if: matrix.lane == 'contracts'
+        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
       - name: Verify mobile OpenAPI and shared contracts
         if: matrix.lane == 'contracts'
         working-directory: src/apps/api
@@ -241,3 +258,27 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/ci/select-tests.py gate ios ios-tests
+
+  # KRI-1549: a red scheduled run opens one `nightly-red` issue naming the
+  # failed jobs and tests (or comments on the open one); the next green
+  # scheduled run closes it. `needs` lists every other job so this runs last;
+  # test_nightly_alert.py holds that and the schedule-only condition.
+  nightly-alert:
+    if: always() && github.event_name == 'schedule'
+    needs: [changes, ios-tests, build-and-test]
+    runs-on: ubuntu-latest
+    # Reads a few job logs and makes three or four API calls.
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Open, update or close the nightly-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_ALERT_ASSIGNEES: ${{ vars.NIGHTLY_ALERT_ASSIGNEES || github.repository_owner }}
+        run: python3 scripts/ci/nightly-alert.py

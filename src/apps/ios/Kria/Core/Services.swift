@@ -690,7 +690,10 @@ struct CreationFormatCapability: Codable, Equatable, Sendable {
     let id: String
     let editFormat: String
     let maxClips: Int
-    enum CodingKeys: String, CodingKey { case id; case editFormat = "edit_format"; case maxClips = "max_clips" }
+    /// KRI-1554: the longest source each media role takes in this format, in seconds, keyed by
+    /// `CreationMediaRole.durationLimitKey`. Nil from a server that predates it.
+    var maxDurationS: [String: Double]? = nil
+    enum CodingKeys: String, CodingKey { case id; case editFormat = "edit_format"; case maxClips = "max_clips"; case maxDurationS = "max_duration_s" }
 }
 
 struct CreationThread: Codable, Identifiable, Sendable {
@@ -1443,7 +1446,9 @@ enum KriaClientProtocolContract {
     /// 52 (two-language captions): draws a smaller translated caption line on its own editor track (cue `translation`,
     /// `caption_meta.translation`), moves and styles it apart from the spoken line, and keeps both on Save. The server offers
     /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
-    static let version = 52
+    /// 53 (music under speech): a Talking or Voiceover recipe may carry `audio.speech_windows` with a music-role audio track; the
+    /// device ducks that track under those windows. Needs `speechDuck`.
+    static let version = 54
     static let header = "X-Kria-Client-Protocol"
 }
 

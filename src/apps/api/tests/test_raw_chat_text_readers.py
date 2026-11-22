@@ -124,8 +124,9 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     ),
     "kria/runtime.py": (
         "carry",
-        "approval decision forwards the request to the claim",
-        frozenset({"_validated_render_shape", "decide_approval"}),
+        "approval decision forwards the request to the claim; the approve-time clip-order rebind "
+        "hands the pinned request, unread, to the same readiness assessment decide_approval runs",
+        frozenset({"_validated_render_shape", "decide_approval", "_rebind_dragged_order"}),
     ),
     "kria/brief_checks.py": (
         "plan_time",

@@ -65,6 +65,7 @@ from app.schemas.edit_proposal import (
 from app.schemas.text_style_intent import normalize_label_position, normalize_title_animation
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
+    CAPABILITY_SFX_ASK,
     CAPABILITY_TIMED_CARDS,
     TalkingCutawayAvailability,
     ending_clip_candidates,
@@ -720,6 +721,28 @@ def speaker_full_opening_taught(manifest: ResolvedCreatorManifest) -> bool:
     )
 
 
+# KRI-1561: a general "add sound effects where they fit" ask on a phone Talking, Voiceover or
+# montage-with-voiceover edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest
+# advertises `sfx_ask` (the writer's own gate, `sfx_capability`); "" otherwise, so every other
+# prompt stays byte-identical.
+_SFX_ASK_PROMPT_SECTION = """
+SOUND EFFECTS CHOSEN FOR THE EDIT (iPhone)
+When the creator asks for sound effects in general and names neither an effect nor a moment --
+"add sound effects where they fit", "put some sound effects in", "make it feel alive with sound
+design", "uygun yerlere ses efekti ekle", "biraz ses efekti koy" -- set `sfx_ask`:
+{"request_text": "the creator's own words for the ask, copied, in their language",
+"max_placements": 1-6, default 6, lower only when they ask for fewer ("just a couple")}. The
+server then chooses the moments from what is said and the pauses; never invent a time, an effect
+or a moment, and add no `licensed_sfx` and no reaction beat for this ask. A sound the creator ties
+to a spoken moment ("a whoosh when I say Mason Greenwood") is still a reaction beat, and a named
+catalogue effect on a montage is still `licensed_sfx`; set `sfx_ask` only for the general ask.
+A request to have no sound effects, or to remove them, never sets `sfx_ask`. Say in `summary`
+that the effects are placed where the speech and pauses call for them. This section overrides any
+earlier line that says a bare "add sound effects" adds nothing, or only sounds tied to the moments
+the creator named: for the general ask, set `sfx_ask` and say that instead.
+""".strip("\n")
+
+
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
 # edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest advertises
 # `timed_cards`; "" otherwise, so every other prompt stays byte-identical.
@@ -1178,10 +1201,14 @@ not a mute and records no audio_intent.
 "No sound effects" / "keine Soundeffekte" / "efekt sesi olmasın" => an `audio` requirement with
 {"audio_intent": "no_sound_effects"}; it never mutes the footage's own sound or the music.
 Research, fact checking or sources for the on-screen explanations ("include sources for the
-historical facts", "research it online", "kaynakları ekle") => ONE `text` requirement, scope
-"global", the ask in `description`, with {"research": {"topic": "<a public topic, never a link or
-file name>", "request_quote": "<the creator's exact words asking for research or sources, copied
-verbatim>"}}. Never write the facts or sources yourself: the server researches before approval.
+historical facts", "research it online", "kaynakları ekle"), and informative text about a public
+place, route or subject that the creator did not write themselves ("informative captions about
+the Kyoto train", "add some facts about Cunda", "bilgilendirici alt yazı istiyorum") => ONE `text`
+requirement, scope "global", the ask in `description`, with {"research": {"topic": "<a public
+topic, never a link or file name>", "request_quote": "<the creator's exact words asking for it,
+copied verbatim>"}}. Never write the facts or sources yourself: the server researches before
+approval. The topic goes ONLY inside `research`; a bare `topic` fact means nothing to the server
+and leaves the ask unresearched.
 Record any requested processing, noise/wind removal, volume change, music or speech selection
 as a SEPARATE requirement with its complete description; never certify those changes with
 `source_unchanged`. Lowering or removing the engine/motor noise in the footage's own sound
@@ -1371,6 +1398,69 @@ def with_long_request_cap(section: str) -> str:
     return section.replace(_BRIEF_CAP_ANCHOR, f"at most {LONG_REQUEST_MAX_UPDATES} objects")
 
 
+# KRI-1561: a general "add sound effects where they fit" ask, typed the same way as the music ask
+# and judged by `brief_checks._check_sfx_ask` against the worker's receipt. Taught only while a
+# phone writer can place effects (`sfx_ask_taught`), so every prompt with the gates closed keeps
+# the bytes it had before.
+_BRIEF_SFX_ASK_ANCHOR = (
+    '{"audio_intent": "no_sound_effects"}; it never mutes the footage\'s own sound or the music.'
+)
+_BRIEF_SFX_ASK_SENTENCE = (
+    '\nSound effects asked for in general, with no effect and no moment named ("add sound effects'
+    ' where they fit", "put some sound effects in", "make it feel alive with sound design",'
+    ' "uygun yerlere ses efekti ekle", "ses efekti koy") => an `audio` requirement with'
+    ' {"audio_intent": "sound_effects"}; the server chooses the moments, so never name an effect'
+    ' or a time in it. A sound tied to a spoken moment ("a whoosh when I say X") or a named'
+    " effect is not this fact. The two are opposites: when the contract holds a"
+    " no_sound_effects requirement and the creator now asks for sound effects, `remove` it, and"
+    " when they now ask for none, `remove` the sound_effects requirement."
+)
+
+
+def sfx_ask_taught() -> bool:
+    """KRI-1561: can a phone Talking, Voiceover or montage-with-voiceover writer place effects for
+    a general ask right now? Closed, the brief section keeps the bytes it had before."""
+    from app.services.sfx_capability import subtitled_sfx_limit, voiceover_sfx_limit  # noqa: PLC0415
+
+    return subtitled_sfx_limit() is None or voiceover_sfx_limit() is None
+
+
+def with_sfx_ask_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the
+    sound-effects fact added after the no-sound-effects one. Only called while `sfx_ask_taught`."""
+    assert section.count(_BRIEF_SFX_ASK_ANCHOR) == 1, "brief sound-effects anchor moved"
+    return section.replace(_BRIEF_SFX_ASK_ANCHOR, _BRIEF_SFX_ASK_ANCHOR + _BRIEF_SFX_ASK_SENTENCE)
+
+
+_BRIEF_MUSIC_ASK_ANCHOR = '{"audio_intent": "no_music"}; it never mutes the footage\'s own sound.'
+_BRIEF_MUSIC_ASK_SENTENCE = (
+    '\nBackground music asked for ("talking video with some chill music", "add calm music",'
+    ' "arkada sakin bir müzik olsun", "müzik ekle") => an `audio` requirement with'
+    ' {"audio_intent": "music"} plus "music_mood": "<the mood or kind of music in the creator\'s'
+    ' own words, never translated>" only when they name one ("chill", "sakin"); the server picks'
+    " the song from its library, so never name one in `summary`. The two are opposites: when the"
+    " contract holds a no_music requirement and the creator now asks for music, `remove` it, and"
+    " when they now ask for no music, `remove` the music requirement."
+)
+
+
+def music_ask_taught() -> bool:
+    """KRI-1562: may a phone Talking edit play a library song right now (the worker decides the
+    app build)? Closed, the brief section keeps the bytes it had before the music fact."""
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return talking_music_supported(require_client=False)
+
+
+def with_music_ask_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the music
+    fact added after the no-music one. Only called while `music_ask_taught`."""
+    assert section.count(_BRIEF_MUSIC_ASK_ANCHOR) == 1, "brief music anchor moved"
+    return section.replace(
+        _BRIEF_MUSIC_ASK_ANCHOR, _BRIEF_MUSIC_ASK_ANCHOR + _BRIEF_MUSIC_ASK_SENTENCE
+    )
+
+
 def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: bool = False) -> str:
     section = (
         with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
@@ -1379,6 +1469,10 @@ def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: boo
     )
     if settings.brief_long_request_enabled:
         section = with_long_request_cap(section)
+    if music_ask_taught():
+        section = with_music_ask_brief(section)
+    if sfx_ask_taught():
+        section = with_sfx_ask_brief(section)
     return with_full_opening_brief(section) if full_opening_open else section
 
 
@@ -1580,6 +1674,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _TIMED_CARDS_PROMPT_SECTION
                     if _timed_cards_available(input.capability_manifest)
+                    else ""
+                )
+                # KRI-1561: a general sound-effect ask; "" unless the manifest advertises it.
+                + (
+                    "\n" + _SFX_ASK_PROMPT_SECTION
+                    if _sfx_ask_available(input.capability_manifest)
                     else ""
                 )
                 # Qendresa item 21: middle line + TikTok look; "" unless the flag is on.
@@ -2494,6 +2594,15 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
     """
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    return bool(capability is not None and capability.available)
+
+
+def _sfx_ask_available(manifest: ResolvedCreatorManifest) -> bool:
+    """Whether the SOUND EFFECTS CHOSEN FOR THE EDIT guidance is shown: a read of the manifest's
+    own `sfx_ask` capability (`creator_capabilities.resolve_creator_manifest` owns the gate;
+    `repair_creator_sfx_ask` never trusts the model alone)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SFX_ASK)
     return bool(capability is not None and capability.available)
 
 

@@ -68,11 +68,15 @@ def main() -> int:
     args = parser.parse_args()
 
     with _sync_session() as db:
-        candidates = db.query(VideoTemplate).filter(
-            VideoTemplate.analysis_status == "ready",
-            VideoTemplate.thumbnail_gcs_path.is_(None),
-            VideoTemplate.gcs_path.isnot(None),
-        ).all()
+        candidates = (
+            db.query(VideoTemplate)
+            .filter(
+                VideoTemplate.analysis_status == "ready",
+                VideoTemplate.thumbnail_gcs_path.is_(None),
+                VideoTemplate.gcs_path.isnot(None),
+            )
+            .all()
+        )
 
     if args.limit > 0:
         candidates = candidates[: args.limit]
@@ -94,12 +98,16 @@ def main() -> int:
         # Conditional update — only writes if thumbnail_gcs_path is still NULL.
         # Two parallel backfill runs won't clobber each other's poster.
         with _sync_session() as db:
-            updated = db.query(VideoTemplate).filter(
-                VideoTemplate.id == t.id,
-                VideoTemplate.thumbnail_gcs_path.is_(None),
-            ).update(
-                {"thumbnail_gcs_path": new_path},
-                synchronize_session=False,
+            updated = (
+                db.query(VideoTemplate)
+                .filter(
+                    VideoTemplate.id == t.id,
+                    VideoTemplate.thumbnail_gcs_path.is_(None),
+                )
+                .update(
+                    {"thumbnail_gcs_path": new_path},
+                    synchronize_session=False,
+                )
             )
             db.commit()
         if updated:

@@ -83,7 +83,7 @@ required email or Apple configuration is absent.
 In App Store Connect, review the app privacy answers against the bundled
 `PrivacyInfo.xcprivacy` and the public privacy policy. The app collects account
 identity, selected media/audio, conversation content, and project interactions
-for app functionality, and discloses Google Gemini and OpenAI before AI use.
+for app functionality, and discloses Google Gemini, OpenAI and Anthropic before AI use.
 Confirm the policy, support details, content rights, and reviewer notes with the
 account holder. Repository declarations do not update App Store Connect.
 

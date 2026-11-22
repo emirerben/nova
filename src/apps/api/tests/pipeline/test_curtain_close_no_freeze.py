@@ -14,6 +14,7 @@ continuous motion in every frame (so any duplicated frame is detectable
 as a near-zero MAD between consecutive frames) and asserts that no MAD
 in the resulting output drops below the freeze threshold.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -51,15 +52,39 @@ def _make_moving_clip(out_path: Path, duration_s: float, fps: int) -> None:
     geq_g = "128+127*sin(2*PI*(Y/64 + T*3))"
     geq_b = "128+127*cos(2*PI*(X/96 + Y/96 + T*5))"
     cmd = [
-        "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-        "-f", "lavfi",
-        "-i", f"color=c=black:s={SOURCE_W}x{SOURCE_H}:r={fps}:d={duration_s}",
-        "-f", "lavfi",
-        "-i", f"sine=frequency=440:sample_rate=44100:duration={duration_s}",
-        "-vf", f"geq=r='{geq_r}':g='{geq_g}':b='{geq_b}'",
-        "-c:v", "libx264", "-profile:v", "high",
-        "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+        "ffmpeg",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s={SOURCE_W}x{SOURCE_H}:r={fps}:d={duration_s}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=440:sample_rate=44100:duration={duration_s}",
+        "-vf",
+        f"geq=r='{geq_r}':g='{geq_g}':b='{geq_b}'",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
         "-shortest",
         str(out_path),
     ]
@@ -76,13 +101,25 @@ def _decode_consecutive_mads(video_path: Path, scratch_dir: Path) -> list[float]
     headers do this routinely) — those virtual frames are duplicates of
     real frames and would mask or falsely trigger the freeze detection.
     Length is (frame_count - 1)."""
-    subprocess.run([
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-i", str(video_path),
-        "-vsync", "passthrough",
-        "-vf", "scale=270:480",  # downscale for speed only, no fps munging
-        "-y", str(scratch_dir / "f_%04d.png"),
-    ], check=True, capture_output=True, timeout=60)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video_path),
+            "-vsync",
+            "passthrough",
+            "-vf",
+            "scale=270:480",  # downscale for speed only, no fps munging
+            "-y",
+            str(scratch_dir / "f_%04d.png"),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
     frames = sorted(scratch_dir.glob("f_*.png"))
     mads: list[float] = []
     prev: np.ndarray | None = None
@@ -129,7 +166,7 @@ def test_apply_curtain_close_tail_no_frozen_frame_at_seam(tmp_path: Path) -> Non
 
     assert min_mad >= FREEZE_MAD_THRESHOLD, (
         f"Frozen frame detected: MAD between consecutive frames drops to "
-        f"{min_mad:.3f} at t≈{seam_t:.3f}s (frame {min_idx} → {min_idx+1}). "
+        f"{min_mad:.3f} at t≈{seam_t:.3f}s (frame {min_idx} → {min_idx + 1}). "
         f"Threshold is {FREEZE_MAD_THRESHOLD}. The synthetic input has "
         f"continuous motion in every frame, so any MAD below threshold is "
         f"a duplicated frame at the prefix/tail concat seam. Check that "
@@ -147,7 +184,9 @@ def test_apply_curtain_close_tail_motion_uniform_across_seam(tmp_path: Path) -> 
     out_path = tmp_path / "curtain.mp4"
     _make_moving_clip(in_path, duration_s=SOURCE_DURATION_S, fps=SOURCE_FPS)
     apply_curtain_close_tail(
-        str(in_path), str(out_path), animate_s=ANIMATE_S,
+        str(in_path),
+        str(out_path),
+        animate_s=ANIMATE_S,
     )
     scratch = tmp_path / "frames"
     scratch.mkdir()

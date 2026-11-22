@@ -8,11 +8,17 @@ from typing import Any
 
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.schemas.edit_proposal import EditProposalSnapshot
+from app.services.sfx_autoplace import (
+    END_KEEPOUT_S,
+    MARK_EPSILON_S,
+    MAX_SUGGESTIONS,
+    MIN_SPACING_S,
+)
 
-MAX_EXPLICIT_SFX_PLACEMENTS = 6
-MIN_EXPLICIT_SFX_SPACING_S = 1.5
-EXPLICIT_SFX_END_KEEPOUT_S = 0.5
-EXPLICIT_SFX_MARK_EPSILON_S = 0.25
+MAX_EXPLICIT_SFX_PLACEMENTS = MAX_SUGGESTIONS
+MIN_EXPLICIT_SFX_SPACING_S = MIN_SPACING_S
+EXPLICIT_SFX_END_KEEPOUT_S = END_KEEPOUT_S
+EXPLICIT_SFX_MARK_EPSILON_S = MARK_EPSILON_S
 
 
 def canonical_effect_id(value: object) -> str:

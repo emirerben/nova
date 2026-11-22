@@ -130,6 +130,10 @@ def claim(catalog, defect="copy_mismatch", tier="repair"):
 # --- the real frozen packet ---------------------------------------------------------------
 
 
+# The lock first: `approved_publication` writes a dispatched execution, and a sweep test on
+# another worker settles it unless this test already holds the shared lock
+# (tests/test_intent_review_lock_order.py).
+@pytest.mark.usefixtures("release_abandoned_db_connections", "exclusive_intent_review_ledger")
 @pytest.mark.asyncio
 async def test_the_real_frozen_packet_issues_its_one_requirement(
     approved_publication, paid, monkeypatch

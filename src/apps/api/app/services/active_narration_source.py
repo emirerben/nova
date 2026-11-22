@@ -9,7 +9,7 @@ path".
 
 Selection mirrors the render contract:
 
-* an active uploaded/recorded voiceover wins and is analyzed in its bounded window;
+* an active uploaded/recorded voiceover wins and is analyzed in full;
 * a subtitled ("Talking to camera") edit uses its single embedded-audio clip;
 * talking-head and multi-clip self-narrated edits use the highest-coverage clip;
 * supporting/background media never participates in selection or fingerprinting.
@@ -18,6 +18,15 @@ The policy fingerprint intentionally contains only the selected foreground
 source, its immutable storage generation, the exact renderer-owned window, and
 format/audio/detector policy.  Adding or reordering visual-only footage therefore
 cannot invalidate an unchanged active voiceover.
+
+This module is the only owner of the analysis window (KRI-1554). Its length comes from
+``source_length_policy`` (``speech_analysis_window``) and it never shortens a window silently:
+
+* a voiceover or Talking source plays in full, so one longer than the window is unavailable
+  (``source_too_long``) rather than analysed in part;
+* a talking-head spine is cut only inside ``talking_head_window_cap_s`` and plays uncut after
+  it, so its window is the renderer's own cut window and the source reports it as
+  ``window_clamp``.
 """
 
 from __future__ import annotations
@@ -27,6 +36,12 @@ import json
 import math
 from dataclasses import dataclass
 from typing import Literal
+
+from app.services.source_length_policy import (
+    NARRATED_FORMATS,
+    SPEECH_CLEANUP_FORMATS,
+    speech_analysis_window_s,
+)
 
 NarrationMediaKind = Literal["audio", "video"]
 NarrationSourceKind = Literal["voiceover", "embedded_spine"]
@@ -41,22 +56,34 @@ NarrationUnavailableReason = Literal[
     "no_speech_spine",
     "spine_too_short",
     "pinned_spine_unavailable",
+    # KRI-1554: the source is longer than the analysis window and the renderer plays all of it.
+    "source_too_long",
 ]
 
-SUPPORTED_EDIT_FORMATS = frozenset(
-    {"subtitled", "talking_head", "narrated", "narrated_planned", "narrated_ready"}
-)
-NARRATED_EDIT_FORMATS = frozenset({"narrated", "narrated_planned", "narrated_ready"})
+SUPPORTED_EDIT_FORMATS = SPEECH_CLEANUP_FORMATS
+NARRATED_EDIT_FORMATS = NARRATED_FORMATS
 
-# These values are the renderer invariants currently used by
-# generative_build._resolve_archetype and talking_head_assembler.spine_cut_cap_s.
-# The render adapter should import this module when it is migrated, leaving one
-# canonical owner rather than maintaining a third copy.
+# Renderer invariants used by generative_build._resolve_archetype; the talking-head spine cut
+# (`talking_head_assembler.spine_cut_cap_s`) reads `talking_head_window_cap_s` below.
 MIN_SPINE_SPEECH_COVERAGE = 0.15
 MIN_TALKING_HEAD_SPINE_WITH_BROLL_S = 2.0
 SPINE_WINDOW_MIN_S = 120.0
-SPINE_WINDOW_MAX_S = 300.0
-MAX_ANALYSIS_WINDOW_S = 300.0
+# Window ends closer than this to the source's end are the same end (rounding to 6 places).
+_WINDOW_END_TOLERANCE_S = 1e-6
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisWindowClamp:
+    """A window shorter than the source span (KRI-1554).
+
+    Only the talking-head renderer has one: it cuts inside the same capped window the analysis
+    reads and plays the rest of the spine uncut. Every other renderer plays its whole source, so
+    a source longer than the window is ``source_too_long`` instead.
+    """
+
+    source_end_s: float
+    window_end_s: float
+    owner: Literal["talking_head_spine_cut"] = "talking_head_spine_cut"
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +173,9 @@ class ActiveNarrationSource:
     # KRI-720: every take of a several-take Talking source, in clip order (the first is the
     # take the scalar fields above describe). Empty for every single source: byte-identical.
     takes: tuple[NarrationTake, ...] = ()
+    # KRI-1554: set when the window is shorter than the source (talking-head only). Reported,
+    # never part of the persisted snapshot or the fingerprint: the window itself already is.
+    window_clamp: AnalysisWindowClamp | None = None
 
     @property
     def window_duration_s(self) -> float:
@@ -197,14 +227,23 @@ class ActiveNarrationResolution:
 
 
 def talking_head_window_cap_s(target_duration_s: float | None) -> float:
-    """Return the exact renderer cap for a talking-head analysis window."""
+    """Return the exact renderer cap for a talking-head analysis window.
 
+    ``min(max(2 x target, SPINE_WINDOW_MIN_S), analysis window)``; no target is the whole
+    analysis window. The talking-head spine cut reads this same function.
+    """
+
+    window = speech_analysis_window_s()
     if target_duration_s is None or float(target_duration_s) <= 0:
-        return SPINE_WINDOW_MAX_S
-    return min(
-        max(float(target_duration_s) * 2.0, SPINE_WINDOW_MIN_S),
-        SPINE_WINDOW_MAX_S,
-    )
+        return window
+    return min(max(float(target_duration_s) * 2.0, SPINE_WINDOW_MIN_S), window)
+
+
+@dataclass(frozen=True, slots=True)
+class _MediaWindow:
+    start_s: float
+    end_s: float
+    clamp: AnalysisWindowClamp | None
 
 
 def _normalized_media_window(
@@ -212,24 +251,35 @@ def _normalized_media_window(
     *,
     renderer: NarrationRenderer,
     target_duration_s: float | None,
-) -> tuple[float, float] | None:
+) -> _MediaWindow | NarrationUnavailableReason:
     values = (media.duration_s, media.trim_start_s)
     if not all(math.isfinite(float(value)) for value in values):
-        return None
+        return "no_audio"
     duration = float(media.duration_s)
     start = max(0.0, float(media.trim_start_s))
     raw_end = duration if media.trim_end_s is None else float(media.trim_end_s)
     if not math.isfinite(raw_end):
-        return None
-    # The shared preflight ceiling applies to every source kind. Talking-head
-    # can impose a tighter target-derived cap below, but no voiceover or
-    # subtitled source may accidentally hand the worker an unbounded window.
-    end = min(duration, raw_end, start + MAX_ANALYSIS_WINDOW_S)
-    if renderer == "talking_head":
-        end = min(end, start + talking_head_window_cap_s(target_duration_s))
-    if duration <= 0 or end <= start:
-        return None
-    return round(start, 6), round(end, 6)
+        return "no_audio"
+    source_end = min(duration, raw_end)
+    if duration <= 0 or source_end <= start:
+        return "no_audio"
+    cap = (
+        talking_head_window_cap_s(target_duration_s)
+        if renderer == "talking_head"
+        else speech_analysis_window_s()
+    )
+    end = min(source_end, start + cap)
+    if end >= source_end - _WINDOW_END_TOLERANCE_S:
+        return _MediaWindow(round(start, 6), round(source_end, 6), None)
+    if renderer != "talking_head":
+        # The voiceover and Talking renderers play the whole source: analysing only its
+        # start would offer cuts for part of what plays and state the wrong result length.
+        return "source_too_long"
+    return _MediaWindow(
+        round(start, 6),
+        round(end, 6),
+        AnalysisWindowClamp(source_end_s=round(source_end, 6), window_end_s=round(end, 6)),
+    )
 
 
 def _fingerprint(
@@ -318,16 +368,16 @@ def _build_multi_take_source(
             renderer="subtitled",
             target_duration_s=request.target_duration_s,
         )
-        if window is None:
-            return _unavailable("no_audio", video_present=video_present)
+        if not isinstance(window, _MediaWindow):
+            return _unavailable(window, video_present=video_present)
         takes.append(
             NarrationTake(
                 media_id=media.media_id,
                 storage_path=media.storage_path,
                 generation=media.generation,
                 manifest_identity=media.manifest_identity,
-                window_start_s=window[0],
-                window_end_s=window[1],
+                window_start_s=window.start_s,
+                window_end_s=window.end_s,
             )
         )
     if len({take.media_id for take in takes}) != len(takes) or len(
@@ -379,8 +429,9 @@ def _build_source(
         renderer=renderer,
         target_duration_s=request.target_duration_s,
     )
-    if window is None:
-        return _unavailable("no_audio", video_present=video_present)
+    if not isinstance(window, _MediaWindow):
+        return _unavailable(window, video_present=video_present)
+    span = (window.start_s, window.end_s)
     source = ActiveNarrationSource(
         source_kind=source_kind,
         media_id=media.media_id,
@@ -388,8 +439,8 @@ def _build_source(
         generation=media.generation,
         media_kind=media.media_kind,
         manifest_identity=media.manifest_identity,
-        window_start_s=window[0],
-        window_end_s=window[1],
+        window_start_s=window.start_s,
+        window_end_s=window.end_s,
         edit_format=request.edit_format,
         audio_mode=request.audio_mode,
         resolved_renderer=renderer,
@@ -399,8 +450,9 @@ def _build_source(
             media=media,
             source_kind=source_kind,
             renderer=renderer,
-            window=window,
+            window=span,
         ),
+        window_clamp=window.clamp,
     )
     return ActiveNarrationResolution(source=source, reason=None, video_present=video_present)
 

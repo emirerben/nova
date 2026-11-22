@@ -24,6 +24,9 @@ if (
         returncode=2,
     )
 
+# Per-test timing rows for CI; does nothing unless NOVA_CI_TIMES_DIR is set.
+pytest_plugins = ("tests._ci_times",)
+
 os.environ.setdefault("STORAGE_BUCKET", "nova-test")
 os.environ.setdefault("STORAGE_PROVIDER", "gcs")
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/nova_test")
@@ -136,6 +139,37 @@ def exclusive_intent_review_ledger():
             connection.close()
         finally:
             engine.dispose()
+
+
+@pytest.fixture
+def exclusive_slide_post_delivery():
+    """Hold one cross-worker lock while a test owns the slide-post delivery state.
+
+    That state is every ``slide_post_generation_receipts`` and
+    ``slide_post_render_revisions`` row. On one xdist database it is shared, and the
+    delivery sweeps (``reconcile_generations``, ``reconcile_revisions``) act on every
+    pending row, so a sweep in one test settles the revision another test is about to
+    observe (``assert 'skip' == 'published'``), or claims it before that test's
+    kill-worker child can (KRI-1545).
+
+    xdist's default ``load`` mode hands tests out in large consecutive chunks, so the
+    tests of one file usually share a worker and never meet. Where a chunk ends moves
+    with every test added before it: with the file split 35/13 across two workers these
+    tests failed in 3 of 5 CI repeats (run 44651481740). A session-level advisory lock
+    on its own connection does not depend on the scheduler, and Postgres releases it if
+    the worker dies.
+    """
+
+    db_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    engine = create_engine(db_url, pool_pre_ping=True)
+    # Collection already handles an intentionally absent test DB. Once these tests
+    # are collected, failure to acquire their lock must fail rather than skip coverage.
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": 2026112001})
+            yield
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture(autouse=True)

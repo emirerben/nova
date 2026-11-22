@@ -44,6 +44,7 @@ from app.kria.route_disclosure import ask_declines, draft_route
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
 from app.services.choice_questions import SIMPLER_VERSION_REASON
+from app.services.clip_order_ledger import snapshot_order
 from app.services.clip_order_sequence import stated_anchors
 from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
@@ -56,6 +57,7 @@ from app.services.creator_render_contract import (
 )
 from app.services.creator_sessions import resolve_item_creator_context
 from app.services.length_planning import read_length_plan
+from app.services.order_mode import unstated_order_default_on
 
 READINESS_KEY = "approval_readiness"
 NOT_READY = "approval_requirements_not_ready"
@@ -422,6 +424,56 @@ def contract_drawn_texts(
     return tuple(row.text for row in contract.exact_texts if contract_text_drawn(row, route=route))
 
 
+def with_defaulted_order_receipts(
+    receipts: list[dict[str, Any]] | None, report: Mapping[str, Any]
+) -> list[dict[str, Any]] | None:
+    """The draft's own receipts with the order ask readiness proved by default, said as met.
+
+    A strategy draft records no ordering basis, so its own receipt for a described sequence
+    reads "I can't confirm the order this draft uses" (unchecked, "have a look") even though
+    readiness credited the pinned upload order (`_planned_order_basis`). Only for a READY report
+    and only the receipt that still carries that neutral line; the reason is readiness's own,
+    "where you didn't say, the clips play in the order you added them", so the card tells the
+    creator what the unsaid parts do. Everything else is returned untouched."""
+    if not unstated_order_default_on() or receipts is None or not report.get("ready"):
+        return receipts
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CANT_CONFIRM_ORDER,
+        _UNSTATED_ORDER_DEFAULTED,
+        _UNSTATED_ORDER_KEPT,
+        reason_in_every_language,
+    )
+
+    said = set(reason_in_every_language(_UNSTATED_ORDER_DEFAULTED)) | set(
+        reason_in_every_language(_UNSTATED_ORDER_KEPT)
+    )
+    neutral = set(reason_in_every_language(_CANT_CONFIRM_ORDER))
+    proved = {
+        str(row["requirement_id"]): row["reason"]
+        for row in report.get("requirements") or ()
+        if row.get("disposition") == "executable"
+        and row.get("evidence_owner") == "brief_checks"
+        and row.get("reason") in said
+    }
+    return [
+        {**receipt, "status": "met", "verification": "checked", "reason": proved[rid]}
+        if (rid := str(receipt.get("requirement_id"))) in proved
+        and receipt.get("status") == "partial"
+        and receipt.get("verification") == "unchecked"
+        and receipt.get("reason") in neutral
+        else receipt
+        for receipt in receipts
+    ]
+
+
+def _states_attachment_order(brief: CreativeBrief | None) -> bool:
+    """True when a live order requirement itself asks for the order the clips were added."""
+    return any(
+        req.kind == "order" and str(req.facts.get("key") or "").casefold() == "attachment"
+        for req in (brief.live() if brief is not None else ())
+    )
+
+
 def _planned_order_basis(
     contract: Any,
     strategy: Mapping[str, Any],
@@ -430,6 +482,7 @@ def _planned_order_basis(
     manifest: ResolvedCreatorManifest | None,
     creator_id: object,
     talking_writer: bool = False,
+    brief: CreativeBrief | None = None,
 ) -> str | None:
     """The order the draft's writer commits to before it renders, when it is a server rule.
 
@@ -499,6 +552,21 @@ def _planned_order_basis(
         and contract.order_ids
     ):
         planned = "capture_time"
+    elif (
+        unstated_order_default_on()
+        and strategy.get("ordering_choice") not in {"random", "group_first"}
+        and contract is not None
+        and contract.order_required
+        and contract.order_basis == "attachment_order"
+        and contract.order_ids
+        and not _states_attachment_order(brief)
+    ):
+        # Toroko: the contract pinned the upload order for what a described sequence left
+        # unsaid (`creator_render_contract._unstated_order_defaults_to_attachment`). The phone
+        # unified montage planner lays out exactly that order and the verifier refuses any
+        # other; the route check below keeps every other writer from this credit. A creator who
+        # said "in the order I added them" is answered by the order answer, not by this default.
+        planned = "attachment_order"
     else:
         return None
     try:
@@ -824,6 +892,7 @@ def assess_readiness(
             ),
             research=dict(prepared_research) if prepared_research is not None else None,
             user_song_attached=bool(media.get("song_path")),
+            order_confirmed=bool(snapshot_order(media)),
             # KRI-1024: a literal no phone font draws is never executable on the phone.
             phone_text=defers_text_to_phone(
                 creator_id=creator_id, clip_paths=media.get("clip_paths") or ()
@@ -849,6 +918,7 @@ def assess_readiness(
                 manifest=manifest,
                 creator_id=creator_id,
                 talking_writer=talking_writer,
+                brief=brief,
             ),
         )
     # Use the existing source-bounded execution plan, never the model's duration

@@ -253,6 +253,13 @@ class TriageHelper(unittest.TestCase):
             {"name": "test-api"},
         ]
         self.assertEqual(self.t.upstream("lint", failing), ["lint-suites"])
+        self.assertEqual(
+            self.t.upstream("lint", [{"name": "lint"}, {"name": "ci-selftests"}]),
+            ["ci-selftests"],
+        )
+        self.assertIn(
+            "unittest discover -s scripts/ci", self.repro("ci-selftests", workflow="CI")
+        )
         self.assertEqual(self.t.upstream("test-api", failing), ["api (1)"])
         self.assertEqual(self.t.upstream("lint", [{"name": "lint"}]), [])
         self.assertEqual(self.t.upstream("api (1)", failing), [])

@@ -1,0 +1,23 @@
+name: Sync Kria App Review login
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: testflight-production
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify and save Kria 1.0 demo login
+        env:
+          REVIEW_EMAIL: ${{ secrets.KRIA_BETA_REVIEW_DEMO_USER }}
+          REVIEW_PASSWORD: ${{ secrets.KRIA_BETA_REVIEW_DEMO_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+        run: ruby scripts/ios/sync-store-review-login.rb

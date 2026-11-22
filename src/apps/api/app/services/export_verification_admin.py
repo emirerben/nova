@@ -57,6 +57,11 @@ class ExportThresholds(BaseModel):
     picture_max_mean_pixel_error, SSIM >= picture_profile_min_local_ssim and no
     neighbour scoring higher. A neighbour within picture_repeat_max_mean_pixel_error of
     the displayed source frame repeats it and counts as no evidence (lead 0).
+    A window on the source frame grid fails when every sample needed its next frame
+    (whole_window_neighbour_shift_rejects, v3). From v6
+    (late_window_without_displayed_only_sample_rejects) it also fails when some sample
+    needed the next frame, no sample matches the displayed frame and not a different
+    next one, and lead_next is below 0.
     Audio chunk passes when correlation >= audio_min_correlation and gain is within
     [audio_min_gain, audio_max_gain]; a reference quieter than
     audio_silent_reference_rms instead needs output rms < audio_silent_max_rms.
@@ -78,6 +83,7 @@ class ExportThresholds(BaseModel):
     picture_max_mean_pixel_error: float
     picture_min_local_ssim: float
     whole_window_neighbour_shift_rejects: bool
+    late_window_without_displayed_only_sample_rejects: bool = False
     picture_profile_min_local_ssim: float | None = None
     picture_profile_min_mean_local_ssim: float | None = None
     picture_profile_min_lead: float | None = None
@@ -125,21 +131,26 @@ _V4_THRESHOLDS = _V3_THRESHOLDS.model_copy(
         "text_hidden_rejects_glyphs": True,
     }
 )
+_V5_THRESHOLDS = _V4_THRESHOLDS.model_copy(
+    update={
+        "picture_profile_min_local_ssim": 0.85,
+        "picture_profile_min_mean_local_ssim": 0.93,
+        "picture_profile_min_lead": 0.02,
+        "picture_repeat_max_mean_pixel_error": round(1.5 / 255, 6),
+    }
+)
 # The exact picture limits are unchanged since v1; v3 (KRI-810/KRI-831) added displayed-frame
 # neighbours and rejects a window where every sample needed one. v4 (KRI-1042) changes
-# only the text proof. v5 (KRI-1042) adds the frame-profile picture proof.
+# only the text proof. v5 (KRI-1042) adds the frame-profile picture proof. v6 (KRI-831)
+# stops a sample that matches both frames from switching the late-window rule off.
 THRESHOLDS_BY_VERIFIER: dict[str, ExportThresholds] = {
     "phone-simple-cut-v1": _BASE_THRESHOLDS,
     "phone-simple-cut-v2": _BASE_THRESHOLDS,
     "phone-simple-cut-v3": _V3_THRESHOLDS,
     "phone-simple-cut-v4": _V4_THRESHOLDS,
-    "phone-simple-cut-v5": _V4_THRESHOLDS.model_copy(
-        update={
-            "picture_profile_min_local_ssim": 0.85,
-            "picture_profile_min_mean_local_ssim": 0.93,
-            "picture_profile_min_lead": 0.02,
-            "picture_repeat_max_mean_pixel_error": round(1.5 / 255, 6),
-        }
+    "phone-simple-cut-v5": _V5_THRESHOLDS,
+    "phone-simple-cut-v6": _V5_THRESHOLDS.model_copy(
+        update={"late_window_without_displayed_only_sample_rejects": True}
     ),
 }
 
@@ -170,6 +181,7 @@ class ExportCheck(_Evidence):
     chunk: int | None = None
     samples: int | None = None
     picture_clock: Token | None = None
+    on_source_grid: bool | None = None
     neighbour_samples: int | None = None
     profile_samples: int | None = None
     max_mean_pixel_error: float | None = None

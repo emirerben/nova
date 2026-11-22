@@ -3965,6 +3965,63 @@ has "kilitli" at about 11.25 s. No move on 12 recorded word/silence fixtures or 
 `docs/reviews/kri-1502-late-words-failure-modes.md`. Not covered: ~1 s pauses whose stamps stretch
 over a mid-sentence pause (T2 keeps four), a follow-up.
 
+## [2026-11-17] Cleanup trims a word's head stretched back over a pause, and moves straddling late runs (KRI-1512, job 887f89d6)
+
+Context. After KRI-1506, the same Cusco T2 take still kept four ~1 s pauses. In three the stamps
+hid the pause from rule 3: the head of the word AFTER the pause was stamped back over it ("1."
+6.20 s over the silence 5.582–6.547 s, voice from 6.565 s; "sertlikten" 9.50 s over 9.241–10.243 s
+mid-sentence, voice from 10.305 s), so the stamped gaps were 0.56 s and 0 s; and "Ve" 37.00–37.60 s
+started on the wordless voice (36.84–37.41 s) and ran into the pause that "4'te" lay wholly in, so
+the late-word move saw an earlier word reaching into the voice. Rule 0 refused each by design: its
+sentence-head carve missed "1." by 18 ms (the 0.3 s floor for the sentence's last word) and never
+trims a mid-sentence edge (KRI-969).
+
+Decision. Two preflight steps in `app/pipeline/late_word_realign.py`, switch
+`SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED` (default on, in the policy fingerprint; off is
+byte-identical to KRI-1506 alone), `DETECTOR_VERSION` → `mixed-gap-v11-stretched-words`:
+- `realign_stretched_heads`: a word whose head lies in exactly one silence span >= 0.6 s (by
+  >= 0.3 s, the word's end outside it) starts at the span end, and the previous word's stamped end
+  inside the span moves back to its start. Only when the stamped gap before it is under
+  `MAX_PAUSE_S` (rule 3 is blind to that pause), the previous word starts before the span and
+  overlaps it by < 0.3 s, no other word is stamped in it, the rest holds the word (>= 0.15 s,
+  <= 12 syllables/s), and the voicing detector hears <= 0.05 s of voice in the whole span, the
+  word's voice within 0.2 s after it, and >= 30% voice in the rest of the stamp.
+- `find_late_runs(straddle=True)`: the word before a late run joins it when it starts on the island
+  (0.1 s slack) and reaches >= 0.1 s into the pause, and the word after the run starts by the pause
+  end + 0.2 s (so the voice after the pause is that word's: a word stamped into the pause BEFORE
+  its voice never moves); such a run may be up to 2.5x the island (2.0 for runs wholly in the
+  pause), every other gate unchanged. `follow_late_runs` moves a second caption pass's straddler
+  only for a run recorded with `straddle: true`, with the same reach, and only when the pass's next
+  word lies in the pause (the analysis's own moved words, re-followed by the worker, stay put).
+- With the switch on, voicing is read with the voice guard's 0.1 s context on each side: the
+  detector band-passes the window it reads, and on Çiğdem S2 0.17 s of voicing inside a 0.65 s pause
+  read as none over the pause alone.
+
+Why it is safe enough. The two-witness argument of KRI-1506: silencedetect's spans and the
+periodicity detector must both call the trimmed stamps dead air, so KRI-969's "quiet onset" (a
+voiced onset under the floor) refuses itself. An unvoiced onset under the floor is covered by the
+80 ms ambient edge guard, the 0.2 s onset reach and rule 3's 125 ms pre-roll; whispered speech
+longer than that is the residual risk. Trimming never cuts; the voice guard still judges every cut.
+
+Kept on purpose. Pause A (1.35–2.10 s, after "bahsettik."): the voice guard drops the cut because
+1.45–2.03 s holds a steady quiet periodic sound (103–125 Hz, 3–6 dB over the floor, lower than the
+speaker's ~140 Hz) that no other pause of the take has. The guard exists for quiet voiced sound it
+cannot tell from speech (KRI-1017); a rule letting a cut through it would weaken that everywhere.
+
+Evidence. T2 replayed on the real clip: pauses B, C, D kept 0.34, 0.30, 0.56 s (were 1.00, 1.05,
+1.10), no cut overlaps a voiced run, the four list labels on the same source moment. Geometry never
+matches on the 12 recorded word/silence fixtures. Real-audio replays: Cusco T3 gains two cuts
+(30.609–31.052 s "taş … işçiliğinden", 38.848–39.357 s "sizi … Cusco"), Çiğdem S4 one
+(51.233–51.782 s "ve … yaşam"); each lies in a voice-band gap of 0.70–0.85 s, at the floor (voice
+band <= 4.2 dB over it, hiss as in the cuts prod already made), far from T3's stickers. Çiğdem S2
+unchanged. Guards: `tests/tasks/test_kri1512_cusco_t2_pauses_replay.py`,
+`tests/pipeline/test_late_word_realign.py` (`h*`/`s*`). Failure modes:
+`docs/reviews/kri-1512-stretched-words-failure-modes.md`.
+
+Reversal condition. "Cleanup clipped the start of a word" traced to a `diagnostics.stretched_heads`
+entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED
+=false` + api and worker restart (analyses redo through the fingerprint).
+
 ## [2026-11-19] A pull request starts a Mac only when it changes an iPhone input (KRI-1534)
 
 **Context:** a Mac ran on 256 of 277 merged PRs (92%) in 2026-11-05..19, and the Mac was the last required check to finish on most of them (median 51.5 min to the last required check with a Mac, 26.5 without). 135 of 153 PRs that touched no iOS file still got one, because an API path selected `ios` (contract prefixes, `app/kria/`) or a journey flagged `needs_native`. On a PR only the `unit` leg runs, and no step of it hands the offline fixture bundle to a test (only the nightly-only `creation` and `screens` legs set `TEST_RUNNER_KRIA_E2E_DIR`), so for those PRs the Mac repeated what `main` had already built and tested. The account has five concurrent Macs.
@@ -3986,3 +4043,101 @@ over a mid-sentence pause (T2 keeps four), a follow-up.
 **Reversal condition:** a regression traced to a manifest edit whose changed rows did not select the journey that would have caught it.
 **Kill switch:** repository variable `CI_MAC_SELECTION=full` (shared with the Mac rule): every manifest edit and `.env.example` select everything again.
 **Guards:** `scripts/ci/test_select_tests.py` (`ManifestRowTests`, `test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac`, `test_a_native_journey_row_edit_keeps_its_mac_and_its_unit_tests`, `test_removing_a_journey_row_still_selects_everything`, `test_an_unreadable_manifest_still_selects_everything`).
+
+## [2026-11-20] The CI scripts' own tests run beside the suites, not in front of them (KRI-1543)
+
+**Context:** the selector job ran `scripts/ci/test_*.py` before selecting, and every CI job waits for the selector. The step took 17 to 20 s on 2026-11-12 and 282 to 319 s on 2026-11-19 (`test_pr_evidence.py`, 60 tests that each build a git repo, is 135 s locally; this train's manifest tests added to `test_select_tests.py`). On a PR with no Mac that was 3.7 of 32 minutes (run 44594847821).
+**Decision:** `ci.yml` passes `selftest: false` to `ci-changes.yml` and runs the tests in a top-level `ci-selftests` job with no `needs` and no `if`. The required `lint` gate lists it in `needs` and fails unless it succeeded. `ios.yml` keeps the tests in front of selection.
+**Trade:** a PR that breaks the selector now starts its suites and turns `lint` red about 5 minutes in; before, nothing started. The merge is blocked either way, because `lint` is required on every PR.
+**Not done:** making the tests faster. They are off the critical path now, and `test_pr_evidence.py` needs real git repos for what it proves.
+**Reversal condition:** a PR merged with a red `ci-selftests` job, or suites acting on a wrong selection in a way that costs more than the 5 minutes.
+**Guards:** `scripts/ci/test_select_tests.py` (`SelfTestWiringTests`, `test_lint_gate_fails_unless_the_ci_self_tests_passed`).
+
+## [2026-11-20] API tests run as three shards packed by measured file time (KRI-1544)
+
+**Context:** on a PR that starts no Mac, the API suite sets the wait (about 27 of 32 minutes, run 44594847821). It ran as two shards split by file position. Four shards by position were tried on 2026-11-19 (#2389) and reverted the same day after a slow test reached its 60 s timeout on an unrelated PR.
+**Decision:** three shards. Files are packed longest first by seconds recorded in `scripts/ci/api-test-timings.json`; each shard passes its files to pytest in path order; xdist stays in its default `load` mode.
+**Evidence:** side-by-side runs on throwaway branches, five repeats per arm (44651481740, 44664494076): slowest shard job 24.6 min before, 18.3 min after (median); tests above 45 s: 2 samples before, 2 after; none at 60 s; no failure the old layout does not have.
+**Found on the way:** the first three-shard arm split `test_slide_post_delivery_postgres.py` across two workers and its tests raced (3 of 5 repeats). Fixed at the source with a cross-worker lock (KRI-1545) before this change. `--dist loadfile` was measured as the alternative and rejected: one test ran at a median of 53 s against 60 s.
+**Gap:** the timings are a snapshot. A new heavy file weighs 0.5 s until someone refreshes them, so the shards drift apart; `test_real_suite_shards_carry_about_the_same_measured_time` checks the packing, not the freshness.
+**Reversal condition:** timeouts or new cross-test races on unrelated PRs that trace to the layout. Set `SHARD_COUNT = 2` and the matrix to `[0, 1]`; the packing works for any count.
+**Guards:** `scripts/ci/test_api_tests.py` (failure modes listed in its docstring), `scripts/ci/test_api_test_timings.py`.
+
+## [2026-11-20] Nightly schedules are written about 9 hours early so the runs land in the UK night (KRI-1552)
+
+**Context:** the nightly `CI` and `iOS` runs were scheduled for 02:23 and 03:23 UTC. GitHub started them at 09:05-10:49 and 10:39-12:04 UTC (2026-11-14 to 11-19), in the working day, where they compete with pull requests for the 5 Macs and report a failure in the afternoon. The delay was about 5 hours in mid-October and about 6.5 at the end of October.
+**Decision:** `ci.yml` runs at 17:23 UTC and `ios.yml` at 18:23 UTC. With today's delay they start at about 00:00-02:00 and 01:30-03:00 UTC; with no delay they start in the evening. CI stays one hour ahead of iOS.
+**Gap:** this compensates for a delay we do not control and that has been growing. It is a tuned value, not a fix. An exact schedule needs a trigger outside GitHub's scheduler calling `workflow_dispatch`, which means a GitHub token stored in another system. The same delay makes the 15-minute beat health check run about 3 times a day (KRI-1553).
+**Reversal condition:** a week of iOS nightlies starting before 22:00 or after 05:00 UTC: move both times together. Rule and command in `docs/runbooks/change-based-ci.md`.
+**Guards:** `test_the_two_nightlies_are_scheduled_an_hour_apart_ci_first` and the schedule assertion beside it in `scripts/ios/tests/test_workflow_policy.py`.
+
+## [2026-11-20] The Beat health check also runs after every CI run and deploy (KRI-1553)
+
+**Context:** `beat-health.yml` is the outside dead-man's switch for the Celery Beat lane (2026-08-04). Its 15-minute GitHub schedule ran 3 times on 2026-11-19; every scheduled workflow in this repo starts 7-9 hours late and most runs of a frequent one are dropped. Others report the same in 2026; GitHub documents schedules as best-effort. A dead lane (every later render stays queued) could go unseen for about 9 hours.
+**Decision:** the workflow also runs on `workflow_run` when `CI` or `Fly Deploy` completes (52-78 and about 24 runs a day), the pattern `deploy-drift.yml` already uses. It needs no credential. The schedule stays as the check for a quiet day.
+**Gap:** nothing runs when nobody pushes (one CI run in 12 hours on the night of 2026-11-18). The real fix is a monitor outside GitHub polling `/health/beat`; the API keeps two machines running, so polling costs nothing extra. Not built: it needs an account and an alert address that only the owner can set up.
+**Why not a GitHub token in Celery Beat or Fly:** a Beat-driven check of Beat shares its blind spot, and the health check needs no GitHub call at all. For exact nightly times a token would work, but that is prod code, a Fly secret and a deploy for a problem the earlier schedule (KRI-1552) may already solve; decide after a week of real start times.
+**Guards:** `scripts/ci/test_beat_health_workflow.py` (the followed workflow names match the real ones; the job has no token, checkout, secret or interpolated text).
+
+## [2026-11-20] An hourly Claude Code routine watches the Beat lane and restarts a stopped light machine (KRI-1553)
+
+**Context:** after the entry above, a stretch with no pushes still had only GitHub's schedule (about 3 runs a day). The owner chose a Claude Code cloud routine over a hosted uptime monitor: no new account, and it can act as well as alert.
+**Decision:** routine "Nova Beat health watch" (`trig_01TntgWxocgy37Q1W2ak8Fsp`, manage or pause at claude.ai/code/routines), every hour at minute 7, on the "Default" cloud environment. It reads `/health/beat`; when healthy it does nothing (about 3 seconds). When the answer is stale on two checks it lists the app's machines and, only if a `light` machine is `stopped`, starts that one machine once, waits up to 10 minutes, and sends the owner a Slack direct message with the outcome. Any other failure: it starts nothing and messages the owner.
+**What it holds:** `FLY_API_TOKEN` in that cloud environment's variables, a deploy token for `nova-video` only (`fly tokens create deploy -a nova-video`). The environment's network settings must allow `nova-video.fly.dev` and `api.machines.dev`; without them the proxy refuses the request and the routine reports "could not reach" (this happened on its first run). Anyone who can edit the environment can read the token, and every routine on it gets it. To revoke: `fly tokens list -a nova-video`, then `fly tokens revoke`.
+**Limits:** hourly is the fastest a routine can run, so worst-case detection is the staleness threshold plus about an hour. The start call has never been exercised (that needs a stopped production machine), and the routine's own permission check may refuse it; the Slack message then gives the manual commands. A machine that stops again each hour is started again each hour, with a message each time. The routine lives outside this repository: its prompt is the source of truth for its behaviour.
+**Reversal condition:** false alarms, or a restart that hides a crash loop. Pause the routine; `beat-health.yml` keeps working without it.
+
+## [2026-11-20] CLAUDE.md flag detail moved out for `TALKING_MUSIC_ENABLED` (KRI-1562)
+
+CLAUDE.md was already 77 bytes over its 38,000 budget on main when KRI-1562 needed its flag line. The two music-bed lines were merged with the new one and three other flag lines were shortened; their full original text, preserved verbatim:
+
+- `SMART_MUSIC_BED_ENABLED` — default `true`. Kill switch for the v2 music bed; off = no new treatments, reburns skip it.
+
+- `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` — default `true` (KRI-20). Bed resolver only returns a creator-selected treatment; never auto-matches. `false` = pre-fix.
+
+- `PLAN_SYNC_DISPATCH_ENABLED` — default `true`. Generate mints the Job in-request (`dispatch_item_render_for`: FOR-UPDATE lock; duplicate ⇒ 200; publish-fail ⇒ `processing_failed`). `false` ⇒ legacy `.delay()`+409. plans/014; apply: fly secret + restart.
+
+- `NARRATIVE_CLIP_ORDER_ENABLED` — default `true`. Plan-item edits follow the filming guide's shot order (`content_plan_build._narrative_clip_order`), read at render time. `false` ⇒ greedy matching. Apply: fly secret + restart.
+
+- `TIKTOK_DEEP_ANALYSIS_ENABLED` — default `true`; `false` ⇒ no TikTok analysis in persona/plan/hook prompts (byte-identical). Apply: fly secret + restart.
+
+## [2026-11-21] A typed music ask on a phone Talking edit picks a library song (KRI-1562 PR3)
+
+**Decision:** with `TALKING_MUSIC_ENABLED` on, "talking video with some chill music" / "arkada sakin bir müzik olsun" is a typed `audio_intent: music` (+ `music_mood`) on the brief. The Talking worker reads it from the approved brief and, with no song stored on the variant, ranks the library with `music_matcher` (the mood as the creator's ask) and plays the winner's rank-1 section. Chat's `swap_music` adds or swaps and `remove_music` removes the song through the Talking Save's `background_music` section. One owner: `app/services/talking_music.py` (eligibility, treatment, chat rows, "does the recipe play a song"). The receipt reads the pinned recipe, never the stored treatment.
+**"No music" wins:** a live `no_music` in the brief stops the worker (even over a stored song), empties chat's candidate list and refuses `swap_music` in words, and a Save bound to that brief takes off a song carried from before. A song the creator picks in that Save's own music section plays: it is their later choice.
+**Open for the owner:** the 2026-11-01 song rule says a creator job never gets a catalog song it did not upload (`creator_song_rule`, both kill switches on). This path lets the matcher pick a library song for a creator who asked for music. It is gated only by `TALKING_MUSIC_ENABLED` (default off) and touches neither song-rule switch, so it needs an explicit owner yes before the flag is flipped. The phone Voiceover writer still never asks the matcher (`phone_catalog_song_match_blocked` has no ask exception); a Voiceover music ask is a follow-up.
+**Not verified:** no live model run. The brief writer and copilot answers in the replay (`tests/kria/test_talking_music_requests.py`) are authored, so whether the models emit the fact and ops for these sentences is unmeasured; `action_music_swap` lost its recording when its snapshot changed.
+
+## [2026-11-22] An order the creator did not state defaults to upload order and never blocks (`KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`)
+
+**Context:** prod threads 666b996f and de471354 (Toroko, 19 clips): the creator ordered groups of clips ("the map video first, then the train entry, ...") and said nothing about the order inside a group. The draft was held on "you didn't say what order the clips in ... should play in" and offered a "simpler version" that dropped the whole ordering. Behind that first hold sat a second one (Leverkusen M1 run 2, KRI-1080): with the marker set but no pinned order, readiness could not confirm the order either.
+**Decision (owner, final):** anything the creator specifies is kept exactly. What they did not specify (the order inside a named group, clips not mentioned) is the order they added the clips, deterministic, disclosed on the card in plain words, never a hold and never a reason to offer a simpler version. The marker is stamped by the planner hook, the render contract pins the full order as `attachment_order`, and readiness credits it for the phone unified montage only; `unconfirmed_order_groups` is empty while the flag is on so saved drafts and reopened receipts read as defaulted. Detail: `docs/pipelines/kria-agent-runtime.md` (Unstated clip order never blocks).
+**Why a flag and why upload order, not filming time:** upload order is what the planner already does with no basis (`unified_montage._order`); filming time is the creator's explicit ask, not a default. Default `false`, byte-identical off.
+**Open decision:** an unset marker cannot tell a creator's listed order (KRI-941) from a group, so with the flag on a legacy listed row plays in upload order and reads `met` after render. Decide before the flag is flipped (see the runtime doc).
+**Known limits:** edits that show Visuals photos, non-phone writers and the native program are not pinned (readiness holds them on "can't confirm" instead of the group question). Later changes (story ordering by the model, a ledger, draggable cards) build on this default and are not here.
+**Reversal condition:** a creator reads the disclosure and the cut surprises them; or a phone render is refused on the pinned order (`order_required`).
+
+## [2026-11-22] The clip order is one live ledger the AI reads and changes (`KRIA_CLIP_ORDER_LEDGER_ENABLED`)
+
+**Context:** after PR 1 (`KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`) a creator's order still lived in three places that could disagree: the upload order, the `order` rows re-resolved and re-applied on every plan from the whole request, and the rendered timeline. A drag or message after a render was not in the AI's view, and an old row could undo it on the next re-plan.
+**Decision (owner, final):** the order is ONE live state the AI always sees and can change when asked. A creator's drag or message is the newest statement, not a lock; a later one replaces it. Anything specified is honoured exactly, the rest is upload order. The AI never reorders on its own. No visible string shows an id or file name. Implementation and the rules: `docs/pipelines/kria-agent-runtime.md` (The clip order is one live, AI-aware state).
+**Why this shape:** event-folded entries (the `song_order` precedent) need no migration; one carrier (`clip_order_ids` on the approval-bound snapshot) keeps the planner, contract, readiness and the worker's plan on one order; "applied once" is read from the brief (a requirement unsaved at planning time is this turn's statement) because order intents carry no requirement link.
+**Deviations from the plan, and why:** an order row is marked `already_seated` only when the order has moved away from it (a row the order still satisfies seats as a no-op, so every receipt keeps judging it); the contract keeps the `attachment_order` basis string for the pin and `confirmed` is expressed as the snapshot key and the receipt wording; an order the model writes before a render is not stripped (the phone montage ignores `selected_media_ids` order; the native program still reads it).
+**Known limits:** a turn that restates ANY order ask re-seats every old row on the current order; relative moves, swaps and undo before a render are not served by the copilot (no rendered variant to read); no live model was run, so whether the copilot emits the ops for these sentences, and uses `previous_order`, is unmeasured.
+**Reversal condition:** a render is refused on a pinned order the worker does not play (`order_required`), or a creator's hand reorder is undone by a re-plan.
+
+## [2026-11-22] One OpenCV distribution: `opencv-contrib-python` (KRI-1534)
+
+**Decision:** The API names `opencv-contrib-python` as its only OpenCV distribution. The lock excludes the other three (`[tool.uv] exclude-dependencies`), and every pip install of the API, the production Dockerfile included, runs `scripts/ci/opencv-install.py --only opencv-contrib-python`, which removes every OpenCV distribution and puts that one back alone.
+**Why:** The four OpenCV distributions unpack into one `cv2/` directory and no installer knows they overlap. The image held three (the project's headless one, scenedetect's `opencv-python`, mediapipe's contrib), with the last one written on top. Under uv's parallel unpack that varied: about 1 CI install in 12 to 45 had a `cv2` without `CascadeClassifier` (2026-11-21). Contrib, because mediapipe requires it by name and only it has the classifier in OpenCV 5. A fresh build of main's Dockerfile had contrib on top (run 45024112564, 2026-11-22; the running image itself was not inspected), and the new image loads the same `cv2` binary. A venv that lives on (local pip installs) is not repaired: the next plain `pip install` brings `opencv-python` back on top.
+**Revisit if:** scenedetect or mediapipe stop requiring an OpenCV distribution by name (the exclusion and the pip repair can then go), or production installs from the lock (the Dockerfile repair can then go).
+
+## [2026-11-22] The clip-order card: a strip in the draft message and a drag that never refuses (`KRIA_CLIP_ORDER_LEDGER_ENABLED` + protocol 54)
+
+**Context:** PR 2 made the order one ledger the AI reads. The creator still had no way to SEE the order Kria decided for them (upload order, or the inner order of a described group) or to change it without typing. KRI-1590 is the server half; the iPhone cards are a separate change.
+**Decision (owner, final):** the draft message shows a numbered clip strip only when something was decided for the creator and there are two or more clips, with two buttons (change the order, use this order). A drag is the newest statement: one `creator_drag` ledger entry, no lock, no model call, no chat message, never a 409/422 (a stale offer or a non-permutation is rebased by media id). Older builds get no card and no 426: the order is listed as plain text in the draft message and chat reorder still works. Wire contract and rules: `docs/pipelines/kria-agent-runtime.md` (The clip-order card).
+**Why this shape:** the card is a projection of the ledger on the assistant event (like `song_order_question`), not state of its own, so nothing is stored and `moved` / `confirmed` are read back from the newest card. A drag is completed inline in `submit_turn` (the inert-turn precedent), because a worker turn would queue behind a pending approval and run after the old order had rendered. The card event has its own event type (`clip_order_card`) that closes no open question.
+**Deviations from the brief, and why:** `spoken_roles` is not a ledger actor, so it is never a card `source` (`ai_story` is); a drag after a video exists, while it is being made or once its render was approved is not recorded (the timeline is the order and would overrule it on the next turn) and the card says `editable: false`; an approval prepared before a drag is rewritten in place at approve time (a drag is never a hard bound); it is closed with `409 clip_order_changed` only as the fallback when the rewrite cannot be proven safe.
+**Known limits:** the approve-time rewrite edits the unrendered head draft in place (same revision, new hash) rather than minting a revision, because the approval and the client pin the revision; it needs a brief binding on the draft; post-render card drags are not an editor op; the card is not on editor drafts that request no render (they write no ledger entry either).
+**Rollout:** the ledger flag is already on in prod and no build declares protocol 54, so on deploy every current build gets the order listed as text on an unstated-order draft; `CLIP_ORDER_CARD_MIN_CLIENT_PROTOCOL=999` keeps that text, only the ledger flag removes it.
+**Reversal condition:** `CLIP_ORDER_CARD_MIN_CLIENT_PROTOCOL=999` (text only for every build) if a build mis-draws the strip; a drag the creator made is rendered in the old order (`clip_order_changed` should have fired).

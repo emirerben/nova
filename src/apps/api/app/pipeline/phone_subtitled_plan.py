@@ -84,6 +84,7 @@ from app.kria.portable_speaker_background import (
 from app.kria.portable_text import TextInk
 from app.kria.portable_visual import AudioMuteWindow, VisualCanvasFill, VisualMediaPlacement
 from app.kria.recipes import (
+    MAX_ASSET_DURATION_S,
     AssetFingerprint,
     AudioMixRecipe,
     Canvas,
@@ -104,13 +105,19 @@ from app.pipeline.phone_captions import (
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
+    PhoneMusicBed,
+    SpeechSourceWindows,
     clip_tilt_fields,
+    compile_music_bed_track,
     display_dims,
     face_fill_transform,
     fit_transform,
     landscape_fit_from_recipe,  # noqa: F401 - re-export, moved to phone_recipe_shared (KRI-285)
+    merge_speech_spans,
     register_backdrop_visuals,
     snap_text_overshoot,
+    speech_windows_on_timeline,
+    timeline_end_s,
 )
 from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
@@ -130,16 +137,20 @@ from app.services.phone_sources import (
     PhoneVisualBinding,
     require_bound_visual,
 )
+from app.services.source_length_policy import exceeds, limit_phrase, max_duration_s
 
 # Old private name, kept importable (moved to `phone_recipe_shared.display_dims`).
 _display_dims = display_dims
 
-# Mirrors `_render_subtitled_variant`'s own cap (generative_build.py, the
-# `probe.duration_s > 300.0` check ~line 20690): "subtitled clips are capped
-# at 5 minutes". Named up front rather than surfacing as a bare recipe
-# validation error. The phone worker checks the same number (KRI-841 included).
-MAX_CLIP_DURATION_S = 300.0
-_MAX_CLIP_DURATION_S = MAX_CLIP_DURATION_S
+
+def _talking_clip_too_long() -> str:
+    """Named up front rather than surfacing as a bare recipe validation error."""
+
+    return (
+        f"subtitled clips are capped at {limit_phrase(max_duration_s('talking_clip'))} "
+        "-- trim the clip and re-upload"
+    )
+
 
 # The phone story canvas for a portrait subtitled render -- subtitled has no
 # `decision.orientation`/`extras["canvas"]` to read (unlike the montage
@@ -169,9 +180,6 @@ _MIN_SFX_DURATION_S = 0.05
 # The speech clip itself is never lowered: ducking the speaker under the
 # effect would make the words quieter at exactly the moment they compete.
 SFX_SPEECH_DUCK_GAIN = 0.35
-# Word gaps shorter than this are still "inside a sentence", so an effect
-# dropped between two quick words counts as landing on speech.
-_SPEECH_WORD_BRIDGE_S = 0.25
 # Overlap shorter than this (a decaying tail brushing the next word) does not
 # trigger the duck.
 _SFX_SPEECH_MIN_OVERLAP_S = 0.05
@@ -277,8 +285,18 @@ def compile_phone_subtitled_plan(
     background_focus_open: bool | None = None,
     additional_speaker_keep_segments: Mapping[str, Sequence[tuple[float, float]]] | None = None,
     closing_card: Mapping[str, Any] | None = None,
+    music: PhoneMusicBed | None = None,
+    speech_source_windows: SpeechSourceWindows | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
+
+    ``music`` (KRI-1562) is the creator's chosen song (`music_bed_from_treatment`), looped
+    under the whole video on a ``role="music"`` track that ducks to ``music.speech_duck_gain``
+    wherever speech is heard (`speech_windows_on_timeline`). ``speech_source_windows`` are the
+    speakers' spoken spans in their own source seconds; footage the creator kept the sound of
+    (a sound cutaway, an insert, the ending clip) ducks for its whole span. ``None`` is a variant
+    from before the windows were stored: the caption words stand in. No ``music`` compiles
+    byte-identically to before.
 
     ``closing_card`` (KRI-1346, ``{"duration_s", "background_color"}``) appends the creator's
     colour card AFTER everything else on the main track (the talk, then any ending clip): the
@@ -426,7 +444,8 @@ def compile_phone_subtitled_plan(
     (possibly cut) segments: each plays in full with its own audio and its
     own ``landscape_fit`` transform. ``caption_cues``, ``text_elements`` and
     ``cutaways`` are then expressed on that combined timeline. Rejects a
-    duplicate speaker, a non-video one, or one longer than 300 s.
+    duplicate speaker, a non-video one, or one over the Talking clip limit
+    (`source_length_policy`, ``talking_clip``).
 
     ``additional_speaker_keep_segments`` (KRI-720, optional) is the speech cleanup cut of an
     extra speaker, keyed by its binding's ``media_id``: that take plays as one clip per kept
@@ -459,8 +478,8 @@ def compile_phone_subtitled_plan(
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
       - a non-video source (no probed width/height).
-      - a clip longer than 300s (`_MAX_CLIP_DURATION_S`), matching the
-        cloud's own cap.
+      - a clip over the Talking clip limit (`source_length_policy`,
+        ``talking_clip``), the same row the cloud render reads.
       - any `lanes` content that cannot compile -- raised as
         `app.pipeline.phone_subtitled_lanes.SubtitledLaneError`, a
         `UnsupportedPhonePlan` subclass naming the failing lane so a caller
@@ -486,10 +505,8 @@ def compile_phone_subtitled_plan(
     original = binding.original
     if original.width is None or original.height is None:
         raise UnsupportedPhonePlan("phone subtitled plan requires a video source clip")
-    if original.duration_s > _MAX_CLIP_DURATION_S:
-        raise UnsupportedPhonePlan(
-            "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
-        )
+    if exceeds(original.duration_s, "talking_clip"):
+        raise UnsupportedPhonePlan(_talking_clip_too_long())
     display_width, display_height = _display_dims(original)
     if speaker_position_x is not None and display_width > display_height:
         speaker_transform = face_fill_transform(
@@ -640,10 +657,8 @@ def compile_phone_subtitled_plan(
         seen_speakers.add(extra.media_id)
         if extra_original.width is None or extra_original.height is None:
             raise UnsupportedPhonePlan("phone subtitled plan requires a video source clip")
-        if extra_original.duration_s > _MAX_CLIP_DURATION_S:
-            raise UnsupportedPhonePlan(
-                "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
-            )
+        if exceeds(extra_original.duration_s, "talking_clip"):
+            raise UnsupportedPhonePlan(_talking_clip_too_long())
         extra_asset = extra.render_asset()
         manifest[extra_asset.id] = extra_asset
         assets[extra_asset.id] = MediaAsset(
@@ -947,6 +962,35 @@ def compile_phone_subtitled_plan(
         # soundless cutaway recipe has.
         tracks.append(cutaway_sound)
 
+    music_mix: dict[str, Any] = {}
+    if music is not None:
+        speakers = {binding.media_id} | {extra.media_id for extra in additional_speakers}
+        heard_footage = {
+            clip.source_asset_id: ((0.0, math.inf),)
+            for track in tracks
+            if track.id != "sfx"
+            for clip in track.clips
+            if clip.volume > 0 and clip.source_asset_id not in speakers
+        }
+        windows = speech_windows_on_timeline(
+            tracks,
+            {**heard_footage, **(speech_source_windows or {})},
+            mute_windows,
+            timeline_spans=(
+                speech_windows_from_cues(caption_cues) if speech_source_windows is None else ()
+            ),
+        )
+        tracks.append(
+            compile_music_bed_track(
+                music,
+                timeline_end_s=timeline_end_s(clip for track in tracks for clip in track.clips),
+                assets=assets,
+                manifest=manifest,
+            )
+        )
+        music_mix = {"speech_windows": windows, "speech_duck_gain": music.speech_duck_gain}
+        required_capabilities |= {"musicBed", "audioMix"}
+
     speaker_background: SpeakerBackgroundLayer | None = None
     if lanes is not None and lanes.background is not None:
         try:
@@ -972,7 +1016,7 @@ def compile_phone_subtitled_plan(
             asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
             tracks=tracks,
             text_layers=layers,
-            audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows),
+            audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows, **music_mix),
             required_capabilities=required_capabilities,
             # `None` is omitted from the recipe wire, so a recipe without a background
             # keeps its exact bytes and digest.
@@ -1053,8 +1097,11 @@ def _validated_inserts(
         seen.add(insert.binding.media_id)
         if original.width is None or original.height is None:
             raise UnsupportedPhonePlan("an inserted Talking clip must be a video")
-        if original.duration_s <= 0 or original.duration_s > _MAX_CLIP_DURATION_S:
-            raise UnsupportedPhonePlan("an inserted Talking clip must be at most 5 minutes")
+        if original.duration_s <= 0 or exceeds(original.duration_s, "talking_clip"):
+            raise UnsupportedPhonePlan(
+                "an inserted Talking clip must be at most "
+                f"{limit_phrase(max_duration_s('talking_clip'))}"
+            )
         if insert.at_take_s > take_s + _MIN_SPEAKER_PIECE_S:
             raise UnsupportedPhonePlan("an insert must fall inside the take")
     # The start and the end of the take are seams too: a point a hair from either leaves no
@@ -1382,7 +1429,7 @@ def _pin_background_visual(
             id=f"visual-{visual.media_id}",
             relative_path=f"visual-{visual.media_id}",
             fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
-            duration=duration if duration <= 1800 else None,
+            duration=duration if duration <= MAX_ASSET_DURATION_S else None,
             natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
             orientation_degrees=visual.orientation_degrees,
         )
@@ -1496,7 +1543,7 @@ def _compile_ending_clip(
         fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
         duration=(
             visual.duration_s
-            if visual.duration_s is not None and visual.duration_s <= 1800
+            if visual.duration_s is not None and visual.duration_s <= MAX_ASSET_DURATION_S
             else None
         ),
         natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
@@ -1774,7 +1821,7 @@ def _compile_fullscreen_track(
                 fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
                 duration=(
                     visual.duration_s
-                    if visual.duration_s is not None and visual.duration_s <= 1800
+                    if visual.duration_s is not None and visual.duration_s <= MAX_ASSET_DURATION_S
                     else None
                 ),
                 natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
@@ -1852,7 +1899,7 @@ def _compile_video_overlay_clip(
         fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
         duration=(
             visual.duration_s
-            if visual.duration_s is not None and visual.duration_s <= 1800
+            if visual.duration_s is not None and visual.duration_s <= MAX_ASSET_DURATION_S
             else None
         ),
         natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
@@ -2229,8 +2276,7 @@ def speech_windows_from_cues(caption_cues: list[dict]) -> tuple[tuple[float, flo
     """Merged ``(start_s, end_s)`` windows where someone is talking.
 
     Uses each cue's per-word timings when present (the subtitled caption path
-    always attaches them), else the cue's own span. Word gaps shorter than
-    `_SPEECH_WORD_BRIDGE_S` are merged so a sentence reads as one window.
+    always attaches them), else the cue's own span, merged by `merge_speech_spans`.
     Cues are untrusted transcript data: malformed or non-positive spans are
     skipped instead of failing the compile.
     """
@@ -2251,13 +2297,7 @@ def speech_windows_from_cues(caption_cues: list[dict]) -> tuple[tuple[float, flo
             start, end = float(start), float(end)
             if end > start >= 0:
                 spans.append((start, end))
-    merged: list[tuple[float, float]] = []
-    for start, end in sorted(spans):
-        if merged and start - merged[-1][1] < _SPEECH_WORD_BRIDGE_S:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return tuple(merged)
+    return merge_speech_spans(spans)
 
 
 def _sfx_volume(

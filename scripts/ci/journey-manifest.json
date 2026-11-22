@@ -631,6 +631,7 @@
         "src/apps/api/app/tasks/speech_cleanup_analysis.py",
         "src/apps/api/prompts/clip_intent_planner.txt",
         "src/apps/api/prompts/clip_request_resolver.txt",
+        "src/apps/api/prompts/sfx_placement.txt",
         "src/apps/api/tests/fixtures/agent_evals/clip_request_resolver/golden/kri612_explain_the_footages.json",
         "src/apps/api/tests/fixtures/prompt_coverage/kri651_approved_hook.json",
         "src/apps/api/tests/kria/test_brief_provider_recovery_postgres.py",
@@ -766,7 +767,7 @@
     {
       "id": "kri-653-silent-take",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/pipeline/test_late_word_realign.py tests/tasks/test_kri1502_cusco_t2_replay.py",
+      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/pipeline/test_late_word_realign.py tests/tasks/test_kri1502_cusco_t2_replay.py tests/tasks/test_kri1512_cusco_t2_pauses_replay.py",
       "paths": [
         "src/apps/api/app/pipeline/silence_cut.py",
         "src/apps/api/app/services/clip_speech.py",
@@ -783,7 +784,9 @@
         "src/apps/api/app/pipeline/late_word_realign.py",
         "src/apps/api/tests/pipeline/test_late_word_realign.py",
         "src/apps/api/tests/tasks/test_kri1502_cusco_t2_replay.py",
-        "src/apps/api/tests/fixtures/kri1502_cusco_t2/incident.json"
+        "src/apps/api/tests/fixtures/kri1502_cusco_t2/incident.json",
+        "src/apps/api/tests/tasks/test_kri1512_cusco_t2_pauses_replay.py",
+        "src/apps/api/tests/fixtures/kri1502_cusco_t2/kri1512_pauses.json"
       ]
     },
     {
@@ -2126,6 +2129,7 @@
         "src/apps/api/app/services/plan_item_media.py",
         "src/apps/api/app/services/speech_cleanup_selection.py",
         "src/apps/api/app/services/speech_cleanup_preflight.py",
+        "src/apps/api/app/pipeline/talking_head_assembler.py",
         "src/apps/api/app/services/speech_cleanup_decision.py",
         "src/apps/api/app/kria/api_schemas.py",
         "src/apps/api/app/kria/runtime.py",
@@ -3951,6 +3955,38 @@
         "src/apps/api/app/tasks/maintenance.py",
         "src/apps/api/tests/kria/test_pending_visual_go_ahead_postgres.py",
         "src/apps/api/tests/integration/test_pool_asset_unclaimed_resend_postgres.py"
+      ]
+    },
+    {
+      "id": "kri-1562-talking-music",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_talking_music_bed.py tests/tasks/test_phone_talking_music_worker.py tests/routes/test_phone_talking_music_save.py tests/kria/test_talking_music_requests.py",
+      "paths": [
+        "src/apps/api/app/pipeline/sound_effects.py",
+        "src/apps/api/app/services/talking_music.py",
+        "src/apps/api/prompts/edit_copilot_ops/talking_music.txt",
+        "src/apps/api/tests/pipeline/test_talking_music_bed.py",
+        "src/apps/api/tests/tasks/test_phone_talking_music_worker.py",
+        "src/apps/api/tests/routes/test_phone_talking_music_save.py",
+        "src/apps/api/tests/kria/test_talking_music_requests.py"
+      ]
+    },
+    {
+      "id": "kri-1585-informative-text",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1585_kyoto/plan.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows_after_editor_save.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/research.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/media_manifest.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/expected_rows.json",
+        "src/apps/api/tests/pipeline/test_kri1585_kyoto_fixture.py",
+        "src/apps/api/tests/pipeline/test_kri1579_creator_edits_win.py",
+        "src/apps/api/app/pipeline/informative_text.py",
+        "src/apps/api/app/pipeline/text_designs.py",
+        "scripts/kri1585_kyoto_fixture.py"
       ]
     }
   ]

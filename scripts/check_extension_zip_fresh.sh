@@ -39,20 +39,23 @@ REQUIRED_PATHS=(
   "src/apps/web/public/admin/extension/extension-info.json"
 )
 
-changed_files="$(git diff --name-only "$BASE" "$HEAD_REF" 2>/dev/null || true)"
+# A diff that cannot be read (unknown base, shallow clone) must stop the guard:
+# an empty result here would read as "nothing changed" and pass.
+changed_files="$(git diff --name-only "$BASE" "$HEAD_REF")"
 if [ -z "$changed_files" ]; then
   echo "Extension zip guard: no diff against $BASE — nothing to check."
   exit 0
 fi
 
-watched_hits="$(printf '%s\n' "$changed_files" | grep -F -f <(printf '%s\n' "${WATCHED_PATHS[@]}") || true)"
+# grep exits 1 for "no match"; anything else is an error and stops the guard.
+watched_hits="$(printf '%s\n' "$changed_files" | grep -F -f <(printf '%s\n' "${WATCHED_PATHS[@]}") || [ "$?" -eq 1 ])"
 if [ -z "$watched_hits" ]; then
   echo "Extension zip guard: no extension source/build files changed — OK."
   exit 0
 fi
 
 # Escape hatch: a commit on the PR opts out for non-semantic edits.
-commit_msgs="$(git log --format='%B' "$BASE..$HEAD_REF" 2>/dev/null || true)"
+commit_msgs="$(git log --format='%B' "$BASE..$HEAD_REF")"
 if printf '%s' "$commit_msgs" | grep -qF '[skip-extension-zip-rebuild]'; then
   echo "Extension zip guard: [skip-extension-zip-rebuild] found in a commit message — bypassing."
   echo "Changed extension source files:"

@@ -67,7 +67,11 @@ class MusicBedTreatment:
             section_end_s=max(0.01, float(value["section_end_s"])),
             # Clamp like the sibling fields — from_value re-trusts persisted
             # JSONB, and an unbounded gain reaches the volume filter verbatim.
-            gain_db=min(0.0, max(-40.0, float(value.get("gain_db") or -18.0))),
+            # `is not None`, not `or`: the editor's top level is 0 dB, which is falsy.
+            gain_db=min(
+                0.0,
+                max(-40.0, float(value["gain_db"] if value.get("gain_db") is not None else -18.0)),
+            ),
             speech_duck_db=float(
                 value["speech_duck_db"] if value.get("speech_duck_db") is not None else -12.0
             ),

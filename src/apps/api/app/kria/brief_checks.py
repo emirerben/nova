@@ -129,7 +129,7 @@ from app.services.length_policy import (
     length_owner,
     natural_length_owner,
 )
-from app.services.order_mode import order_mode, seeded_permutation
+from app.services.order_mode import order_mode, seeded_permutation, unstated_order_default_on
 from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
@@ -570,6 +570,12 @@ class PlanFacts:
     # creator already knows about: noted (partial), never a failure.
     sequence_unlocated: tuple[str, ...] = ()
     sequence_unlocated_intent_ids: tuple[str | None, ...] = ()
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: the creator's described order was applied by an earlier turn
+    # and no longer seats anything (a newer order of theirs stands); never judged for position.
+    sequence_replaced: bool = False
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: a creator actor changed the order (the approved snapshot
+    # carries it), so the order a draft pins is theirs, not the order the clips were added in.
+    order_confirmed: bool = False
     # Leverkusen M2 run 3: (the creator's words, the clip's app number) of each named moment
     # inside one of several clips that no cut is shown to hold (codes in _CLIP_MOMENT_CODES).
     sequence_clip_moments: tuple[tuple[str, int | None], ...] = ()
@@ -1021,6 +1027,13 @@ class PlanFacts:
     # KRI-1164: a finished phone render that plays music under the video (a smart music bed, or
     # a track mixed in rather than only recommended). False = none recorded.
     music_in_render: bool = False
+    # KRI-1562: whether the recipe a phone Talking render pinned plays a song (None = not read),
+    # and the worker's record of the song the creator asked for (`talking_music.RECEIPT_FIELD`).
+    recipe_music: bool | None = None
+    talking_music: Mapping[str, Any] | None = None
+    # KRI-1561: the worker's record of a general sound-effect ask (`phone_sfx_choice_receipt`:
+    # what it placed, or the `SfxLimit` it declined for). None = no ask was served.
+    sfx_choice: Mapping[str, Any] | None = None
     # KRI-1472: untyped whole-video audio rows that restate a typed "only my voice" / "no
     # music" row of the same turn (`voice_only_ask.restated_voice_only_ids`); set by
     # `build_receipts`, which sees the whole brief.
@@ -1858,6 +1871,7 @@ def plan_facts_from_strategy(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
         sequence_conflicts=_strategy_sequence_conflicts(strategy),
+        sequence_replaced=_strategy_sequence_replaced(strategy),
         sequence_unlocated=tuple(row["code"] for row in creator_omission_outcomes(strategy)),
         sequence_unlocated_intent_ids=tuple(
             row["intent_id"] for row in creator_omission_outcomes(strategy)
@@ -2050,6 +2064,19 @@ def _sequence_problems(record: Mapping[str, Any], codes: tuple[str | None, ...])
     return tuple(out)
 
 
+def _strategy_sequence_replaced(strategy: Mapping[str, Any]) -> bool:
+    """True when every order row the strategy carries was seated by an earlier turn."""
+    rows = [
+        row
+        for row in strategy.get("resolved_clip_intents") or []
+        if isinstance(row, Mapping)
+        and row.get("op") == "order"
+        and not row.get("order_by")
+        and not row.get("placeholder")
+    ]
+    return bool(rows) and all(row.get("already_seated") for row in rows)
+
+
 def _strategy_sequence_conflicts(strategy: Mapping[str, Any]) -> tuple[str, ...]:
     """Draft-time twin of ``_sequence_problems(record, ("conflict",))`` (KRI-764).
 
@@ -2149,6 +2176,10 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         sequence_unconfirmed=_sequence_problems(record, ("member_order_unknown",)),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
+        sequence_replaced=any(
+            isinstance(row, Mapping) and row.get("op") == "order" and row.get("code") == "replaced"
+            for row in record.get("intent_outcomes") or []
+        ),
         sequence_unlocated=tuple(
             str(row.get("code"))
             for row in record.get("intent_outcomes") or []
@@ -3303,6 +3334,12 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         )  # KRI-1486
     if _rendered_music(variant):
         changes["music_in_render"] = True  # KRI-1164: "No music" is judged against it
+    talking_music = variant.get("talking_music")
+    if isinstance(talking_music, Mapping):
+        changes["talking_music"] = talking_music  # KRI-1562: why an asked song is missing
+    sfx_choice = variant.get("phone_sfx_choice_receipt")
+    if isinstance(sfx_choice, Mapping):
+        changes["sfx_choice"] = sfx_choice  # KRI-1561: what the chooser placed, or why not
     receipt = variant.get("clip_sound")
     if isinstance(receipt, Mapping):
         changes["clip_sound"] = receipt  # KRI-842
@@ -3885,6 +3922,7 @@ _MONTAGE_ORDER_FIELDS = (
     "sequence_conflicts",
     "sequence_unlocated",
     "sequence_unlocated_intent_ids",
+    "sequence_replaced",
     "sequence_clip_moments",
     "sequence_spots_met",
     "route_start",
@@ -4508,6 +4546,16 @@ _ORDER_RULE_NOT_APPLIED = (
     "I can't verify this ordering rule, and the clips are not in an order I can show matches it."
 )
 _ORDER_VERIFIED_ELSEWHERE = frozenset({"song_time", "confirmed", "editor", "attachment_order"})
+# Toroko: what the creator did not say about the order inside a described group is the order
+# they added the clips (`KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`); said on the card, a lowercase
+# clause like the "group first" one below it.
+_UNSTATED_ORDER_DEFAULTED = "where you didn't say, the clips play in the order you added them"
+# ... and once the creator has moved the clips themselves (a drag, an edit, a message) what they
+# did not say stays in the order they have them now, not the order they were added in.
+_UNSTATED_ORDER_KEPT = "where you didn't say, the clips play in the order you have them now"
+# KRIA_CLIP_ORDER_LEDGER_ENABLED: an order the creator described earlier was applied then, and a
+# later order of theirs (a drag, an edit, a message) replaced it; the newest statement stands.
+_ORDER_SET_SINCE = "you set the order yourself since, and the order you set is the one that plays"
 _PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
 
 
@@ -4706,6 +4754,17 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
+    if (
+        facts.sequence_replaced
+        and key not in _CAPTURE_ORDER_KEYS
+        and not facts.sequence_unmet
+        and not facts.sequence_absent
+        and not facts.sequence_conflicts
+        and facts.ordering_basis not in {"random", "capture_time"}
+    ):
+        # The described order was applied earlier and a newer order of the creator's stands: an
+        # old ask is never judged against what they did since (`clip_order_ledger`).
+        return _receipt(req, "met", _ORDER_SET_SINCE)
     if not facts.ordering_basis:
         if required and facts.rendered_output:
             return _receipt(req, "not_possible", _ORDER_NOT_RECORDED)
@@ -4716,6 +4775,20 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     reversed_reason = _route_reversed_reason(req, facts)
     if reversed_reason is not None:
         return _receipt(req, "partial", reversed_reason)
+    if (
+        basis == "attachment_order"
+        and key not in _CAPTURE_ORDER_KEYS
+        and key != "attachment"  # a stated basis: `choice_questions.ATTACHMENT_ORDER_KEY`
+        and not facts.sequence_statuses
+        and unstated_order_default_on()
+    ):
+        # A draft that pins the upload order under a described sequence (the render contract's
+        # default for what the creator left unsaid; the phone verifier refuses any other order).
+        if facts.sequence_unlocated:
+            return _receipt(req, "partial", _unlocated_moments_reason(facts))
+        return _receipt(
+            req, "met", _UNSTATED_ORDER_KEPT if facts.order_confirmed else _UNSTATED_ORDER_DEFAULTED
+        )
     if basis == _CREATOR_LIST_BASIS and key not in _CAPTURE_ORDER_KEYS:
         # KRI-1112: the creator listed every clip the edit shows, one at a time, and the render
         # contract pins that list (`creator_render_contract._creator_listed_order`).
@@ -7188,8 +7261,15 @@ SOURCE_MUTED_INTENT = "source_muted"
 # nothing about the footage's own sound (that is `source_muted`), so none of the bed readers
 # below claim it; `_check_no_music` does.
 NO_MUSIC_INTENT = "no_music"
+# KRI-1562: "with some chill music." typed the same way; `_check_music_ask` judges it on a phone
+# Talking edit, and a live `no_music` always wins over it.
+MUSIC_INTENT = "music"
 # KRI-1405: "No sound effects." typed the same way; `_check_no_sound_effects` judges it.
 NO_SOUND_EFFECTS_INTENT = "no_sound_effects"
+# KRI-1561: "add sound effects where they fit" typed the same way (taught while `sfx_ask_taught`);
+# `_check_sfx_ask` judges it against the worker's `phone_sfx_choice_receipt`. A live
+# `no_sound_effects` is its opposite and is removed by the brief writer, never both live.
+SOUND_EFFECTS_INTENT = "sound_effects"
 
 
 def _typed_audio_intent(req: BriefRequirement) -> str | None:
@@ -7290,6 +7370,25 @@ def wants_no_music(req: BriefRequirement) -> bool:
     return req.kind == "audio" and _typed_audio_intent(req) == NO_MUSIC_INTENT
 
 
+def wants_music(req: BriefRequirement) -> bool:
+    """KRI-1562: "with some chill music" as the brief writer typed it (``audio_intent: music``,
+    taught while `music_ask_taught`). Only the typed fact counts, never the words (KRI-667)."""
+    return req.kind == "audio" and _typed_audio_intent(req) == MUSIC_INTENT
+
+
+def wants_sound_effects(req: BriefRequirement) -> bool:
+    """KRI-1561: "add sound effects where they fit" as the brief writer typed it
+    (``audio_intent: sound_effects``, taught while `sfx_ask_taught`). Only the typed fact counts,
+    never the words (KRI-667)."""
+    return req.kind == "audio" and _typed_audio_intent(req) == SOUND_EFFECTS_INTENT
+
+
+def music_mood(req: BriefRequirement) -> str | None:
+    """The kind of music the creator named for a `wants_music` ask ("chill"), in their words."""
+    value = req.facts.get("music_mood") if isinstance(req.facts, Mapping) else None
+    return " ".join(value.split())[:60] if isinstance(value, str) and value.strip() else None
+
+
 def wants_no_sound_effects(req: BriefRequirement) -> bool:
     """KRI-1405: "No sound effects." as the brief writer typed it (``no_sound_effects``).
 
@@ -7344,6 +7443,81 @@ def _check_no_music(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             say(en="No music, as asked.", tr="İstediğin gibi müzik yok."),
         )
     return _receipt(req, "partial", _NO_CHECKER)
+
+
+def _check_music_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1562: "with some chill music" on a phone Talking edit.
+
+    A finished video is judged by its pinned recipe (`recipe_music`): met only when a song
+    plays there, never because a treatment is stored. With the rollout closed a Talking video
+    can't add one (the answer it gave before). Missing, it says why (the worker's
+    `talking_music` receipt), else that there is none. A draft promises the song.
+    """
+    from app.services import talking_music  # noqa: PLC0415
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    if facts.rendered_variant and facts.recipe_music:
+        return _receipt(req, "met", None, stage="checked")
+    if not talking_music_supported(require_client=False):
+        return _receipt(req, "not_possible", _TALKING_NO_SUCH_EDIT)
+    if facts.rendered_variant:
+        if facts.recipe_music is None:
+            return _receipt(req, "partial", _NO_CHECKER)
+        reason = {
+            talking_music.APP_TOO_OLD: _MUSIC_APP_TOO_OLD,
+            talking_music.EMPTY_LIBRARY: _MUSIC_EMPTY_LIBRARY,
+            talking_music.NO_MATCH: _MUSIC_NO_MATCH,
+            talking_music.SONG_UNAVAILABLE: _MUSIC_SONG_UNAVAILABLE,
+        }.get(str((facts.talking_music or {}).get("reason") or ""), _MUSIC_NOT_PLAYED)
+        return _receipt(req, "not_possible", reason, stage="checked")
+    return _receipt(req, "partial", _MUSIC_PLAN)
+
+
+def _sfx_placed(count: int) -> str:
+    if count == 1:
+        return say(en="I added 1 sound effect", tr="1 ses efekti ekledim")
+    return say(en="I added {count} sound effects", tr="{count} ses efekti ekledim", count=count)
+
+
+def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-1561: "add sound effects where they fit" on a phone Talking, Voiceover or
+    montage-with-voiceover edit.
+
+    A finished video is judged by the worker's receipt (`sfx_choice`): met only when it placed
+    effects (and says how many), else not possible with the REAL reason, the closed gate or the
+    chooser's decline (`sfx_capability.limit_line`), never "A Talking video can't do this". A
+    Talking or Voiceover render with no receipt had no ask to serve. A draft promises the
+    effects while the writer's gate is open and names the gate when it is not. Any other
+    format has no way to judge it here (neutral, as before).
+    """
+    from app.services.sfx_capability import (  # noqa: PLC0415
+        limit_line,
+        subtitled_sfx_limit,
+        voiceover_sfx_limit,
+    )
+    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+    choice = facts.sfx_choice
+    if facts.rendered_variant and choice is not None:
+        placed = choice.get("placed")
+        if isinstance(placed, list) and placed:
+            return _receipt(req, "met", _sfx_placed(len(placed)), stage="checked")
+        try:
+            reason = limit_line(SfxLimit(str(choice.get("declined"))))
+        except ValueError:
+            reason = _SFX_NOT_PLACED
+        return _receipt(req, "not_possible", reason, stage="checked")
+    if facts.phone_talking:
+        limit = subtitled_sfx_limit()
+    elif facts.phone_narrated:
+        limit = voiceover_sfx_limit()
+    else:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.rendered_variant:
+        return _receipt(req, "not_possible", _SFX_NOT_PLACED, stage="checked")
+    if limit is not None:
+        return _receipt(req, "not_possible", limit_line(limit), stage="checked")
+    return _receipt(req, "partial", _SFX_PLAN)
 
 
 def _check_voice_only(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -7703,6 +7877,24 @@ _NO_CLIP_SOUND_UNDER_VOICE = "No clip's own sound plays under your voice"
 # outside what it can draw. Static strings: `is_judged` / `is_format_limit` read them by prefix.
 _TALKING_NO_SUCH_EDIT = "A Talking video can't do this, so it stays as filmed"
 _TALKING_NO_SPOKEN_TEXT = "A Talking video can't show text at a word you say yet"
+# KRI-1562: "with some chill music" on a phone Talking edit. The plan is a render promise; the
+# rest say why the finished video has no song (`talking_music` receipt reasons).
+_MUSIC_PLAN = "I'll pick a song from the music library and play it quietly under your voice"
+# KRI-1561: the sound effects the writer will choose, and the finished video with none.
+_SFX_PLAN = "I'll place sound effects where your speech and pauses call for them"
+_SFX_NOT_PLACED = "The finished video has no sound effects"
+_MUSIC_NOT_PLAYED = "The finished video has no music"
+_MUSIC_APP_TOO_OLD = "Your iPhone app is too old to play music under your voice; update it first"
+_MUSIC_EMPTY_LIBRARY = "The music library has no song I can add yet, so the video has no music"
+_MUSIC_NO_MATCH = "I couldn't pick a song from the music library, so the video has no music"
+_MUSIC_SONG_UNAVAILABLE = "The song I picked is no longer available, so the video has no music"
+_MUSIC_MISSING: tuple[str, ...] = (
+    _MUSIC_NOT_PLAYED,
+    _MUSIC_APP_TOO_OLD,
+    _MUSIC_EMPTY_LIBRARY,
+    _MUSIC_NO_MATCH,
+    _MUSIC_SONG_UNAVAILABLE,
+)
 _TALKING_OPENING_CUT_PLAN = (
     "I'll start the video at that line if I find it in your take; if not, it opens at the start"
 )
@@ -7816,6 +8008,10 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _CLOSING_ARROW_PLAN,
     # KRI-1346: the colour card after the last word.
     _CC_PLAN,
+    # KRI-1562: the library song under the talk.
+    _MUSIC_PLAN,
+    # KRI-1561: the sound effects the writer chooses for a general ask.
+    _SFX_PLAN,
     # KRI-1322: the picture above the opening title.
     _TITLE_PICTURE_PLAN,
     # KRI-1304 leftover: the zoom onto the recordings' text.
@@ -8147,8 +8343,22 @@ _REASON_TR: dict[str, str] = {
         "Bu düzenlemede kliplerin ne kadar aydınlık ya da karanlık göründüğünü henüz "
         "değiştiremiyorum, o yüzden kendi ışıklarıyla kalıyorlar"
     ),
-    _TALKING_NO_SUCH_EDIT: "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır",
+    # KRI-1561: "Konuşmalı videoda" read as "in a video with speech". The Talking format is not
+    # the reason (nothing stops sound or a change over speech), so the line says "this edit".
+    _TALKING_NO_SUCH_EDIT: "Bu düzenlemede bunu yapamıyorum, o kısım çekildiği gibi kalıyor",
     _TALKING_NO_SPOKEN_TEXT: "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
+    _MUSIC_PLAN: "Müzik kütüphanesinden bir şarkı seçip sesinin altında kısık çalarım",
+    _SFX_PLAN: "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım",
+    _SFX_NOT_PLACED: "Bitmiş videoda ses efekti yok",
+    _MUSIC_NOT_PLAYED: "Bitmiş videoda müzik yok",
+    _MUSIC_APP_TOO_OLD: (
+        "iPhone uygulaman sesinin altında müzik çalmak için çok eski; önce güncelle"
+    ),
+    _MUSIC_EMPTY_LIBRARY: (
+        "Müzik kütüphanesinde henüz ekleyebileceğim bir şarkı yok, o yüzden videoda müzik yok"
+    ),
+    _MUSIC_NO_MATCH: "Müzik kütüphanesinden bir şarkı seçemedim, o yüzden videoda müzik yok",
+    _MUSIC_SONG_UNAVAILABLE: "Seçtiğim şarkı artık kullanılamıyor, o yüzden videoda müzik yok",
     _TALKING_OPENING_CUT_PLAN: (
         "Videoyu o cümlenin başladığı yerden başlatırım; çekiminde bulamazsam baştan açılır"
     ),
@@ -8421,6 +8631,10 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NO_CLIP_SOUND_UNDER_VOICE,
     _CLIP_SOUND_NEEDS_PHONE_VOICEOVER,
     *_TALKING_HONEST_EN,
+    # KRI-1562: why a requested song is missing is the library's or the app's, not a choice.
+    *_MUSIC_MISSING,
+    # KRI-1561: that a finished video has no sound effects is the writer's, not a simpler plan.
+    _SFX_NOT_PLACED,
     _VOICEOVER_SPOKEN_TEXT_PLAN,
     # KRI-1465: that a Voiceover edit always captions is the format's, never a simpler plan.
     _NARRATED_CAPTIONS_PLAN,
@@ -12199,6 +12413,9 @@ _ANIMATION_UNAVAILABLE = (
     "animated text isn't available on this phone build yet, so the text will appear "
     "without animation"
 )
+_REASON_TR[_UNSTATED_ORDER_DEFAULTED] = "söylemediğin yerlerde klipler eklediğin sırayla oynar"
+_REASON_TR[_UNSTATED_ORDER_KEPT] = "söylemediğin yerlerde klipler şu an olduğu sırayla oynar"
+_REASON_TR[_ORDER_SET_SINCE] = "sırayı sonradan kendin belirledin, oynayan senin belirlediğin sıra"
 _REASON_TR[_ANIMATION_PLANNED] = (
     "yazı belirirken animasyonlu girecek; bitmiş videoda kontrol edeceğim"
 )
@@ -16598,6 +16815,10 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-1161 / item 16: judged against the plan's / render's background
     if wants_no_music(req):
         return True  # KRI-1164: judged against the plan's / render's music
+    if wants_music(req):
+        return True  # KRI-1562: judged on a phone Talking edit against its recipe's song
+    if wants_sound_effects(req):
+        return True  # KRI-1561: judged against the worker's receipt for the ask
     if wants_no_sound_effects(req):
         return True  # KRI-1405: judged against the plan's / render's sound pop-ins
     if caption_look_ask(req) is not None:
@@ -17420,6 +17641,11 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # KRI-1164: the typed "no music" is judged against the plan's / render's music, ahead of
         # the bed and source-sound readers (it says nothing about the footage's own sound).
         return _check_no_music(req, facts)
+    if wants_music(req) and facts.phone_talking:
+        # KRI-1562: the song under a phone Talking edit, read from the recipe it pinned.
+        return _check_music_ask(req, facts)
+    if wants_sound_effects(req):
+        return _check_sfx_ask(req, facts)
     if wants_no_sound_effects(req):
         return _check_no_sound_effects(req, facts)
     clip_sound = requirement_clip_sound(req)

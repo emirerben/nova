@@ -32,7 +32,7 @@ its own go-ahead. Queries run against the production database (read-only).
   step 1, and again right before step 5, this must print `[]`:
 
   ```bash
-  gh run list --repo emirerben/nova --workflow fly-deploy.yml --limit 30 --json databaseId,status --jq '[.[] | select(.status != "completed")]'
+  gh run list --repo Kria-AI/kria --workflow fly-deploy.yml --limit 30 --json databaseId,status --jq '[.[] | select(.status != "completed")]'
   ```
 
   The deploy workflow serializes deploys, but the manual stop/scale below does not take its

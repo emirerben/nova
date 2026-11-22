@@ -211,6 +211,7 @@ from app.services.kria_editor_ops import (
     KriaEditorOpError,
     TextTimingConflict,
     _clip_label_links,
+    _variant_slots,
     build_editor_snapshot,
     compile_editor_ops,
     editor_payload_dump,
@@ -230,6 +231,7 @@ from app.services.phone_speaker_background import (
 )
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
+from app.services.source_length_policy import max_duration_s
 from app.services.suggestions.commit_readiness import (
     MARK_NEEDED,
     REQUIREMENTS_NOT_READY,
@@ -803,10 +805,14 @@ def _complete_response_turn(
     pinned_refusal: dict[str, Any] | None = None,
     pinned_spend: dict[str, Any] | None = None,
     conversation_language: str | None = None,
+    clip_order_entries: Sequence[Mapping[str, Any]] = (),
+    client_protocol: int | None = None,
 ) -> _Completion:
-    """``conversation_language`` is the language the model that read the creator's message
-    reported (`PlannedKriaTurn.conversation_language`); stored on the thread in this commit,
-    after the lease and revision fences. None keeps the stored language."""
+    """``clip_order_entries`` are the ledger entries a plain reply turn carries (a hand reorder the
+    turn found; `clip_order_ledger`); ``client_protocol`` is the sending build, for the order card
+    those entries earn (`clip_order_card`). ``conversation_language`` is the language the model that
+    read the creator's message reported (`PlannedKriaTurn.conversation_language`); stored on the
+    thread in this commit, after the lease and revision fences. None keeps the stored language."""
     plan = classify_response_turn(plan, brief_coverage, pinned_refusal)
     if pinned_spend is not None:
         plan = plan.model_copy(
@@ -900,13 +906,27 @@ def _complete_response_turn(
                 {**receipt, "brief_version": persisted_brief.version, "generation_id": None}
                 for receipt in requirement_receipts
             ]
+        order_card, order_listing = (
+            _clip_order_card_block(
+                db,
+                thread,
+                db.get(PlanItem, thread.active_plan_item_id)
+                if thread.active_plan_item_id is not None
+                else None,
+                clip_order_entries,
+                client_protocol=client_protocol,
+                editable=False,
+            )
+            if clip_order_entries
+            else ({}, None)
+        )
         event = _append_sync_event(
             db,
             thread,
             role="assistant",
             event_type="assistant_response",
             # KRI-815: a drafted script is also readable as prose by clients without the card.
-            content=voiceover_script_content(plan),
+            content=_with_listing(voiceover_script_content(plan), order_listing),
             payload={
                 "turn_id": str(turn.id),
                 "turn_value": plan.turn_value,
@@ -915,6 +935,8 @@ def _complete_response_turn(
                 "schema_version": plan.schema_version,
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
                 **({"brief_coverage": brief_coverage} if brief_coverage is not None else {}),
+                **_clip_order_payload(clip_order_entries, turn.id),
+                **order_card,
                 **({"clip_question": plan.clip_question} if plan.clip_question else {}),
                 # KRI-374: persisted so the answer can be validated + folded later.
                 **(
@@ -3017,6 +3039,8 @@ def _complete_draft_turn(
                     raise KriaEditorOpError(rewritten)
             changes = compiled.changes
             editor_diff_trace = compiled.diff.to_json()
+            planned = _with_editor_order_entry(planned, editor_base.projected, compiled)
+            changes = _with_order_receipt(changes, planned, item)
             state_id = (
                 client_state.client_state_id if editor_base.source == "client_state" else None
             )
@@ -3608,7 +3632,11 @@ def _complete_draft_turn(
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
             ]
         if readiness_required:
-            from app.kria.approval_readiness import APPROVABLE, readiness_reply  # noqa: PLC0415
+            from app.kria.approval_readiness import (  # noqa: PLC0415
+                APPROVABLE,
+                readiness_reply,
+                with_defaulted_order_receipts,
+            )
             from app.kria.brief_binding import snapshot_media as _readiness_media  # noqa: PLC0415
 
             if brief is None:
@@ -3737,6 +3765,10 @@ def _complete_draft_turn(
                 ]
                 if story_proofs and len(story_proofs) == len(readiness_report["requirements"]):
                     reply_text = arguments.summary
+            # Toroko: the order readiness proved by default is said on the draft's own receipt.
+            requirement_receipts = with_defaulted_order_receipts(
+                requirement_receipts, readiness_report
+            )
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts
@@ -4671,12 +4703,25 @@ def _complete_draft_turn(
             "summary": arguments.summary,
             "context_hash": planned.context_hash,
         }
+        order_card, order_listing = _clip_order_card_block(
+            db,
+            thread,
+            item,
+            planned.clip_order_entries,
+            client_protocol=client_protocol,
+            strategy=(
+                document.strategy if document is not None and document.kind == "strategy" else None
+            ),
+            editable=(
+                document is not None and document.kind == "strategy" and item.current_job_id is None
+            ),
+        )
         draft_event = _append_sync_event(
             db,
             thread,
             role="assistant",
             event_type="draft_applied",
-            content=reply_text,
+            content=_with_listing(reply_text, order_listing),
             payload={
                 "turn_id": str(turn.id),
                 **repair_receipt,
@@ -4688,6 +4733,8 @@ def _complete_draft_turn(
                 ),
                 "draft_revision": draft.draft_revision,
                 "snapshot_hash": draft.snapshot_hash,
+                **_clip_order_payload(planned.clip_order_entries, turn.id),
+                **order_card,
                 "changes": changes,
                 "can_undo": parent_draft is not None,
                 "receipt_ids": [str(draft_execution.id)],
@@ -5062,6 +5109,158 @@ async def _plan_pinned_turn(
     finally:
         unbind_sending_build(sender)
         await engine.dispose()
+
+
+def _with_editor_order_entry(
+    planned: PlannedKriaTurn, projected: Mapping[str, Any], compiled: Any
+) -> PlannedKriaTurn:
+    """The draft's order change as one ledger entry (`clip_order_ledger`), read off the compiled
+    draft: the clips' media order before the ops and after them. A reorder the creator asked for
+    is theirs (``creator_text``); one a turn without an order ask made is the AI's. No entry with
+    the flag off, or when the media order did not change."""
+    from app.services import clip_order_ledger  # noqa: PLC0415
+
+    if not clip_order_ledger.clip_order_ledger_on() or not isinstance(
+        compiled.payload, EditorCommitRequest
+    ):
+        return planned
+    slots = compiled.payload.timeline_slots
+    if slots is None:
+        return planned
+    rows = [row for row in _variant_slots(dict(projected)) if isinstance(row, dict)]
+    media_by_slot = {
+        str(row.get("slot_id")): str(row.get("media_id") or "")
+        for row in rows
+        if row.get("slot_id")
+    }
+    before = clip_order_ledger.first_appearance(
+        row.get("media_id") for row in rows if not row.get("removed")
+    )
+    after = clip_order_ledger.first_appearance(
+        media_by_slot.get(str(getattr(slot, "slot_id", None) or ""))
+        for slot in slots
+        if not getattr(slot, "removed", False)
+    )
+    if not before or sorted(before) != sorted(after) or before == after:
+        return planned
+    asked = any(update.kind in {"order", "select"} for update in planned.brief_updates)
+    entry = clip_order_ledger.LedgerEntry(
+        clip_order_ledger.CREATOR_TEXT if asked else clip_order_ledger.AI_STORY,
+        tuple(before),
+        tuple(after),
+    )
+    return replace(planned, clip_order_entries=(*planned.clip_order_entries, entry.to_payload()))
+
+
+def _with_order_receipt(changes: list[str], planned: PlannedKriaTurn, item: Any) -> list[str]:
+    """The draft's change list with its reorder said by name ("Moved “swing video” before
+    “map”."), built from the ledger entry's before/after ids (`clip_order_ledger.reorder_receipt`).
+    The handler's generic "Reorder clips" is replaced; everything else is untouched. No change at
+    all without an entry (flag off, or the media order did not move)."""
+    from app.services import clip_order_ledger  # noqa: PLC0415
+
+    entry = (
+        clip_order_ledger.LedgerEntry.from_payload(planned.clip_order_entries[-1])
+        if planned.clip_order_entries
+        else None
+    )
+    if entry is None:
+        return changes
+    labels = clip_order_ledger.labels_for(entry.after_ids, item.clip_assignments or [])
+    line = clip_order_ledger.reorder_receipt(entry.before_ids, entry.after_ids, labels)
+    if "Reorder clips" in changes:
+        return [line if change == "Reorder clips" else change for change in changes]
+    return [*changes, line]
+
+
+def _clip_order_payload(entries: Sequence[Mapping[str, Any]], turn_id: uuid.UUID) -> dict[str, Any]:
+    """The turn's clip-order ledger entries for its assistant event (`clip_order_ledger`): the
+    same thread event that records the turn is the record, nothing new is stored. Empty (no key)
+    with the flag off, and for a turn that changed no order."""
+    if not entries:
+        return {}
+    from app.services.clip_order_ledger import LEDGER_KEY  # noqa: PLC0415
+
+    return {LEDGER_KEY: [{**entry, "turn_id": str(turn_id)} for entry in entries]}
+
+
+def _clip_order_card_block(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread: CreationThread,
+    item: PlanItem | None,
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    client_protocol: int | None,
+    strategy: Mapping[str, Any] | None = None,
+    editable: bool = True,
+) -> tuple[dict[str, Any], str | None]:
+    """The event fields and the reply text for the order the creator will see after this turn.
+
+    ``({"clip_order_card": card}, None)`` for a build that shows the strip,
+    ``({}, listing)`` (the order as plain text, to append to the message) for an older build,
+    and ``({}, None)`` when the strip is not shown (fewer than two clips, every position stated
+    by the creator, a draft whose order is not the upload order), the flag is off, or the caller
+    declares no build. Never raises: the card describes the order, it must not break a turn.
+    """
+    from app.services import clip_order_card as card_mod  # noqa: PLC0415
+    from app.services import clip_order_ledger as ledger  # noqa: PLC0415
+
+    if item is None or card_mod.card_gate(client_protocol) == "none":
+        return {}, None
+    try:
+        rows = db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role == "assistant",
+            )
+            .order_by(CreationThreadEvent.sequence)
+        ).all()
+        events = [(role, payload) for role, payload in rows]
+        assignments = [row for row in (item.clip_assignments or []) if isinstance(row, dict)]
+        attachment = list(
+            dict.fromkeys(
+                row["media_id"]
+                for row in assignments
+                if isinstance(row.get("media_id"), str) and row["media_id"]
+            )
+        )
+        new = [
+            entry
+            for entry in (ledger.LedgerEntry.from_payload(raw) for raw in entries)
+            if entry is not None
+        ]
+        state = ledger.current_clip_order(
+            attachment_ids=attachment, entries=(*ledger.fold_clip_order(events), *new)
+        )
+        brief = load_latest_brief_sync(db, thread.id)
+        card = card_mod.build_card(
+            state,
+            assignments,
+            events=events,
+            brief_version=brief.version if brief else 0,
+            applies=card_mod.card_applies(strategy) if strategy is not None else None,
+            groups=ledger.group_words_by_clip(
+                (strategy or {}).get("resolved_clip_intents") if strategy else None
+            ),
+            stated=card_mod.stated_ids(strategy),
+            only=card_mod.played_ids(strategy),
+            editable=editable,
+        )
+    except Exception:  # noqa: BLE001 - the card must never break a turn
+        log.warning("kria_clip_order_card_failed", thread_id=str(thread.id), exc_info=True)
+        return {}, None
+    if not card["shown"]:
+        return {}, None
+    if card_mod.card_gate(client_protocol) == "card":
+        return {card_mod.CARD_KEY: card}, None
+    return {}, card_mod.listing_text(card)
+
+
+def _with_listing(content: str | None, listing: str | None) -> str | None:
+    if listing is None:
+        return content
+    return f"{content}\n\n{listing}" if content else listing
 
 
 def _append_sync_event(
@@ -6061,6 +6260,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
                     conversation_language=planned.conversation_language,
+                    clip_order_entries=planned.clip_order_entries,
+                    client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
                     plan=planned.plan,
                     brief_updates=planned.brief_updates,
                     creative_copy_resolution=planned.creative_copy_resolution,
@@ -7121,6 +7322,10 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     if editor_payload.music_track_id
                     else None
                 )
+                # KRI-1562: a chat song on a phone Talking edit is the background-music section.
+                bed = getattr(editor_payload, "background_music", None)
+                bed_track_id = bed.track_id if bed is not None else None
+                background_music_track = db.get(MusicTrack, bed_track_id) if bed_track_id else None
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
                 plan_before_background_pin = current_job.assembly_plan
                 try:
@@ -7146,6 +7351,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         editor_payload,
                         user_id=str(thread.creator_id),
                         music_track=music_track,
+                        background_music_track=background_music_track,
                         plan_item_id=str(item.id),
                         phone_sfx_catalog_paths=phone_sfx_catalog_paths,
                         # The validated approval binding is staged with the
@@ -8060,6 +8266,11 @@ _VOICEOVER_UNAVAILABLE_TR = (
     "iPhone'da oluşturuluyor. Bu düzenlemeyi seslendirme olmadan iste. Yedek bir düzenleme "
     "oluşturulmadı."
 )
+# KRI-1554: a template; `{limit_minutes:g}` is the Talking clip limit from `source_length_policy`.
+_TALKING_CLIP_TOO_LONG_TR = (
+    "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan "
+    "kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+)
 _PHONE_GATE_MESSAGES_TR = {
     "device_render_unsupported": (
         "Bu proje tamamen bu iPhone'da oluşturulamıyor. Mevcut videon değişmedi."
@@ -8084,9 +8295,10 @@ _PHONE_GATE_MESSAGES_TR = {
         "klipleri kaldır (ya da bir klip ekle) ve tekrar dene. Yedek bir düzenleme "
         "oluşturulmadı."
     ),
-    "subtitled_clip_too_long": (
-        "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir "
-        "klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+    # Formatted like `PHONE_GATE_MESSAGES` reads it; `_phone_gate_refusal_copy` fills the template
+    # itself so the reply follows the policy's current limit.
+    "subtitled_clip_too_long": _TALKING_CLIP_TOO_LONG_TR.format(
+        limit_minutes=max_duration_s("talking_clip") / 60
     ),
     "self_narration_multi_clip": (
         "Birden fazla klip üzerinde anlatım iPhone'da henüz yok. Bir seslendirme kaydet ya da "
@@ -8102,7 +8314,9 @@ _PHONE_GATE_MESSAGES_TR = {
 def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import (  # noqa: PLC0415
         PHONE_GATE_MESSAGES,
+        TALKING_CLIP_TOO_LONG_MESSAGE,
         TALKING_MULTI_CLIP_COUNT_MESSAGE,
+        talking_clip_limit_minutes,
     )
 
     multi_clip = False
@@ -8123,6 +8337,12 @@ def _phone_gate_refusal_copy(reason: str) -> str:
                 "oluşturulmadı."
             ),
             max_clips=TALKING_MULTI_CLIP_MAX_CLIPS,
+        )
+    elif reason == "subtitled_clip_too_long":
+        message = say(
+            en=TALKING_CLIP_TOO_LONG_MESSAGE,
+            tr=_TALKING_CLIP_TOO_LONG_TR,
+            limit_minutes=talking_clip_limit_minutes(),
         )
     elif reason in PHONE_GATE_MESSAGES and reason in _PHONE_GATE_MESSAGES_TR:
         message = say(en=PHONE_GATE_MESSAGES[reason][1], tr=_PHONE_GATE_MESSAGES_TR[reason])
@@ -9092,6 +9312,28 @@ def _with_clip_sound_toggles(job: Job, variant: dict, facts: Any, *, brief_bindi
     return dataclasses.replace(facts, clip_sound_toggles=receipt) if receipt is not None else facts
 
 
+def _with_recipe_music(job: Job, variant: dict, facts: Any) -> Any:
+    """KRI-1562: ``facts`` with whether the recipe pinned for this phone Talking ``variant``
+    plays a song. The recipe decides, never the stored treatment: a Save with the rollout off
+    drops the bed and keeps the treatment. Only the recipe this variant rendered counts (a later
+    Save pins a newer one); without it the facts stand."""
+    from app.services.device_render import device_status  # noqa: PLC0415
+    from app.services.talking_music import recipe_plays_music  # noqa: PLC0415
+
+    variant_id = variant.get("variant_id")
+    if not facts.phone_talking or not variant_id:
+        return facts
+    try:
+        status = device_status(job, str(variant_id))
+    except (AttributeError, KeyError, ValueError, TypeError):
+        return facts
+    rendered = variant.get("render_generation_id")
+    if not rendered or rendered not in {status.base_generation, status.published_generation}:
+        return facts
+    plays = recipe_plays_music(status.request.recipe)
+    return dataclasses.replace(facts, recipe_music=plays, music_in_render=plays)
+
+
 def _order_source_context_sync(db, *, brief, item_id, creator_id):
     from app.kria.order_replacement_sources import load_brief_order_source_context_sync
 
@@ -9206,6 +9448,7 @@ def _approved_generation_requirements_review(
             )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
+    facts = _with_recipe_music(job, variant, facts)
     # KRI-1189: a restart ask with no retake cut says "didn't find" only where this render's
     # cleanup could have cut one, read the same way as the finished-render note below.
     facts = dataclasses.replace(

@@ -38,7 +38,7 @@ final class VoiceoverScriptCardUITests: XCTestCase {
 
         let record = app.buttons["voiceover-script-record"]
         XCTAssertTrue(record.exists)
-        XCTAssertGreaterThanOrEqual(record.frame.height, 44)
+        assertTouchTarget(record.frame.height)
         XCTAssertTrue(app.buttons["voiceover-script-import"].exists)
         record.tap()
 

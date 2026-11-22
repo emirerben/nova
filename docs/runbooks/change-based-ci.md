@@ -41,11 +41,33 @@ cases when adding a new subsystem or cross-subsystem dependency.
 ## Detection and required checks
 
 `.github/workflows/ci-changes.yml` is reused by CI and iOS. Each call checks out
-full history, runs the selector's offline regression tests, and compares the PR
-head with the merge base of its event base/head SHAs. Tests still execute on the
+full history and compares the PR head with the merge base of its event base/head
+SHAs. Tests still execute on the
 normal GitHub merge checkout. The diff uses NUL delimiters, has no API file-count
 limit and disables rename detection so both old and new paths are considered.
 No fork tokens or PR-supplied shell interpolation are needed.
+
+### Where the CI scripts' own tests run (KRI-1543)
+
+`python3 -m unittest discover -s scripts/ci -p 'test_*.py'` covers selection,
+the gates, the registries and PR evidence. It takes about 5 minutes on a hosted
+runner (17 to 20 s on 2026-11-12; `test_pr_evidence.py` alone is now 135 s
+locally, `test_select_tests.py` 49 s).
+
+- `ci.yml` calls the selector with `selftest: false` and runs the tests in the
+  `ci-selftests` job, beside the suites. That job has no `needs` and no `if`.
+  The required `lint` gate needs it and fails unless its result is `success`
+  (`select-tests.py gate lint lint-suites`), on every event. Suites therefore
+  start about 5 minutes earlier, and a red self-test still blocks the merge.
+- `ios.yml` (main pushes, nightly, manual) keeps the default: the tests run
+  inside the selector job, before selection.
+- A new caller of `ci-changes.yml` gets the default. Passing `selftest: false`
+  without a `ci-selftests` job that `lint` needs fails
+  `SelfTestWiringTests` in `scripts/ci/test_select_tests.py`.
+
+What changed in behaviour: with a broken selector, `ci.yml` suites now start and
+`lint` goes red afterwards; before, nothing started. To undo, revert the pull
+request that made the change.
 
 Before selecting suites for a PR to `main`, the selector job runs the existing
 release-metadata ownership guard. Manual release version or changelog edits stop
@@ -76,15 +98,117 @@ avoid dependency installation, PostgreSQL/Redis services, five web workers and
 macOS runners. Superseded PR and portable main CI runs are cancelled; a running main iOS
 release lane is never cancelled. Nightly/manual regressions have separate concurrency groups.
 
-API tests run as two deterministic round-robin shards over the
-complete non-quality test-file set; every shard feeds the same stable `test-api`
-gate, so sharding changes wall-clock scheduling without reducing coverage. The
-count lives in `scripts/ci/api-tests.py` (`SHARD_COUNT`) and the workflow matrix
-must list exactly those shards. Four shards were tried on 2026-11-19 and
-reverted the same day: the slowest job got only 3 to 4 minutes faster, and one
-shard concentrated CPU-heavy render tests so that a 24-41 second test ran for
-53-60 seconds against the 60-second per-test timeout. More shards need a
-partition balanced on measured per-file time, checked over several runs.
+API tests run as six shards over the complete non-quality test-file set
+(KRI-1544); every shard feeds the same stable `test-api` gate, so sharding
+changes wall-clock scheduling without reducing coverage. The count lives in
+`scripts/ci/api-tests.py` (`SHARD_COUNT`) and the workflow matrix must list
+exactly those shards.
+
+Files are packed by measured time, longest first into the lightest shard, from
+`scripts/ci/api-test-timings.json` (files of 5 s and more; any other file weighs
+0.5 s). A missing or malformed timings file only makes the shards uneven; every
+file still runs once. Each shard hands pytest its files in path order, never in
+packing order: xdist's `load` mode gives each worker a run of consecutive tests,
+which tends to keep CPU-heavy neighbours in `tests/pipeline/` on the same
+worker, one after another, without guaranteeing it.
+
+To refresh the timings (a few runs' worth is enough; each shard attempts to
+upload its junit report as `api-junit-<run-id>-<shard>-<attempt>` for 3 days).
+These uploads are diagnostic and do not affect the required test result.
+Keep the artifact directories: when merging reports from retries, the timing
+tool takes the highest available attempt separately for each run and shard.
+
+```sh
+gh run download <run id> -p 'api-junit-*' -D /tmp/api-junit
+python3 scripts/ci/api-test-timings.py /tmp/api-junit "run <id>, <date>"
+```
+
+Measured on 2026-11-20 on throwaway branches, API job only, five repeats per
+arm (runs 44651481740, 44658565495, 44664494076):
+
+| Layout | Slowest shard job, median | Tests above 45 s (of 60 s) | Other failures |
+| --- | --- | --- | --- |
+| two shards by file position (before) | 24.6 min | 2 samples | none |
+| three packed, `load` mode | 16.2 min | 1 | slide-post delivery tests in 3 of 5 repeats (KRI-1545) |
+| three packed, `--dist loadfile` | not adopted | 5, one test at a median of 53 s | none |
+| three packed, `load` mode, KRI-1545 lock (adopted 2026-11-20) | 18.3 min | 2 | none |
+
+Measured on 2026-11-21 on a throwaway branch, API job only, five repeats per
+arm on one commit (run 44913979019, 45 jobs, all green), with the locked
+install and timings refreshed from five runs:
+
+| Layout | Slowest shard job, median | Tests near their timeout | Other differences |
+| --- | --- | --- | --- |
+| three packed | 1,012 s (16.9 min) | none | none |
+| six packed (adopted) | 642 s (10.7 min) | none | none: 52,354 tests, identical outcomes |
+
+Tests with a timeout of their own did get slower at six shards, with room to
+spare: the three carousel focus-mode renders reached 47 s of their 180 s, and
+one route replay 59 s of its 300 s. No test on the default 60 s timeout went
+above 45 s in either layout. An earlier run of the same experiment (run
+44903511580) had one test at 45-46 s, `test_lane_targets_only_move_toward_green`;
+it was split per fixture first (#2443).
+
+What that taught:
+
+- A layout change moves where xdist's chunks end, so tests of one file that
+  share database rows can start running beside each other. The slide-post
+  delivery tests did; they now hold a cross-worker advisory lock
+  (`exclusive_slide_post_delivery` in `tests/conftest.py`). A test that sweeps a
+  whole table needs such a lock.
+- `--dist loadfile` removes that race but spreads the CPU-heavy files over all
+  four workers at once, and slow tests get slower. It failed the bar below.
+- Four shards by file position were tried on 2026-11-19 (#2389) and reverted
+  the same day: a 24-41 second test ran for 53-60 seconds against the
+  60-second per-test timeout.
+
+Before changing the count, the packing or the xdist mode, run the old and the
+new layout side by side on a throwaway branch (the API job alone, at least five
+repeats per arm) and compare the per-test rows:
+
+```sh
+python3 scripts/ci/api-times.py compare OLD_DIR NEW_DIR
+```
+
+It requires:
+
+1. no test that stopped running and no outcome that differs;
+2. no test newly at its timeout, and no more samples per run above three
+   quarters of their timeout than the old layout (45 s of the default 60 s;
+   a test with its own timeout is judged against that).
+
+A throwaway branch for this adds one workflow triggered by pushes to that
+branch, holding the API job with a `layout` and a `repeat` matrix dimension,
+`max-parallel: 10` so real pull requests keep runners, and an environment
+override for the shard count. Do not reduce `ci.yml` itself: a test reads it.
+
+Order the matrix so the arms take turns (repeat 1 of every arm, then repeat 2),
+never one whole arm after the other. Runner speed drifts over an hour, and a
+run on 2026-11-21 that listed all "disk" jobs before all "memory" jobs showed a
+7% gain for an in-memory test database that was not real: tests that never touch
+the database were 10% faster in that arm too. Read a difference under about 10%
+at five repeats as noise unless it shows up only in the tests the change
+should affect. That experiment is neither adopted nor disproven; all time spent
+off the CPU is about 1,100 s per run across six shards, so the most a faster
+database could save is about 45 s per shard.
+
+`journey-offline` runs its two slowest steps (the KRI-492 prerequisites and the
+camera-roll tests) on four xdist workers. Both spend about 215 s in
+`tests/integration/test_actual_export_verification.py` when run serially.
+Measured on 2026-11-21 on a throwaway branch, six repeats per arm, arms taking
+turns, same commit:
+
+| Workers | KRI-492 step, median | Camera-roll step, median | Outcomes against serial |
+| --- | --- | --- | --- |
+| serial | 230 s | 232 s | |
+| two | 179 s | 163 s | identical, 262 and 180 tests |
+| four | 153 s | 151 s | identical, 262 and 180 tests |
+
+Four workers only gain a third because the tests already use every core
+(FFmpeg): summed test time doubles. The slowest test used 26% of its timeout.
+The same file runs in both steps and in an API shard; running it once per job
+would save more and is not done yet.
+
 The `iPhone validation` matrix has a `unit` leg (build, unit tests, selected UI
 subset, named-unit gate) plus `creation` and `screens` legs that compile from
 the same cache and split the fixture-driven journeys by measured duration. The
@@ -122,9 +246,38 @@ fixture bundle is downloaded and fails the leg unless `journey-offline` (and
 `journey-library`, when selected) succeeded, so the Linux journeys are no
 longer in front of the Mac queue. The stable `build-and-test` gate requires every leg and the contract
 job to pass when iOS is selected. Main uses one iOS build/unit/smoke lane and dispatches TestFlight after those checks
-pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
-native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither
-regression path dispatches TestFlight.
+pass. Full iOS regression runs nightly or on manual dispatch; full native
+journeys run nightly or on manual CI dispatch. Neither regression path
+dispatches TestFlight.
+
+A full iOS regression runs at most three of its six legs at a time
+(`max-parallel: 3` in `ios.yml`), so it never holds more than three of the
+account's five hosted Macs. Uncapped, the nightly of 2026-11-21 took four Macs
+and then all five; with main's own lane no Mac was free for 65 minutes, and two
+PRs waited 43 and 53 minutes for their iPhone job (results after 86 and 88
+minutes). The price is a second round: legs 1 to 3
+start together, legs 4 and 5 and the Linux contracts leg start as slots free
+up. First capped run (45007886433, manual): never more than three Mac legs at
+once, Mac legs 58 to 74 minutes each. Size the cap from Macs left for PRs, not
+from nightly duration; `test_full_regression_never_holds_more_than_three_macs`
+fails if it is removed or raised past three.
+
+The nightlies are meant to run in the UK night. GitHub starts this repo's
+scheduled runs hours after the time in the workflow, and the delay moves: about
+5 hours in mid-October 2026, 7 to 9 hours in mid-November. The schedules are
+therefore written early (KRI-1552): `ci.yml` at 17:23 UTC and `ios.yml` at
+18:23 UTC, which today start at about 00:00 to 02:00 and 01:30 to 03:00 UTC. The
+iOS nightly then runs for about two and a half hours. To see when they really start:
+
+```sh
+gh api "repos/{owner}/{repo}/actions/workflows/ios.yml/runs?event=schedule&per_page=7" \
+  --jq '.workflow_runs[] | .created_at'
+```
+
+Re-tune both times together, keeping CI one hour ahead of iOS, when a week of
+iOS nightlies starts before 22:00 or after 05:00 UTC. The guard is
+`test_the_two_nightlies_are_scheduled_an_hour_apart_ci_first` in
+`scripts/ios/tests/test_workflow_policy.py`.
 
 Test registries are derived, not listed (KRI-1380). A journey API test declares
 `pytestmark = pytest.mark.journey("<journey-id>")` at module level (add
@@ -248,6 +401,122 @@ How to read it:
   leg. About a third of the failed PR Mac-minutes fell in such periods, judged
   by the last `iOS` run on `main` that had started before the PR run.
 
+### Waiting, setup and running per job
+
+`--phases` splits every job of the newest finished runs into three buckets, so
+a speed change is aimed at the biggest one:
+
+```sh
+python3 scripts/ci/ci-baseline.py --phases 150 --days 1 --until 2026-11-21T06:00:00Z
+python3 scripts/ci/ci-baseline.py --phases 150 --workflow ios.yml --event push
+```
+
+- **Waiting** is job creation to runner pickup, plus any step named "Wait for
+  ..." (a job waiting on another job). A job behind `needs` is created when its
+  dependencies finish, so their runtime is not counted as its wait.
+- **Setup** is checkout, toolchain installs, caches, service containers,
+  uploads and the runner's own bookkeeping. The step names it covers are listed
+  in `SETUP_PREFIXES` at the top of the script. A step that is not listed counts
+  as running, so a new step can never make setup look cheaper.
+- **Running** is everything else: the checks themselves.
+
+It costs one API call per run. Skipped, cancelled and never-started jobs are
+left out; matrix legs are reported separately. The report also lists every step
+with a median of 8 s or more and the bucket it was filed under.
+
+Pull-request runs of `ci.yml`. Job columns are seconds, p50 / p95, for
+`api (0)` and the iPhone unit leg:
+
+| Window | Runs | Minutes to last required check | API setup | API running | iPhone running | iPhone waiting |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-14 to 11-19, before KRI-1534 | 126 | median 50.0, p95 134.6 | 162 / 193 | 1,140 / 1,461 | 1,809 / 2,816 | 305 / 5,859 |
+| 2026-11-20, three API shards | 22 | median 32.5, p95 44.0 | 166 / 186 | 852 / 974 | 1,867 / 2,264 | 5 / 369 |
+
+Here the wait is run start to the last of `lint`, `test-api` and
+`build-and-test`, for every finished PR run, not only merged heads. Setup is
+about 2.5 minutes on every Linux job that installs the API (`pip install` 86 s,
+`setup-python` 32 s, service containers 22 s, apt 15 s). Runner-minutes per PR
+run on 2026-11-20: 75 Linux, 32 Mac.
+
+### The API's locked install
+
+Every CI job that needs the API's Python packages uses
+`.github/actions/api-env`: `uv sync --frozen` from `src/apps/api/uv.lock`, with
+torch from the CPU-only index. Measured side by side on one hosted runner
+(#2434): 10 s and 2.3 GB locked, against 114 s and 7.0 GB for the unlocked
+`pip install -e ".[dev]"` it replaced. There is no cache on purpose: the
+download is faster than a cache restore of that size.
+
+- After any change to the dependencies in `src/apps/api/pyproject.toml`, run
+  `cd src/apps/api && uv lock` and commit `uv.lock`. `lint-suites` fails when
+  the two disagree.
+- The lock resolves every extra together, so CI runs versions the production
+  image (which installs the `observability` extra) can also install: celery
+  5.6.x and redis 6.4.x, not the 5.7.0 and 8.1.0 the unlocked install picked.
+  The production Dockerfile is not built from the lock yet.
+- Before changing how the suite is installed, sharded or run, download the
+  `api-times-*` artifacts of runs before and after and compare them:
+  `python3 scripts/ci/api-times.py compare OLD_DIR NEW_DIR`. It fails when a
+  test stopped running, an outcome changed, a test newly reaches the 60 s
+  timeout, or more samples per run sit above 45 s.
+
+### API lint and format
+
+`python3 scripts/ci/api-lint.py` runs `ruff check` and `ruff format --check` on
+`src/apps/api`. `lint-suites` runs it on the whole tree; `scripts/preship-check.sh`
+runs it on the changed files. Both checks always run, so one push shows every
+problem. First measured 2026-11-21 on a laptop: 0.06 s lint, 0.03 s format,
+3,452 files.
+
+- ruff is pinned exactly (`ruff==` in `pyproject.toml`, the same version in
+  `uv.lock`). The command refuses to run with any other version and prints the
+  install line, because two ruff versions format differently. Before the pin,
+  CI ran 0.17 and laptops 0.15, and formatting was not checked in CI at all:
+  92 files had drifted.
+- To move to a new ruff: change the pin, run `cd src/apps/api && uv lock`,
+  run `ruff format .` with the new version and commit the three together.
+- Format one file, never a directory you did not change, and with the pinned
+  ruff (a bare `ruff` on PATH may be another version):
+  `cd src/apps/api && "$(python3 ../../../scripts/ci/api-lint.py --ruff-path)" format path/to/file.py`.
+
+### Local git hooks
+
+`hk.pkl` defines two git hooks, run by [hk](https://hk.jdx.dev). Install once
+per clone: `brew install hk && hk install` (`scripts/worktree-setup.sh` does the
+second part). The install is in the repository's git config, so every worktree
+has it; a branch without `hk.pkl` runs no hk checks. They repeat checks CI
+runs anyway, to save the CI round trip.
+
+| Hook | Checks | Measured 2026-11-21 |
+| --- | --- | --- |
+| commit | `api-lint.py` on the staged API Python files (check only, nothing is rewritten) | 0.08 s |
+| push | `api-lint.py` on the whole API tree, the CLAUDE.md size limit, the journey and UI test registries, and unmapped journey paths against main | 2.0-2.3 s |
+
+The budget for both together is 9 s. Time them with
+`HK_TIMING_JSON=/tmp/hk.json hk run pre-push --from-ref origin/main --to-ref HEAD </dev/null`.
+The editor's format-on-save hook (`scripts/hooks/format-on-save.sh`) formats
+only with the pinned ruff; with any other version it does nothing.
+
+### Skips in the API shards
+
+A skipped test is a check that did not run. After pytest, each API shard reads
+its own per-test rows and fails if a test skipped for a reason that is not on
+`scripts/ci/api-expected-skips.json` (`check_skips` in `scripts/ci/api-tests.py`).
+Each entry names a file, a pattern the skip reason must match, and why the skip
+is acceptable. An entry whose `why` starts with `GAP` is a check that should run
+and does not yet.
+
+- A new skip in CI: make the test run, or add an entry with the reason. Do not
+  widen an existing pattern to cover it.
+- Tests that need the repository's history are marked
+  `@pytest.mark.needs_git_history` (`tests/git_history_required.py`). They skip
+  in the shards, which clone one commit, and run in `creator-contract-replay`
+  with `NOVA_REQUIRE_GIT_HISTORY=1`, where a missing commit or merge base is a
+  failure. That job runs only the marked tests.
+- First measured 2026-11-21: 115 skips per run in 26 files. 26 of them were
+  checks that never ran on pull requests (25 reliability-gate fix-commit tests
+  and the copy-catalog codemod test) and one needed an uninstalled package.
+
 ## When a PR gets a Mac (KRI-1534)
 
 A pull request starts a Mac only when it changes an iPhone input
@@ -367,6 +636,54 @@ are the 26 above plus 7, each read:
 - 1 is `NativeEditorPlaybackAdmissionUITests`: an in-app playback fixture that
   never admitted its first frame on that runner. The same test passed on ten
   other Mac jobs within four hours, including the same branch.
+
+## When a nightly goes red (KRI-1549)
+
+The nightlies are the only runs of the `creation` and `screens` journey legs
+and of the full iPhone UI suite; a PR that selects the `full` UI group runs only
+smoke. From 2026-11-05 to 11-19 the `iOS` nightly was red 14 nights in a row and
+the `CI` nightly 10 of 14, and nobody was told.
+
+Each scheduled run of `ci.yml` and `ios.yml` now ends with a `nightly-alert`
+job (`scripts/ci/nightly-alert.py`, built-in `GITHUB_TOKEN`, no secret):
+
+- If any job of the run failed, was cancelled (a timeout is a cancel) or had not
+  finished, it opens one GitHub issue, **Nightly CI run is red** or **Nightly
+  iOS run is red**, labelled `nightly-red` and assigned to the repository owner,
+  or comments on that issue if it is already open. The text names the run's start
+  time (UTC) and commit, never "last night": scheduled runs start hours late.
+- It lists each red job with its failed step and the failed tests it reads from
+  the job log: the UI suite's `UI coverage mismatch` line, XCTest
+  `Test Case ... failed` lines with no later pass (a test that passed on retry
+  is flaky, not failing) and pytest `FAILED`/`ERROR` lines. A log it cannot read
+  is named as such; the jobs are still listed.
+- The next green scheduled run of the same workflow closes the issue with a
+  comment naming that run. Only the newest scheduled run speaks: re-running an
+  older night's jobs (which keeps the `schedule` event) changes nothing.
+- It runs on `schedule` only. PR, push and manual runs never open, update or
+  close the issue. A run of any branch but `main` uses its own title ("... (branch
+  <name>)") and no assignee, so a drill cannot touch main's issue.
+
+To change who is assigned, set the repository variable
+`NIGHTLY_ALERT_ASSIGNEES` (comma-separated GitHub logins). With the issue open:
+
+1. Open the failing tests' job from the issue and read the diagnostics artifact
+   (`ios-native-test-diagnostics-*`). File a Linear issue per failing test, or
+   fix it, as for any red `main` check.
+2. Merging the fix does not close the issue; the next green scheduled run does.
+   A manual `workflow_dispatch` run is a useful check but does not close it.
+
+To see what the alert would write for any finished run, without changing
+anything:
+
+```sh
+GITHUB_REPOSITORY=Kria-AI/kria python3 scripts/ci/nightly-alert.py --dry-run --run-id <run id>
+```
+
+The guard is `scripts/ci/test_nightly_alert.py`: it lists the ways the alert can
+fail and holds the job's `needs` (every other job, so it runs last), its
+schedule-only condition and its permissions. A new job in either workflow must
+be added to `nightly-alert`'s `needs`.
 
 ## Verification and rollback
 

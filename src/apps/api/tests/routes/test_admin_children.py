@@ -26,6 +26,7 @@ ADMIN_TOKEN = "test-admin-token"
 def _patch_admin_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ADMIN_API_KEY", ADMIN_TOKEN)
     from app.config import settings
+
     settings.admin_api_key = ADMIN_TOKEN
 
 
@@ -54,9 +55,16 @@ def _make_parent(template_id: str = "parent-001") -> VideoTemplate:
         "shot_count": 4,
         "total_duration_s": 12.0,
         "slots": [
-            {"position": i + 1, "target_duration_s": 3.0, "slot_type": "broll",
-             "transition_in": "cut", "text_overlays": [], "speed_factor": 1.0,
-             "color_hint": "warm", "energy": 5.0}
+            {
+                "position": i + 1,
+                "target_duration_s": 3.0,
+                "slot_type": "broll",
+                "transition_in": "cut",
+                "text_overlays": [],
+                "speed_factor": 1.0,
+                "color_hint": "warm",
+                "energy": 5.0,
+            }
             for i in range(4)
         ],
         "copy_tone": "cinematic",

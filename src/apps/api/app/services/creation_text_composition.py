@@ -354,6 +354,13 @@ class CreationTextCompositionError(ValueError):
         self.op_index = op_index
 
 
+class ResearchSourcesUnavailable(CreationTextCompositionError):
+    """The search for an asked research text found no source the rules accept.
+
+    The caller renders the rest of the creator's text and says which asked text it could not
+    add; it fails only when nothing asked is left on screen."""
+
+
 class CreationTextClarification(CreationTextCompositionError):
     """The text composer asked the creator a question instead of composing.
 
@@ -926,6 +933,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
                 if old_id not in known and str(old_id).startswith("kria-"):
                     row["id"] = f"{id_prefix}{index}"
                 known.add(row.get("id"))
+            from app.pipeline.informative_text import policy_enabled
             from app.services.phone_text_styling import current_phone_text_policy
 
             if current_phone_text_policy() and op.get("op") == "patch_text_style":
@@ -943,6 +951,12 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
                 row = state.text[-1]
                 source = dict(row.get("source_params") or {})
                 fields = set(op.get("patch") or {})
+                if isinstance(op.get("research"), dict) and policy_enabled(
+                    current_phone_text_policy()
+                ):
+                    # KRI-1585: the research writer's spot is its own pick, not the
+                    # creator's, so her saved and asked styles still apply to it.
+                    fields = set()
                 if op.get("style_from") is not None:
                     fields.update(
                         {
@@ -1889,6 +1903,7 @@ def _compose_from_research(
     writer's answer then skipped the evidence checks and the claim review.
     """
     from app.services.researched_text import (  # noqa: PLC0415
+        NoUsableSources,
         ResearchUnavailable,
         layer_operations,
         pinned_layer_operations,
@@ -1923,6 +1938,8 @@ def _compose_from_research(
                 retrieved_at=evidence.retrieved_at,
                 search_entry_html=evidence.search_entry_html,
             )
+    except NoUsableSources as exc:
+        raise ResearchSourcesUnavailable(str(exc), reason="incomplete") from exc
     except ResearchUnavailable as exc:
         raise CreationTextCompositionError(str(exc)) from exc
     uncovered = _uncovered_layer_requirements(layers, text_requirements)
@@ -2292,6 +2309,8 @@ def _compose_creation_text(
     shaping_lane: list[dict] = []
     shapes: list[ResearchLayerShape] = []
     drops: list[TextDrop] = []
+    # Why research left nothing to show; it is the failure if no other asked text is on screen.
+    research_failure: CreationTextCompositionError | None = None
     owned = (
         _server_timed_sequences(texts_for_model, text_requirements)
         if approved_layers is None
@@ -2313,23 +2332,44 @@ def _compose_creation_text(
         and pinned_research is None
         and research_needs_text_layers(text_requirements)
     ):
-        output, then, shaping_lane, researched, shapes, uncovered = _compose_from_research(
-            output.research_request,
-            approved=approved_layers,
-            snapshot=snapshot,
-            creator_request=creator_request,
-            plan=plan,
-            base_digest=_digest(texts, slots),
-            lane=texts_for_model,
-            slots=slots,
-            pinned_ops=pinned_ops,
-            constraints=constraints,
-            text_requirements=text_requirements,
-            ctx=ctx,
-        )
-        constraints = {**constraints, **researched}
-        drops.extend(uncovered)
-        full_lane_ops = True
+        try:
+            output, then, shaping_lane, researched, shapes, uncovered = _compose_from_research(
+                output.research_request,
+                approved=approved_layers,
+                snapshot=snapshot,
+                creator_request=creator_request,
+                plan=plan,
+                base_digest=_digest(texts, slots),
+                lane=texts_for_model,
+                slots=slots,
+                pinned_ops=pinned_ops,
+                constraints=constraints,
+                text_requirements=text_requirements,
+                ctx=ctx,
+            )
+        except ResearchSourcesUnavailable as exc:
+            # No qualifying source for the creator's topic: the rest of her approved text
+            # renders and the note names each asked text it could not add (prod 2e76b62f).
+            log.info(
+                "creation_text_research_sources_unavailable",
+                job_id=getattr(ctx, "job_id", None),
+                reason=str(exc)[:300],
+            )
+            research_failure = exc
+            drops.extend(
+                shrink(
+                    CreationTextCompositionError(
+                        "Text composition is incomplete: no researched text", reason="incomplete"
+                    ),
+                    text=req.description or None,
+                )
+                for req in _uncovered_layer_requirements([], text_requirements)
+            )
+            output = output.model_copy(update={"research_request": None})
+        else:
+            constraints = {**constraints, **researched}
+            drops.extend(uncovered)
+            full_lane_ops = True
     elif output.research_request is not None and pinned_research is not None:
         # The creator approved this research before render: it is never searched again.
         log.info(
@@ -2339,14 +2379,16 @@ def _compose_creation_text(
         )
         output = output.model_copy(update={"research_request": None})
     elif output.research_request is not None:
+        from app.agents._runtime import TerminalSchemaError  # noqa: PLC0415
         from app.services.researched_text import (  # noqa: PLC0415
             ResearchUnavailable,
             run_researched_revision,
         )
 
+        asked_research = output.research_request
         try:
             output = run_researched_revision(
-                output.research_request,
+                asked_research,
                 utterance=creator_request,
                 snapshot=model_snapshot,
                 ctx=ctx,
@@ -2355,8 +2397,23 @@ def _compose_creation_text(
                 look=_research_entrance_patch(research_look),
                 handled_elsewhere=("animation",) if research_look else (),
             )
-        except ResearchUnavailable as exc:
-            raise CreationTextCompositionError(str(exc)) from exc
+        except (ResearchUnavailable, TerminalSchemaError) as exc:
+            # The creator approved this draft, so research that finds no usable source (or no
+            # place to put it) renders the rest of the text and says so, instead of failing the
+            # video (prod 2e76b62f: 14 cited facts, none from a `.gov`/`.edu`/museum host). Only
+            # a failure that is `ResearchUnavailable` itself or wraps it degrades: a truncated or
+            # malformed model answer is ours, and stays a failure.
+            unavailable = _research_unavailable(exc)
+            if unavailable is None:
+                raise
+            log.info(
+                "creation_text_research_unavailable",
+                job_id=getattr(ctx, "job_id", None),
+                reason=str(unavailable)[:300],
+            )
+            research_failure = CreationTextCompositionError(str(unavailable), reason="incomplete")
+            drops.append(shrink(research_failure, text=asked_research.request_quote))
+            output = output.model_copy(update={"research_request": None})
     unmet: CreationTextCompositionError | None = None
     if (
         output.needs_clarification
@@ -2523,6 +2580,7 @@ def _compose_creation_text(
         raise (
             unmet
             or degraded.cause
+            or research_failure
             or CreationTextCompositionError(
                 "Text composition left none of the requested text on screen", reason="incomplete"
             )
@@ -2530,6 +2588,21 @@ def _compose_creation_text(
     if not program.operations and not constraints:
         return snapshot, drops
     return snapshot.model_copy(update={"text_composition": program}), drops
+
+
+def _research_unavailable(exc: BaseException) -> BaseException | None:
+    """The ``ResearchUnavailable`` that is ``exc`` or sits behind its cause chain, else None.
+
+    The grounded-search agent turns "no usable cited evidence" into a ``SchemaError`` the runtime
+    re-raises as ``TerminalSchemaError``, so the typed reason is only on the cause."""
+    from app.services.researched_text import ResearchUnavailable  # noqa: PLC0415
+
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, ResearchUnavailable):
+            return seen
+        seen = seen.__cause__
+    return None
 
 
 def _first_unmet_ask(output: EditCopilotOutput) -> str | None:

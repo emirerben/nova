@@ -311,7 +311,7 @@ final class CreationUITests: XCTestCase {
             XCTAssertTrue(count.waitForExistence(timeout: 5))
             let decision = app.buttons["text-learning-\(action)-learning-position"]
             scrollIntoView(decision, in: app)
-            XCTAssertGreaterThanOrEqual(decision.frame.height, 44)
+            assertTouchTarget(decision.frame.height)
             XCTAssertLessThan(decision.frame.maxY, app.textFields["Message Kria"].frame.minY)
             let screenshot = XCTAttachment(screenshot: app.screenshot())
             screenshot.name = "Finished-edit chat suggestion before \(action)"
@@ -633,11 +633,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tile0 = app.buttons["gallery-tile-0"], tile1 = app.buttons["gallery-tile-1"], tile2 = app.buttons["gallery-tile-2"]
-        XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tile0, timeout: 50), app.debugDescription)
         XCTAssertTrue(tile2.exists)
         let count = app.staticTexts["gallery-count"]
         // The gallery leads with a Record cell and a Files switch; Add stays disabled until something is picked.
@@ -654,10 +652,12 @@ final class CreationUITests: XCTestCase {
             )
         XCTAssertTrue(eventually { count.label.hasPrefix("3 of") }, count.label)
         XCTAssertEqual(tile1.value as? String, "Selected, 2")
-        // A slide that starts on a selected tile deselects.
+        // A slide that starts on a selected tile deselects. It moves off at once, as a finger does, and ends one tile
+        // away, still within the first tile's tap reach: that used to end in a tap that put the first tile back
+        // (KRI-1550, every time from a 0.05 s press; at 0.1 s only now and then, on a busy runner).
         tile1.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(
-                forDuration: 0.1,
+                forDuration: 0.05,
                 thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
                 withVelocity: .slow,
                 thenHoldForDuration: 0.1
@@ -707,11 +707,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tile0 = app.buttons["gallery-tile-0"]
-        XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tile0, timeout: 50), app.debugDescription)
         let count = app.staticTexts["gallery-count"]
         tile0.tap()
         XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
@@ -763,11 +761,9 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(photos.waitForExistence(timeout: 5), "Upload asks where from")
         XCTAssertTrue(app.buttons["upload-source-files"].exists)
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tile0 = app.buttons["gallery-tile-0"]
-        XCTAssertTrue(tile0.waitForExistence(timeout: 40), "choosing Photos in the tray presents the gallery at once\n\(app.debugDescription)")
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tile0, timeout: 50), "choosing Photos in the tray presents the gallery at once\n\(app.debugDescription)")
         let count = app.staticTexts["gallery-count"]
         tile0.tap()
         XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
@@ -842,9 +838,8 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 5))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: app.buttons["gallery-tile-0"], timeout: 50), app.debugDescription)
         let count = app.staticTexts["gallery-count"]
         for index in 0..<picks {
             let tile = app.buttons["gallery-tile-\(index)"]
@@ -898,8 +893,22 @@ final class CreationUITests: XCTestCase {
             let bottom = min(plus.frame.minY, composer.frame.minY)
             return CGRect(x: 0, y: top, width: app.frame.width, height: max(bottom - top, 0))
         }
-        func isInView(_ element: XCUIElement) -> Bool {
-            element.exists && element.frame.intersection(visibleTranscript()).height >= 16
+        // Whether a text that `matches` is drawn at least 16 pt inside that strip, read from one snapshot of the screen.
+        // Separate queries for the text, the header and the composer took 4.4 s on the CI runner right after Send, while
+        // the chat was still scrolling to the new turn: their frames came from different moments, and one check
+        // outlasted the whole 3 s wait (KRI-1550, run 44764112232). `within`: only texts under that container.
+        func textInView(within container: String? = nil, _ matches: (XCUIElementSnapshot) -> Bool) -> Bool {
+            guard let screen = try? app.snapshot() else { return false }
+            func nodes(_ node: XCUIElementSnapshot) -> [XCUIElementSnapshot] { [node] + node.children.flatMap(nodes) }
+            let all = nodes(screen)
+            guard let header = all.first(where: { $0.identifier == "workspace-menu-toggle" }),
+                  let attach = all.first(where: { $0.identifier == "chat-attach" }),
+                  let field = all.first(where: { [.textField, .textView].contains($0.elementType) && $0.label == "Message Kria" })
+            else { return false }
+            let top = header.frame.maxY
+            let strip = CGRect(x: 0, y: top, width: screen.frame.width, height: max(min(attach.frame.minY, field.frame.minY) - top, 0))
+            let scope = container.flatMap { name in all.first { $0.label == name } }.map(nodes) ?? all
+            return scope.contains { $0.elementType == .staticText && matches($0) && $0.frame.intersection(strip).height >= 16 }
         }
         let send = app.buttons["chat-send-message"]
         XCTAssertTrue(eventually(timeout: 10) { send.isEnabled })
@@ -908,15 +917,15 @@ final class CreationUITests: XCTestCase {
         // While the turn is still on its way (the fixture answers four seconds late), the sent prompt is drawn
         // inside the visible chat.
         let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "word by word")).firstMatch
-        XCTAssertTrue(eventually(timeout: 3) { isInView(sent) },
+        // 5 s: the app was busy for 3.3 s after the tap on the CI runner before the first check could start.
+        XCTAssertTrue(eventually(timeout: 5) { textInView { $0.label.contains("word by word") } },
                       "the sent prompt is in the visible chat: \(sent.exists ? "\(sent.frame)" : "not drawn") vs \(visibleTranscript())\n\(app.debugDescription)")
         snapshot("2-after-send")
         // And once Kria's reply has landed, the chat is still drawn, with the keyboard still up.
         let reply = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'direction I'")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 30), "Kria's reply arrived\n\(app.debugDescription)")
         // The chat follows the reply's end, so its opening line may have scrolled up: any of the transcript's text counts.
-        let transcriptText = app.otherElements["Conversation history"].descendants(matching: .staticText)
-        XCTAssertTrue(eventually(timeout: 5) { transcriptText.allElementsBoundByIndex.contains(where: isInView) },
+        XCTAssertTrue(eventually(timeout: 5) { textInView(within: "Conversation history") { _ in true } },
                       "the transcript is drawn in the visible chat \(visibleTranscript())\n\(app.debugDescription)")
         XCTAssertTrue(app.keyboards.firstMatch.exists)
         snapshot("3-after-reply")
@@ -954,11 +963,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let done = app.buttons["photos-picker-done"]
-        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: done, timeout: 20))
         // Add stays disabled until something is picked, so leaving with nothing is Cancel.
         XCTAssertFalse(done.isEnabled)
         app.buttons["gallery-cancel"].tap()
@@ -1054,11 +1061,9 @@ final class CreationUITests: XCTestCase {
         let photos = app.buttons["upload-source-photos"]
         XCTAssertTrue(photos.waitForExistence(timeout: 3))
         photos.tap()
-        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
-        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
 
         let tiles = (0..<3).map { app.buttons["gallery-tile-\($0)"] }
-        XCTAssertTrue(tiles[0].waitForExistence(timeout: 40), app.debugDescription)
+        XCTAssertTrue(waitAnsweringPhotosAccess(for: tiles[0], timeout: 50), app.debugDescription)
         let count = app.staticTexts["gallery-count"]
         XCTAssertTrue(eventually { count.label.hasPrefix("0 of 10") }, count.label)
         for (index, tile) in tiles.enumerated() {
@@ -1130,8 +1135,9 @@ final class CreationUITests: XCTestCase {
         if offered {
             let blackBars = app.buttons["video-shape-fit-fit"]
             XCTAssertTrue(vertical.isSelected && blackBars.isSelected, "\(runtime): seeded from the server default (Vertical + Black bars)", file: file, line: line)
-            XCTAssertGreaterThanOrEqual(vertical.frame.height, 44, "44pt touch target", file: file, line: line)
-            XCTAssertGreaterThanOrEqual(app.buttons["video-shape-orientation-landscape"].frame.height, 44, file: file, line: line)
+            // The picker sits inside the approval card at a fractional y (KRI-1538); the app asks for minHeight 44.
+            assertTouchTarget(vertical.frame.height, "Vertical", file: file, line: line)
+            assertTouchTarget(app.buttons["video-shape-orientation-landscape"].frame.height, file: file, line: line)
             XCTAssertEqual(vertical.label, "Video shape: Vertical 9:16", file: file, line: line)
             let capture = XCTAttachment(screenshot: app.screenshot())
             capture.name = "video-shape-confirm-\(runtime)"
@@ -1256,7 +1262,7 @@ final class CreationUITests: XCTestCase {
 
         let mic = app.buttons["chat-dictate"]
         XCTAssertTrue(mic.waitForExistence(timeout: 10), "The mic appears once the server advertises voice_dictation")
-        XCTAssertGreaterThanOrEqual(mic.frame.height, 44)
+        assertTouchTarget(mic.frame.height)
         let composer = app.textFields["Message Kria"]
         mic.tap()
 
@@ -1446,12 +1452,14 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(clean.waitForExistence(timeout: 15), "the approval card offers the cleanup choice")
 
         // Read the card the way a creator does: scroll up past its buttons, then bring "Clean up" back into
-        // view. "Keep original" and "Change direction" stay below it, so the reader is still above the
-        // follow threshold and the "Latest" pill is up when the button is tapped.
+        // view. On a card taller than the screen, "Keep original" and "Change direction" stay below it, so
+        // the reader is still above the follow threshold and the "Latest" pill is up when the button is
+        // tapped. Since KRI-1403 the card fits one screen (LongApprovalCardUITests pins that), so there is
+        // nothing to scroll past and no pill: both layouts must end with the render stage in view.
         let history = app.scrollViews.firstMatch
         history.swipeDown()
         let pill = app.buttons["chat-jump-to-latest"]
-        XCTAssertTrue(pill.waitForExistence(timeout: 3))
+        let readerWasAboveTheCard = pill.waitForExistence(timeout: 3)
         let composer = app.buttons["chat-send-message"]
         func cleanIsClear() -> Bool { clean.isHittable && clean.frame.maxY <= composer.frame.minY - 4 }
         // A swipe flings; drag by exactly what is needed so the buttons below "Clean up" stay off screen.
@@ -1462,7 +1470,9 @@ final class CreationUITests: XCTestCase {
             from.press(forDuration: 0.1, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.3)
         }
         XCTAssertTrue(cleanIsClear(), "Clean up must be on screen above the composer")
-        XCTAssertTrue(pill.exists, "precondition: the reader is above the card's buttons")
+        if readerWasAboveTheCard {
+            XCTAssertTrue(pill.exists, "precondition: the reader is above the card's buttons")
+        }
         clean.tap()
 
         // The server still reports a plain draft for a poll or two after Create (its decision writes only
@@ -1480,7 +1490,8 @@ final class CreationUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(4)
         while Date() < deadline, !feed.exists {
             XCTAssertFalse(footage.exists, "the footage stage must not flash while the render is queued")
-            XCTAssertTrue(shaping.exists, "the render stage stays until the plan feed takes over")
+            // The feed can take over between the loop's check and this one; either is the right screen.
+            XCTAssertTrue(shaping.exists || feed.exists, "the render stage stays until the plan feed takes over")
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertTrue(eventually(timeout: 3) { !pill.exists }, "the conversation sits at its end, so no Latest pill")
@@ -1924,7 +1935,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(second.label, "About 0.8 seconds")
         XCTAssertEqual(third.label, "About 0.5 seconds")
         XCTAssertEqual(other.label, "Type my own")
-        for chip in [first, second, third, other] { XCTAssertGreaterThanOrEqual(chip.frame.height, 44, chip.identifier) }
+        for chip in [first, second, third, other] { assertTouchTarget(chip.frame.height, chip.identifier) }
         // The prose above the chips is unchanged (old builds rely on it).
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: The clips are about 1.3 seconds each")).firstMatch.exists)
         attachScreenshot(app, "reply-option-chips")
@@ -2114,8 +2125,8 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(chronological.exists)
         XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport, Each sport plays as one block., recommended")
         XCTAssertEqual(chronological.label, "Keep it strictly chronological; sports may interleave")
-        XCTAssertGreaterThanOrEqual(grouped.frame.height, 44)
-        XCTAssertGreaterThanOrEqual(chronological.frame.height, 44)
+        assertTouchTarget(grouped.frame.height)
+        assertTouchTarget(chronological.frame.height)
         attachScreenshot(app, "choice-question-blocks")
         grouped.tap()
         // Answered: the "You chose" capsule is the one place the choice shows. The echoed bubble carries the same
@@ -2405,7 +2416,7 @@ final class CreationUITests: XCTestCase {
             let chip = app.buttons["Use suggestion: \(suggestion)"]
             XCTAssertTrue(chip.waitForExistence(timeout: 5))
             XCTAssertTrue(chip.isHittable)
-            XCTAssertGreaterThanOrEqual(chip.frame.height, 44)
+            assertTouchTarget(chip.frame.height)
             chip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy)).tap()
             let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", suggestion), object: composer)
             XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 3), .completed, "Edge tap on '\(suggestion)' was ignored")
@@ -2457,8 +2468,8 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any)["suggestion-chip-0"].label, "Let Kria decide")
         XCTAssertLessThan(defaultEdit.frame.minX, hook.frame.minX + 1, "Chip #1 stays first")
         for chip in [defaultEdit, hook, app.buttons["Add captions"], app.buttons["Add sound effects"]] {
-            // The chips scroll with the transcript, so a fractional y can round a 44 pt chip to 43.99999.
-            XCTAssertGreaterThanOrEqual(chip.frame.height, 43.5)
+            // The chips scroll with the transcript, so they sit at a fractional y.
+            assertTouchTarget(chip.frame.height, chip.label)
         }
         // A chip is a real send, not a fill of the composer: the message is the chip's `message`, not its label.
         defaultEdit.tap()
@@ -2622,7 +2633,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "0.04")).firstMatch.exists, "no price anywhere")
         XCTAssertFalse(app.buttons["suggestion-card-0-dismiss"].exists, "a chip has no dismiss button")
         XCTAssertFalse(app.buttons["suggestion-chip-0"].exists, "cards replace the chip row")
-        for index in 0..<5 { XCTAssertGreaterThanOrEqual(app.buttons["suggestion-card-\(index)"].frame.height, 44, "chip \(index) is a 44 pt target") }
+        for index in 0..<5 { assertTouchTarget(app.buttons["suggestion-card-\(index)"].frame.height, "chip \(index) is a 44 pt target") }
         keepScreenshot(app, "Suggestion chips in the chat's ready stage")
 
         guard let composer = editorConversationComposer(in: app) else { return }
@@ -2757,7 +2768,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(hook.waitForExistence(timeout: 30))
         XCTAssertTrue(hook.label.contains("Şu manzarayı kaçırıyordum neredeyse, ışıklar yanınca ıslak taşlar parladı"))
         XCTAssertTrue(hook.label.contains("İlk saniyeye bir kanca ekle"))
-        XCTAssertGreaterThanOrEqual(hook.frame.height, 44)
+        assertTouchTarget(hook.frame.height)
         keepScreenshot(app, "Turkish hook chip at accessibility text size")
         XCTAssertTrue(eventually(timeout: 10) { hook.isHittable })
         hook.tap()
@@ -2961,7 +2972,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Making your video"].waitForExistence(timeout: 10))
         let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
-        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+        assertTouchTarget(stop.frame.height)
         XCTAssertFalse(app.buttons["plan-feed-review-cta"].exists, "no Review CTA while sections are still being decided")
         XCTAssertFalse(app.buttons["Create this video"].exists || app.staticTexts["Create this video"].exists, "Create already happened")
         XCTAssertTrue(eventually(timeout: 20) { self.planBlockValue(app, "title") == "deciding" || self.planBlockValue(app, "title").hasPrefix("decided") })
@@ -3160,7 +3171,7 @@ final class CreationUITests: XCTestCase {
         let app = launchLivePlanFeed(reduceMotion: true)
         let stop = app.buttons["plan-feed-stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 30))
-        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+        assertTouchTarget(stop.frame.height)
         XCTAssertTrue(eventually(timeout: 20) { self.planBlockValue(app, "title") != "" })
         stop.tap()
         XCTAssertTrue(eventually(timeout: 20) { !app.otherElements["plan-feed"].exists }, "a stopped render leaves the feed")
@@ -3184,7 +3195,13 @@ final class CreationUITests: XCTestCase {
 
     private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
-    private func fieldText(_ app: XCUIApplication, _ id: String) -> String { element(app, id).value as? String ?? "" }
+    /// While a section updates, the sheet swaps its text field for plain text with no identifier. Reading
+    /// `.value` of a missing element records a failure instead of returning, so a poll that lands in that
+    /// window failed the test before `eventually` could retry (KRI-1538).
+    private func fieldText(_ app: XCUIApplication, _ id: String) -> String {
+        let field = element(app, id)
+        return field.exists ? field.value as? String ?? "" : ""
+    }
 
     /// Scrolls the sheet until the element sits in the clear middle band (above the floating panel, below the
     /// header), then returns it. The bottom panel floats over the cards, so a bare tap can land on the glass.
@@ -3577,7 +3594,7 @@ final class CreationUITests: XCTestCase {
         } else if mode == "offline" {
             let retry = app.buttons["chat-retry-message"]
             XCTAssertTrue(retry.waitForExistence(timeout: 15))
-            XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            assertTouchTarget(retry.frame.height)
             XCTAssertNotEqual(composer.value as? String, "Keep my first clip")
             assertSubmissionStatusVisible(in: app, composer: composer)
             attach(app, "Unconfirmed message keyboard open")
@@ -3613,6 +3630,19 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+    }
+
+    /// Waits for `element` and answers the Photos access prompt (Allow Full Access) whenever it shows meanwhile. The
+    /// prompt can come long after the Photos tap: on the CI simulator it appeared about 18 s later (nightly
+    /// 2026-11-15, run 43707825608), after a fixed 10 s wait for it had given up, and then covered the gallery for
+    /// the rest of the wait (KRI-1550). Picked by position: the alert is in the simulator's language.
+    private func waitAnsweringPhotosAccess(for element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let prompt = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        return eventually(timeout: timeout) {
+            if element.exists { return true }
+            if prompt.exists, prompt.buttons.count == 3 { prompt.buttons.element(boundBy: 1).tap() }
+            return false
+        }
     }
 
     /// Re-checks `condition` until it holds or `timeout` passes. XCTWaiter polls an

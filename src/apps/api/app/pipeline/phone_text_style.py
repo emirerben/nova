@@ -14,6 +14,7 @@ from functools import lru_cache
 from typing import Any
 
 from app.pipeline.canvas import PORTRAIT, Canvas
+from app.pipeline.informative_text import authored_fields, informative_role, informative_text_scope
 from app.schemas.phone_text_style import (
     CAPTION_PREFERRED_FONT,
     CURATED_PHONE_FONTS,
@@ -124,7 +125,7 @@ def text_role(row: dict) -> str:
         or row.get("role") in {"label", "context_label", "narration_label"}
     ):
         return "label"
-    return "title"
+    return informative_role(row) or "title"
 
 
 @lru_cache(maxsize=2048)
@@ -265,7 +266,7 @@ def measure_box(
                 budget["cache"][key] = cached
         boxes.append(cached)
     rendered_size = min(box.get("size_px", float(row.get("size_px") or 76)) for box in boxes)
-    authored = (row.get("source_params") or {}).get("creator_style_fields") or []
+    authored = authored_fields(row)
     keeps_requested_size = "size_px" in authored and rendered_size < float(row["size_px"])
     if floor is not None:
         connected = (row.get("source_params") or {}).get("text_stack_v1")
@@ -548,7 +549,7 @@ def _lay_out_stacks(rows, rules, obstacles_for, canvas, wanted_for):
     for row in rows:
         if not (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM):
             continue
-        authored = set(row["source_params"].get("creator_style_fields") or [])
+        authored = authored_fields(row)
         wanted = wanted_for(row)
         corner = row["source_params"][STACK_LAYOUT_PARAM].get("corner")
         zone = (
@@ -568,14 +569,12 @@ def _lay_out_stacks(rows, rules, obstacles_for, canvas, wanted_for):
     strained = []
     for (zone, alignment), members in corners.items():
         authored_position = any(
-            set(row["source_params"].get("creator_style_fields") or [])
-            & {"position", "x_frac", "y_frac"}
-            for row in members
+            authored_fields(row) & {"position", "x_frac", "y_frac"} for row in members
         )
         reason = "no_clear_placement"
         if not authored_position:
             for row in members:
-                authored = set(row["source_params"].get("creator_style_fields") or [])
+                authored = authored_fields(row)
                 if "size_px" in authored:
                     row["source_params"][STACK_LAYOUT_PARAM]["explicit_size"] = True
                 row["text"] = row["source_params"][STACK_LAYOUT_PARAM].get(
@@ -679,12 +678,36 @@ _RELAXED_FIT = _FitStrategy(
 )
 
 # Roles that choose their own spot; label and pinned keep the spot their lane gave the row.
-AUTO_PLACED_ROLES = frozenset({"title", "caption", "lyric"})
+AUTO_PLACED_ROLES = frozenset({"title", "caption", "lyric", "research", "hook"})
+# Placed last, around everything else on screen. research and hook exist only on a job stamped
+# with INFORMATIVE_TEXT_DESIGNS_ENABLED; their preferences fall back to all_text.
+TITLE_LIKE_ROLES = frozenset({"title", "research", "hook"})
 PLACEMENT_CASCADE = ("bottom_left", "top_left", "middle", "top_right")
 # ``source_params`` key (`phone_narrated_plan.narrated_title_element`): a `LABEL_ANCHORS` name
 # the row tries before `PLACEMENT_CASCADE`. A writer's preference, never the creator's spot
 # (hers is ``creator_style_fields``, which pins it).
 PREFERRED_POSITION = "preferred_position"
+
+
+# Fields put back from the row when they are authored. The resolver writes none of the shadow,
+# stroke colour, spacing or case fields today; they are listed so no later pass here drops one.
+_RESTORED_FIELDS = frozenset(
+    {
+        "font_family",
+        "color",
+        "stroke_width",
+        "shadow_enabled",
+        "size_px",
+        "alignment",
+        "max_width_frac",
+        "glow_strength",
+        "shadow_color",
+        "shadow_opacity",
+        "stroke_color",
+        "letter_spacing",
+        "text_case",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -715,7 +738,7 @@ def _place(
 
     original = deepcopy(row)
     obstacles = [as_obstacle(item) for item in obstacles]
-    authored = set((row.get("source_params") or {}).get("creator_style_fields") or [])
+    authored = authored_fields(row)
     # Item 21: a middle pin keeps the middle column and only slides up or down to a clear spot.
     middle_pin = (
         role == "pinned"
@@ -927,7 +950,7 @@ def _candidates(
 
     # Pins, labels and captions stack within their corner; a title only does once the cascade
     # has reached a rung that offers offsets.
-    stack = (0, 0.06, 0.12, 0.18) if role != "title" else strategy.offsets
+    stack = (0, 0.06, 0.12, 0.18) if role not in TITLE_LIKE_ROLES else strategy.offsets
     spots = [
         (position, offset)
         for position in positions
@@ -1104,7 +1127,26 @@ def resolve_phone_text_style(
     excluded_boxes: list | None = None,
     background_frames: list | None = None,
     canvas: Canvas = PORTRAIT,
+    informative: bool | None = None,
 ) -> list[dict]:
+    """Resolve each row's font, outline, shadow, colour and spot.
+
+    A field a row records as creator- or design-authored (`informative_text.authored_fields`)
+    keeps the row's value; every other field follows the saved preference, then this turn's
+    request, then the automatic pick. ``informative`` is the job's KRI-1585 stamp; None keeps
+    the scope the caller opened.
+    """
+    if informative is not None:
+        with informative_text_scope(informative):
+            return resolve_phone_text_style(
+                rows,
+                preferences=preferences,
+                requested=requested,
+                selected_fonts=selected_fonts,
+                excluded_boxes=excluded_boxes,
+                background_frames=background_frames,
+                canvas=canvas,
+            )
     if _MEASUREMENTS.get() is None:
         with phone_text_measurement_scope():
             return resolve_phone_text_style(
@@ -1132,10 +1174,7 @@ def resolve_phone_text_style(
             raise _style_decline("Text outlines use whole pixel widths. Choose a whole number.")
         role_rows = [row for row in rows if text_role(row) == role]
         texts = [
-            coverage_text(row)
-            for row in role_rows
-            if "font_family"
-            not in ((row.get("source_params") or {}).get("creator_style_fields") or [])
+            coverage_text(row) for row in role_rows if "font_family" not in authored_fields(row)
         ]
         excluded = set(wanted.get("excluded_fonts") or [])
         required = wanted.get("font_family")
@@ -1178,29 +1217,17 @@ def resolve_phone_text_style(
             row["stroke_width"] = wanted.get("stroke_width", DEFAULT_STROKE_WIDTH)
             # The account default says no shadow. Only the creator's own ask (a saved
             # preference or this turn's request, both in ``wanted``) or a shadow they set in
-            # the editor (restored below from ``creator_style_fields``) turns one on, never a
+            # the editor (restored below from ``authored_fields``) turns one on, never a
             # shadow the plan's writer authored.
             row["shadow_enabled"] = wanted.get("shadow_enabled", DEFAULT_SHADOW_ENABLED)
             if "color" in wanted:
                 row["color"] = wanted["color"]
-            source_fields = (row.get("source_params") or {}).get("creator_style_fields") or []
+            source_fields = authored_fields(row)
             if "glow_strength" not in source_fields:
                 row["glow_strength"] = 0
             before = next(original for original in original_rows if original["id"] == row["id"])
-            for field in source_fields:
-                if (
-                    field
-                    in {
-                        "font_family",
-                        "color",
-                        "stroke_width",
-                        "shadow_enabled",
-                        "size_px",
-                        "alignment",
-                        "max_width_frac",
-                    }
-                    and before.get(field) is not None
-                ):
+            for field in sorted(source_fields):
+                if field in _RESTORED_FIELDS and before.get(field) is not None:
                     row[field] = before[field]
             if not float(row["stroke_width"]).is_integer():
                 raise _style_decline("Text outlines use whole pixel widths. Choose a whole number.")
@@ -1235,7 +1262,7 @@ def resolve_phone_text_style(
             ),
         ]
 
-    fixed = [row for row in rows if text_role(row) != "title"]
+    fixed = [row for row in rows if text_role(row) not in TITLE_LIKE_ROLES]
     fitted = _place_connected_stacks(fixed, rules, obstacles_for, canvas, requested)
     for row in fixed:
         if (row.get("source_params") or {}).get("text_stack_v1"):
@@ -1258,7 +1285,8 @@ def resolve_phone_text_style(
         fitted.append(row)
     placed: list[dict] = []
     for row in rows:
-        if text_role(row) == "title":
+        role = text_role(row)
+        if role in TITLE_LIKE_ROLES:
             occupied = [
                 Obstacle(animation_box(other, measure_box(other, canvas), canvas), "text")
                 for other in [*fixed, *placed]
@@ -1266,17 +1294,17 @@ def resolve_phone_text_style(
             ]
             _place(
                 row,
-                role="title",
-                wanted=rules["title"],
+                role=role,
+                wanted=rules[role],
                 obstacles=[*obstacles_for(row), *occupied],
                 canvas=canvas,
-                position_fixed=position_requested(requested, "title"),
+                position_fixed=position_requested(requested, role),
             )
             placed.append(row)
     from app.pipeline.phone_text_background import automatic_fill
 
     for row in rows:
-        authored = (row.get("source_params") or {}).get("creator_style_fields") or []
+        authored = authored_fields(row)
         frames = [frame for frame in background_frames or [] if _same_window(row, frame)]
         if frames and "color" not in rules[text_role(row)] and "color" not in authored:
             row["color"], _score = automatic_fill(measure_box(row, canvas), frames)

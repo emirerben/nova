@@ -291,11 +291,16 @@ def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
         ("phone-simple-cut-v3", "phone-simple-cut-v5", True),
         ("phone-simple-cut-v4", "phone-simple-cut-v5", True),
         ("phone-simple-cut-v5", "phone-simple-cut-v5", True),
+        # KRI-831 late-window rule: earlier pins publish bytes the v6 rule checks.
+        ("phone-simple-cut-v4", "phone-simple-cut-v6", True),
+        ("phone-simple-cut-v5", "phone-simple-cut-v6", True),
+        ("phone-simple-cut-v6", "phone-simple-cut-v6", True),
         # An older verifier never satisfies a pin: the video still publishes, unverified.
         ("phone-simple-cut-v2", "phone-simple-cut-v1", False),
         ("phone-simple-cut-v3", "phone-simple-cut-v2", False),
         ("phone-simple-cut-v4", "phone-simple-cut-v3", False),
         ("phone-simple-cut-v5", "phone-simple-cut-v4", False),
+        ("phone-simple-cut-v6", "phone-simple-cut-v5", False),
     ],
 )
 def test_pinned_verifier_counts_as_verified_only_for_its_own_or_a_later_verifier(

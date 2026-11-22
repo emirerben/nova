@@ -9,12 +9,13 @@ from app.agents._runtime import Agent, AgentSpec, SchemaError
 
 
 class PhoneTypographyInput(BaseModel):
-    roles: dict[str, dict] = Field(default_factory=dict, max_length=6)
+    # Up to seven roles: the five saved ones plus KRI-1585's research and hook.
+    roles: dict[str, dict] = Field(default_factory=dict, max_length=8)
     mood: str = Field(default="", max_length=300)
 
 
 class PhoneTypographyOutput(BaseModel):
-    fonts: dict[str, str] = Field(max_length=6)
+    fonts: dict[str, str] = Field(max_length=8)
 
 
 class PhoneTypographyAgent(Agent[PhoneTypographyInput, PhoneTypographyOutput]):

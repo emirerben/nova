@@ -113,6 +113,7 @@ from app.services.phone_rollout import (
     recipe_has_color_moments,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
+    recipe_has_speech_duck,
     recipe_has_styled_card,
     recipe_has_tilted_card,
     single_word_text_client_supported,
@@ -120,6 +121,7 @@ from app.services.phone_rollout import (
     speaker_background_color_client_supported,
     speaker_background_windows_client_supported,
     speaker_full_opening_client_supported,
+    speech_duck_client_supported,
     text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
@@ -561,6 +563,7 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     newer than the one that declined is not necessarily new enough for the recipe.
     """
     from app.services.client_protocol import (  # noqa: PLC0415
+        SPEECH_DUCK_PROTOCOL,
         SPLIT_BLANK_PANEL_PROTOCOL,
         SPLIT_COLLAPSE_PROTOCOL,
     )
@@ -659,6 +662,14 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "color_moments",
             "minimum_client_protocol": settings.color_moments_min_client_protocol,
+        }
+    if recipe_has_speech_duck(recipe) and not speech_duck_client_supported():
+        # KRI-1562: an older build decodes the recipe but ignores `audio.speech_windows`, so the
+        # music would play at full level over the creator's voice. Tell it to update.
+        return {
+            "code": "client_update_required",
+            "feature": "speech_duck",
+            "minimum_client_protocol": SPEECH_DUCK_PROTOCOL,
         }
     if (
         getattr(recipe, "speaker_background", None) is not None

@@ -50,6 +50,7 @@ from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_understanding import clip_record
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
+    GENERIC_SOUND_EFFECT_NOTICE,
     resolve_creator_manifest,
     speaker_background_pick_from_state,
 )
@@ -103,11 +104,7 @@ _REPAIR_D_SOUND_NOTICE = (
     "Sound effects on iPhone are placed at the moments you named; the "
     "general sound-effect treatment was left out."
 )
-_GENERIC_SOUND_EFFECT_NOTICE = (
-    "Sound effects on iPhone are placed only at spoken moments you name "
-    "(for example: “when I say no, play a buzzer”). No moment was "
-    "named, so no sound was added."
-)
+_GENERIC_SOUND_EFFECT_NOTICE = GENERIC_SOUND_EFFECT_NOTICE
 
 ACTIVE_CREATOR_PHASES = frozenset(
     {
@@ -224,17 +221,19 @@ def _chat_evidence(
     analysis. Trimmed further than the planner's view because this can repeat
     once per clip for up to ``MAX_CREATOR_MEDIA_REFS`` clips in one prompt:
     brands carry no clip-identification value for chat (no sponsor/rights
-    decision happens here) and only the first few notable moments are kept.
+    decision happens here). The full-evidence pilot keeps all sanitized stored
+    moments, transcript and enabled speech segments with their source times.
     ``segment_chars`` is the timed-speech budget; footage clips pass their
     share of ``CHAT_EVIDENCE_SPEECH_BUDGET_CHARS``, Visuals keep the default.
     """
     record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
+    expanded = settings.main_creator_full_clip_evidence_enabled
     view = record.prompt_view(
-        transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS,
+        transcript_chars=None if expanded else CHAT_EVIDENCE_TRANSCRIPT_CHARS,
         include_facts=include_facts,
         # KRI-282: timed sentences for a talking clip (empty/omitted until stored).
         include_segments=settings.speech_excerpt_montage_enabled,
-        segment_chars=segment_chars,
+        segment_chars=None if expanded else segment_chars,
     )
     view.pop("brands", None)
     # KRI-845: the clip resolver reads props / actions / visual_quality; the chat agent's input
@@ -248,7 +247,7 @@ def _chat_evidence(
     if isinstance(people, dict) and people.get("note"):
         people["note"] = people["note"][:CHAT_EVIDENCE_PEOPLE_NOTE_CHARS]
     moments = view.get("notable_moments")
-    if isinstance(moments, list):
+    if isinstance(moments, list) and not expanded:
         view["notable_moments"] = [
             {**m, "description": m["description"][:CHAT_EVIDENCE_MOMENT_CHARS]}
             for m in moments[:CHAT_EVIDENCE_MAX_MOMENTS]
@@ -990,6 +989,10 @@ def _generic_sound_effect_notice(
         return None
     strategy = edit_plan.strategy
     if getattr(strategy, "licensed_sfx", None) is not None:
+        return None
+    if getattr(strategy, "sfx_ask", None) is not None:
+        # KRI-1561: the writer chooses the moments for this ask, so "no moment was named, so no
+        # sound was added" would contradict what it is about to do.
         return None
     if any(getattr(beat, "sound", None) for beat in (strategy.reaction_beats or [])):
         return None

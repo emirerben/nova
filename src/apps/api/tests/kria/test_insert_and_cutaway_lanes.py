@@ -99,11 +99,17 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for the model-owned chat language: every Main Creator prompt now ends its turn with
 # the CHAT LANGUAGE line (`conversation_language`); the values before it were abe644f4 /
 # 05b2007d / d5b8a2cf / 271524fd.
+# Re-pinned for KRI-1561 (the `sfx_ask` section, appended because these manifests advertise the
+# capability); masking that one section reproduces the values before it: 7cd34ba1 / 7a6d9f5e /
+# b31e1b83 / 2dba7829.
+# Re-pinned again for KRI-1561 PR 6 (the typed `sound_effects` brief fact, taught while a writer's
+# gate is open); masking that one sentence reproduces the values before it: c9391bb9 / 33304ad0 /
+# 98ebf115 / 4cc5fdd1.
 MAIN_PROMPT_SHA = {
-    "neither": "3731664d04a3721259f88cc6429c51fc9f8b618144574b5bcee1fb1255f4fa43",
-    (True, True): "12f7087f5535d26d8c25a23f58a3b390653c4bd1aaf3bbced3f350a003e2efa3",
-    (True, False): "bcc90d2467a7b44da54e911b21db5fc44713cd98bc68251af45343fdef04d9b2",
-    (False, True): "823890fc955fa42dc3fde8f10296ab80b4c3ddab22b681b748bfe798f1fc8a9f",
+    "neither": "caa371d9624d36dd0eb180442b15d75ce09d5de3ec41d18cbf6a930ca386a984",
+    (True, True): "da1d5f1d4608fe70188b5af234bb3060c84b14620cd7ae08109e8d0f019ffc85",
+    (True, False): "a19e6eabab089222c7965b126c17325b9590ea514d0b74e939d0f4faa0ffc520",
+    (False, True): "16e7270fd4a762168dce4e9059079f64ec9dd1c7d8951a2c623b72f707798fe3",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

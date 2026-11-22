@@ -67,6 +67,8 @@ jobs:
       - name: Install API dependencies
         working-directory: src/apps/api
         run: pip install -e ".[dev]"
+      - name: Leave one OpenCV distribution
+        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
 
       - name: Install renderer libraries
         run: sudo bash scripts/ci/apt-install.sh libegl1 libgl1
@@ -115,6 +117,8 @@ jobs:
       - name: Install API dependencies
         working-directory: src/apps/api
         run: pip install -e ".[dev]"
+      - name: Leave one OpenCV distribution
+        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
 
       - name: Validate paid eval reason against the selected ref
         shell: bash

@@ -9,9 +9,7 @@ from app.cli import gate as gate_cli
 
 
 def test_render_needed_true_for_pipeline_path(monkeypatch):
-    monkeypatch.setattr(
-        "sys.stdin", io.StringIO("+++ b/src/apps/api/app/pipeline/reframe.py\n")
-    )
+    monkeypatch.setattr("sys.stdin", io.StringIO("+++ b/src/apps/api/app/pipeline/reframe.py\n"))
     assert gate_cli.main(["render-needed"]) == 0  # 0 = verify-overlays must run
 
 

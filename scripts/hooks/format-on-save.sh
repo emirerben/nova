@@ -28,12 +28,13 @@ ROOT="$(git -C "$(dirname "$FILE")" rev-parse --show-toplevel 2>/dev/null || tru
 
 case "$FILE" in
   "$ROOT"/src/apps/api/*.py)
-    if command -v ruff >/dev/null 2>&1; then
-      ruff format "$FILE" >/dev/null 2>&1 || true
-      ruff check --fix "$FILE" >/dev/null 2>&1 || true
-    elif [ -x "$ROOT/src/apps/api/.venv/bin/ruff" ]; then
-      "$ROOT/src/apps/api/.venv/bin/ruff" format "$FILE" >/dev/null 2>&1 || true
-      "$ROOT/src/apps/api/.venv/bin/ruff" check --fix "$FILE" >/dev/null 2>&1 || true
+    # Only the ruff version CI uses may format a file: another version formats
+    # differently, and the saved file then fails CI's format check. No such
+    # ruff (or an older branch without the script) means no formatting.
+    RUFF="$(python3 "$ROOT"/scripts/ci/api-lint.py --ruff-path 2>/dev/null)" || RUFF=""
+    if [ -n "$RUFF" ] && [ -x "$RUFF" ]; then
+      "$RUFF" format "$FILE" >/dev/null 2>&1 || true
+      "$RUFF" check --fix "$FILE" >/dev/null 2>&1 || true
     fi
     ;;
   "$ROOT"/src/apps/web/*.ts|"$ROOT"/src/apps/web/*.tsx)

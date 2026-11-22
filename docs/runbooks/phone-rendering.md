@@ -94,6 +94,29 @@ Phone render lifecycle (killer-screens train):
   variant or Job.
 The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
+## Source-length limits (KRI-1554)
+
+How long a source may be is one table, `SOURCE_LENGTH_POLICY` in
+`src/apps/api/app/services/source_length_policy.py`: one row per format and source kind
+(library media 1800 s, Talking clip 300 s, speech-cut speaker 300 s, speech-cleanup analysis
+window 300 s, slide video 90 s, creator song 600 s). To change a limit, change its row; every
+reader follows:
+
+- `/capabilities` `formats[].max_duration_s` and the thread's `media_capabilities.*.max_duration_s`.
+  The iPhone refuses a longer file when it is picked (`CreationUploadError.tooLong`, before the
+  copy, proxy or upload) and the camera roll reads the library row the same way.
+- `upload-urls` refuses a proxy whose original is too long, and attach/replace refuse from the
+  probed length, so a build without the pick-time check is refused before any plan exists.
+- The dispatch gate, the phone compilers and the workers read the same rows.
+- Speech cleanup never analyses part of a source it plays in full: a voiceover or Talking take
+  longer than the analysis window is `source_too_long`. The window limits cleanup only: a
+  voiceover longer than it is still accepted at pick and registration. A talking-head spine's cut window is
+  reported as `window_clamp`.
+
+`tests/test_source_length_policy.py` fails when a compiler, gate or preflight writes one of
+these numbers itself. The speech-cut speaker row binds at plan time (a montage becomes a
+speech-cut montage only once the planner reads its clips), so it has no pick-time check.
+
 ## Adding media to a saved guided edit (KRI-145)
 
 `PHONE_EDITOR_MEDIA_ENABLED` defaults to `false`. It enables the native editor's
@@ -748,6 +771,12 @@ three extra lanes on top of the unchanged speaker clip + captions:
   `test_ios_level_test_pins_the_server_duck_gain`. Device check: enable the
   flag on the local API, render a Talking edit whose SFX lands on a word and
   one in a pause, and listen on the iPhone dev build.
+  Music under speech (KRI-1562): `TalkingMusicDuckLevelTests.swift` proves the
+  engine duck on tones. `scripts/dev/kri1562-listening-check.sh [--takes DIR]`
+  runs real talking takes (or `--synthetic` stand-ins) through the real compiler
+  and the native exporter, and measures the duck, the recovery in pauses and the
+  words whisper.cpp hears with and without the song. Results and the
+  voice-separation decision: `docs/reviews/kri-1562/voice-separation.md`.
 - **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
@@ -3873,7 +3902,9 @@ Flags and rollout:
   `SONG_ALIGNMENT_PROXY_OFFSET_S` (default 0) is added to every delta to absorb a
   measured analysis-proxy vs original audio offset (AAC priming, `.mov` edit
   lists); measure it with the device fixture before relying on frame-exact sync.
-  `USER_SONG_MAX_DURATION_S` (600) caps the upload; a montage is capped at 120 s.
+  The song length limit (600 s) is the `creator_song` row of
+  `app/services/source_length_policy.py` (KRI-1554; the old `USER_SONG_MAX_DURATION_S`
+  setting is gone); a montage is capped at 120 s.
 
 Troubleshooting:
 
@@ -4349,6 +4380,18 @@ Rollout follows the v3 boundary above: v4 is forward-only. A request pinned to v
 - **Known gaps.** Still footage has no best frame and keeps the exact bar. A tone change (brightness about 8 codes, saturation, mild blur, a low-quality re-encode) that keeps SSIM >= 0.93 passes on soft-proxy footage, as v4 already passed it on sharp-proxy footage. A one-frame-late export on calm footage can pass through the unchanged next-frame tolerance, as in v4. Calibration and controls: [kri-1042-picture-profile](../reviews/kri-1042-picture-profile.md).
 
 Rollout follows the v3 boundary above: v5 is forward-only. A request pinned to v4 accepts a v5 report; a v5 pin never accepts a v4 report. Each picture check stores `profile_samples`, `mean_local_ssim`, `lead_previous` and `lead_next`; read them with `GET /admin/jobs/{id}/export-verification`. Guards: `tests/integration/test_actual_export_verification.py` (KRI-1042 frame profile section).
+
+## Actual-export verifier v6 late-window rule (KRI-831)
+
+`phone-simple-cut-v6` changes one thing: when a clip window counts as one frame late. Sample pass rules, text, audio and duration are the same as v5, and every window v5 rejects, v6 rejects.
+
+- **The hole.** Since v3 a window on the source frame grid failed only when every sample needed its next source frame. A 30 fps proxy of a 25 fps original shows every sixth picture twice. A sample that lands there matches the displayed frame and the next one, v5 counted it as in place, and the rule never fired. A sample on slow footage did the same. With a sharp proxy a one-frame-late export was accepted in 5 of 6 timing phases.
+- **The rule.** A sample proves timing only when it matches the displayed frame and not a different next one. A sample that matches both, or has no next frame, says nothing. A window on the grid now also fails (`reason: no_sample_holds_displayed_frame`) when some sample needed the next frame, no sample proves timing, and the next frame scores higher than the displayed one on average (`lead_next` below 0). The average keeps near-still footage passing, where noise tips single samples.
+- **Unchanged.** Off the grid a correct export legitimately needs next frames (KRI-810), so the rule still applies only on the grid. An all-next window still fails with `whole_window_neighbour_shift`.
+- **Known gap.** Footage so slow that every sample matches both frames (a slow zoom, a still) cannot show a one-frame shift. A late export of it passes, as in v5.
+- **Replay before the next bump.** The rule is a function of stored evidence (`_late_window`). `python -m app.cli.replay_export_verdicts --fetch --prod --since <date> <dir>` reads stored reports (GET only) and lists every `checked` report the current rule would reject; it exits 1 when one flips. Reports from before v6 do not say whether a window was on the grid, so a flip there is an upper bound. Calibration: [kri-831-late-window](../reviews/kri-831-late-window.md).
+
+Rollout follows the v3 boundary above: v6 is forward-only. A request pinned to v5 accepts a v6 report; a v6 pin never accepts a v5 report. Each picture check stores `on_source_grid`; read it with `GET /admin/jobs/{id}/export-verification`. Guards: `tests/integration/test_actual_export_verification.py` (late-window section), `tests/cli/test_replay_export_verdicts.py`.
 
 ## Freeze frames (KRI-828)
 

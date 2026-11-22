@@ -217,6 +217,12 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("q13_tight")
     }
 
+    func testArchivalMontagesRenderOnTheIPhone() async throws {
+        for id in ["archive_arrival", "archive_garden", "archive_crowd", "archive_wrong_arrival"] {
+            try await assertCase(id)
+        }
+    }
+
     private func assertCase(_ caseID: String, expectedCreationProvenance: String = "authored_model_transport_fixture") async throws {
         let input = try inputDirectory()
         let meta = try XCTUnwrap(

@@ -205,7 +205,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // The timeline scrolls itself while a finger rests in the 56 pt zone at its edge (`updateAutoScrollX`), and
         // this drag ends with a 0.2 s hold, so a drop inside that zone overshoots the length it measures. The clip
         // starts right of centre, so slide it left under the fixed playhead until the whole extension fits short of it.
-        dragPlayheadForward(originalWidth * 0.6, in: app)
+        dragPlayheadForward(originalWidth * 0.8, in: app)
         XCTAssertTrue(member.isSelected, "Seeking with the playhead keeps the clip selected")
         XCTAssertTrue(trailing.isHittable)
         let lane = app.scrollViews["native-editor-lane-scroll"].frame
@@ -228,6 +228,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         selectTimelineClip(1, in: app)
         XCTAssertTrue(trailing.isHittable)
         let extendedWidth = member.frame.width
+        dragPlayheadForward(originalWidth * 0.6, in: app)
         XCTAssertGreaterThan(trailing.frame.midX - extendedWidth * 1.1, app.frame.minX + 12)
         dragHandle(trailing, by: -extendedWidth * 1.1)
         let minimum = try splitSnapshot(app)
@@ -817,7 +818,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let hidden = app.buttons["native-editor-tool-draw"]
         XCTAssertTrue(peeking.waitForExistence(timeout: 5))
         for tool in whole {
-            XCTAssertGreaterThanOrEqual(tool.frame.width, 44)
+            assertTouchTarget(tool.frame.width)
             XCTAssertLessThanOrEqual(tool.frame.maxX, rail.frame.maxX, "whole tools sit fully inside the rail")
         }
         let shown = rail.frame.maxX - peeking.frame.minX
@@ -896,7 +897,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
             let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
             XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(handle.isHittable, tool)
-            XCTAssertGreaterThanOrEqual(handle.frame.height, 44, tool)
+            assertTouchTarget(handle.frame.height, tool)
             let initialPanel = panel.frame
             let initialPreview = preview.frame
             let railBottom = rail.frame.maxY
@@ -1798,7 +1799,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["native-editor-tool-sounds"].tap()
         let songRow = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
         XCTAssertTrue(songRow.waitForExistence(timeout: 4))
-        XCTAssertGreaterThanOrEqual(songRow.frame.height, 44, "the song row keeps a 44pt touch target")
+        assertTouchTarget(songRow.frame.height, "the song row keeps a 44pt touch target")
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-note"].firstMatch.exists)
         XCTAssertFalse(app.textFields["native-editor-music-track-input"].exists, "the song is a project asset, not a track ID")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-music-volume"].firstMatch.exists)
@@ -1818,8 +1819,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let end = app.descendants(matching: .any)["native-editor-your-song-trim-end"].firstMatch
         XCTAssertTrue(start.waitForExistence(timeout: 4))
         XCTAssertTrue(end.exists)
-        XCTAssertGreaterThanOrEqual(start.frame.width, 43.9)
-        XCTAssertGreaterThanOrEqual(end.frame.width, 43.9)
+        assertTouchTarget(start.frame.width)
+        assertTouchTarget(end.frame.width)
         let scroll = app.scrollViews["native-editor-sounds-scroll"]
         XCTAssertTrue(scroll.frame.contains(CGPoint(x: bar.frame.midX, y: bar.frame.midY)), "the trim bar must sit inside the raised Sounds panel")
 
@@ -1950,7 +1951,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(percent.label, "0%", "the song plays alone until the creator turns the camera up")
         let slider = app.sliders["Original audio volume"]
         XCTAssertTrue(slider.waitForExistence(timeout: 4))
-        XCTAssertGreaterThanOrEqual(control.frame.height, 44, "the control keeps a 44pt touch target")
+        assertTouchTarget(control.frame.height, "the control keeps a 44pt touch target")
         // Scroll the control into the panel's reachable area if the song controls pushed it down.
         let scroll = app.scrollViews["native-editor-sounds-scroll"]
         if !slider.isHittable { scroll.swipeUp() }
@@ -2209,8 +2210,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(handle.exists)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-trim-leading"].firstMatch.exists)
         let before = text.value as? String
-        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: -20, dy: 0)))
+        let start = text.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: 6, dy: 0))
+        start.press(forDuration: 0, thenDragTo: start.withOffset(CGVector(dx: -20, dy: 0)))
         XCTAssertNotEqual(text.value as? String, before)
         XCTAssertTrue(handle.exists)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
@@ -2826,7 +2827,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
     /// XCUITest time to observe the new layout: the row relation must satisfy
     /// `holds` on two consecutive polls. A timeout means the items really do
     /// still overlap in time (test geometry), not a stale layout.
-    private func waitForStableRowRelation(_ text: XCUIElement, _ second: XCUIElement, timeout: TimeInterval = 5, holds: @escaping (CGFloat) -> Bool) {
+    /// Each poll reads two frames and costs 2-3 s on the hosted simulator, so 5 s fitted one poll on a slow
+    /// night and the wait could not see two equal ones (KRI-1538, run 44299097913).
+    private func waitForStableRowRelation(_ text: XCUIElement, _ second: XCUIElement, timeout: TimeInterval = 15, holds: @escaping (CGFloat) -> Bool) {
         var previousDelta: CGFloat?
         let stable = NSPredicate { _, _ in
             let delta = text.frame.midY - second.frame.midY

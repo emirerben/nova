@@ -80,9 +80,7 @@ def with_yt_dlp_cookiefile(
     cookie_b64_value = (cookie_b64 or "").strip()
 
     if cookie_path_value and cookie_b64_value:
-        raise YtDlpCookieConfigError(
-            "set only one of YTDLP_COOKIES_PATH or YTDLP_COOKIES_B64"
-        )
+        raise YtDlpCookieConfigError("set only one of YTDLP_COOKIES_PATH or YTDLP_COOKIES_B64")
 
     if cookie_path_value:
         path = Path(cookie_path_value).expanduser()
@@ -119,9 +117,7 @@ def _decode_cookie_secret(cookie_b64: str) -> bytes:
 
     stripped = cookie_bytes.lstrip()
     if not stripped.startswith(_NETSCAPE_COOKIE_HEADERS):
-        raise YtDlpCookieConfigError(
-            "YTDLP_COOKIES_B64 must decode to a Netscape cookies.txt file"
-        )
+        raise YtDlpCookieConfigError("YTDLP_COOKIES_B64 must decode to a Netscape cookies.txt file")
     return cookie_bytes
 
 

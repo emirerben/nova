@@ -2,6 +2,14 @@ name: Select CI suites
 
 on:
   workflow_call:
+    inputs:
+      selftest:
+        description: >-
+          Run scripts/ci/test_*.py before selecting. A caller may pass false only
+          when it runs them in a job of its own that a required check needs
+          (ci.yml: ci-selftests, read by lint); selection then starts at once.
+        type: boolean
+        default: true
     outputs:
       api:
         value: ${{ jobs.select.outputs.api }}
@@ -41,8 +49,9 @@ on:
 jobs:
   select:
     runs-on: ubuntu-latest
-    # Full-history checkout dominates; slowest green run 3.8 min (typical ~0.3).
-    timeout-minutes: 10
+    # With the self-tests in front (ios.yml) a green run took 5.9 min on
+    # 2026-11-19; without them (ci.yml) the full-history checkout dominates.
+    timeout-minutes: 15
     outputs:
       api: ${{ steps.select.outputs.api }}
       shared_motion: ${{ steps.select.outputs.shared_motion }}
@@ -64,6 +73,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Test CI selection and required-check contracts
+        if: inputs.selftest
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
       - name: Validate PR release metadata before selecting suites
         if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'

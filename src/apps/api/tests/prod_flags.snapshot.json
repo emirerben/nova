@@ -177,6 +177,10 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "clip_order_card_min_client_protocol": {
+      "source": "default",
+      "value": 54
+    },
     "clip_speech_language_check_enabled": {
       "source": "default",
       "value": true
@@ -461,6 +465,10 @@
       "source": "default",
       "value": true
     },
+    "informative_text_designs_enabled": {
+      "source": "default",
+      "value": false
+    },
     "ios_device_only_mode": {
       "source": "decisions-md:2026-11-02",
       "value": true
@@ -496,6 +504,10 @@
     "kria_choice_questions_enabled": {
       "source": "default",
       "value": true
+    },
+    "kria_clip_order_ledger_enabled": {
+      "source": "default",
+      "value": false
     },
     "kria_clip_selection_questions_enabled": {
       "source": "default",
@@ -693,6 +705,10 @@
       "source": "default",
       "value": true
     },
+    "kria_unstated_order_default_enabled": {
+      "source": "default",
+      "value": false
+    },
     "kria_voiceover_script_enabled": {
       "source": "default",
       "value": true
@@ -780,6 +796,10 @@
     "main_creator_deadline_ladder_enabled": {
       "source": "default",
       "value": true
+    },
+    "main_creator_full_clip_evidence_enabled": {
+      "source": "default",
+      "value": false
     },
     "main_creator_model": {
       "source": "job-data:main-creator-sol-2026-11-14",
@@ -1511,6 +1531,10 @@
       "source": "default",
       "value": false
     },
+    "speech_cleanup_stretched_words_enabled": {
+      "source": "default",
+      "value": true
+    },
     "speech_excerpt_montage_enabled": {
       "source": "default",
       "value": true
@@ -1592,6 +1616,10 @@
       "value": false
     },
     "talking_multi_take_cleanup_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "talking_music_enabled": {
       "source": "default",
       "value": false
     },

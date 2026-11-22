@@ -231,3 +231,70 @@ async def test_speech_length_never_changes_the_manifest() -> None:
     long_manifest, _ = await _resolve(item)
 
     assert short_manifest.model_dump() == long_manifest.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_expanded_moments_reach_creator_prompt_with_their_source_times(monkeypatch) -> None:
+    """A named action can occur in the third moment and after character 80."""
+    # Three observations from the 1930 Forest Farm film. See the KRI-1430 score sheet.
+    moments = [
+        {"start_s": 2.0, "end_s": 12.0, "description": "Guests seated at a garden table"},
+        {"start_s": 110.0, "end_s": 121.0, "description": "Visitors walking beside poultry pens"},
+        {
+            "start_s": 222.0,
+            "end_s": 233.0,
+            "description": (
+                "The visitors stand on opposite sides of a long feeding trough and look towards "
+                "the cattle between them."
+            ),
+        },
+    ]
+    analysis = {"duration_s": 240.0, "understanding": {"notable_moments": moments}}
+    item = _item([_clip("farm.mp4", analysis, duration_s=240), _clip("unanalysed.mp4", None)])
+    for enabled in (False, True):
+        monkeypatch.setattr(
+            creator_sessions.settings, "main_creator_full_clip_evidence_enabled", enabled
+        )
+        manifest, context = await _resolve(item)
+        assert not context[1]["analysis_only_not_copy"].get("notable_moments")
+        expected = moments if enabled else moments[:2]
+        assert context[0]["analysis_only_not_copy"]["notable_moments"] == expected
+        prompt = MainCreatorAgent(None).render_prompt(
+            MainCreatorInput(
+                user_message="Use the part with the cattle at the trough.",
+                media_context=context,
+                capability_manifest=manifest,
+            )
+        )
+        assert (json.dumps(moments[-1], ensure_ascii=False) in prompt) == enabled
+
+
+@pytest.mark.asyncio
+async def test_expanded_speech_keeps_late_sentences_and_legacy_transcript(monkeypatch) -> None:
+    # Six talking takes share 6000 characters in the compact view. The late anchor
+    # must survive on its own take when full evidence is requested.
+    rows = [
+        (i * 2, i * 2 + 1, f"Sentence {i}: " + "looking down the valley " * 5) for i in range(12)
+    ]
+    rows[-1] = (22, 23, "The cattle are just behind the fence.")
+    analysis = _talking_analysis(rows)
+    clips = [_clip("speaker.mp4", analysis)]
+    clips += [_clip(f"other-{i}.mp4", _talking_analysis(rows[:-1])) for i in range(5)]
+    legacy = " ".join(sentence for _, _, sentence in TAKE[:5])
+    clips.append(_clip("legacy.mp4", {"on_screen_text": legacy, "source": "clip_metadata"}))
+    for enabled in (False, True):
+        monkeypatch.setattr(
+            creator_sessions.settings, "main_creator_full_clip_evidence_enabled", enabled
+        )
+        manifest, context = await _resolve(_item(clips))
+        prompt = MainCreatorAgent(None).render_prompt(
+            MainCreatorInput(
+                user_message="Cut to the last sentence.",
+                media_context=context,
+                capability_manifest=manifest,
+            )
+        )
+        late = json.dumps({"s": 22.0, "e": 23.0, "text": rows[-1][2]})
+        assert (late in prompt) == enabled
+        assert (legacy in prompt) == enabled
+        assert not any(s["text"] == rows[-1][2] for entry in context[1:] for s in _segments(entry))

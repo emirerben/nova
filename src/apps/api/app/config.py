@@ -1286,11 +1286,26 @@ class Settings(BaseSettings):
     # restart. Rollback: the flag false + restart, never a code revert.
     color_moments_enabled: bool = False
     color_moments_min_client_protocol: int = 48
+    # KRI-1562: the creator's chosen song under a phone Talking edit, ducked wherever speech is
+    # heard (a Voiceover edit's matched bed follows the same duck). Default off: Talking edits
+    # carry no music, the editor offers none and Voiceover beds keep one level. Serving also needs
+    # `speechDuck` + `musicBed` + `audioMix` in PHONE_RENDER_VERIFIED_FEATURES and a build at
+    # SPEECH_DUCK_PROTOCOL (53); an older build is told to update (426 `speech_duck`). Apply: fly
+    # secret TALKING_MUSIC_ENABLED=true (api + worker) + restart. Rollback: the flag false +
+    # restart; a later Save of a Talking edit then drops its bed.
+    talking_music_enabled: bool = False
     # KRI-1384: chat "undo that" is offered only to app builds declaring
     # `X-Kria-Client-Protocol` >= this. An older editor keeps a staged chat lane that a newer
     # draft head puts back to the saved value, so its undo would say done and change nothing.
     # Kill switch: `fly secrets set CHAT_UNDO_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
     chat_undo_min_client_protocol: int = 50
+    # The clip-order card (KRIA_CLIP_ORDER_LEDGER_ENABLED): the draft message shows the numbered
+    # clip strip when the order was decided for the creator, and the creator can reorder it from
+    # the card (`clip_order_ops` on a turn). Only app builds declaring `X-Kria-Client-Protocol` >=
+    # this get the card or may send `clip_order_ops`; an older build is told the order as plain
+    # text and can still reorder in chat. Kill switch: `fly secrets set
+    # CLIP_ORDER_CARD_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    clip_order_card_min_client_protocol: int = 54
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
@@ -1352,8 +1367,8 @@ class Settings(BaseSettings):
     # FALSE (dark). Off = no events, no job metadata, capability false, byte-identical.
     # Kill switch = false + restart (api + worker). Contract: docs/pipelines/live-plan-blocks.md.
     live_plan_review_enabled: bool = False
-    # Longest song accepted (seconds); a song-owned montage is capped at 120 s.
-    user_song_max_duration_s: float = Field(default=600.0, gt=0)
+    # The longest song accepted is `source_length_policy` ``creator_song`` (KRI-1554);
+    # a song-owned montage is capped at 120 s.
     # How long a planner turn waits for song analysis / take alignment before it
     # answers "still checking your clips".
     song_alignment_turn_deadline_s: float = Field(default=45.0, ge=0)
@@ -2366,6 +2381,20 @@ class Settings(BaseSettings):
         "`fly secrets set SPEECH_CLEANUP_LATE_WORDS_ENABLED=false --app nova-video` + api and "
         "worker restart (the fingerprint is computed in the API, the analysis in the worker).",
     )
+    speech_cleanup_stretched_words_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup stretched-word fix (KRI-1512, Cusco T2). whisper-1 can stretch "
+        "a word over a pause so rule 3 never sees it: the head of the word after the pause "
+        '("1." and "sertlikten" started 0.3-0.7 s inside the silence before their voice), or a '
+        'late run whose first word starts on its voice and runs into the pause ("Ve 4\'te"). On: '
+        "the preflight analysis trims such a head to the silence end, and the late-word move "
+        "(needs SPEECH_CLEANUP_LATE_WORDS_ENABLED) also takes such a straddling run, only "
+        "when silencedetect and the KRI-1017 voicing detector agree "
+        "(app/pipeline/late_word_realign.py). "
+        "Off is byte-identical to the late-word fix alone. Part of the source policy fingerprint, "
+        "so a flip re-analyzes. Kill switch: `fly secrets set "
+        "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker restart.",
+    )
 
     speech_cleanup_aligner_model_dir: str = Field(
         default="/opt/models/wav2vec2-base-960h",
@@ -2909,6 +2938,8 @@ class Settings(BaseSettings):
     # capability with its own kill switch.
     # New plans only; persisted legacy narrated jobs retain their renderer.
     creator_prompt_fidelity_enabled: bool = False
+    # Include full stored clip moments and speech in the planner input (KRI-1430).
+    main_creator_full_clip_evidence_enabled: bool = False
     main_creator_agent_enabled: bool = False
     main_creator_agent_execution_enabled: bool = False
     main_creator_agent_review_enabled: bool = False
@@ -3173,6 +3204,10 @@ class Settings(BaseSettings):
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False
+    # KRI-1585: informative text designs (hook/research roles, creator > design > prefs style
+    # provenance, the A1/A2/A3/B1 registry). Stamped on the job's phone text policy when it is
+    # created (`pipeline.informative_text.POLICY_KEY`); a job stamped off is byte-identical.
+    informative_text_designs_enabled: bool = False
     # Qendresa case 3 (2026-11-06): a place or colour word in the request styles the text it is
     # written next to, not a role named elsewhere ("Small white text in the middle, no captions"
     # styled the captions and her line stayed at the top), and a pinned brief whose typed
@@ -3254,6 +3289,20 @@ class Settings(BaseSettings):
     # after a failed render goes to the copilot, and a missing text sequence is composed rather
     # than asked about. false = the previous routing, replies and ops, byte-identical.
     kria_compose_unmet_with_ops_enabled: bool = False
+    # Unstated clip order never blocks (PR 1): what the creator did not say about the order
+    # INSIDE a group they described defaults to the order the clips were added, disclosed on the
+    # card, instead of holding the draft behind "tell me the order". Honoured exactly: anything
+    # they did say. false = the previous hold, byte-identical. Apply: fly secret + restart
+    # api and worker.
+    kria_unstated_order_default_enabled: bool = False
+    # Clip order is one live, AI-aware state (PR 2): every order change (the creator's message,
+    # a drag, a manual timeline edit, the AI's own story order) is one ledger entry; the chat
+    # reads the current order before and after a render, a chat reorder is an editor op composed
+    # with the rest of the message, an order row is applied once and a later statement replaces
+    # an earlier one, and the AI never reorders on its own initiative. false = the previous
+    # behaviour, prompts, ops and receipts byte-identical. Apply: fly secret + restart api and
+    # worker.
+    kria_clip_order_ledger_enabled: bool = False
     # KRI-1358 (de1): approval readiness reads the same "the phone Voiceover compiler renders
     # this" fact the draft turn reads, so one clip's own sound under the voice is judged on the
     # phone draft instead of refused as "only works in a voiceover edit made on your iPhone".

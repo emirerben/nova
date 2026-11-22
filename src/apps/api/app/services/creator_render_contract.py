@@ -58,6 +58,7 @@ from app.services.choice_questions import (
     pin_anchors,
 )
 from app.services.clip_file_names import clip_display_name
+from app.services.clip_order_ledger import ordered_by_ids, snapshot_order
 from app.services.clip_order_sequence import (
     SequenceRow,
     apply_sequence,
@@ -234,6 +235,8 @@ _CLIP_INTENT_LEAVES = (
     "position",
     "order_by",
     "ordered_members",
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: an earlier turn seated this order row; it seats nothing now.
+    "already_seated",
     "exclusive",
     # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
     "requirement_id",
@@ -336,6 +339,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[]",
         "selection_reconciliation.rejected_selections[].category_key",
         "selection_reconciliation.rejected_selections[].intent",
+        "selection_reconciliation.rejected_selections[].intent.already_seated",
         "selection_reconciliation.rejected_selections[].intent.attribute",
         "selection_reconciliation.rejected_selections[].intent.by_length",
         "selection_reconciliation.rejected_selections[].intent.caption_attribute",
@@ -689,6 +693,20 @@ FIELD_MATRIX: dict[str, FieldRule] = {
             "clock by the phone writers (app.pipeline.phone_timed_cards) and recorded on "
             "variant['phone_timed_card_receipt'], which the brief receipts judge. The contract "
             "itself does not verify placement"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "sfx_ask_chooser",
+        "sfx_ask",
+        "sfx_ask.request_text",
+        "sfx_ask.max_placements",
+        note=(
+            "KRI-1561: a general sound-effect ask. The phone Talking, Voiceover and "
+            "montage-with-voiceover workers choose the moments "
+            "(app.services.sfx_chooser.choose_sfx), write them as ordinary "
+            "sound_effects lane rows and record variant['phone_sfx_choice_receipt']. The "
+            "contract itself does not verify placement"
         ),
     ),
     **_rules(
@@ -1306,6 +1324,56 @@ def _creator_listed_order(
     return tuple(apply_sequence(list(shown), sequence))
 
 
+def _unstated_order_defaults_to_attachment(
+    raw: Mapping[str, Any],
+    brief: CreativeBrief | None,
+    sequence: Sequence[SequenceRow],
+    media_snapshot: Mapping[str, Any] | None,
+    edit_rows: Sequence[Any],
+    hidden_ids: frozenset[str],
+    *,
+    ledger: bool = False,
+) -> bool:
+    """``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED``: may the contract pin the upload order under a
+    described sequence that names no basis?
+
+    Only where the pin is the order the worker plays and the phone verifier checks, so an
+    approved draft is never refused after render (KRI-503): the unified phone montage writer
+    (a montage-family format with phone proxy clips and no voiceover, the shape
+    ``defers_to_unified_montage`` mirrors, without the account), the planner's attachment basis
+    (no seeded shuffle, no "any order", no "group first" answer, no confirmed hand reorder,
+    not the native program that re-orders its clips by the intents) and no Visuals (a Visual is
+    spread, not seated by upload order). The caller has already seen a placed rule, so a single
+    "start with X" pin pins the rest of the order too: a pin-only brief is held today on "I can't
+    confirm this draft does it yet" for the same reason a group is. Reads fields, never words."""
+    from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+    from app.services.order_mode import (  # noqa: PLC0415
+        brief_order_mode,
+        unstated_order_default_on,
+    )
+
+    if (not ledger and not unstated_order_default_on()) or brief is None or not edit_rows:
+        return False
+    # The pin reads the snapshot's clip rows only, like every other pin here, so the dry run,
+    # readiness and dispatch (whatever else each snapshot lists) decide it identically.
+    clip_paths = [str(row.get("gcs_path") or "") for row in edit_rows if isinstance(row, Mapping)]
+    ids = [str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)]
+    return bool(
+        raw.get("edit_format") in GUIDED_EDIT_FORMATS
+        and raw.get("audio_strategy") in {"original_audio", "licensed_music"}
+        and raw.get("render_program") != "native"
+        and raw.get("ordering_choice") not in {"random", "group_first"}
+        and clip_paths
+        and all(is_analysis_proxy_path(path) for path in clip_paths)
+        and brief_order_mode(brief) is None
+        and not _edit_visuals(media_snapshot, raw, hidden_ids)
+        and all(ids)
+        and len(set(ids)) == len(ids) == len(edit_rows)
+        and (ledger or bool(sequence))
+    )
+
+
 def _pin_not_found(words: str) -> str:
     """A stated first / last clip the server could not place, in the chat's language."""
     return say(
@@ -1610,6 +1678,15 @@ def _edit_rows(
 ) -> list[Any]:
     """The approved clip rows the edit shows: the selected media, minus hidden clips."""
     rows = (media_snapshot or {}).get("clip_assignments") or []
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: the clips as the creator has them ordered now, not as they
+    # were added. The snapshot carries the order (`clip_order_ledger.with_clip_order_ids`).
+    live_order = snapshot_order(media_snapshot)
+    if live_order:
+        rows = ordered_by_ids(
+            list(rows),
+            live_order,
+            key=lambda r: str(r.get("media_id")) if isinstance(r, Mapping) else "",
+        )
     selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
     if selected:
         rows = [row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected]
@@ -1792,6 +1869,11 @@ def build_render_contract(
         if brief is not None and _clip_intents_on()
         else []
     )
+    sequence_placed_rows = (
+        sequence_rows(raw.get("resolved_clip_intents"), seated=True)
+        if brief is not None and _clip_intents_on()
+        else []
+    )
     if not sequence and talking_edit and brief is not None and _clip_intents_on():
         # S3 Yorum2 (prod thread cc0e3706, 2026-11-08): a Talking edit plans no clip intents
         # (`CLIP_INTENT_FREE_EDIT_FORMATS`), so nothing seated the brief's first / last take
@@ -1805,8 +1887,10 @@ def build_render_contract(
         for row in (media_snapshot or {}).get("clip_assignments") or []
         if isinstance(row, Mapping) and row.get("media_id")
     }
-    sequence_placed = all(status == "resolved" for _p, _n, _m, status in sequence) and any(
-        clip_ids.intersection(members) for _p, _n, members, _s in sequence
+    # An ask an earlier turn already seated (`already_seated`) was placed; it only no longer seats.
+    placed_rows = sequence or sequence_placed_rows
+    sequence_placed = all(status == "resolved" for _p, _n, _m, status in placed_rows) and any(
+        clip_ids.intersection(members) for _p, _n, members, _s in placed_rows
     )
     placed_positions = {
         position
@@ -2117,6 +2201,33 @@ def build_render_contract(
         )
         if listed:
             order_required, order_ids, order_basis = True, listed, CREATOR_LIST_ORDER_BASIS
+        elif not order_ids and _unstated_order_defaults_to_attachment(
+            raw, brief, sequence, media_snapshot, edit_rows, hidden_ids
+        ):
+            # Toroko (prod threads 666b996f, de471354): "the map video first, then the train
+            # entry, then ..." names no basis, so the order INSIDE each group (and of the clips
+            # nobody mentioned) was never said. It is the order the clips were added; the
+            # KRI-503 block below seats the described groups on it, so the pin is exactly the
+            # order the phone montage planner lays out.
+            ids = [str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)]
+            order_required, order_ids, order_basis = True, tuple(ids), "attachment_order"
+    if (
+        not order_required
+        and not order_ids
+        and snapshot_order(media_snapshot)
+        # An editorial plan owns its own beat order (`editorial_order` below raises when a pinned
+        # order disagrees with it), so a creator-moved order is not pinned under one.
+        and not (typed is not None and typed.editorial_plan is not None)
+        and _unstated_order_defaults_to_attachment(
+            raw, brief, sequence, media_snapshot, edit_rows, hidden_ids, ledger=True
+        )
+    ):
+        # KRIA_CLIP_ORDER_LEDGER_ENABLED: the creator changed the order (the snapshot carries it).
+        # The unified phone montage plays exactly that order and the verifier refuses any other,
+        # so it is pinned like the upload-order default above (which also turns the spoken-welcome
+        # reorder off): a described row that no longer seats anything does not drop the pin.
+        ids = [str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)]
+        order_required, order_ids, order_basis = True, tuple(ids), "attachment_order"
     if (
         order_required
         and order_ids

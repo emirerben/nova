@@ -86,7 +86,11 @@ public struct PreviewComposition: @unchecked Sendable {
             : nil
         // Speech-cleanup cuts crossfade their audio across the join.
         let cutHandles = AudioCutHandles.plan(recipe.tracks)
-        func addAudio(asset: AVURLAsset, clip recipeClip: TimelineClip, gain: Double, originalGain: Bool = false) async throws {
+        // KRI-1562: the music-role track ducks under the spoken windows. They are timeline seconds, the same clock
+        // `applyAudioGain` evaluates a duck on, so a bed split into consecutive clips ducks the same in each.
+        let musicSpeechDuck = AudioDuckEnvelope.speech(windows: recipe.audio.speechWindows.map { ($0.start, $0.end) },
+                                                       level: recipe.audio.speechDuckGain ?? 0.3)
+        func addAudio(asset: AVURLAsset, clip recipeClip: TimelineClip, gain: Double, originalGain: Bool = false, speechDuck: AudioDuckEnvelope? = nil) async throws {
             guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return }
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
             let cut = cutHandles[recipeClip.id] ?? .none
@@ -105,7 +109,7 @@ public struct PreviewComposition: @unchecked Sendable {
             if originalGain, abs(clip.rate - 1) > 0.000_001 {
                 parameter.audioTimePitchAlgorithm = .spectral
             }
-            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil, cut: cut)
+            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : speechDuck, cut: cut)
             audioParameters.append(parameter)
         }
         let overlayOrders = Self.overlayOrders(in: recipe)
@@ -123,7 +127,7 @@ public struct PreviewComposition: @unchecked Sendable {
                 if recipeTrack.kind == .audio {
                     guard clip.look == nil else { throw NativePreviewFeatureError("Composition-87") }
                     guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
-                    try await addAudio(asset: asset, clip: clip, gain: 1)
+                    try await addAudio(asset: asset, clip: clip, gain: 1, speechDuck: recipeTrack.role == .music ? musicSpeechDuck : nil)
                     continue
                 }
                 let end = clip.timelineStart + clip.duration

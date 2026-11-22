@@ -39,11 +39,15 @@ class MediaSize(_RecipeModel):
     height: float = Field(gt=0)
 
 
+# The longest media asset a recipe describes; a compiler leaves a longer asset's duration unset.
+MAX_ASSET_DURATION_S = 1800
+
+
 class MediaAsset(_RecipeModel):
     id: str = Field(min_length=1, max_length=160)
     relative_path: str = Field(min_length=1, max_length=1024)
     fingerprint: AssetFingerprint | None = None
-    duration: float | None = Field(default=None, gt=0, le=1800)
+    duration: float | None = Field(default=None, gt=0, le=MAX_ASSET_DURATION_S)
     natural_size: MediaSize | None = None
     frame_rate: float | None = Field(default=None, gt=0, le=240)
     orientation_degrees: int = Field(default=0, ge=-360, le=360)
@@ -200,6 +204,40 @@ class TimelineTrack(_RecipeModel):
     id: str = Field(min_length=1, max_length=160)
     kind: Literal["video", "overlay", "audio"]
     clips: list[TimelineClip] = Field(default_factory=list, max_length=100)
+    # KRI-1562: marks the background-music bed so the device ducks it under
+    # `AudioMixRecipe.speech_windows`. Omitted when unset so every recipe digest that
+    # predates the field is unchanged.
+    role: Literal["music"] | None = None
+
+    @model_validator(mode="after")
+    def _music_role_is_audio(self) -> TimelineTrack:
+        if self.role is not None and self.kind != "audio":
+            raise ValueError("a music track must be an audio track")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _optional_role(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result = handler(self)
+        if self.role is None:
+            result.pop("role", None)
+        return result
+
+
+# The longest span list the device accepts; a compiler merges the closest gaps past it.
+MAX_SPEECH_WINDOWS = 400
+
+
+class SpeechWindow(_RecipeModel):
+    """Seconds of the finished timeline where a person is speaking (KRI-1562)."""
+
+    start: float = Field(ge=0, le=1800)
+    end: float = Field(gt=0, le=1800)
+
+    @model_validator(mode="after")
+    def _positive_span(self) -> SpeechWindow:
+        if self.end <= self.start:
+            raise ValueError("speech window must have positive duration")
+        return self
 
 
 class AudioMixRecipe(_RecipeModel):
@@ -232,6 +270,20 @@ class AudioMixRecipe(_RecipeModel):
     # default-off: omitted from the payload when false so existing recipes stay
     # byte-identical. Requires the `audioDucking` capability (derived below).
     duck_music_during_speech: bool = False
+    # KRI-1562: where the finished timeline carries speech, and the gain (0-1) the music-role
+    # track drops to inside those windows. The server computes the windows from the clips it
+    # laid out; the device only applies them. `None` gain means the device default (0.3).
+    # Both are omitted when unset, so existing recipes stay byte-identical. Non-empty windows
+    # need a music-role track and derive the `speechDuck` capability.
+    speech_windows: list[SpeechWindow] = Field(default_factory=list, max_length=MAX_SPEECH_WINDOWS)
+    speech_duck_gain: float | None = Field(default=None, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _speech_windows_ordered(self) -> AudioMixRecipe:
+        for left, right in zip(self.speech_windows, self.speech_windows[1:]):
+            if right.start < left.end:
+                raise ValueError("speech windows must be sorted and must not overlap")
+        return self
 
     @model_serializer(mode="wrap")
     def preserve_legacy_shape(self, handler):
@@ -244,6 +296,10 @@ class AudioMixRecipe(_RecipeModel):
             payload.pop("target_lufs", None)
         if not self.duck_music_during_speech:
             payload.pop("duck_music_during_speech", None)
+        if not self.speech_windows:
+            payload.pop("speech_windows", None)
+        if self.speech_duck_gain is None:
+            payload.pop("speech_duck_gain", None)
         return payload
 
 
@@ -311,6 +367,9 @@ MediaCapability = Literal[
     # KRI-1350: `color_moments` (whole-frame tone windows with flash / light-leak / dip edges)
     # and/or `end_fade` on the V2 recipe root, drawn on device by `ColorMomentPainter`.
     "colorMoments",
+    # KRI-1562 (protocol 53): the music-role track ducks under `audio.speech_windows` on device.
+    # Derived from non-empty windows; gated by its own verified token.
+    "speechDuck",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -461,6 +520,10 @@ class EditRecipeV1(_RecipeModel):
             # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
             # verified the native side-chain duck must never receive one.
             self.required_capabilities = self.required_capabilities | {"audioDucking"}
+        if self.audio.speech_windows:
+            if not any(track.role == "music" for track in self.tracks):
+                raise ValueError("speech windows need a music-role track to duck")
+            self.required_capabilities = self.required_capabilities | {"speechDuck"}
         if any(clip.transition and clip.transition.kind != "crossfade" for clip in clips):
             # New transition programs must not be offered as legacy crossfade
             # capability to clients that have not verified this implementation.

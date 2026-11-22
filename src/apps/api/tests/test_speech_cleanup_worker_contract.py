@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.pipeline import speech_cleanup_analysis as engine
 from app.services import speech_cleanup_preflight as preflight
+from app.services.source_length_policy import speech_analysis_window_s
 from app.services.speech_cleanup_rollout import audit_rollout_evidence
 from app.tasks import speech_cleanup_analysis as tasks
 from app.worker import celery_app
@@ -51,18 +52,16 @@ def test_analysis_limits_fit_broker_lease_and_operation_envelopes() -> None:
     assert (
         tasks.SPEECH_CLEANUP_AUDIO_EXTRACTION_TIMEOUT_S < preflight.SPEECH_CLEANUP_TASK_SOFT_LIMIT_S
     )
-    assert preflight.SPEECH_CLEANUP_MAX_DURATION_S > 0
+    assert speech_analysis_window_s() > 0
 
     derived_max = (
-        preflight.SPEECH_CLEANUP_MAX_DURATION_S
+        speech_analysis_window_s()
         * tasks.SPEECH_CLEANUP_SAMPLE_RATE_HZ
         * tasks.SPEECH_CLEANUP_CHANNELS
         * tasks.SPEECH_CLEANUP_SAMPLE_WIDTH_BYTES
         + tasks.SPEECH_CLEANUP_WAV_HEADER_ALLOWANCE_BYTES
     )
-    assert tasks._maximum_pcm_artifact_bytes(preflight.SPEECH_CLEANUP_MAX_DURATION_S) == int(
-        derived_max
-    )
+    assert tasks._maximum_pcm_artifact_bytes(speech_analysis_window_s()) == int(derived_max)
 
 
 def test_reconciler_is_bounded_late_ack_maintenance_work() -> None:
