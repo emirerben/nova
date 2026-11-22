@@ -361,6 +361,17 @@ def plan_frame_times(duration: float, limits: EvidenceLimits) -> list[tuple[floa
     return sorted([*anchors, *uniform], key=lambda item: item[0])
 
 
+def _video_ended_first(failure: subprocess.CalledProcessError) -> bool:
+    """FFmpeg's own report that the video stream ended before the requested time.
+
+    Both parts are needed: 234 is any invalid argument, and the text alone could come with
+    a status that means something else (245 is a thread it could not start).
+    """
+    return failure.returncode == 234 and b"Could not open encoder before EOF" in (
+        failure.stderr or b""
+    )
+
+
 def _frames(
     local: Path, artifact_sha: str, limits: EvidenceLimits, deadline: float
 ) -> tuple[tuple[FrameEvidence, ...], float]:
@@ -434,11 +445,13 @@ def _frames(
                 ],
                 deadline,
             )
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as failure:
+            # A planned frame is left out only when the video has none there. Any other
+            # failure ends the review: fewer frames than planned would pass as a full look.
+            _require(_video_ended_first(failure), "frame_decode_failed")
             continue
         timestamp_match = re.search(rb"\bn:\s*0\s+pts:.*?pts_time:([0-9.+eE-]+)", decoded.stderr)
-        if timestamp_match is None:
-            continue
+        _require(timestamp_match is not None, "frame_timestamp_missing")
         timestamp = float(timestamp_match[1])
         _require(
             math.isfinite(timestamp)
