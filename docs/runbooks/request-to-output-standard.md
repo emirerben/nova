@@ -107,10 +107,10 @@ the final diff.
 22795779), otherwise a red result does not block merge. Add it with:
 
 ```bash
-gh api repos/emirerben/nova/rulesets/22795779 | jq '{name, target, enforcement, conditions, bypass_actors,
+gh api repos/Kria-AI/kria/rulesets/22795779 | jq '{name, target, enforcement, conditions, bypass_actors,
      rules: (.rules | map(if .type == "required_status_checks"
        then .parameters.required_status_checks += [{"context": "PR evidence"}] else . end))}' \
-  | gh api -X PUT repos/emirerben/nova/rulesets/22795779 --input -
+  | gh api -X PUT repos/Kria-AI/kria/rulesets/22795779 --input -
 ```
 
 Label evidence separately:

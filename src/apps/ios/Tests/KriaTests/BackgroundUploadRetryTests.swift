@@ -953,7 +953,26 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
             guard let self, transport.request.httpMethod != "PUT" else { return }
             self.received += 1
             if self.answerImmediately { transport.finish(200, reservationResponse) } else { self.pending.append(transport) }
+            self.wake()
         }
+    }
+
+    /// Returns once `count` requests have reached the server, or every selection started so far has ended
+    /// without that many. Awaited, not polled against a deadline: a stalled runner makes it late, not wrong.
+    /// It never ends while a selection is stuck with no request on its way; that is a hang, not a pass.
+    func requests(_ count: Int) async {
+        while received < count, selectionsRunning > 0 {
+            await withCheckedContinuation { waiters.append($0) }
+        }
+    }
+
+    private var selectionsRunning = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    private func wake() {
+        let waiting = waiters
+        waiters = []
+        for waiter in waiting { waiter.resume() }
     }
 
     func answerPending(_ count: Int) {
@@ -969,7 +988,12 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
     func select(_ identifier: String, role: CreationMediaRole = .clip, itemID: String? = nil, debounce: Duration = .zero, attached: Set<String> = [], contents: Data? = nil) throws -> URL {
         let file = FileManager.default.temporaryDirectory.appending(path: "pick-\(UUID().uuidString).mp4")
         try (contents ?? Data("clip \(identifier)".utf8)).write(to: file)
-        started.append(coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file })
+        let work = coordinator.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: .cloudRenderSource, itemID: itemID, limit: nil, attachedMediaIDs: attached), debounce: debounce) { file }
+        started.append(work)
+        if let work {
+            selectionsRunning += 1
+            Task { await work.value; self.selectionsRunning -= 1; self.wake() }
+        }
         return file
     }
 
@@ -1296,16 +1320,24 @@ extension BackgroundUploadRetryTests {
 
     /// The headline of KRI-125: the user sees each pick land. A thumbnail used to exist only after the clip
     /// had fully uploaded and attached; everything still in flight was a bare filename.
+    ///
+    /// Ways this test can go wrong: it asks for the thumbnail before the coordinator has started it (the
+    /// clip is listed as in flight first, and the thumbnail starts a suspension later; on CI run 45031243802
+    /// that gap was seconds long, `finishEarlyPreviewForTesting` found no work to wait for and the test read
+    /// "no thumbnail"); it waits for the decode against a deadline a slow simulator outlasts; the
+    /// reservation is answered, so the thumbnail it finds could have come from the upload.
+    /// So it waits for the held reservation to arrive, which the coordinator sends only after it has staged
+    /// the clip and started the thumbnail, and then for that thumbnail's own work.
     func testAChosenClipHasAThumbnailAndAFilenameBeforeItHasUploaded() async throws {
         let video = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")))
         let h = harness(answerImmediately: false)   // hold the reservation: the clip never gets an upload record
         let file = try h.select("asset-1", contents: video)
 
-        let staged = await waitUntil { !h.coordinator.inFlight.isEmpty }
-        XCTAssertTrue(staged)
+        await h.requests(1)
+        XCTAssertEqual(h.received, 1, "the clip is prepared and waiting on its held reservation")
         let previewID = try XCTUnwrap(h.coordinator.inFlight.first?.key)
-        // Await the real decode rather than racing a five-second timer on a loaded simulator.
-        // The reservation remains held, so this still proves visibility before upload.
+        // The decode itself, however long it takes. The reservation stays held, so this still proves
+        // visibility before upload.
         await h.coordinator.finishEarlyPreviewForTesting(recordID: previewID)
 
         XCTAssertGreaterThan(h.coordinator.previewVersion, 0, "a thumbnail is written as soon as the clip is chosen")
