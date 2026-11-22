@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.92.0] - 2026-11-22
+
+### Changed
+- feat(kria): "no sound effects" holds through later chat edits and a stale plan (KRI-1561) (#2469) <!-- release-pr: 2469 -->
+
 ## [0.89.91.0] - 2026-11-22
 
 ### Changed
