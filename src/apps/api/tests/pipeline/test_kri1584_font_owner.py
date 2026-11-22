@@ -94,6 +94,10 @@ def _rows() -> list[dict]:
     return copy.deepcopy(_load("text_rows.json")["text_elements"])
 
 
+def _without_reason(entry: dict) -> dict:
+    return {key: value for key, value in entry.items() if key != "reason"}
+
+
 def _payload(prompt: str) -> dict:
     return json.loads(prompt[prompt.index("\n{") + 1 :])
 
@@ -180,7 +184,7 @@ def test_a_failed_pick_is_traced_and_falls_back_to_the_ranked_pool(monkeypatch):
     (decision,) = [data for event, data in events if event == "font_decision"]
     # Still one decision: her first drawable favourite, not the resolver's swap of Big Curls
     # for another script (Great Vibes) on long fact lines.
-    assert decision["roles"]["research"] == {"font": "Inter", "source": "fallback"}
+    assert _without_reason(decision["roles"]["research"]) == {"font": "Inter", "source": "fallback"}
     assert {row["font_family"] for row in styled} == {"Inter"}
 
 
@@ -227,7 +231,7 @@ def test_a_failed_pick_with_no_favourite_or_hint_leaves_the_resolver_order(monke
 
     assert len(prompts) == 1
     (decision,) = [data for event, data in events if event == "font_decision"]
-    assert decision["roles"]["research"] == {"font": None, "source": "fallback"}
+    assert _without_reason(decision["roles"]["research"]) == {"font": None, "source": "fallback"}
 
 
 # Round-1 failure modes, written before the fix:
@@ -320,7 +324,7 @@ def test_a_failed_pick_never_puts_a_script_on_long_lines(monkeypatch):
 
     # Big Curls, her first favourite, is a script and draws English; long facts get Inter.
     (decision,) = [data for event, data in events if event == "font_decision"]
-    assert decision["roles"]["research"] == {"font": "Inter", "source": "fallback"}
+    assert _without_reason(decision["roles"]["research"]) == {"font": "Inter", "source": "fallback"}
     assert {row["font_family"] for row in styled} == {"Inter"}
 
 
@@ -339,7 +343,10 @@ def test_a_failed_pick_with_only_script_favourites_takes_a_readable_curated_font
     )
 
     (decision,) = [data for event, data in events if event == "font_decision"]
-    assert decision["roles"]["research"] == {"font": CURATED_PHONE_FONTS[0], "source": "fallback"}
+    assert _without_reason(decision["roles"]["research"]) == {
+        "font": CURATED_PHONE_FONTS[0],
+        "source": "fallback",
+    }
     assert {row["font_family"] for row in styled} == {CURATED_PHONE_FONTS[0]}
 
 
@@ -400,3 +407,149 @@ def test_a_design_font_is_traced_as_the_design_over_a_saved_rule(monkeypatch):
     assert {row["font_family"] for row in styled} == {"Inter Medium"}
     (decision,) = [data for event, data in events if event == "font_decision"]
     assert decision["roles"]["research"] == {"fonts": ["Inter Medium"], "source": "design"}
+
+
+# Round-2 failure modes, written before the fix:
+# 15. A failed pick on a role with a hint but no drawable favourite crashes the writer
+#     (`preferred_fonts` is set only when a favourite is drawable): no favourites at all, or
+#     only a favourite that cannot draw the wording (Big Curls on the Turkish rows).
+# 16. The same crash when the hint itself is a script on long lines and there is no favourite.
+
+
+def _hinted_rows(font: str) -> list[dict]:
+    rows = _rows()
+    rows[0]["font_family"] = font
+    rows[0]["source_params"]["default_style_fields"] = ["size_px"]
+    return rows
+
+
+def _favourites(monkeypatch, favourites: list[str] | None) -> None:
+    def patched(*, stamped, proposal_font=None, _real=_snapshot):
+        snapshot = _real(stamped=stamped, proposal_font=proposal_font)
+        prefs = snapshot[styling.PHONE_TEXT_STYLE_FIELD]["preferences"]
+        for rule in prefs.values():
+            rule.pop("favorite_fonts", None)
+        if favourites is not None:
+            prefs.setdefault("all_text", {})["favorite_fonts"] = favourites
+        return snapshot
+
+    monkeypatch.setattr(f"{__name__}._snapshot", patched)
+
+
+@pytest.mark.parametrize("favourites", [None, ["Big Curls"]], ids=["none", "undrawable"])
+def test_a_failed_pick_with_a_hint_and_no_drawable_favourite_takes_the_hint(
+    monkeypatch, favourites
+):
+    _favourites(monkeypatch, favourites)
+    styled, prompts, events = _generate(
+        monkeypatch,
+        _hinted_rows("Unbounded"),
+        stamped=True,
+        answer={"fonts": {"research": "Fraunces"}},
+    )
+
+    research = _payload(prompts[0])["roles"]["research"]
+    assert research["hint"] == "Unbounded" and "preferred_fonts" not in research
+    (decision,) = [data for event, data in events if event == "font_decision"]
+    assert decision["roles"]["research"]["font"] == "Unbounded"
+    assert decision["roles"]["research"]["source"] == "fallback"
+    assert {row["font_family"] for row in styled} == {"Unbounded"}
+
+
+def test_a_failed_pick_with_a_script_hint_on_long_lines_takes_a_readable_font(monkeypatch):
+    from app.pipeline.font_coverage import _registry
+
+    _favourites(monkeypatch, None)
+    styled, prompts, events = _generate(
+        monkeypatch,
+        _hinted_rows("Pacifico"),
+        stamped=True,
+        answer={"fonts": {"research": "Fraunces"}},
+    )
+
+    assert _payload(prompts[0])["roles"]["research"]["hint"] == "Pacifico"
+    (decision,) = [data for event, data in events if event == "font_decision"]
+    font = decision["roles"]["research"]["font"]
+    assert decision["roles"]["research"]["source"] == "fallback"
+    assert font and _registry()["fonts"][font]["category"] not in {"script", "handwriting"}
+    assert {row["font_family"] for row in styled} == {font}
+
+
+# 17. The voiceover montage writer's snapshot has no approved proposal, so on a stamped job its
+#     font pick gets no mood at all (main sent its style set id).
+def test_the_voiceover_writer_gives_its_own_clip_analysis_as_the_mood(monkeypatch):
+    import inspect
+
+    from app.pipeline.agents.gemini_analyzer import ClipMeta
+    from app.tasks import generative_build
+
+    source = inspect.getsource(generative_build._run_phone_voiceover_montage_job)
+    assert source.index("register_generation_footage(clip_metas)") < source.index(
+        "generation_style_rows("
+    )
+
+    metas = [
+        ClipMeta(
+            clip_id="a",
+            transcript="",
+            hook_text="",
+            hook_score=0.0,
+            best_moments=[],
+            detected_subject="red and yellow train",
+            setting="autumn river gorge",
+            activity="riding an open carriage",
+        )
+    ]
+    sent = {}
+    for stamped in (False, True):
+        client = _Recorded(json.dumps({"fonts": {"research": "Unbounded"}}))
+        from app.agents import _model_client
+
+        monkeypatch.setattr(_model_client, "default_client", lambda client=client: client)
+
+        @styling.phone_text_generation
+        def writer(job_id, snapshot):
+            styling.register_generation_footage(metas)
+            return styling.generation_style_rows(_rows(), job_id=job_id, mood="clean_editorial")
+
+        snapshot = _snapshot(stamped=stamped)
+        snapshot.pop("guided_edit")
+        writer("3930c822", snapshot)
+        sent[stamped] = _payload(client.prompts[0])["mood"]
+    assert sent[False] == "clean_editorial"
+    assert sent[True] == "autumn river gorge; red and yellow train; riding an open carriage"
+
+
+# 18. A generation's font decision is split over two events (rows, then the caption pick), and
+#     a fallback entry says neither why the pick failed nor who decides when it names no font.
+def test_the_last_font_event_is_the_whole_generation_and_fallbacks_say_why(monkeypatch):
+    from app.agents import _model_client
+    from app.services import pipeline_trace
+
+    def timeout():
+        raise TimeoutError("typography timed out")
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(_model_client, "default_client", timeout)
+    monkeypatch.setattr(
+        pipeline_trace,
+        "record_pipeline_event",
+        lambda stage, event, data=None: events.append((event, data or {})),
+    )
+
+    @styling.phone_text_generation
+    def writer(job_id, snapshot):
+        styling.generation_style_rows(_rows(), job_id=job_id)
+        return styling.generation_caption_look(
+            [{"text": "we took the slow train", "start_s": 0.0, "end_s": 1.5}]
+        )
+
+    writer("3930c822", _snapshot(stamped=True))
+    decisions = [data for event, data in events if event == "font_decision"]
+    assert len(decisions) == 2
+    last = decisions[-1]["roles"]
+    assert set(last) == {"research", "caption"}
+    assert last["research"]["font"] == "Inter"
+    assert "TimeoutError" in last["research"]["reason"]
+    assert last["caption"]["font"] is None
+    assert "TimeoutError" in last["caption"]["reason"] and "order" in last["caption"]["reason"]

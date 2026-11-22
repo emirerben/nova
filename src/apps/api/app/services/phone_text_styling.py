@@ -264,7 +264,11 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
         role_rows = [row for row in rows if text_role(row) == role]
         open_rows = [row for row in role_rows if "font_family" not in authored_fields(row)]
         if rule.get("font_family") and (open_rows or not informative):
-            decisions[role] = {"font": rule["font_family"], "source": "saved_rule"}
+            decisions[role] = {
+                "font": rule["font_family"],
+                "source": "saved_rule",
+                "reason": "A saved or requested text rule names this font.",
+            }
             continue
         if informative and not open_rows:
             mine = any(
@@ -296,7 +300,7 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
             roles[role]["hint"] = hint
         short[role] = all(len(text.split()) <= SCRIPT_MAX_WORDS for text in texts)
     if not roles:
-        _record_font_decision(decisions, mood, informative=informative)
+        _record_font_decision(policy, decisions, mood, informative=informative)
         return {}
     try:
         agent = PhoneTypographyAgent if informative else LegacyPhoneTypographyAgent
@@ -319,9 +323,9 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
                 "source": "agent",
                 "reason": result.reasons.get(role, ""),
             }
-        _record_font_decision(decisions, mood, informative=informative)
+        _record_font_decision(policy, decisions, mood, informative=informative)
         return chosen
-    except Exception:  # noqa: BLE001 - bounded best-effort aesthetic selection
+    except Exception as exc:  # noqa: BLE001 - bounded best-effort aesthetic selection
         record_pipeline_event(
             "text",
             "font_selection_fallback",
@@ -330,9 +334,16 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
         if not informative:
             return {}
         fallback = _fallback_fonts(roles, short)
+        failed = f"The font pick failed ({type(exc).__name__})"
         for role in roles:
-            decisions[role] = {"font": fallback.get(role), "source": "fallback"}
-        _record_font_decision(decisions, mood, informative=informative)
+            decisions[role] = {
+                "font": fallback.get(role),
+                "source": "fallback",
+                "reason": f"{failed}; the hint or her first readable favourite is kept."
+                if role in fallback
+                else f"{failed}; the resolver's own font order decides.",
+            }
+        _record_font_decision(policy, decisions, mood, informative=informative)
         return fallback
 
 
@@ -357,7 +368,7 @@ def _fallback_fonts(roles: dict, short: dict) -> dict:
             continue
         hint = entry.get("hint")
         ranked = [hint] if hint and readable(hint, role) else []
-        ranked += [font for font in entry["preferred_fonts"] if readable(font, role)]
+        ranked += [font for font in entry.get("preferred_fonts") or [] if readable(font, role)]
         ranked += [font for font in entry["eligible_fonts"] if readable(font, role)]
         if ranked:
             fallback[role] = ranked[0]
@@ -397,15 +408,20 @@ def _font_traits(roles: dict) -> dict:
     }
 
 
-def _record_font_decision(decisions: dict, mood: str, *, informative: bool) -> None:
+def _record_font_decision(policy: dict, decisions: dict, mood: str, *, informative: bool) -> None:
+    """Trace the generation's font decisions so far. The caption pick is its own selection call
+    (decision 4.9), so each event carries every role decided earlier in the generation and the
+    last event alone is the whole decision."""
     if not informative or not decisions:
         return
     from app.services.pipeline_trace import record_pipeline_event
 
+    so_far = policy.setdefault("_font_decisions", {})
+    so_far.update(copy.deepcopy(decisions))
     record_pipeline_event(
         "text",
         "font_decision",
-        {"version": 1, "mood": mood[:300], "roles": decisions},
+        {"version": 1, "mood": mood[:300], "roles": copy.deepcopy(so_far)},
     )
 
 
@@ -421,7 +437,26 @@ def footage_mood(snapshot: dict) -> str:
             continue
         record = clip_record(media.get("analysis"), kind=str(media.get("kind") or "video"))
         phrases += [record.setting, record.subject, record.activity, record.visibility]
+    return _join_mood(phrases)
+
+
+def _join_mood(phrases) -> str:
     return "; ".join(dict.fromkeys(p.strip() for p in phrases if p and p.strip()))[:300]
+
+
+def register_generation_footage(clip_metas) -> None:
+    """The footage mood for a writer whose snapshot has no approved proposal (the voiceover
+    montage), from its own clip analysis. Stamped jobs only; a proposal's mood is kept."""
+    from app.pipeline.informative_text import policy_enabled
+
+    policy = _POLICY.get()
+    if not policy or not policy_enabled(policy) or policy.get("_footage_mood"):
+        return
+    policy["_footage_mood"] = _join_mood(
+        str(getattr(meta, name, "") or "")
+        for meta in clip_metas or []
+        for name in ("setting", "detected_subject", "activity")
+    )
 
 
 @contextmanager
