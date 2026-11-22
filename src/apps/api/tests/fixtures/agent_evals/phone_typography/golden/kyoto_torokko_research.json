@@ -73,19 +73,19 @@
       }
     }
   },
-  "raw_text": "{\n  \"fonts\": {\n    \"research\": \"Inter\"\n  },\n  \"reasons\": {\n    \"research\": \"Inter is a preferred sans-serif font with an editorial vibe, well-suited for dense, informative text about train routes and scenery, ensuring excellent readability.\"\n  }\n}",
+  "raw_text": "{\n  \"fonts\": {\n    \"research\": \"Inter\"\n  },\n  \"reasons\": {\n    \"research\": \"The wording is dense and factual, requiring a highly readable sans-serif font like the preferred 'Inter' for clear communication about the train route and scenery.\"\n  }\n}",
   "output": {
     "fonts": {
       "research": "Inter"
     },
     "reasons": {
-      "research": "Inter is a preferred sans-serif font with an editorial vibe, well-suited for dense, informative text about train routes and scenery, ensuring excellent readability."
+      "research": "The wording is dense and factual, requiring a highly readable sans-serif font like the preferred 'Inter' for clear communication about the train route and scenery."
     }
   },
   "meta": {
-    "source": "provider_smoke_capture",
+    "source": "live_capture",
     "job_id": "3930c822-2d44-4251-bcf6-d45ef865c5ef",
     "note": "Stamped (INFORMATIVE_TEXT_DESIGNS_ENABLED) font pick for prod job 3930c822's three Turkish research lines, built by select_fonts from tests/fixtures/kri1585_kyoto. A script face on these long fact lines is the KRI-1584 failure.",
-    "test_run_id": "kri1584-phone-typography-98f31f0a-r1"
+    "test_run_id": "kri1584-phone-typography-22989824-live1"
   }
 }
