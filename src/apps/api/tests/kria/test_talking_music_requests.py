@@ -1,4 +1,7 @@
-"""KRI-1562 PR3: a creator asks for, changes and removes the song under a phone Talking edit.
+"""KRI-1562 PR3: a creator asks for, changes and removes the LIBRARY song under a Talking edit.
+
+KRI-1578 moved this path behind ``TALKING_LIBRARY_MUSIC_ENABLED`` (on for the whole module); the
+creator's own uploaded song, and the library closed, are `tests/kria/test_talking_creator_song.py`.
 
 Offline replay over the real chain. First request: the real runtime-v2 planner (real Postgres)
 reads the request into a typed music ask; that ask on the approved brief reaches the real Talking
@@ -52,6 +55,11 @@ from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled,
 from tests.tasks.test_phone_talking_music_worker import WORDS, _pin
 
 VERIFIED = ["audioMix", "musicBed", "speechDuck"]
+
+
+@pytest.fixture(autouse=True)
+def _library_music_open(monkeypatch):
+    monkeypatch.setattr("app.config.settings.talking_library_music_enabled", True)
 
 
 def _track(track_id: str, *, mood: str, start_s: float, end_s: float) -> SimpleNamespace:
@@ -154,7 +162,11 @@ def _render(
     matcher = _Matcher(ranked)
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: matcher)
     monkeypatch.setattr(gb, "_talking_library_tracks", lambda: list(library))
-    monkeypatch.setattr(gb, "_persisted_music_treatment", lambda **_: stored)
+    monkeypatch.setattr(
+        gb,
+        "_persisted_variant",
+        lambda **_: {"smart_music_treatment": stored} if stored else None,
+    )
     monkeypatch.setattr(gb, "_pin_catalog_music", _pin)
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device", "the talk renders whatever happens to the song"
@@ -345,7 +357,7 @@ def test_a_library_that_cannot_be_read_renders_the_talk_and_says_no_song(monkeyp
     job.assembly_plan["creator_brief_binding"] = _binding(MUSIC_EN)
     job.all_candidates["creator_client_protocol"] = SPEECH_DUCK_PROTOCOL
     monkeypatch.setattr(gb, "_talking_library_tracks", unreadable)
-    monkeypatch.setattr(gb, "_persisted_music_treatment", lambda **_: None)
+    monkeypatch.setattr(gb, "_persisted_variant", lambda **_: None)
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device"
     variant = job.assembly_plan["variants"][0]

@@ -777,6 +777,20 @@ three extra lanes on top of the unchanged speaker clip + captions:
   and the native exporter, and measures the duck, the recovery in pauses and the
   words whisper.cpp hears with and without the song. Results and the
   voice-separation decision: `docs/reviews/kri-1562/voice-separation.md`.
+  A creator's own song on a Talking edit (KRI-1578, server half): the worker reads
+  the item's upload (`talking_music.uploaded_song`; a Talking item keeps
+  `audio_mode = "original"`, the speech fingerprint its cleanup consent is bound to),
+  pins it (`inspect_song_asset`) and compiles it as `song`-kind clips on a `role: music`
+  track from the song's start at -18 dB, looped to the end (`music_bed_from_user_song`),
+  ducked -12 dB, never `audio.music_asset_id`. The variant keeps her choices as
+  `talking_song`, projected as `variants[].user_song` with
+  `user_song.{volume,window,remove,trim}`; a Save's `user_song` section adds
+  (`{}`), moves, re-levels, re-pins a replaced upload or removes it. Library songs
+  need `TALKING_LIBRARY_MUSIC_ENABLED`; without an upload a music ask is answered
+  "send me the song". In chat, `set_user_song` changes, removes or (for a song sent after
+  the render, YOUR SONG `on_edit: false`) adds it, and "no music" takes it off; protocol 53
+  only. Guards: `tests/kria/test_talking_creator_song.py`,
+  `tests/pipeline/test_creator_song_bed.py`.
 - **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,

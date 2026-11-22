@@ -247,6 +247,7 @@ from app.services.suggestions.commit_readiness import (
     on_marks_route,
     plan_blockers_sync,
 )
+from app.services.talking_music import UploadedSongRead, uploaded_song
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
     bind_thought_publisher,
@@ -7320,6 +7321,8 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         music_track=music_track,
                         background_music_track=background_music_track,
                         plan_item_id=str(item.id),
+                        # KRI-1578: a chat change to her own song re-pins it from the item.
+                        uploaded_song=UploadedSongRead(uploaded_song(item)),
                         phone_sfx_catalog_paths=phone_sfx_catalog_paths,
                         # The validated approval binding is staged with the
                         # native editor save before its phone recipe is pinned.

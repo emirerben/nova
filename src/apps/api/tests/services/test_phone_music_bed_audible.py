@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 
 from app.kria.render_assets import RenderFingerprint
-from app.pipeline.phone_recipe_shared import PhoneMusicBed
+from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed
 from app.services.creator_render_contract import (
     CreatorRenderContract,
     CreatorRenderContractError,
@@ -101,9 +101,11 @@ def test_the_speech_montage_compiler_never_plays_its_music_twice():
     from tests.services.test_phone_speech_montage_job import _binding
 
     music = PhoneMusicBed(
-        catalog_id="track",
-        generation="1",
-        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=1000),
+        source=LibraryMusicSource(
+            catalog_id="track",
+            generation="1",
+            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=1000),
+        ),
         duration_s=60.0,
         start_s=0.0,
         volume=0.3,

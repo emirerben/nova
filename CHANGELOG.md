@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.93.0] - 2026-11-22
+
+### Changed
+- fix(review): a frame the decoder could not produce ends the review, never shrinks it (KRI-1534) (#2478) <!-- release-pr: 2478 -->
+
 ## [0.89.92.0] - 2026-11-22
 
 ### Changed

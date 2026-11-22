@@ -30,6 +30,7 @@ from app.kria.recipes import MAX_SPEECH_WINDOWS, TimelineClip, TimelineTrack
 from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
+    LibraryMusicSource,
     PhoneMusicBed,
     music_bed_from_treatment,
     speech_spans_from_words,
@@ -134,9 +135,11 @@ def test_no_music_compiles_byte_identical_to_before():
         "cf331cb29ab614a7fe8f828e0fb840a951c5f2588b31641e18af2b8df08f6425"
     )
     music = PhoneMusicBed(
-        catalog_id="track1",
-        generation="7",
-        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        source=LibraryMusicSource(
+            catalog_id="track1",
+            generation="7",
+            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        ),
         duration_s=120.0,
         start_s=30.5,
         volume=1.0,
@@ -339,9 +342,11 @@ def test_dropping_the_source_windows_leaves_speech_unducked():
 
 
 VOICEOVER_MUSIC = PhoneMusicBed(
-    catalog_id="track1",
-    generation="7",
-    fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+    source=LibraryMusicSource(
+        catalog_id="track1",
+        generation="7",
+        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+    ),
     duration_s=120.0,
     start_s=30.5,
     volume=1.0,

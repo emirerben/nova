@@ -7,7 +7,7 @@ from app.pipeline.generative_decision import (
     GenerativeVariantDecision,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
+from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed, PhoneNarrationBed
 from app.pipeline.phone_voiceover_montage_plan import (
     compile_phone_voiceover_montage_plan as _compile,
 )
@@ -137,9 +137,11 @@ def fixture(
 
 def test_compiles_three_clips_with_crossfades_intro_and_voiceover_music_bed():
     music = PhoneMusicBed(
-        catalog_id="track1",
-        generation="7",
-        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        source=LibraryMusicSource(
+            catalog_id="track1",
+            generation="7",
+            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        ),
         duration_s=120.0,
         start_s=30.5,
         volume=1.0,
@@ -375,9 +377,11 @@ def test_voiceover_mix_0_4_mixes_footage_audio_under_the_voice():
 def test_voiceover_music_bed_caps_gain_and_never_mixes_footage():
     """voiceover_music: matched track plays as a low bed, footage never mixed."""
     music = PhoneMusicBed(
-        catalog_id="track1",
-        generation="7",
-        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        source=LibraryMusicSource(
+            catalog_id="track1",
+            generation="7",
+            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        ),
         duration_s=120.0,
         start_s=10.0,
         volume=1.0,
@@ -427,9 +431,11 @@ def test_no_recorded_voiceover_is_never_this_writers_job():
 def test_voice_fades_out_and_music_bed_fades_both_ends():
     """KRI-139: fades ride the audio clips; the loudness target rides the mix."""
     music = PhoneMusicBed(
-        catalog_id="track1",
-        generation="7",
-        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        source=LibraryMusicSource(
+            catalog_id="track1",
+            generation="7",
+            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        ),
         duration_s=120.0,
         start_s=10.0,
         volume=1.0,
