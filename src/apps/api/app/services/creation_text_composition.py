@@ -933,6 +933,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
                 if old_id not in known and str(old_id).startswith("kria-"):
                     row["id"] = f"{id_prefix}{index}"
                 known.add(row.get("id"))
+            from app.pipeline.informative_text import policy_enabled
             from app.services.phone_text_styling import current_phone_text_policy
 
             if current_phone_text_policy() and op.get("op") == "patch_text_style":
@@ -950,6 +951,12 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
                 row = state.text[-1]
                 source = dict(row.get("source_params") or {})
                 fields = set(op.get("patch") or {})
+                if isinstance(op.get("research"), dict) and policy_enabled(
+                    current_phone_text_policy()
+                ):
+                    # KRI-1585: the research writer's spot is its own pick, not the
+                    # creator's, so her saved and asked styles still apply to it.
+                    fields = set()
                 if op.get("style_from") is not None:
                     fields.update(
                         {

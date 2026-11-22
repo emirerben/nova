@@ -102,11 +102,15 @@ def approval_text_policy(strategy: dict) -> dict | None:
 
     if not settings.phone_text_styling_enabled:
         return None
-    return {
-        "version": PHONE_TEXT_STYLE_VERSION,
-        "preferences": {"all_text": {}},
-        "requested": requested_style(strategy or {}, ""),
-    }
+    from app.pipeline.informative_text import stamp_policy
+
+    return stamp_policy(
+        {
+            "version": PHONE_TEXT_STYLE_VERSION,
+            "preferences": {"all_text": {}},
+            "requested": requested_style(strategy or {}, ""),
+        }
+    )
 
 
 def stamp_phone_text_style(job) -> None:
@@ -159,7 +163,9 @@ def stamp_phone_text_style(job) -> None:
             ask = ask.without_shape()
     if ask is not None:
         stamped["caption_ask"] = ask.as_dict()
-    current[PHONE_TEXT_STYLE_FIELD] = stamped
+    from app.pipeline.informative_text import stamp_policy
+
+    current[PHONE_TEXT_STYLE_FIELD] = stamp_policy(stamped)
     job.assembly_plan = current
 
 
@@ -214,6 +220,8 @@ def style_rows(
         return copy.deepcopy(rows)
     if policy.get("version") != PHONE_TEXT_STYLE_VERSION:
         raise ValueError("This text styling version is not supported")
+    from app.pipeline.informative_text import policy_enabled
+
     return resolve_phone_text_style(
         rows,
         preferences=policy.get("preferences"),
@@ -222,6 +230,7 @@ def style_rows(
         canvas=canvas or PORTRAIT,
         excluded_boxes=excluded_boxes,
         background_frames=background_frames,
+        informative=policy_enabled(policy),
     )
 
 
@@ -229,6 +238,7 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
     from app.agents._model_client import default_client
     from app.agents._runtime import RunContext
     from app.agents.phone_typography import PhoneTypographyAgent, PhoneTypographyInput
+    from app.pipeline.informative_text import authored_fields
     from app.pipeline.phone_text_style import _covers, coverage_text, text_role
     from app.services.pipeline_trace import record_pipeline_event
 
@@ -241,9 +251,7 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
         texts = [
             coverage_text(row)
             for row in rows
-            if text_role(row) == role
-            and "font_family"
-            not in ((row.get("source_params") or {}).get("creator_style_fields") or [])
+            if text_role(row) == role and "font_family" not in authored_fields(row)
         ]
         eligible = [
             font
@@ -275,11 +283,12 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
 
 @contextmanager
 def phone_text_policy_scope(policy: dict | None):
+    from app.pipeline.informative_text import informative_text_scope, policy_enabled
     from app.pipeline.phone_text_style import phone_text_measurement_scope
 
     token = _POLICY.set(copy.deepcopy(policy))
     try:
-        with phone_text_measurement_scope():
+        with phone_text_measurement_scope(), informative_text_scope(policy_enabled(policy)):
             yield
     finally:
         _POLICY.reset(token)
@@ -2205,11 +2214,11 @@ def style_guided_generation(plan, bindings, *, job_id: str) -> dict:
     raw = plan.model_dump(mode="json", exclude_none=False)
     lanes = ("text_elements", "context_label_text_elements", "narration_label_text_elements")
     rows = [row for lane in lanes for row in raw.get(lane) or []]
-    from app.pipeline.phone_text_style import text_role
+    from app.pipeline.phone_text_style import TITLE_LIKE_ROLES, text_role
 
     for lane in lanes[1:]:
         for row in raw.get(lane) or []:
-            if text_role(row) == "title":
+            if text_role(row) in TITLE_LIKE_ROLES:
                 row["source_params"] = {
                     **(row.get("source_params") or {}),
                     "phone_text_role": "label",
@@ -2228,7 +2237,8 @@ def style_guided_generation(plan, bindings, *, job_id: str) -> dict:
                     3,
                 )
                 for row in rows
-                if text_role(row) in {"title", "label", "pinned", "caption", "lyric"}
+                if text_role(row)
+                in {"title", "label", "pinned", "caption", "lyric", "research", "hook"}
                 for fraction in (0.02, 0.25, 0.5, 0.75, 0.98)
             }
         )

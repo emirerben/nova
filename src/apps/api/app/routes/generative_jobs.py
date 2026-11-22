@@ -12603,6 +12603,26 @@ def _validate_landscape_fit_section(job: Job, variant: dict, value: str) -> str:
     return value
 
 
+def _record_creator_text_edits(job: Job, variant: dict, rows: list[dict]) -> list[dict]:
+    """KRI-1585: on a job stamped with informative text designs, every style field a Save
+    changes (the iPhone editor's or a chat edit's draft, both commit here) becomes the
+    creator's, so no later style pass can take it back. Unstamped jobs are untouched."""
+    from app.pipeline.informative_text import policy_enabled, record_creator_edits
+    from app.services.phone_text_styling import PHONE_TEXT_STYLE_FIELD
+
+    policy = variant.get(PHONE_TEXT_STYLE_FIELD) or (job.assembly_plan or {}).get(
+        PHONE_TEXT_STYLE_FIELD
+    )
+    if not policy_enabled(policy):
+        return rows
+    # The guided revision, when there is one, is the authoritative copy of each row.
+    previous = [
+        *(variant.get("text_elements") or []),
+        *((_guided_v2_revision(job, variant) or {}).get("text_elements") or []),
+    ]
+    return record_creator_edits(previous, copy.deepcopy(rows))
+
+
 def _prepare_editor_commit(
     job: Job,
     variant_id: str,
@@ -12906,6 +12926,7 @@ def _prepare_editor_commit(
                 # exact-ID guard.
                 append_projection_tombstones=not guided_v2 and not phone_talking_text,
             )
+        validated_elements = _record_creator_text_edits(job, variant, validated_elements)
         if not guided_v2:
             _require_guided_story_text_ids(variant, validated_elements)
 
