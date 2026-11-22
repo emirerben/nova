@@ -761,8 +761,14 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     // Text behind people: the multiply happens AFTER placement, in canvas space, where the
                     // mask lives (F1). No mask this frame = plain text, never a missing layer (F3, F13).
                     if layer.behindSubject == true, let occlusion { placed = SubjectOcclusion.apply(to: placed, mask: occlusion) }
-                    // KRI-1581: the scrim fades with the text but stays put while the text moves.
-                    if let scrim = layer.scrim { frame = opacity(scrimImage(scrim, canvas: canvas), state.alpha).composited(over: frame) }
+                    // KRI-1581: the scrim fades with the text but stays put while the text moves. It blends in
+                    // sRGB-encoded values, as the cloud burn and the approved mock-ups do; blended in this
+                    // compositor's linear working space, black at 0.6 only darkens to 0.66, not 0.4.
+                    if let scrim = layer.scrim {
+                        frame = opacity(scrimImage(scrim, canvas: canvas), state.alpha)
+                            .composited(over: frame.applyingFilter("CILinearToSRGBToneCurve"))
+                            .applyingFilter("CISRGBToneCurveToLinear")
+                    }
                     frame = opacity(placed, state.alpha).composited(over: frame)
                 } catch { throw error }
                 continue
