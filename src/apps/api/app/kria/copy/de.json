@@ -420,6 +420,7 @@
     "I can't place the clip labels \"{clip_value}\" yet, so they stay where the layout puts them": "Ich kann die Clip-Labels \"{clip_value}\" noch nicht platzieren, deshalb bleiben sie dort, wo das Layout sie hinsetzt",
     "I can't place the clip labels at the {words_value} on this video yet": "Ich kann die Clip-Labels in diesem Video noch nicht bei {words_value} platzieren",
     "I can't play that title entrance on this phone yet, so the title fades in instead": "Ich kann diese Eingangsanimation des Titels auf diesem Handy noch nicht abspielen, deshalb blendet der Titel stattdessen sanft ein",
+    "I can't promise the clip order on this kind of video yet, so it may not match what you asked": "Bei dieser Art von Video kann ich die Reihenfolge der Clips noch nicht garantieren, deshalb ist sie vielleicht nicht so, wie du es wolltest",
     "I can't put a photo or video behind a clip on this edit.": "Ich kann in diesem Edit kein Foto oder Video hinter einen Clip legen.",
     "I can't put a plain colour behind you: {reason}.": "Ich kann keine einfarbige Fläche hinter dich legen: {reason}.",
     "I can't put text on each shot and keep exact photo and video timing in the same edit. Which one matters more?": "Ich kann nicht im selben Edit Text auf jede Einstellung setzen und das genaue Foto- und Video-Timing behalten. Was ist dir wichtiger?",

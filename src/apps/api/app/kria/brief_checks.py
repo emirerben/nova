@@ -4532,6 +4532,13 @@ _UNSTATED_ORDER_KEPT = "where you didn't say, the clips play in the order you ha
 # KRIA_CLIP_ORDER_LEDGER_ENABLED: an order the creator described earlier was applied then, and a
 # later order of theirs (a drag, an edit, a message) replaced it; the newest statement stands.
 _ORDER_SET_SINCE = "you set the order yourself since, and the order you set is the one that plays"
+# KRI-1592: with `KRIA_UNSTATED_ORDER_DEFAULT_ENABLED` an order ask that nothing in the draft
+# commits to (no writer vouches for it before render, the render contract pins none) is a limit of
+# that kind of video, said plainly, never a hold (`approval_readiness._order_not_promised`). It
+# names no order on purpose: the Talking, voiceover and Visuals writers each play their own.
+_ORDER_NOT_PROMISED = (
+    "I can't promise the clip order on this kind of video yet, so it may not match what you asked"
+)
 _PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
 
 
@@ -8059,6 +8066,11 @@ _REASON_TR: dict[str, str] = {
         "Bazı anlar senin kararın: kliplerinde olmadığını söylediklerin ya da bana bıraktıkların"
     ),
     _MOMENT_NOT_IN_CLIP: "Oynayan klip parçasının söylediğin anı gösterdiğini doğrulayamadım",
+    # Before the format-limit list below reads it (`reasons_in_every_language`).
+    _ORDER_NOT_PROMISED: (
+        "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi "
+        "olmayabilir"
+    ),
     _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
     _ORDER_RULE_NOT_APPLIED: (
         "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
@@ -8527,6 +8539,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _MOMENTS_NOT_LOCATED,
     _MOMENTS_CREATOR_CALL,
     _MOMENT_NOT_IN_CLIP,
+    # KRI-1592: an order the kind of video can't promise is its limit, never a simpler plan.
+    _ORDER_NOT_PROMISED,
     _FREEZE_NEEDS_FRAME,
     _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,

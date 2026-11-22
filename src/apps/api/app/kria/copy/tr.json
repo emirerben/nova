@@ -423,6 +423,7 @@
     "I can't place the clip labels \"{clip_value}\" yet, so they stay where the layout puts them": "Klip etiketlerini henüz \"{clip_value}\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar",
     "I can't place the clip labels at the {words_value} on this video yet": "Klip etiketlerini bu videoda henüz {words_value} konumuna yerleştiremiyorum",
     "I can't play that title entrance on this phone yet, so the title fades in instead": "Bu başlık girişini bu telefonda henüz oynatamıyorum, o yüzden başlık onun yerine yavaşça beliriyor",
+    "I can't promise the clip order on this kind of video yet, so it may not match what you asked": "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir",
     "I can't put a photo or video behind a clip on this edit.": "Bu videoda bir klibin arkasına fotoğraf ya da video koyamıyorum.",
     "I can't put a plain colour behind you: {reason}.": "Arkana düz bir renk koyamıyorum: bu uygulama sürümünde henüz açık değil.",
     "I can't put text on each shot and keep exact photo and video timing in the same edit. Which one matters more?": "Aynı düzenlemede hem her çekime yazı koyup hem de fotoğraf ve videoların zamanlamasını tam tutamıyorum. Hangisi daha önemli?",
