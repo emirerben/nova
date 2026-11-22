@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.90.0] - 2026-11-22
+
+### Changed
+- KRI-1584: one font owner that sees font traits and the footage, favourites ranked (KRI-1585 PR4) (#2472) <!-- release-pr: 2472 -->
+
 ## [0.89.89.0] - 2026-11-22
 
 ### Changed
