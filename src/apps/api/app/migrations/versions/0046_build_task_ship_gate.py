@@ -37,8 +37,7 @@ depends_on = None
 
 _STATUS_OLD = "status IN ('queued', 'in_progress', 'blocked', 'done')"
 _STATUS_NEW = (
-    "status IN ('queued', 'in_progress', 'gating', 'awaiting_approval', "
-    "'blocked', 'done')"
+    "status IN ('queued', 'in_progress', 'gating', 'awaiting_approval', 'blocked', 'done')"
 )
 
 

@@ -279,7 +279,25 @@ if [[ "${KRIA_IOS_SKIP_RENDER_EVIDENCE:-0}" == "1" ]]; then
     < <(python3 "$REPO_ROOT/scripts/ios/render_evidence.py" skip-args)
   echo "Skipping export/OCR unit proofs (no render code changed); main runs them" | tee -a "$RESULT_DIR/timings.log"
 fi
+# Compilation takes 100-700 s even when the restored Xcode cache matches and no
+# Swift changed. Print where the build's time went so that can be diagnosed.
+BUILD_TEST_ARGS+=(-showBuildTimingSummary)
 timed "Compilation" xcodebuild "${BUILD_TEST_ARGS[@]}" build-for-testing 2>&1 | tee "$RESULT_DIR/build.log"
+# Diagnostic only: it runs after a successful build and reads the log, so it
+# cannot change the build's result. No pipe, so nothing here can fail on a
+# closed reader.
+BUILD_TIMING="$(awk '
+  /^Build Timing Summary/ { found = 1; next }
+  found && /^\*\* / { exit }
+  found && NF { print; if (++lines == 25) exit }
+' "$RESULT_DIR/build.log")"
+if [[ -n "$BUILD_TIMING" ]]; then
+  printf 'Build timing summary:\n%s\n' "$BUILD_TIMING" | tee -a "$RESULT_DIR/timings.log"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf '\n<details><summary>Build timing summary</summary>\n\n```\n%s\n```\n\n</details>\n' \
+      "$BUILD_TIMING" >> "$GITHUB_STEP_SUMMARY"
+  fi
+fi
 timed "Simulator wait after compilation" wait "$BOOT_PID"
 trap - EXIT
 

@@ -1036,21 +1036,21 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # re-frozen for KRI-1405 (typed `no_sound_effects`; a kept ask after a simpler version).
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "3799fbe71c7cd2fb0601d3db3581dd5fc6156d7a3a6b416ba668d927b50cc61b"
+        "63a08717391bb6da832abe0c84986cf8b2c63f2773184be18bcc2c4f055927ea"
     )
     assert digest(brief_prompt_section(True)) == (
-        "33fbb9cfe8461a942d8273b848f5a96fc0070c5d4fa869022494f8e88d5535f4"
+        "7ae1c499ac0cd4b0069e72c9093222fc8a612614e78b84b7c908f9ff72cb6a3d"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "fa27631e9de41ec6b364cc355b987def7e1da56d3863d85485a2ba4a5816d58d"
+        "2232a7f0ab021c7616851dc55f4bac548d5aa4062c128109ada4565bd718059f"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "04c75efc186882ee0d4b14d4f65a799ac311c35d77127c5b9bd9ab692db25776"
+        "8b32b2e3b686586e2a28fd8c017f28cc7ca069a679976af21006b85e41ee00d1"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "a1042d0f70c2107fb5e1d48a0286ed8d17b43c2d28c2f07db06f643fc71735b1"),
-        (True, "7e2f134d291a8104d1db0744f1a5eb8f424478df779ed14648d6801aafe1fcde"),
+        (False, "e3f33187985014d61965f3ac53571b5ea0079ae5a1e03fdec5dd662e5aad4ac8"),
+        (True, "9fd82d9e45dff7af2babe3e4b76eaa58f24e83e743877382db96e9e7dfb913ba"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

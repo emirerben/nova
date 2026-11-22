@@ -70,9 +70,7 @@ def _fake_words(tokens: list[str]) -> list[OCRWord]:
     The cross-check only inspects ``text``; bboxes are ignored, so we
     use the same placeholder for every word.
     """
-    return [
-        OCRWord(text=t, bbox=(0.0, 0.0, 0.01, 0.01), confidence=0.9) for t in tokens
-    ]
+    return [OCRWord(text=t, bbox=(0.0, 0.0, 0.01, 0.01), confidence=0.9) for t in tokens]
 
 
 _FIXTURE_NAMES = ("rich_in_life_v2.json", "fdaf3bbc.json")

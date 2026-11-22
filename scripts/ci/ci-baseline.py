@@ -5,6 +5,7 @@ Usage:
   python3 scripts/ci/ci-baseline.py                      # last 14 days, this repo
   python3 scripts/ci/ci-baseline.py --days 7 --until 2026-11-19T00:00:00Z
   python3 scripts/ci/ci-baseline.py --json .dev/ci-baseline.json
+  python3 scripts/ci/ci-baseline.py --phases 150         # waiting/setup/running per job
 
 Stdlib only; needs an authenticated `gh`. Read-only: every call is a GET.
 The repository is public, so hosted minutes cost nothing. What is scarce is the
@@ -22,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import math
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -31,6 +33,38 @@ REQUIRED_CHECKS = ("lint", "test-api", "build-and-test")
 MAC_CHECK_PREFIX = "iPhone validation"
 # GitHub returns at most this many results for one filtered run query.
 RUN_QUERY_CAP = 1000
+
+# How `--phases` files a step. Anything not listed here is running time, so a
+# new step can never make setup look cheaper than it is.
+RUNNER_STEPS = {"Set up job", "Complete job", "Initialize containers", "Stop containers"}
+# An action step without its own name: "Run actions/checkout@v4".
+ACTION_STEP = re.compile(r"^Run \.?[\w.-]*/[\w./-]+(@\S+)?$")
+SETUP_PREFIXES = (
+    "Post ",
+    "Install ",
+    "Set up ",
+    "Restore ",
+    "Save ",
+    "Cache ",
+    "Disable unused Chrome apt source",
+    "Identify ",
+    "Hash ",
+    "Configure Xcode",
+    "Start simulator boot early",
+    "Prepare ",
+    "Download ",
+    "Mint ",
+    "Authenticate ",
+    "Migrate disposable",
+    "Select affected suites",
+    "Keep per-test times",
+    "Transfer fixture inputs",
+    "Upload ",
+)
+# Steps a setup prefix would catch that are the job's actual work.
+WORK_STEPS = ("Upload and distribute",)
+WAIT_PREFIXES = ("Wait for ",)
+PHASES = ("wait", "setup", "run")
 
 
 def parse(stamp):
@@ -159,6 +193,124 @@ def pr_used_mac(checks):
         and c.get("conclusion") not in (None, "skipped")
         for c in checks
     )
+
+
+def step_phase(name):
+    """Which bucket a step's time belongs to: wait, setup or run."""
+    if name.startswith(WAIT_PREFIXES):
+        return "wait"
+    if name.startswith(WORK_STEPS):
+        return "run"
+    if name in RUNNER_STEPS or ACTION_STEP.match(name) or name.startswith(SETUP_PREFIXES):
+        return "setup"
+    return "run"
+
+
+def seconds_between(start, end):
+    return round((parse(end) - parse(start)).total_seconds())
+
+
+def timed_steps(job):
+    """(name, phase, seconds) for each step that ran; skipped steps have no times."""
+    for item in job.get("steps") or ():
+        if item.get("started_at") and item.get("completed_at"):
+            yield (
+                item["name"],
+                step_phase(item["name"]),
+                max(0, seconds_between(item["started_at"], item["completed_at"])),
+            )
+
+
+def job_phases(job):
+    """Seconds a job spent waiting, setting up and running. None if it did no work.
+
+    Waiting starts at the job's own creation, not the run's start: a job behind
+    `needs` is created when its dependencies finish. Steps that wait on another
+    job count as waiting too.
+    """
+    if job.get("conclusion") not in ("success", "failure"):
+        return None
+    if not job.get("started_at") or not job.get("completed_at"):
+        return None
+    created = job.get("created_at") or job["started_at"]
+    phases = {
+        "wait": max(0, seconds_between(created, job["started_at"])),
+        "setup": 0,
+        "run": 0,
+    }
+    for _, phase, seconds in timed_steps(job):
+        phases[phase] += seconds
+    phases["total"] = max(0, seconds_between(job["started_at"], job["completed_at"]))
+    return phases
+
+
+def tails(values):
+    return {"p50": percentile(values, 50), "p95": percentile(values, 95)}
+
+
+def phase_table(jobs):
+    """Per job name: how many ran, p50/p95 of each phase, and every step's phase."""
+    phases, steps = defaultdict(list), defaultdict(lambda: defaultdict(list))
+    for job in jobs:
+        measured = job_phases(job)
+        if measured is None:
+            continue
+        phases[job["name"]].append(measured)
+        for name, phase, seconds in timed_steps(job):
+            steps[job["name"]][(name, phase)].append(seconds)
+    table = {}
+    for name, rows in phases.items():
+        table[name] = {"n": len(rows)}
+        for phase in (*PHASES, "total"):
+            table[name][phase] = tails([row[phase] for row in rows])
+        table[name]["steps"] = sorted(
+            (
+                {"name": step, "phase": phase, "n": len(values)} | tails(values)
+                for (step, phase), values in steps[name].items()
+            ),
+            key=lambda row: (-row["p50"], row["name"]),
+        )
+    return table
+
+
+def runner_os(job):
+    labels = [str(label) for label in job.get("labels") or ()]
+    if any(label.startswith("macos") for label in labels):
+        return "macos"
+    if any(label.startswith("ubuntu") for label in labels):
+        return "linux"
+    return "other"
+
+
+def runner_minutes(jobs):
+    """Minutes jobs held a runner, by OS, part minutes rounded up."""
+    minutes = Counter()
+    for job in jobs:
+        if job.get("conclusion") == "skipped":
+            continue
+        if not job.get("started_at") or not job.get("completed_at"):
+            continue
+        seconds = seconds_between(job["started_at"], job["completed_at"])
+        if seconds >= 0:
+            minutes[runner_os(job)] += max(1, math.ceil(seconds / 60))
+    return dict(minutes)
+
+
+def run_required_minutes(run, jobs):
+    """Run start to the last required check finishing. None unless all finished."""
+    finished = []
+    for name in REQUIRED_CHECKS:
+        done = [
+            job
+            for job in jobs
+            if job["name"] == name
+            and job.get("conclusion") in ("success", "failure")
+            and job.get("completed_at")
+        ]
+        if not done:
+            return None
+        finished.append(max(parse(job["completed_at"]) for job in done))
+    return round((max(finished) - parse(run["run_started_at"])).total_seconds() / 60, 1)
 
 
 def gh(path, jq, paginate=True):
@@ -361,6 +513,100 @@ def measure(repo, start, end, workers=8):
     }
 
 
+def measure_phases(repo, start, end, limit, workflow="ci.yml", event="pull_request", workers=8):
+    """Waiting, setup and running per job over the newest finished runs in a window."""
+    runs, page = [], 1
+    while len(runs) < limit:
+        batch = gh(
+            f"repos/{repo}/actions/workflows/{workflow}/runs?event={event}"
+            f"&status=completed&created={start}..{end}&per_page=100&page={page}",
+            "[.workflow_runs[]|{id,conclusion,run_attempt,created_at,run_started_at}]",
+            paginate=False,
+        )[0]
+        runs += [run for run in batch if run["conclusion"] in ("success", "failure")]
+        if len(batch) < 100:
+            break
+        page += 1
+    runs = runs[:limit]
+    require_budget(int(len(runs) * 1.1) + 20)
+
+    def jobs_for(run):
+        return run, gh(
+            f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100&filter=latest",
+            ".jobs[]|{name,labels,conclusion,created_at,started_at,completed_at,"
+            "steps:[.steps[]?|{name,conclusion,started_at,completed_at}]}",
+        )
+
+    with ThreadPoolExecutor(workers) as pool:
+        run_jobs = list(pool.map(jobs_for, runs))
+
+    waits = [run_required_minutes(run, jobs) for run, jobs in run_jobs]
+    minutes = Counter()
+    for _, jobs in run_jobs:
+        minutes.update(runner_minutes(jobs))
+    return {
+        "repo": repo,
+        "workflow": workflow,
+        "event": event,
+        "window": {"start": start, "end": end},
+        "runs": {
+            "measured": len(runs),
+            "failed": sum(run["conclusion"] == "failure" for run in runs),
+            "rerun": sum((run["run_attempt"] or 1) > 1 for run in runs),
+            "oldest": min((run["created_at"] for run in runs), default=None),
+            "newest": max((run["created_at"] for run in runs), default=None),
+        },
+        "minutes_to_last_required_check": tails([w for w in waits if w is not None])
+        | {"n": sum(w is not None for w in waits)},
+        "runner_minutes": dict(minutes),
+        "jobs": phase_table([job for _, jobs in run_jobs for job in jobs]),
+    }
+
+
+def render_phases(report, step_floor=8):
+    def pair(tail):
+        return f"{tail['p50']} / {tail['p95']}"
+
+    runs, wait = report["runs"], report["minutes_to_last_required_check"]
+    measured = max(runs["measured"], 1)
+    lines = [
+        f"# CI job phases: {report['repo']} {report['workflow']} on {report['event']}",
+        f"Runs: {runs['measured']} finished ({runs['failed']} failed, {runs['rerun']} re-run),"
+        f" {runs['oldest']} to {runs['newest']}",
+        f"Minutes from run start to last required check: median {wait['p50']},"
+        f" p95 {wait['p95']} ({wait['n']} runs where all of them finished)",
+        "Runner-minutes per run: "
+        + ", ".join(
+            f"{name} {total / measured:.0f}"
+            for name, total in sorted(report["runner_minutes"].items())
+        ),
+        "",
+        "Seconds, p50 / p95. Waiting is job creation to runner pickup plus steps that"
+        " wait on another job.",
+        "",
+        "| Job | Runs | Waiting | Setup | Running | Whole job |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    ordered = sorted(report["jobs"].items(), key=lambda item: -item[1]["total"]["p50"])
+    for name, row in ordered:
+        lines.append(
+            f"| {name} | {row['n']} | {pair(row['wait'])} | {pair(row['setup'])}"
+            f" | {pair(row['run'])} | {pair(row['total'])} |"
+        )
+    lines += ["", f"## Steps with a median of {step_floor} s or more"]
+    for name, row in ordered:
+        slow = [item for item in row["steps"] if item["p50"] >= step_floor]
+        if not slow:
+            continue
+        lines += ["", f"### {name}", "| Step | Filed as | Runs | p50 / p95 (s) |",
+                  "| --- | --- | --- | --- |"]
+        for item in slow:
+            lines.append(
+                f"| {item['name']} | {item['phase']} | {item['n']} | {pair(item)} |"
+            )
+    return "\n".join(lines) + "\n"
+
+
 def render(report):
     def cell(value):
         return "-" if value is None else str(value)
@@ -437,13 +683,28 @@ def main(argv=None):
     parser.add_argument("--days", type=int, default=14)
     parser.add_argument("--until", help="window end, ISO-8601 UTC; defaults to now")
     parser.add_argument("--json", help="also write the raw summary to this path")
+    parser.add_argument(
+        "--phases",
+        type=int,
+        metavar="RUNS",
+        help="report waiting, setup and running per job over the newest RUNS"
+        " finished runs in the window, instead of the baseline",
+    )
+    parser.add_argument("--workflow", default="ci.yml", help="workflow file for --phases")
+    parser.add_argument("--event", default="pull_request", help="trigger for --phases")
     args = parser.parse_args(argv)
     repo = args.repo or origin_repo()
     end = parse(args.until) if args.until else datetime.now(timezone.utc)
-    report = measure(repo, iso(end - timedelta(days=args.days)), iso(end))
+    start = iso(end - timedelta(days=args.days))
+    if args.phases:
+        report = measure_phases(repo, start, iso(end), args.phases, args.workflow, args.event)
+        text = render_phases(report)
+    else:
+        report = measure(repo, start, iso(end))
+        text = render(report)
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    sys.stdout.write(render(report))
+    sys.stdout.write(text)
     return 0
 
 

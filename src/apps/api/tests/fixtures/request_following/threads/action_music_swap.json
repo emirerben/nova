@@ -2,7 +2,7 @@
   "fixture_id": "action_music_swap",
   "provenance": "authored",
   "footage": "harbor_run",
-  "description": "Parity group music_swap: a plain request on a phone snapshot, expecting the op applied. The snapshot never lists swap candidates; expected to fail.",
+  "description": "Parity group music_swap: a plain request on a phone snapshot, expecting the op applied. A phone Talking edit picks its song from the library (KRI-1562).",
   "turns": [
     {
       "turn_id": "t0",
@@ -14,15 +14,16 @@
           "prior_turns": [],
           "variant_snapshot": {
             "allowed_op_families": [
+              "caption",
               "clip",
               "music",
-              "sfx",
+              "music_library",
               "text",
               "title",
               "transition"
             ],
             "base_generation": "gen-1",
-            "has_narrated_captions": false,
+            "has_narrated_captions": true,
             "max_duration_s": 240,
             "remaining_duration_s": 217.0,
             "slots": [
@@ -336,6 +337,7 @@
             ],
             "text_bars": [],
             "total_duration_s": 23.0,
+            "spoken_edit": true,
             "label_facts": true,
             "timeline_patch_capabilities": {
               "duration_s": true,
@@ -344,7 +346,7 @@
               "transition_after": true,
               "transition_duration_s": true,
               "look_preset": false,
-              "playback_rate": true,
+              "playback_rate": false,
               "source_crop": true,
               "muted": true,
               "source_audio_volume": true,
@@ -498,35 +500,58 @@
                 "ready": true
               }
             ],
+            "captions": {
+              "cues": [],
+              "cues_editable": false,
+              "meta": {
+                "enabled": true,
+                "style": "sentence",
+                "font": null,
+                "y_frac": null,
+                "size_px": null,
+                "color": null,
+                "highlight_color": null,
+                "stroke_width": null,
+                "shadow_enabled": null,
+                "appearance": null,
+                "animation_phases": null
+              },
+              "total_cues": 0,
+              "truncated": false
+            },
+            "editor_capabilities": {
+              "caption_animation": true
+            },
             "music": {
-              "swappable": false,
+              "swappable": true,
               "removable": true,
-              "current_track_id": "00000000-0000-0000-0000-000000000001",
-              "current_track_title": null,
-              "candidates": []
+              "current_track_id": "song-bright",
+              "current_track_title": "Morning Run",
+              "candidates": [
+                {
+                  "id": "song-calm",
+                  "title": "Slow Harbour",
+                  "mood": "calm, warm",
+                  "genre": "acoustic"
+                },
+                {
+                  "id": "song-bright",
+                  "title": "Morning Run",
+                  "mood": "upbeat",
+                  "genre": "pop"
+                }
+              ]
             },
             "mix": {
-              "music_level": 0.6,
-              "original_level": 1.0
-            },
-            "render_destination": "device",
-            "sfx": {
-              "placements": [],
-              "catalog": []
+              "music_level_locked": true,
+              "background_music": {
+                "track_id": "song-bright",
+                "gain_db": -18.0
+              }
             },
             "editor_ops_version": 2
           }
-        },
-        "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"I can't swap the music from chat right now because there are no alternative tracks available for this edit.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Swap the music for something calmer.\",\n      \"reason\": \"No alternative music tracks are available to choose from in this draft.\"\n    }\n  ],\n  \"claimed_ops\": []\n}",
-        "prompt_version": "2026-11-11-v122",
-        "model_actual": "gemini-3.1-pro-preview",
-        "recorded_at": "2026-11-13T08:20:12Z",
-        "latency_s": 17.2,
-        "model_calls": 1,
-        "tokens_in": 28779,
-        "tokens_out": 147,
-        "tokens_thoughts": 1828,
-        "test_run_id": "rf-baseline-20261113-b"
+        }
       }
     }
   ],
@@ -544,8 +569,7 @@
           }
         ],
         "stage": "parsed",
-        "reference_compiles": false,
-        "blocked_reason": "swap_music: operation values are invalid"
+        "reference_compiles": true
       },
       "source": "Swap the music for something calmer.",
       "introduced_in_turn": 0,
@@ -653,30 +677,25 @@
     "applied_ops": [
       {
         "op": "swap_music",
-        "track_id": "00000000-0000-0000-0000-000000000002"
+        "track_id": "song-calm"
       }
     ]
   },
   "reference_probe": {
     "families": [
+      "caption",
       "clip",
       "music",
-      "sfx",
+      "music_library",
       "text",
       "title",
       "transition"
     ],
-    "parsed_ops": [],
-    "parse_outcome": "failed",
-    "parse_reasons": [
-      {
-        "op": "swap_music",
-        "reason": "invalid_value",
-        "detail": "operation values are invalid"
-      }
-    ]
-  },
-  "baseline": {
-    "music_swap-op-applied": "unmet"
+    "parsed_ops": [
+      "swap_music"
+    ],
+    "parse_outcome": "proposed",
+    "parse_reasons": [],
+    "compiles": true
   }
 }

@@ -1,4 +1,5 @@
 """Tests for scripts/overlay_forensics/masking.py."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -44,6 +45,7 @@ def test_mask_by_color_respects_tolerance_edges():
 
 def test_mask_by_color_rejects_non_rgb_shape():
     import pytest
+
     with pytest.raises(ValueError):
         mask_by_color(np.zeros((10, 10), dtype=np.uint8), (255, 255, 255))
 
@@ -61,8 +63,8 @@ def test_mask_white_excludes_yellow_pixels():
 def test_largest_blob_bbox_finds_largest_blob_when_scipy_present():
     # Two blobs: small at (0..2), large at (5..18). Largest must win.
     mask = np.zeros((20, 20), dtype=bool)
-    mask[0:3, 0:3] = True       # 9 pixels
-    mask[5:19, 5:19] = True     # 196 pixels
+    mask[0:3, 0:3] = True  # 9 pixels
+    mask[5:19, 5:19] = True  # 196 pixels
     bbox = largest_blob_bbox(mask, min_pixels=50)
     assert bbox is not None
     assert bbox.x_min == 5
@@ -104,15 +106,15 @@ def test_stroke_width_ratio_bold_vs_thin():
     H, W = 30, 30
     # Both glyphs are 20px tall, 20px wide (rows 5..24, cols 5..24).
     bold = np.zeros((H, W), dtype=bool)
-    bold[5:25, 5:10] = True   # 5px-wide left vertical bar
+    bold[5:25, 5:10] = True  # 5px-wide left vertical bar
     bold[5:25, 20:25] = True  # 5px-wide right vertical bar
-    bold[5:10, 5:25] = True   # 5px-tall top bar
+    bold[5:10, 5:25] = True  # 5px-tall top bar
     bold[20:25, 5:25] = True  # 5px-tall bottom bar
     bold_bbox = BBox(x_min=5, y_min=5, x_max=24, y_max=24)
     thin = np.zeros((H, W), dtype=bool)
-    thin[5:25, 5:6] = True    # 1px-wide left vertical
+    thin[5:25, 5:6] = True  # 1px-wide left vertical
     thin[5:25, 24:25] = True  # 1px-wide right vertical
-    thin[5:6, 5:25] = True    # 1px-tall top
+    thin[5:6, 5:25] = True  # 1px-tall top
     thin[24:25, 5:25] = True  # 1px-tall bottom
     thin_bbox = BBox(x_min=5, y_min=5, x_max=24, y_max=24)
     assert stroke_width_ratio(bold, bold_bbox) > stroke_width_ratio(thin, thin_bbox)

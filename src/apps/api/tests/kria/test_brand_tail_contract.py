@@ -68,6 +68,5 @@ def test_the_phone_bundles_the_asset_the_brand_kit_generated():
     if not KIT_OUTRO.exists():
         pytest.skip("brand kit output is not present in this checkout")
     assert BUNDLED_OUTRO.read_bytes() == KIT_OUTRO.read_bytes(), (
-        "brand/social/dist and the Swift package have drifted — "
-        "re-run brand/social/build.py"
+        "brand/social/dist and the Swift package have drifted — re-run brand/social/build.py"
     )

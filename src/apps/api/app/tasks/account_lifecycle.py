@@ -252,7 +252,7 @@ def send_account_deletion_email(email: str, confirm_token: str) -> None:
                 "Content-Type": "application/json",
             },
             json={
-                "from": "Kria <hello@usekria.com>",
+                "from": "Kria <emir@usekria.com>",
                 "to": [email],
                 "subject": "Confirm your Kria account deletion",
                 "html": _build_email_html(confirm_token),

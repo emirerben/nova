@@ -2,6 +2,196 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.76.0] - 2026-11-22
+
+### Changed
+- fix(export-verifier): reject a one-frame-late export when samples match either frame (KRI-831) (#2457) <!-- release-pr: 2457 -->
+
+## [0.89.75.0] - 2026-11-22
+
+### Changed
+- feat(kria): ask for, swap and remove music on a Talking edit (#2435) <!-- release-pr: 2435 -->
+
+## [0.89.74.0] - 2026-11-21
+
+### Changed
+- fix(kria): the brief extractor routes informative text about a public subject to the typed research fact (#2454) <!-- release-pr: 2454 -->
+
+## [0.89.73.0] - 2026-11-21
+
+### Changed
+- fix(kria): a word-by-word or translated research ask with no qualifying source renders the rest of the text (KRI-1413) (#2452) <!-- release-pr: 2452 -->
+
+## [0.89.72.0] - 2026-11-21
+
+### Changed
+- fix(kria): research accepts government registries and the national tourism organization as primary sources (#2453) <!-- release-pr: 2453 -->
+
+## [0.89.71.0] - 2026-11-21
+
+### Changed
+- fix(kria): a paid call the ledger already settled is a bug, not an AI timeout (KRI-1413) (#2451) <!-- release-pr: 2451 -->
+
+## [0.89.70.0] - 2026-11-21
+
+### Changed
+- feat(kria): the montage-with-voiceover worker places effects for a general sound-effect ask (KRI-1561) (#2449) <!-- release-pr: 2449 -->
+
+## [0.89.69.0] - 2026-11-21
+
+### Changed
+- ci(hooks): commit and push hooks through hk, format-on-save with the pinned ruff (KRI-1534) (#2448) <!-- release-pr: 2448 -->
+
+## [0.89.68.0] - 2026-11-21
+
+### Changed
+- test(intent-review): take the shared lock before borrowed fixtures write rows (KRI-1534) (#2450) <!-- release-pr: 2450 -->
+
+## [0.89.67.0] - 2026-11-21
+
+### Changed
+- ci(journeys): run the two slowest journey-offline steps on four workers (KRI-1534) (#2447) <!-- release-pr: 2447 -->
+
+## [0.89.66.0] - 2026-11-21
+
+### Changed
+- ci(api): check formatting in CI with the pinned ruff (KRI-1534) (#2446) <!-- release-pr: 2446 -->
+
+## [0.89.65.0] - 2026-11-21
+
+### Changed
+- feat(kria): the Talking and Voiceover workers place effects for a general sound-effect ask (KRI-1561) (#2442) <!-- release-pr: 2442 -->
+
+## [0.89.64.0] - 2026-11-21
+
+### Changed
+- ci(api): run the API suite as six shards (KRI-1534) (#2445) <!-- release-pr: 2445 -->
+
+## [0.89.63.0] - 2026-11-21
+
+### Changed
+- ci(ios): print where the iPhone build's time went (KRI-1534) (#2444) <!-- release-pr: 2444 -->
+
+## [0.89.62.0] - 2026-11-21
+
+### Changed
+- test(kria): one lane-targets guard test per fixture (KRI-1534) (#2443) <!-- release-pr: 2443 -->
+
+## [0.89.61.0] - 2026-11-21
+
+### Changed
+- ci(api): write opencv-contrib last so cv2 always has the cascade classifier (KRI-1534) (#2441) <!-- release-pr: 2441 -->
+
+## [0.89.60.0] - 2026-11-21
+
+### Changed
+- fix(kria): failed research renders the approved video without explanations; each text compose pays under its own key (KRI-1413) (#2440) <!-- release-pr: 2440 -->
+
+## [0.89.59.0] - 2026-11-21
+
+### Changed
+- feat(kria): the montage sound-effect line comes from its gates; reword the Turkish catch-all (KRI-1561) (#2437) <!-- release-pr: 2437 -->
+
+## [0.89.58.0] - 2026-11-21
+
+### Changed
+- ci(api): fail on unlisted skips; run the history tests on pull requests (KRI-1534) (#2439) <!-- release-pr: 2439 -->
+
+## [0.89.57.0] - 2026-11-21
+
+### Changed
+- ci: install the API from the lock in every CI job (KRI-1534) (#2436) <!-- release-pr: 2436 -->
+
+## [0.89.56.0] - 2026-11-21
+
+### Changed
+- ci(api): lock the API's Python dependencies with CPU-only torch (KRI-1534) (#2434) <!-- release-pr: 2434 -->
+
+## [0.89.55.0] - 2026-11-21
+
+### Changed
+- ci(api): record setup, call, teardown and CPU time per test (KRI-1534) (#2431) <!-- release-pr: 2431 -->
+
+## [0.89.54.0] - 2026-11-21
+
+### Changed
+- feat(kria): music under speech for Talking and Voiceover phone edits (#2428) <!-- release-pr: 2428 -->
+
+## [0.89.53.0] - 2026-11-21
+
+### Changed
+- feat(kria): one sound-effect chooser that returns placements or a named reason (KRI-1561) (#2433) <!-- release-pr: 2433 -->
+
+## [0.89.52.0] - 2026-11-21
+
+### Changed
+- ci(guards): fail when a guard's diff cannot be read (KRI-1534) (#2432) <!-- release-pr: 2432 -->
+
+## [0.89.51.0] - 2026-11-21
+
+### Changed
+- ci(baseline): report waiting, setup and running per job (KRI-1534) (#2430) <!-- release-pr: 2430 -->
+
+## [0.89.50.0] - 2026-11-21
+
+### Changed
+- fix(ios): move split clips and scroll from the timeline body (#2408) <!-- release-pr: 2408 -->
+
+## [0.89.49.0] - 2026-11-21
+
+### Changed
+- fix(ios): chat scrolls over clip rows, slides don't tap their first tile, Photos prompt and 44 pt checks in UI tests (KRI-1550) (#2426) <!-- release-pr: 2426 -->
+
+## [0.89.48.0] - 2026-11-20
+
+### Changed
+- feat(kria): recipe contract for music ducked under speech (#2427) <!-- release-pr: 2427 -->
+
+## [0.89.47.0] - 2026-11-20
+
+### Changed
+- ci: open one issue when a nightly CI or iOS run goes red (KRI-1549) (#2424) <!-- release-pr: 2424 -->
+
+## [0.89.46.0] - 2026-11-20
+
+### Changed
+- Fix account erasure with saved job clips (KRI-55) (#2419) <!-- release-pr: 2419 -->
+
+## [0.89.45.0] - 2026-11-20
+
+### Changed
+- Verify and sync the Kria App Review demo login (#2418) <!-- release-pr: 2418 -->
+
+## [0.89.44.0] - 2026-11-20
+
+### Changed
+- KRI-1430 Preserve full clip moments and speech in Main Creator pilot (#2416) <!-- release-pr: 2416 -->
+
+## [0.89.43.0] - 2026-11-20
+
+### Changed
+- KRI-1426 Benchmark native shot order with public archival footage (#2415) <!-- release-pr: 2415 -->
+
+## [0.89.42.0] - 2026-11-20
+
+### Changed
+- Disclose Anthropic edit chat and add iPhone support for release (#2412) <!-- release-pr: 2412 -->
+
+## [0.89.41.0] - 2026-11-20
+
+### Changed
+- Exclude archived songs from automatic music selection (#2411) <!-- release-pr: 2411 -->
+
+## [0.89.40.0] - 2026-11-20
+
+### Changed
+- Send account deletion emails from the monitored Kria mailbox (#2409) <!-- release-pr: 2409 -->
+
+## [0.89.39.0] - 2026-11-20
+
+### Changed
+- docs(ci): record the hourly Beat health routine beside the workflow it backs up (KRI-1553) (#2414) <!-- release-pr: 2414 -->
+
 ## [0.89.38.0] - 2026-11-20
 
 ### Changed

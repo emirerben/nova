@@ -4,6 +4,7 @@ Importable without pytesseract installed; calls raise OCRNotAvailable so
 the analyzer can fall back to color-region matching when Tesseract is
 absent on the host.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -61,7 +62,7 @@ def _isolate_text_crop(
     y_max = min(h - 1, y_max + pad_px)
     x_min = max(0, x_min - pad_px)
     x_max = min(w - 1, x_max + pad_px)
-    crop = mask[y_min:y_max + 1, x_min:x_max + 1].astype(np.uint8) * 255
+    crop = mask[y_min : y_max + 1, x_min : x_max + 1].astype(np.uint8) * 255
     return Image.fromarray(crop, mode="L")
 
 
@@ -87,8 +88,7 @@ def ocr_mask_crop(
 
     data = pyt.image_to_data(img, config=config, output_type=pyt.Output.DICT)
     tokens = [
-        (t, int(c)) for t, c in zip(data["text"], data["conf"])
-        if t and t.strip() and int(c) >= 0
+        (t, int(c)) for t, c in zip(data["text"], data["conf"]) if t and t.strip() and int(c) >= 0
     ]
     if not tokens:
         return OCRResult(text="", confidence=0.0)

@@ -561,3 +561,51 @@ def test_research_caption_binds_to_a_grouped_montage_window():
     )
     assert [op["op"] for op in ops] == ["add_text"]
     assert ops[0]["end_s"] - ops[0]["start_s"] >= 2
+
+
+def test_primary_evidence_sources_for_a_travel_route_topic():
+    """Kyoto Toroko train (prod 2e76b62f): the search cited the operator, a city government,
+    the national tourism organization and travel sites. Government registries and the national
+    tourism organization are primary; the operator's own site, wikipedia and travel sites are not;
+    open `go.<tld>` registrations are not."""
+    from app.services.researched_text import (
+        ResearchEvidence,
+        ResearchFact,
+        ResearchSource,
+        primary_evidence,
+    )
+
+    accepted = [
+        "japan.travel",
+        "www.japan.travel",
+        "www.city.example.lg.jp",
+        "www.mlit.go.jp",
+        "www.culture.go.kr",
+        "www.culture.gouv.fr",
+        "www.gob.mx",
+        "www.tourism.govt.nz",
+    ]
+    refused = [
+        "sagano-kanko.co.jp",
+        "wikipedia.org",
+        "kyoto.travel",
+        "japan-guide.com",
+        "evil-go.jp",
+        "go.jp.evil.com",
+        "foo.go.io",
+        "foo.lg.jp.evil.com",
+        "japan.travel.evil.com",
+        "notjapan.travel",
+    ]
+
+    def fact(host):
+        return ResearchFact(
+            id=host, text=host, sources=[ResearchSource(title=host, url=f"https://{host}/p")]
+        )
+
+    evidence = ResearchEvidence(
+        facts=[fact(host) for host in [*accepted, *refused]],
+        retrieved_at="2026-11-20",
+        search_entry_html="<div>Search</div>",
+    )
+    assert [row.id for row in primary_evidence(evidence).facts] == accepted

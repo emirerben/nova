@@ -16,6 +16,7 @@ from app.config import settings
 from app.kria.clip_tilt_row import row_tilt_from_clip
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.render_assets import LibraryRenderAsset
 from app.pipeline.editor_render_window import RenderWindowUnavailable
 from app.pipeline.guided_story import (
     USER_SONG_LIPSYNC_LOCKED,
@@ -48,9 +49,12 @@ from app.pipeline.phone_recipe_shared import (
     PhoneSongBed,
     apply_landscape_fit,
     clip_tilt_zoom,
+    music_bed_from_treatment,
+    parse_speech_source_windows,
     timeline_end_s,
     with_color_moments,
     with_drawings,
+    with_speech_windows,
 )
 from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
@@ -84,7 +88,12 @@ from app.services.creator_render_contract import (
     decline_payload,
     read_render_contract,
 )
-from app.services.device_render import CONTRACT_REVISIONS_FIELD, device_status, pin_device_request
+from app.services.device_render import (
+    CONTRACT_REVISIONS_FIELD,
+    DEVICE_RENDER_FIELD,
+    device_status,
+    pin_device_request,
+)
 from app.services.phone_editor_sources import (
     editor_source_bindings,
     editor_sources_for_variant,
@@ -117,6 +126,8 @@ from app.services.phone_rollout import (
     speaker_background_color_client_supported,
     speaker_background_windows_client_supported,
     speaker_full_opening_client_supported,
+    speech_duck_client_supported,
+    talking_music_supported,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -938,6 +949,32 @@ def prepare_phone_editor_commit(
                 "minimum_client_protocol": settings.color_moments_min_client_protocol,
             },
         )
+    staged_row = next(
+        (
+            v
+            for v in (staged.assembly_plan or {}).get("variants", [])
+            if isinstance(v, dict) and v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if (
+        is_phone_subtitled_editor_variant(staged_row)
+        and isinstance(staged_row.get("smart_music_treatment"), dict)
+        and talking_music_supported(require_client=False)
+        and not speech_duck_client_supported()
+    ):
+        # KRI-1562: the Save this leaves behind still plays the creator's song, and an older
+        # build would play it at full level over her voice. A Save that removes it goes through.
+        from app.services.client_protocol import SPEECH_DUCK_PROTOCOL  # noqa: PLC0415
+
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speech_duck",
+                "minimum_client_protocol": SPEECH_DUCK_PROTOCOL,
+            },
+        )
     stored_variant = next(
         (
             v
@@ -1554,11 +1591,14 @@ def _compile_subtitled_editor_commit(
     if range_rows is not None and not phone_talking_range_supported():
         range_rows = None
     media_supported = phone_subtitled_editor_media_supported()
+    talking_music = talking_music_supported(require_client=False)
     allowed_sections = (
         _SUBTITLED_EDITOR_SECTIONS
         | (_SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset())
         | (frozenset({"timeline"}) if range_rows is not None else frozenset())
         | (frozenset({"visual_blocks"}) if media_supported else frozenset())
+        # KRI-1562: the staged `smart_music_treatment` (the route already wrote it) compiles.
+        | (frozenset({"background_music"}) if talking_music else frozenset())
     )
     unsupported_sections = active_sections - allowed_sections
     if unsupported_sections:
@@ -1693,6 +1733,23 @@ def _compile_subtitled_editor_commit(
             variant.get(SPEAKER_FRAMING_FIELD), landscape_fit=landscape_fit
         )
 
+    # KRI-1562: the creator's song rides every Save (a caption or sound Save never drops it), on
+    # the transcript's spoken windows, which a deleted caption line never moves. A "no music" in
+    # the brief this Save is bound to takes off a song carried from before; one the creator picks
+    # in this very Save is their later choice and plays.
+    drop_song = (
+        talking_music
+        and "background_music" not in active_sections
+        and isinstance(variant.get("smart_music_treatment"), dict)
+        and _bound_brief_asks_no_music(assembly, prep.get("generation"), variant_id)
+    )
+    music = (
+        music_bed_from_treatment(
+            variant.get("smart_music_treatment"), _saved_music_pin(previous.recipe)
+        )
+        if talking_music and not drop_song
+        else None
+    )
     recipe = compile_phone_subtitled_plan(
         (speaker,),
         caption_cues=caption_cues,
@@ -1700,6 +1757,16 @@ def _compile_subtitled_editor_commit(
         visuals=visuals,
         lanes=lanes,
         duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
+        **(
+            {
+                "music": music,
+                "speech_source_windows": parse_speech_source_windows(
+                    variant.get("speech_source_windows")
+                ),
+            }
+            if music is not None
+            else {}
+        ),
         keep_segments=keep_segments,
         caption_look=caption_look,
         cutaways=cutaways,
@@ -1811,6 +1878,11 @@ def _compile_subtitled_editor_commit(
         row["render_status"] = "awaiting_device"
         row["render_destination"] = "device"
         row["duration_s"] = recipe.duration
+        if drop_song:
+            row["smart_music_treatment"] = None
+        if drop_song or "background_music" in active_sections:
+            # The worker's record of how the asked song turned out no longer describes this one.
+            row.pop("talking_music", None)
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
         if framing_receipt is not None:
@@ -1832,6 +1904,52 @@ def _compile_subtitled_editor_commit(
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )
+
+
+def _bound_brief_asks_no_music(
+    assembly: Mapping[str, Any], generation: object, variant_id: str
+) -> bool:
+    """KRI-1562: does the newest brief this edit is bound to hold a live "no music"? This
+    Save's generation, else the one it replaces (a chat turn binds the brief it read to the
+    generation it saved), else the approved one. Unreadable reads as no."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.draft_sound_carry import asks_no_music  # noqa: PLC0415
+
+    bindings = assembly.get("creator_brief_bindings")
+    bindings = bindings if isinstance(bindings, Mapping) else {}
+    record = (assembly.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
+    replaced = record.get("base_generation") if isinstance(record, Mapping) else None
+    raw = next(
+        (bindings[key] for key in (str(generation), str(replaced)) if key in bindings),
+        assembly.get("creator_brief_binding"),
+    )
+    try:
+        brief = BriefBinding.model_validate(raw).resolve()
+    except (ValueError, TypeError):
+        return False
+    return asks_no_music(brief)
+
+
+def _saved_music_pin(previous: Any) -> Callable[[str, str], tuple[Any, float | None]]:
+    """KRI-1562: how a Save pins the creator's song. The song the pinned recipe already plays
+    keeps its receipt (Save never re-hashes it); a newly chosen one, whose catalog row the route
+    checked, is hashed once, like a newly added sound effect (`lanes_from_editor_sections`)."""
+
+    def pin(track_id: str, path: str) -> tuple[Any, float | None]:
+        if isinstance(previous, EditRecipeV2):
+            durations = {asset.id: asset.duration for asset in previous.assets}
+            for asset in previous.asset_manifest.assets:
+                if (
+                    isinstance(asset, LibraryRenderAsset)
+                    and asset.catalog == "music"
+                    and asset.catalog_id == track_id
+                ):
+                    return asset, durations.get(asset.id)
+        from app.services.render_library import inspect_music_track  # noqa: PLC0415
+
+        return inspect_music_track(track_id, path), None
+
+    return pin
 
 
 def _apply_talking_range(
@@ -2418,6 +2536,10 @@ def _compile_voiceover_montage_editor_commit(
                 variant, previous.recipe, prep.get("landscape_fit_override")
             ),
             visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
+        )
+        # KRI-1562: a longer cut plays more of the voice; the bed must duck under it too.
+        recipe = with_speech_windows(
+            recipe, parse_speech_source_windows(variant.get("speech_source_windows"))
         )
     fit_override = prep.get("landscape_fit_override")
     if fit_override is not None:

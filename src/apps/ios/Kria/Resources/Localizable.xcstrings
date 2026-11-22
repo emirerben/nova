@@ -18014,18 +18014,18 @@
         }
       }
     },
-    "I agree to share my messages and selected media with Google Gemini and OpenAI for AI editing" : {
+    "I agree to share my data as described above" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ich stimme zu, meine Nachrichten und ausgewählten Medien für die KI-Bearbeitung mit Google Gemini und OpenAI zu teilen"
+            "value" : "Ich stimme der oben beschriebenen Datenweitergabe zu"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yapay zekâ düzenlemesi için mesajlarımı ve seçtiğim medyaları Google Gemini ve OpenAI ile paylaşmayı kabul ediyorum"
+            "value" : "Verilerimin yukarıda açıklandığı şekilde paylaşılmasını kabul ediyorum"
           }
         }
       }
@@ -20268,18 +20268,18 @@
         }
       }
     },
-    "Kria only uploads what you choose. Depending on how a project renders, that is either full-quality originals for cloud editing or smaller copies for analysis. Nothing is uploaded from your camera roll until you choose it." : {
+    "Only selected media is uploaded: originals for cloud editing or smaller copies for analysis." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kria lädt nur hoch, was du auswählst. Je nachdem, wie ein Projekt erstellt wird, sind das entweder Originale in voller Qualität für die Cloud-Bearbeitung oder kleinere Kopien für die Analyse. Aus deiner Kamerarolle wird nichts hochgeladen, bevor du es auswählst."
+            "value" : "Nur ausgewählte Medien werden hochgeladen: Originale für den Cloud-Schnitt oder kleinere Kopien für die Analyse."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kria yalnızca seçtiklerini yükler. Projenin nasıl oluşturulduğuna göre bunlar, bulutta düzenleme için tam kalitede orijinaller ya da analiz için daha küçük kopyalar olur. Sen seçmeden kamera rulonuzdan hiçbir şey yüklenmez."
+            "value" : "Yalnızca seçtiğin medya yüklenir: bulutta düzenleme için orijinaller veya analiz için küçük kopyalar."
           }
         }
       }
@@ -30474,6 +30474,22 @@
         }
       }
     },
+    "Remove empty ending" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leeres Ende entfernen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Boş son kısmı kaldır"
+          }
+        }
+      }
+    },
     "Remove split" : {
       "localizations" : {
         "de" : {
@@ -33789,6 +33805,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kısa destek videoları."
+          }
+        }
+      }
+    },
+    "Shorten a clip or choose another spot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kürze einen Clip oder wähle eine andere Stelle."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bir klibi kısalt veya başka bir yer seç."
           }
         }
       }
@@ -41252,6 +41284,22 @@
         }
       }
     },
+    "This clip won’t fit here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Clip passt hier nicht hin."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu klip buraya sığmıyor."
+          }
+        }
+      }
+    },
     "This panel is full. Shorten a clip in it to make room." : {
       "localizations" : {
         "de" : {
@@ -48207,18 +48255,18 @@
         }
       }
     },
-    "Your messages and selected media, including faces, voices, and transcripts, are sent to Google Gemini and OpenAI for analysis, transcription, and editing. Kria stores your projects and finished videos in your account." : {
+    "Google Gemini and OpenAI process your messages and selected footage, including faces, voices and transcripts, to edit videos. Anthropic (Claude) uses your edit requests and project context to suggest changes. Kria stores your projects and finished videos." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Deine Nachrichten und ausgewählten Medien, einschließlich Gesichtern, Stimmen und Transkripten, werden zur Analyse, Transkription und Bearbeitung an Google Gemini und OpenAI gesendet. Kria speichert deine Projekte und fertigen Videos in deinem Konto."
+            "value" : "Google Gemini und OpenAI verarbeiten deine Nachrichten und ausgewählten Aufnahmen mit Gesichtern, Stimmen und Transkripten für den Videoschnitt. Anthropic (Claude) nutzt deine Änderungswünsche und Projektinformationen für Vorschläge. Kria speichert deine Projekte und fertigen Videos."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mesajların ve seçtiğin medyalar (yüzler, sesler ve metin dökümleri dahil) analiz, yazıya dökme ve düzenleme için Google Gemini ve OpenAI'a gönderilir. Kria projelerini ve tamamlanan videolarını hesabında saklar."
+            "value" : "Google Gemini ve OpenAI, video düzenlemek için mesajlarını ve seçtiğin görüntüleri, yüzler, sesler ve dökümler dahil, işler. Anthropic (Claude), düzenleme isteklerini ve proje bilgilerini kullanarak değişiklik önerir. Kria projelerini ve bitmiş videolarını saklar."
           }
         }
       }

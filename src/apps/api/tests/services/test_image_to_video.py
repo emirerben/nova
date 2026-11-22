@@ -30,9 +30,13 @@ def _make_image_bytes(width: int, height: int, fmt: str = "JPEG") -> bytes:
 def _ffprobe_duration_s(path: str) -> float:
     out = subprocess.check_output(
         [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             path,
         ],
         text=True,
@@ -43,10 +47,15 @@ def _ffprobe_duration_s(path: str) -> float:
 def _ffprobe_resolution(path: str) -> tuple[int, int]:
     out = subprocess.check_output(
         [
-            "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=p=0:s=,",
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=,",
             path,
         ],
         text=True,
@@ -60,10 +69,15 @@ def _ffprobe_color_metadata(path: str) -> tuple[str, str, str]:
     the H.264 SPS by ffprobe. Used to verify -x264-params propagation."""
     out = subprocess.check_output(
         [
-            "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=color_primaries,color_transfer,color_space",
-            "-of", "csv=p=0:s=,",
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=color_primaries,color_transfer,color_space",
+            "-of",
+            "csv=p=0:s=,",
             path,
         ],
         text=True,
@@ -210,8 +224,7 @@ class TestEndToEnd:
         image_bytes_to_mp4(raw, str(out), duration_s=2.0)
         primaries, transfer, space = _ffprobe_color_metadata(str(out))
         assert primaries == "bt709", (
-            f"color_primaries must be bt709 (was {primaries!r}); "
-            f"missing -x264-params propagation"
+            f"color_primaries must be bt709 (was {primaries!r}); missing -x264-params propagation"
         )
         assert transfer == "bt709", f"color_transfer must be bt709 (was {transfer!r})"
         assert space == "bt709", f"color_space must be bt709 (was {space!r})"

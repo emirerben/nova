@@ -693,6 +693,20 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "sfx_ask_chooser",
+        "sfx_ask",
+        "sfx_ask.request_text",
+        "sfx_ask.max_placements",
+        note=(
+            "KRI-1561: a general sound-effect ask. The phone Talking, Voiceover and "
+            "montage-with-voiceover workers choose the moments "
+            "(app.services.sfx_chooser.choose_sfx), write them as ordinary "
+            "sound_effects lane rows and record variant['phone_sfx_choice_receipt']. The "
+            "contract itself does not verify placement"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "ending_clip_repair",
         "ending_clip",
         "ending_clip.media_id",

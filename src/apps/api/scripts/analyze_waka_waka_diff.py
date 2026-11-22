@@ -23,6 +23,7 @@ Without tesseract installed, the analyzer still runs but reports text as
 "<unknown>" with text_source="color-region-fallback" — text content
 mismatches will still be detected via region+color but not by string.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,8 +57,8 @@ from scripts.overlay_forensics import safe_crop as safe_crop_mod  # noqa: E402
 # config works for the 1024x576 recipe and the 1080x1920 output. Real text
 # overlays at 60-250px font size cover 0.05-2% of the frame; pure-color noise
 # in b-roll (sand glints, sky pixels) is much smaller in relative terms.
-WHITE_MIN_PIXELS_FRAC = 0.00015   # ~88 px at 1024x576, ~311 px at 1080x1920
-MAIZE_MIN_PIXELS_FRAC = 0.00030   # ~177 px / ~622 px
+WHITE_MIN_PIXELS_FRAC = 0.00015  # ~88 px at 1024x576, ~311 px at 1080x1920
+MAIZE_MIN_PIXELS_FRAC = 0.00030  # ~177 px / ~622 px
 WHITE_MIN_LUMA = 220
 
 # Filter spurious tiny detections post-clustering: real text events have
@@ -100,9 +101,14 @@ def detect_audio_beats(audio_path: Path, threshold_db: float = -35.0) -> list[fl
     energy onset. Non-fatal: returns [] on any error.
     """
     cmd = [
-        "ffmpeg", "-i", str(audio_path),
-        "-af", f"silencedetect=noise={threshold_db}dB:d=0.1",
-        "-f", "null", "-",
+        "ffmpeg",
+        "-i",
+        str(audio_path),
+        "-af",
+        f"silencedetect=noise={threshold_db}dB:d=0.1",
+        "-f",
+        "null",
+        "-",
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=30, check=False)
@@ -110,8 +116,7 @@ def detect_audio_beats(audio_path: Path, threshold_db: float = -35.0) -> list[fl
             return []
         stderr_text = result.stderr.decode("utf-8", errors="replace")
         return sorted(
-            float(m.group(1))
-            for m in re.finditer(r"silence_end:\s*([\d.]+)", stderr_text)
+            float(m.group(1)) for m in re.finditer(r"silence_end:\s*([\d.]+)", stderr_text)
         )
     except Exception:
         return []
@@ -177,18 +182,22 @@ def _detect_color_observations_per_frame(
             continue
         # Compute mean brightness over the masked region — used by animation
         # classifier to spot fade-in.
-        text_pixels = frame[
-            bbox.y_min:bbox.y_max + 1, bbox.x_min:bbox.x_max + 1
-        ].mean() if (bbox.height > 0 and bbox.width > 0) else 0.0
-        out.append(events_mod.FrameObservation(
-            t_s=frame_t,
-            color_key=color_key,
-            bbox=bbox,
-            mask_pixel_count=pixel_count,
-            mean_brightness=float(text_pixels) / 255.0,
-            frame_array=frame,
-            mask=mask,
-        ))
+        text_pixels = (
+            frame[bbox.y_min : bbox.y_max + 1, bbox.x_min : bbox.x_max + 1].mean()
+            if (bbox.height > 0 and bbox.width > 0)
+            else 0.0
+        )
+        out.append(
+            events_mod.FrameObservation(
+                t_s=frame_t,
+                color_key=color_key,
+                bbox=bbox,
+                mask_pixel_count=pixel_count,
+                mean_brightness=float(text_pixels) / 255.0,
+                frame_array=frame,
+                mask=mask,
+            )
+        )
     return out
 
 
@@ -280,7 +289,9 @@ def analyze_video(
     # gap_tolerance_steps=4 (=0.20s @ 0.05s step) absorbs font-cycle flickers
     # where a frame transiently dips below min_pixels.
     events = events_mod.cluster_observations_to_events(
-        observations, width, height,
+        observations,
+        width,
+        height,
         step_s=step_s,
         gap_tolerance_steps=4,
         min_duration_s=0.10,
@@ -289,7 +300,8 @@ def analyze_video(
 
     # Drop tiny stray detections — real text covers > EVENT_MIN_HEIGHT_FRAC.
     events = [
-        ev for ev in events
+        ev
+        for ev in events
         if ev.median_relative_bbox(width, height).h_frac >= EVENT_MIN_HEIGHT_FRAC
     ]
 
@@ -350,8 +362,7 @@ def _check_cooccurrence(
         return None
     t = trigger.t_start
     visible = {
-        (e.text or "").lower() for e in events
-        if e.t_start <= t <= e.t_end and e is not trigger
+        (e.text or "").lower() for e in events if e.t_start <= t <= e.t_end and e is not trigger
     }
     return all(rt.lower() in visible for rt in required_texts)
 
@@ -366,9 +377,15 @@ def build_report(
 
     pairs = diff_mod.pair_events(recipe.events, output.events)
     for pair in pairs:
-        findings.extend(diff_mod.diff_paired_event(
-            pair, recipe.width, recipe.height, output.width, output.height,
-        ))
+        findings.extend(
+            diff_mod.diff_paired_event(
+                pair,
+                recipe.width,
+                recipe.height,
+                output.width,
+                output.height,
+            )
+        )
 
     # Co-occurrence rule: in recipe, when "Africa" (or location) starts, both
     # "This" and "is" must still be visible. Same check on output. Flag if
@@ -415,7 +432,9 @@ def build_report(
         for ev in recipe.events:
             label = (ev.text or ev.color_key).strip()
             proj = safe_crop_mod.project_to_9x16(
-                ev.median_bbox(), recipe.width, recipe.height,
+                ev.median_bbox(),
+                recipe.width,
+                recipe.height,
             )
             safe_crop_summaries[label] = {
                 "survives": proj.survives,
@@ -486,9 +505,7 @@ def _event_json(ev: events_mod.TextEvent, frame_w: int, frame_h: int) -> dict:
     return {
         "text": ev.text,
         "text_source": ev.text_source,
-        "ocr_confidence": (
-            None if ev.ocr_confidence is None else round(ev.ocr_confidence, 3)
-        ),
+        "ocr_confidence": (None if ev.ocr_confidence is None else round(ev.ocr_confidence, 3)),
         "color_key": ev.color_key,
         "t_start": round(ev.t_start, 3),
         "t_end": round(ev.t_end, 3),
@@ -554,8 +571,10 @@ def _print_stdout_report(report: dict) -> None:
 
     print()
     print("--- DETECTED EVENTS ---")
-    for label, evs in (("recipe", report["events"]["recipe"]),
-                      ("output", report["events"]["output"])):
+    for label, evs in (
+        ("recipe", report["events"]["recipe"]),
+        ("output", report["events"]["output"]),
+    ):
         print(f"\n  [{label}] {len(evs)} event(s):")
         for ev in evs:
             print(
@@ -596,17 +615,28 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "videos", nargs=2,
+        "videos",
+        nargs=2,
         help="Two videos. Use LABEL=path (REF=recipe.mp4 OURS=output.mp4).",
     )
-    parser.add_argument("--window", type=float, default=DEFAULT_WINDOW_S,
-                        help=f"Analysis window in seconds (default {DEFAULT_WINDOW_S})")
-    parser.add_argument("--sample-step", type=float, default=DEFAULT_STEP_S,
-                        help=f"Seconds between sampled frames (default {DEFAULT_STEP_S})")
-    parser.add_argument("--json", type=Path,
-                        help="Write structured JSON report to this path")
-    parser.add_argument("--no-ocr", action="store_true",
-                        help="Skip OCR entirely (use color-region fallback for all text)")
+    parser.add_argument(
+        "--window",
+        type=float,
+        default=DEFAULT_WINDOW_S,
+        help=f"Analysis window in seconds (default {DEFAULT_WINDOW_S})",
+    )
+    parser.add_argument(
+        "--sample-step",
+        type=float,
+        default=DEFAULT_STEP_S,
+        help=f"Seconds between sampled frames (default {DEFAULT_STEP_S})",
+    )
+    parser.add_argument("--json", type=Path, help="Write structured JSON report to this path")
+    parser.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="Skip OCR entirely (use color-region fallback for all text)",
+    )
     args = parser.parse_args(argv)
 
     frames_mod.check_ffmpeg_installed()
@@ -625,14 +655,10 @@ def main(argv: list[str] | None = None) -> int:
     label_map = {label.upper(): (label, p) for label, p in parsed}
     if "REF" in label_map:
         recipe_label, recipe_path = label_map["REF"]
-        ours_label, ours_path = next(
-            (lp for k, lp in label_map.items() if k != "REF")
-        )
+        ours_label, ours_path = next((lp for k, lp in label_map.items() if k != "REF"))
     elif "OURS" in label_map:
         ours_label, ours_path = label_map["OURS"]
-        recipe_label, recipe_path = next(
-            (lp for k, lp in label_map.items() if k != "OURS")
-        )
+        recipe_label, recipe_path = next((lp for k, lp in label_map.items() if k != "OURS"))
     else:
         recipe_label, recipe_path = parsed[0]
         ours_label, ours_path = parsed[1]

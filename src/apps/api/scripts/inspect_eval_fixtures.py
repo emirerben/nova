@@ -18,9 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-FIXTURES_ROOT = (
-    Path(__file__).parent.parent / "tests" / "fixtures" / "agent_evals"
-)
+FIXTURES_ROOT = Path(__file__).parent.parent / "tests" / "fixtures" / "agent_evals"
 
 BAR = "─" * 72
 DOT = "·" * 72
@@ -164,9 +162,7 @@ def main() -> None:
         sys.exit(f"no fixtures found at {FIXTURES_ROOT}")
 
     agents_to_show = (
-        [args.agent]
-        if args.agent
-        else ["template_recipe", "creative_direction", "clip_metadata"]
+        [args.agent] if args.agent else ["template_recipe", "creative_direction", "clip_metadata"]
     )
 
     total = 0

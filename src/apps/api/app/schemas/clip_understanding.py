@@ -282,12 +282,12 @@ class ClipUnderstanding(BaseModel):
     def prompt_view(
         self,
         *,
-        transcript_chars: int = 400,
+        transcript_chars: int | None = 400,
         include_facts: bool = False,
         include_segments: bool = False,
-        segment_chars: int = 900,
+        segment_chars: int | None = 900,
     ) -> dict[str, Any]:
-        """Compact dict for an LLM prompt: empty fields dropped, transcript capped.
+        """Project stored evidence for a prompt. A None budget keeps the full stored field.
 
         ``facts`` (KRI-189) appear only when the caller opts in, so the CLIP_FACTS
         kill switch also silences facts already stored on older analyses. Timed
@@ -310,7 +310,7 @@ class ClipUnderstanding(BaseModel):
                 "has_speech": self.speech.has_speech or bool(self.speech.transcript),
                 "to_camera": self.speech.to_camera,
             }
-            if self.speech.transcript and transcript_chars > 0:
+            if self.speech.transcript and (transcript_chars is None or transcript_chars > 0):
                 speech["transcript"] = self.speech.transcript[:transcript_chars]
             if include_segments and self.speech.segments:
                 rows: list[dict[str, Any]] = []
@@ -319,7 +319,7 @@ class ClipUnderstanding(BaseModel):
                     if not seg.text:
                         continue
                     used += len(seg.text)
-                    if rows and used > segment_chars:
+                    if rows and segment_chars is not None and used > segment_chars:
                         break  # compact: whole sentences only, never a clipped one
                     rows.append(
                         {"s": round(seg.start_s, 1), "e": round(seg.end_s, 1), "text": seg.text}

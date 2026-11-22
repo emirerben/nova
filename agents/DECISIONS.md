@@ -4078,3 +4078,32 @@ entry, or a caption/label early after a `straddle` late run: `SPEECH_CLEANUP_STR
 **Gap:** nothing runs when nobody pushes (one CI run in 12 hours on the night of 2026-11-18). The real fix is a monitor outside GitHub polling `/health/beat`; the API keeps two machines running, so polling costs nothing extra. Not built: it needs an account and an alert address that only the owner can set up.
 **Why not a GitHub token in Celery Beat or Fly:** a Beat-driven check of Beat shares its blind spot, and the health check needs no GitHub call at all. For exact nightly times a token would work, but that is prod code, a Fly secret and a deploy for a problem the earlier schedule (KRI-1552) may already solve; decide after a week of real start times.
 **Guards:** `scripts/ci/test_beat_health_workflow.py` (the followed workflow names match the real ones; the job has no token, checkout, secret or interpolated text).
+
+## [2026-11-20] An hourly Claude Code routine watches the Beat lane and restarts a stopped light machine (KRI-1553)
+
+**Context:** after the entry above, a stretch with no pushes still had only GitHub's schedule (about 3 runs a day). The owner chose a Claude Code cloud routine over a hosted uptime monitor: no new account, and it can act as well as alert.
+**Decision:** routine "Nova Beat health watch" (`trig_01TntgWxocgy37Q1W2ak8Fsp`, manage or pause at claude.ai/code/routines), every hour at minute 7, on the "Default" cloud environment. It reads `/health/beat`; when healthy it does nothing (about 3 seconds). When the answer is stale on two checks it lists the app's machines and, only if a `light` machine is `stopped`, starts that one machine once, waits up to 10 minutes, and sends the owner a Slack direct message with the outcome. Any other failure: it starts nothing and messages the owner.
+**What it holds:** `FLY_API_TOKEN` in that cloud environment's variables, a deploy token for `nova-video` only (`fly tokens create deploy -a nova-video`). The environment's network settings must allow `nova-video.fly.dev` and `api.machines.dev`; without them the proxy refuses the request and the routine reports "could not reach" (this happened on its first run). Anyone who can edit the environment can read the token, and every routine on it gets it. To revoke: `fly tokens list -a nova-video`, then `fly tokens revoke`.
+**Limits:** hourly is the fastest a routine can run, so worst-case detection is the staleness threshold plus about an hour. The start call has never been exercised (that needs a stopped production machine), and the routine's own permission check may refuse it; the Slack message then gives the manual commands. A machine that stops again each hour is started again each hour, with a message each time. The routine lives outside this repository: its prompt is the source of truth for its behaviour.
+**Reversal condition:** false alarms, or a restart that hides a crash loop. Pause the routine; `beat-health.yml` keeps working without it.
+
+## [2026-11-20] CLAUDE.md flag detail moved out for `TALKING_MUSIC_ENABLED` (KRI-1562)
+
+CLAUDE.md was already 77 bytes over its 38,000 budget on main when KRI-1562 needed its flag line. The two music-bed lines were merged with the new one and three other flag lines were shortened; their full original text, preserved verbatim:
+
+- `SMART_MUSIC_BED_ENABLED` — default `true`. Kill switch for the v2 music bed; off = no new treatments, reburns skip it.
+
+- `SMART_MUSIC_BED_REQUIRES_REQUEST_ENABLED` — default `true` (KRI-20). Bed resolver only returns a creator-selected treatment; never auto-matches. `false` = pre-fix.
+
+- `PLAN_SYNC_DISPATCH_ENABLED` — default `true`. Generate mints the Job in-request (`dispatch_item_render_for`: FOR-UPDATE lock; duplicate ⇒ 200; publish-fail ⇒ `processing_failed`). `false` ⇒ legacy `.delay()`+409. plans/014; apply: fly secret + restart.
+
+- `NARRATIVE_CLIP_ORDER_ENABLED` — default `true`. Plan-item edits follow the filming guide's shot order (`content_plan_build._narrative_clip_order`), read at render time. `false` ⇒ greedy matching. Apply: fly secret + restart.
+
+- `TIKTOK_DEEP_ANALYSIS_ENABLED` — default `true`; `false` ⇒ no TikTok analysis in persona/plan/hook prompts (byte-identical). Apply: fly secret + restart.
+
+## [2026-11-21] A typed music ask on a phone Talking edit picks a library song (KRI-1562 PR3)
+
+**Decision:** with `TALKING_MUSIC_ENABLED` on, "talking video with some chill music" / "arkada sakin bir müzik olsun" is a typed `audio_intent: music` (+ `music_mood`) on the brief. The Talking worker reads it from the approved brief and, with no song stored on the variant, ranks the library with `music_matcher` (the mood as the creator's ask) and plays the winner's rank-1 section. Chat's `swap_music` adds or swaps and `remove_music` removes the song through the Talking Save's `background_music` section. One owner: `app/services/talking_music.py` (eligibility, treatment, chat rows, "does the recipe play a song"). The receipt reads the pinned recipe, never the stored treatment.
+**"No music" wins:** a live `no_music` in the brief stops the worker (even over a stored song), empties chat's candidate list and refuses `swap_music` in words, and a Save bound to that brief takes off a song carried from before. A song the creator picks in that Save's own music section plays: it is their later choice.
+**Open for the owner:** the 2026-11-01 song rule says a creator job never gets a catalog song it did not upload (`creator_song_rule`, both kill switches on). This path lets the matcher pick a library song for a creator who asked for music. It is gated only by `TALKING_MUSIC_ENABLED` (default off) and touches neither song-rule switch, so it needs an explicit owner yes before the flag is flipped. The phone Voiceover writer still never asks the matcher (`phone_catalog_song_match_blocked` has no ask exception); a Voiceover music ask is a follow-up.
+**Not verified:** no live model run. The brief writer and copilot answers in the replay (`tests/kria/test_talking_music_requests.py`) are authored, so whether the models emit the fact and ops for these sentences is unmeasured; `action_music_swap` lost its recording when its snapshot changed.

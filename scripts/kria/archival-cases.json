@@ -1,0 +1,94 @@
+{
+  "provenance": "Wikimedia Commons file pages displayed Public domain when downloaded 2026-11-10. Observations from the accompanying source inventory. Requests and typed shot orders authored for this interim evaluation. Use the first two seconds of each source.",
+  "sources": {
+    "alphabet": {
+      "file_page": "https://commons.wikimedia.org/wiki/File:Mustafa_Kemal_teaching_new_alphabet_to_Ulku.ogv",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/f/fb/Mustafa_Kemal_teaching_new_alphabet_to_Ulku.ogv",
+      "sha256": "c7c6b49306009da6bc644d4a4d32b1afed22f5783948cb9d3ce6a91b07d39c87",
+      "observation": "Teaching the new alphabet to Ülkü at a blackboard (whole file)"
+    },
+    "anatolian": {
+      "file_page": "https://commons.wikimedia.org/wiki/File:Mustafa_Kemal_during_his_Anatolian_tours.ogv",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/c/cc/Mustafa_Kemal_during_his_Anatolian_tours.ogv",
+      "sha256": "008c5b705f854bd6e9c3f726768e0096667ef0cdf3bb28f0720174219ec07e10",
+      "observation": "Stepping down from train during Anatolian tour, greeted on platform (whole file)"
+    },
+    "farms": {
+      "file_page": "https://commons.wikimedia.org/wiki/File:Mustafa_Kemal_establishment_of_model_farms.ogv",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/7/7f/Mustafa_Kemal_establishment_of_model_farms.ogv",
+      "sha256": "4f34f7ca02ebf4a4eff0e4e2093713e6de4c9b0aa63e23c71598793ae1c07d70",
+      "observation": "Standing in a field in light suit and hat, model farm (whole file)"
+    },
+    "parliament": {
+      "file_page": "https://commons.wikimedia.org/wiki/File:Mustafa_Kemal_with_members_of_parliament.ogv",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/d/d7/Mustafa_Kemal_with_members_of_parliament.ogv",
+      "sha256": "54553eb4a1fc84976f2a11ec5a5b4b9132693a4c3a4d9eca8986aee8c8efecd1",
+      "observation": "Leaving the Grand National Assembly building with deputies (whole file)"
+    },
+    "revolutionaries": {
+      "file_page": "https://commons.wikimedia.org/wiki/File:Mustafa_Kemal_and_Turkish_revolutionaries.ogv",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/b7/Mustafa_Kemal_and_Turkish_revolutionaries.ogv",
+      "sha256": "95dc45256e7e71c9264bf1a6b264a2d9a3ebb18130aab9df2fcde88fd6de5701",
+      "observation": "Mustafa Kemal in kalpak among revolutionaries, flag and crowd (whole file)"
+    },
+    "rose": {
+      "file_page": "https://commons.wikimedia.org/wiki/File:Mustafa_Kemal_rose_garden.ogv",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/5/55/Mustafa_Kemal_rose_garden.ogv",
+      "sha256": "9d631b2e067ad01f698043bd95a38a03ca33e56aa306a0f0cfe030d65b9c0e66",
+      "observation": "Tending the rose garden by the sea with Ülkü (whole file)"
+    }
+  },
+  "cases": {
+    "archive_arrival": {
+      "request": "Start with the train arrival, then show the deputies leaving parliament. Give each shot two seconds.",
+      "attachments": [
+        "parliament",
+        "anatolian"
+      ],
+      "creator_order": [
+        1,
+        0
+      ],
+      "expected": [
+        "anatolian",
+        "parliament"
+      ]
+    },
+    "archive_garden": {
+      "request": "Önce gül bahçesini, sonra tarlayı, en son kara tahtayı göster. Her çekim iki saniye sürsün.",
+      "attachments": [
+        "alphabet",
+        "rose",
+        "farms"
+      ],
+      "creator_order": [
+        1,
+        2,
+        0
+      ],
+      "expected": [
+        "rose",
+        "farms",
+        "alphabet"
+      ]
+    },
+    "archive_crowd": {
+      "request": "Zeige erst die Menschenmenge mit der Fahne, dann die Tafel und zum Schluss die Ankunft am Zug. Pro Einstellung zwei Sekunden.",
+      "attachments": [
+        "anatolian",
+        "revolutionaries",
+        "alphabet"
+      ],
+      "creator_order": [
+        1,
+        2,
+        0
+      ],
+      "expected": [
+        "revolutionaries",
+        "alphabet",
+        "anatolian"
+      ]
+    }
+  }
+}

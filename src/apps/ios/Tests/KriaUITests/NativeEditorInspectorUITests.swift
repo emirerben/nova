@@ -818,7 +818,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let hidden = app.buttons["native-editor-tool-draw"]
         XCTAssertTrue(peeking.waitForExistence(timeout: 5))
         for tool in whole {
-            XCTAssertGreaterThanOrEqual(tool.frame.width, 44)
+            assertTouchTarget(tool.frame.width)
             XCTAssertLessThanOrEqual(tool.frame.maxX, rail.frame.maxX, "whole tools sit fully inside the rail")
         }
         let shown = rail.frame.maxX - peeking.frame.minX
@@ -897,7 +897,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
             let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
             XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(handle.isHittable, tool)
-            XCTAssertGreaterThanOrEqual(handle.frame.height, 44, tool)
+            assertTouchTarget(handle.frame.height, tool)
             let initialPanel = panel.frame
             let initialPreview = preview.frame
             let railBottom = rail.frame.maxY
@@ -1799,7 +1799,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["native-editor-tool-sounds"].tap()
         let songRow = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
         XCTAssertTrue(songRow.waitForExistence(timeout: 4))
-        XCTAssertGreaterThanOrEqual(songRow.frame.height, 44, "the song row keeps a 44pt touch target")
+        assertTouchTarget(songRow.frame.height, "the song row keeps a 44pt touch target")
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-note"].firstMatch.exists)
         XCTAssertFalse(app.textFields["native-editor-music-track-input"].exists, "the song is a project asset, not a track ID")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-music-volume"].firstMatch.exists)
@@ -1819,8 +1819,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let end = app.descendants(matching: .any)["native-editor-your-song-trim-end"].firstMatch
         XCTAssertTrue(start.waitForExistence(timeout: 4))
         XCTAssertTrue(end.exists)
-        XCTAssertGreaterThanOrEqual(start.frame.width, 43.9)
-        XCTAssertGreaterThanOrEqual(end.frame.width, 43.9)
+        assertTouchTarget(start.frame.width)
+        assertTouchTarget(end.frame.width)
         let scroll = app.scrollViews["native-editor-sounds-scroll"]
         XCTAssertTrue(scroll.frame.contains(CGPoint(x: bar.frame.midX, y: bar.frame.midY)), "the trim bar must sit inside the raised Sounds panel")
 
@@ -1951,7 +1951,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(percent.label, "0%", "the song plays alone until the creator turns the camera up")
         let slider = app.sliders["Original audio volume"]
         XCTAssertTrue(slider.waitForExistence(timeout: 4))
-        XCTAssertGreaterThanOrEqual(control.frame.height, 44, "the control keeps a 44pt touch target")
+        assertTouchTarget(control.frame.height, "the control keeps a 44pt touch target")
         // Scroll the control into the panel's reachable area if the song controls pushed it down.
         let scroll = app.scrollViews["native-editor-sounds-scroll"]
         if !slider.isHittable { scroll.swipeUp() }

@@ -1,0 +1,122 @@
+{
+  "agent": "nova.compose.sfx_placement",
+  "prompt_version": "2026-11-20-v3",
+  "input": {
+    "words": [
+      {
+        "word": "Three",
+        "start_s": 0.5,
+        "end_s": 0.9
+      },
+      {
+        "word": "tips",
+        "start_s": 1.05,
+        "end_s": 1.45
+      },
+      {
+        "word": "for",
+        "start_s": 1.6,
+        "end_s": 2.0
+      },
+      {
+        "word": "better",
+        "start_s": 2.15,
+        "end_s": 2.55
+      },
+      {
+        "word": "coffee",
+        "start_s": 2.7,
+        "end_s": 3.1
+      },
+      {
+        "word": "grind",
+        "start_s": 3.25,
+        "end_s": 3.65
+      },
+      {
+        "word": "fresh",
+        "start_s": 3.8,
+        "end_s": 4.2
+      },
+      {
+        "word": "use",
+        "start_s": 4.35,
+        "end_s": 4.75
+      },
+      {
+        "word": "cold",
+        "start_s": 4.9,
+        "end_s": 5.3
+      },
+      {
+        "word": "water",
+        "start_s": 5.45,
+        "end_s": 5.85
+      },
+      {
+        "word": "and",
+        "start_s": 6.0,
+        "end_s": 6.4
+      },
+      {
+        "word": "weigh",
+        "start_s": 6.55,
+        "end_s": 6.95
+      },
+      {
+        "word": "everything",
+        "start_s": 7.1,
+        "end_s": 7.5
+      }
+    ],
+    "pauses": [],
+    "moments": [],
+    "effects": [
+      {
+        "effect_id": "sfx-whoosh",
+        "name": "Whoosh",
+        "role_tags": [
+          "motion",
+          "transition"
+        ],
+        "duration_s": 0.6
+      },
+      {
+        "effect_id": "sfx-pop",
+        "name": "Pop",
+        "role_tags": [
+          "appear",
+          "reaction"
+        ],
+        "duration_s": 0.3
+      },
+      {
+        "effect_id": "sfx-click",
+        "name": "UI click",
+        "role_tags": [
+          "ui"
+        ],
+        "duration_s": 0.2
+      }
+    ],
+    "duration_s": 9.0,
+    "request_text": "make this edit feel alive with some sound design",
+    "beats_s": [
+      0.5,
+      1.05,
+      1.6,
+      2.15,
+      2.7,
+      3.25,
+      3.8,
+      4.35
+    ]
+  },
+  "raw_text": "{\"placements\": [{\"effect_id\": \"sfx-click\", \"at_s\": 0.5, \"gain\": 0.7, \"anchor\": \"word_start\", \"reason\": \"click on the tips\"}, {\"effect_id\": \"sfx-pop\", \"at_s\": 4.35, \"gain\": 0.7, \"anchor\": \"word_start\", \"reason\": \"pop on the weigh tip\"}]}",
+  "output": {},
+  "meta": {
+    "source": "hand-authored-golden",
+    "contract": "a general request places effects only on supplied word marks, at least 1.5s apart, none in the last 0.5s"
+  },
+  "prompt_sha": "86394b0a4c33571c"
+}

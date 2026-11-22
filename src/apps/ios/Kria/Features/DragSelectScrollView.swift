@@ -169,7 +169,12 @@ struct DragSelectRecognizer: UIGestureRecognizerRepresentable {
             let t = pan.translation(in: pan.view)
             return DragSelect.isHorizontalIntent(translation: CGSize(width: t.x, height: t.y))
         }
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+        /// Only the scroll view's own recognizers run alongside a slide. Everything else on the touch, the tile
+        /// buttons included, fails once the slide begins: a slide that started moving at once used to end in a tap
+        /// on its first tile, which undid that tile when the slide ended within the button's reach (KRI-1550).
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            other.view is UIScrollView
+        }
     }
 
     func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }

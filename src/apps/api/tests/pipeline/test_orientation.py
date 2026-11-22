@@ -421,8 +421,10 @@ class TestNormalizeOrientationIntegration:
         with patch("app.services.pipeline_trace.record_pipeline_event") as mock_record:
             normalize_orientation(str(target))
 
-        events = [c.kwargs.get("event") or (c.args[1] if len(c.args) > 1 else None)
-                  for c in mock_record.call_args_list]
+        events = [
+            c.kwargs.get("event") or (c.args[1] if len(c.args) > 1 else None)
+            for c in mock_record.call_args_list
+        ]
         assert "normalized" in events, (
             f"square+flag must hit the re-encode path (event='normalized'), got {events}"
         )
@@ -439,32 +441,68 @@ class TestNormalizeOrientationIntegration:
         reference = tmp_path / "ref_pos90.png"
         subprocess.run(
             [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-ss", "0.3", "-i", str(rotated_pos90_clip),
-                "-vframes", "1", str(reference),
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "0.3",
+                "-i",
+                str(rotated_pos90_clip),
+                "-vframes",
+                "1",
+                str(reference),
             ],
-            check=True, timeout=30, capture_output=True,
+            check=True,
+            timeout=30,
+            capture_output=True,
         )
         normalize_orientation(str(rotated_pos90_clip))
         normalized = tmp_path / "norm_pos90.png"
         subprocess.run(
             [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-ss", "0.3", "-i", str(rotated_pos90_clip),
-                "-vframes", "1", str(normalized),
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "0.3",
+                "-i",
+                str(rotated_pos90_clip),
+                "-vframes",
+                "1",
+                str(normalized),
             ],
-            check=True, timeout=30, capture_output=True,
+            check=True,
+            timeout=30,
+            capture_output=True,
         )
         psnr_out = subprocess.run(
             [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "info",
-                "-i", str(normalized), "-i", str(reference),
-                "-filter_complex", "psnr",
-                "-f", "null", "-",
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "info",
+                "-i",
+                str(normalized),
+                "-i",
+                str(reference),
+                "-filter_complex",
+                "psnr",
+                "-f",
+                "null",
+                "-",
             ],
-            capture_output=True, text=True, timeout=30, check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
         )
         import re
+
         match = re.search(r"PSNR.*average:([0-9.]+|inf)", psnr_out.stderr)
         assert match is not None, f"PSNR parse failed:\n{psnr_out.stderr[-500:]}"
         psnr_value = float("inf") if match.group(1) == "inf" else float(match.group(1))
@@ -494,9 +532,18 @@ class TestNormalizeOrientationIntegration:
         reference = tmp_path / "reference_autorotate.png"
         subprocess.run(
             [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-ss", "0.3", "-i", str(rotated_neg90_clip),
-                "-vframes", "1", str(reference),
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "0.3",
+                "-i",
+                str(rotated_neg90_clip),
+                "-vframes",
+                "1",
+                str(reference),
             ],
             check=True,
             timeout=30,
@@ -508,9 +555,18 @@ class TestNormalizeOrientationIntegration:
         normalized_frame = tmp_path / "normalized_frame.png"
         subprocess.run(
             [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-ss", "0.3", "-i", str(rotated_neg90_clip),
-                "-vframes", "1", str(normalized_frame),
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "0.3",
+                "-i",
+                str(rotated_neg90_clip),
+                "-vframes",
+                "1",
+                str(normalized_frame),
             ],
             check=True,
             timeout=30,
@@ -525,11 +581,20 @@ class TestNormalizeOrientationIntegration:
         # frame, PSNR well below 20dB.
         psnr_out = subprocess.run(
             [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "info",
-                "-i", str(normalized_frame),
-                "-i", str(reference),
-                "-filter_complex", "psnr",
-                "-f", "null", "-",
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "info",
+                "-i",
+                str(normalized_frame),
+                "-i",
+                str(reference),
+                "-filter_complex",
+                "psnr",
+                "-f",
+                "null",
+                "-",
             ],
             capture_output=True,
             text=True,
@@ -539,6 +604,7 @@ class TestNormalizeOrientationIntegration:
         # PSNR result is on stderr like:
         #   [Parsed_psnr_0 @ 0x...] PSNR y:42.5 u:48.1 v:48.2 average:43.7 min:43.7 max:43.7
         import re
+
         match = re.search(r"PSNR.*average:([0-9.]+|inf)", psnr_out.stderr)
         assert match is not None, (
             f"could not parse PSNR from ffmpeg output:\n{psnr_out.stderr[-500:]}"
@@ -631,9 +697,7 @@ class TestNormalizeOrientationIntegration:
             with pytest.raises(OrientationError, match="ffmpeg flag-strip failed"):
                 normalize_orientation(str(bad))
 
-    def test_strip_flag_only_timeout_raises(
-        self, plain_clip: Path, tmp_path: Path
-    ) -> None:
+    def test_strip_flag_only_timeout_raises(self, plain_clip: Path, tmp_path: Path) -> None:
         """The strip path's TimeoutExpired handler must clean up the tmp
         file and raise OrientationError with the strip-specific timeout
         message. Mock subprocess.run to simulate the timeout."""
@@ -669,9 +733,7 @@ class TestNormalizeOrientationIntegration:
 
         # Tmp file (would be <input>.flagstrip.tmp.mp4) must not be left behind.
         tmp_artifact = target.with_suffix(target.suffix + ".flagstrip.tmp.mp4")
-        assert not tmp_artifact.exists(), (
-            "strip path must clean up its tmp file on timeout"
-        )
+        assert not tmp_artifact.exists(), "strip path must clean up its tmp file on timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -765,9 +827,7 @@ class TestNormalizeOrientationStaleFlagRegression:
         assert _probe_for_rotation(portrait_with_stale_180) == 0
         assert _probe_dims(portrait_with_stale_180) == (240, 320)
 
-    def test_stale_neg90_records_flag_stripped_event(
-        self, portrait_with_stale_neg90: Path
-    ) -> None:
+    def test_stale_neg90_records_flag_stripped_event(self, portrait_with_stale_neg90: Path) -> None:
         """The admin job-debug view distinguishes stale-flag strips from
         legitimate transposes via the event name. Pin the wire."""
         with patch("app.services.pipeline_trace.record_pipeline_event") as mock_record:
@@ -782,9 +842,7 @@ class TestNormalizeOrientationStaleFlagRegression:
         assert call_kwargs["data"]["width"] == 240
         assert call_kwargs["data"]["height"] == 320
 
-    def test_stale_180_records_separate_event(
-        self, portrait_with_stale_180: Path
-    ) -> None:
+    def test_stale_180_records_separate_event(self, portrait_with_stale_180: Path) -> None:
         """180° on portrait pixels emits its own event so the warning log
         and the event are aligned. Operators looking for 'is there a real
         upside-down recording?' can filter on this event."""
@@ -863,9 +921,7 @@ class TestNormalizeReencodeSemaphore:
     of timing-based concurrency tests in CI.
     """
 
-    def _spy_on_semaphore(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> list[str]:
+    def _spy_on_semaphore(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
         """Replace the module-level semaphore with a spy that records
         every acquire/release call. Returns the recorded events list."""
         import app.pipeline.orientation as mod
@@ -914,9 +970,7 @@ class TestNormalizeReencodeSemaphore:
         target.write_bytes(plain_clip.read_bytes())
         events = self._spy_on_semaphore(monkeypatch)
         normalize_orientation(str(target))
-        assert events == [], (
-            f"skip path must not touch the semaphore. events={events}"
-        )
+        assert events == [], f"skip path must not touch the semaphore. events={events}"
 
     def test_stale_flag_path_does_not_acquire_semaphore(
         self,
@@ -928,9 +982,7 @@ class TestNormalizeReencodeSemaphore:
         rate-limiting; gating it would just stall the pipeline."""
         events = self._spy_on_semaphore(monkeypatch)
         normalize_orientation(str(portrait_with_stale_neg90))
-        assert events == [], (
-            f"stale-flag path must not touch the semaphore. events={events}"
-        )
+        assert events == [], f"stale-flag path must not touch the semaphore. events={events}"
 
     def test_env_disabled_path_does_not_acquire_semaphore(
         self,
@@ -941,9 +993,7 @@ class TestNormalizeReencodeSemaphore:
         monkeypatch.setenv("ORIENTATION_NORMALIZE_ENABLED", "false")
         events = self._spy_on_semaphore(monkeypatch)
         normalize_orientation(str(rotated_neg90_clip))
-        assert events == [], (
-            f"kill-switch path must not touch the semaphore. events={events}"
-        )
+        assert events == [], f"kill-switch path must not touch the semaphore. events={events}"
 
     def test_semaphore_releases_even_on_ffmpeg_failure(
         self,
@@ -965,9 +1015,7 @@ class TestNormalizeReencodeSemaphore:
             with pytest.raises(OrientationError):
                 normalize_orientation(str(bad))
 
-        assert "release" in events, (
-            f"semaphore must release on failure. events={events}"
-        )
+        assert "release" in events, f"semaphore must release on failure. events={events}"
 
 
 # ---------------------------------------------------------------------------

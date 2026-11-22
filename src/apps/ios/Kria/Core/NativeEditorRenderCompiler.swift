@@ -360,7 +360,8 @@ enum NativeEditorRenderError: Error, Equatable {
         let splitProjection = NativeEditorInteraction.timelineProjection(slots: document.clips, carousel: document.carouselMoment, splitSections: document.splitScreenSections)
         let videoEnd = video.map { $0.timelineStart + $0.duration }.max() ?? 0
         let total = document.splitScreenSections.isEmpty ? videoEnd : max(videoEnd, splitProjection.totalDuration)
-        func addAudio(id: String, lane: String, start: Double, length: Double, gain: Double, timelineStart: Double = 0, catalog: RenderAssetCatalog = .music) throws {
+        func addAudio(id: String, lane: String, start: Double, length: Double, gain: Double, timelineStart: Double = 0, catalog: RenderAssetCatalog = .music,
+                      role: TimelineTrackRole? = nil, repeatingUntil end: Double? = nil) throws {
             guard length > 0, let source = audioSources[id], let fingerprint = source.asset.fingerprint,
                   let available = source.asset.duration, start >= 0, start + length <= available + 0.01 else {
                 #if DEBUG
@@ -373,10 +374,18 @@ enum NativeEditorRenderError: Error, Equatable {
             references[alias] = RenderAssetReference(id: alias, fingerprint: try RenderFingerprint(fingerprint),
                 source: .library(catalog: catalog, catalogID: id, generation: fingerprint.hex))
             urls[alias] = source.url
-            audioTracks.append(TimelineTrack(id: lane, kind: .audio, clips: [
-                TimelineClip(id: lane, sourceAssetID: alias, sourceStart: start, sourceDuration: length, timelineStart: timelineStart, volume: gain)
-            ]))
+            var clips = [TimelineClip(id: lane, sourceAssetID: alias, sourceStart: start, sourceDuration: length, timelineStart: timelineStart, volume: gain)]
+            if let end {
+                var cursor = timelineStart + length
+                while end - cursor > 0.05 {
+                    let piece = min(length, end - cursor)
+                    clips.append(TimelineClip(id: "\(lane)-\(clips.count + 1)", sourceAssetID: alias, sourceStart: start, sourceDuration: piece, timelineStart: cursor, volume: gain))
+                    cursor += piece
+                }
+            }
+            audioTracks.append(TimelineTrack(id: lane, kind: .audio, clips: clips, role: role))
         }
+        var speechWindows: [SpeechWindow] = []
         if let narration = audioSources["narration"] {
             guard let fingerprint = narration.asset.fingerprint, let available = narration.asset.duration,
                   available.isFinite, available > 0 else { throw MediaEngineError.missingAsset("narration") }
@@ -437,7 +446,13 @@ enum NativeEditorRenderError: Error, Equatable {
         if !referenceOnlyMusic, let bed = document.backgroundMusic, bed.enabled, !bed.muted, let id = bed.trackID {
             let start = bed.startS ?? 0
             let length = min(total, max(0, (bed.endS ?? (start + total)) - start))
-            try addAudio(id: id, lane: "background-music", start: start, length: length, gain: pow(10, (bed.gainDB ?? -18) / 20))
+            // The preview's windows come from the cues the creator sees, so after a caption line is deleted they can
+            // differ from the server's transcript windows. The exported file always follows the server recipe.
+            let windows = document.editFormat == "subtitled"
+                ? Self.speechWindows(cues: document.captionCues, items: items, total: total) : []
+            try addAudio(id: id, lane: "background-music", start: start, length: length, gain: pow(10, (bed.gainDB ?? -18) / 20),
+                         role: windows.isEmpty ? nil : .music, repeatingUntil: windows.isEmpty ? nil : total)
+            speechWindows = windows
         }
         // KRI-1350: the stored colour moments on the current Range edit (the server moves them the same way at Save),
         // and each moment's own sound re-pinned to its edge, dropped when its moment is gone.
@@ -1128,7 +1143,8 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         var recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
             assets: assets.values.sorted { $0.id < $1.id }, tracks: videoTracks + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,
-            audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows),
+            audio: AudioMixRecipe(originalVolume: originalGain, muteWindows: muteWindows, speechWindows: speechWindows,
+                                  speechDuckGain: speechWindows.isEmpty ? nil : Self.speechDuckGain),
             assetManifest: RenderAssetManifest(assets: references.values.sorted { $0.id < $1.id }), textLayers: text, cameraPulses: cameraPulses, motionScenes: motionProgram, visualFills: visualFills, speakerBackground: speakerBackground)
         recipe.splitScreenSections = document.splitScreenSections.compactMap { section in
             guard let index = document.clips.firstIndex(where: { $0.splitSectionID == section.id }),
@@ -1153,6 +1169,43 @@ enum NativeEditorRenderError: Error, Equatable {
         (recipe.colorMoments, recipe.endFade) = Self.colorMoments(colorMomentLane, duration: TimelineMath.totalDuration(of: recipe))
         try recipe.validate()
         return NativeEditorRenderProgram(recipe: recipe, assetURLs: urls)
+    }
+
+    /// Mirrors `_SPEECH_WORD_BRIDGE_S` (app/pipeline/phone_subtitled_plan.py): word gaps shorter than this read as one window.
+    static let speechWordBridge = 0.25
+    /// Gain a Talking bed falls to under speech: -12 dB, the server's `speech_duck_db`.
+    static let speechDuckGain = 0.25
+
+    /// KRI-1562: where the speaker talks, from the caption cues (per-word timings in `raw["words"]`, else the cue span),
+    /// on the timeline the cue's item sits at. Mirrors `speech_windows_from_cues`: malformed or empty spans are skipped.
+    static func speechWindows(cues: [EditorCaptionCue], items: [NativeEditorTimelineItem], total: Double) -> [SpeechWindow] {
+        var itemByCue: [String: NativeEditorTimelineItem] = [:]
+        for item in items where item.kind == .captionCue { itemByCue[item.id] = item }
+        var spans: [(Double, Double)] = []
+        for cue in cues {
+            var place: (Double) -> Double = { $0 }
+            if let item = itemByCue[cue.id], cue.endS > cue.startS {
+                let scale = (item.end - item.start) / (cue.endS - cue.startS)
+                place = { item.start + ($0 - cue.startS) * scale }
+            }
+            var sources: [(Double?, Double?)] = [(cue.startS, cue.endS)]
+            if case .array(let words)? = cue.raw["words"], !words.isEmpty {
+                sources = words.map { ($0.objectValue?["start_s"]?.numberValue, $0.objectValue?["end_s"]?.numberValue) }
+            }
+            for case (let begin?, let finish?) in sources where begin.isFinite && finish.isFinite && finish > begin && begin >= 0 {
+                let start = max(0, place(begin)), end = min(total, place(finish))
+                if end > start { spans.append((start, end)) }
+            }
+        }
+        var merged: [SpeechWindow] = []
+        for (start, end) in spans.sorted(by: { $0.0 < $1.0 }) {
+            if let last = merged.last, start - last.end < speechWordBridge {
+                merged[merged.count - 1].end = max(last.end, end)
+            } else {
+                merged.append(SpeechWindow(start: start, end: end))
+            }
+        }
+        return merged
     }
 
     /// KRI-1350: the stored colour-moments lane for the PREVIEW, clamped to this edit's length exactly as the server's

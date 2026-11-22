@@ -49,9 +49,13 @@ async def catalog_path(db: AsyncSession, catalog: str, catalog_id: str) -> str:
         or not row.audio_gcs_path
     ):
         raise FileNotFoundError("render catalog asset unavailable")
+    return _require_catalog_path(
+        "music" if catalog == "music" else "sound-effects", catalog_id, row.audio_gcs_path
+    )
+
+
+def _require_catalog_path(prefix: str, catalog_id: str, path: str) -> str:
     # Even corrupt catalog rows cannot grant access to creator-owned media.
-    prefix = "music" if catalog == "music" else "sound-effects"
-    path = row.audio_gcs_path
     if (
         not path.startswith(f"{prefix}/{catalog_id}/")
         or any(part in {"", ".", ".."} for part in path.split("/"))
@@ -59,6 +63,16 @@ async def catalog_path(db: AsyncSession, catalog: str, catalog_id: str) -> str:
     ):
         raise ValueError("invalid render catalog path")
     return path
+
+
+def inspect_music_track(track_id: str, path: str) -> LibraryRenderAsset:
+    """Pin a library song's bytes as the ``music-<id>`` asset, after the catalog path check."""
+    return inspect_library_asset(
+        _require_catalog_path("music", track_id, path),
+        asset_id=f"music-{track_id}",
+        catalog="music",
+        catalog_id=track_id,
+    )
 
 
 def inspect_library_asset(

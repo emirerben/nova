@@ -104,7 +104,7 @@ export default function PrivacyPage() {
             <div>
               <dt className="text-[11px] uppercase tracking-[0.1em] text-[#a1a1aa]">Where it goes</dt>
               <dd>
-                To Google and OpenAI, to power the editing (§5). We do not sell your data, and we run no analytics or
+                To Google and OpenAI for media analysis and editing, and to Anthropic for edit chat (§5). We do not sell your data, and we run no analytics or
                 advertising trackers of any kind (§10).
               </dd>
             </div>
@@ -254,8 +254,13 @@ export default function PrivacyPage() {
                 </tr>
                 <tr>
                   <td className="px-3 py-2 font-medium">OpenAI</td>
-                  <td className="px-3 py-2">Extracted audio, transcripts</td>
-                  <td className="px-3 py-2">Speech-to-text, caption correction</td>
+                  <td className="px-3 py-2">Extracted audio, transcripts, instructions and project context</td>
+                  <td className="px-3 py-2">Speech-to-text, caption correction and edit planning</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2 font-medium">Anthropic (Claude)</td>
+                  <td className="px-3 py-2">Edit requests and project context, which may include chat history, timeline details and transcript excerpts</td>
+                  <td className="px-3 py-2">Understand edit requests and propose changes</td>
                 </tr>
                 <tr>
                   <td className="px-3 py-2 font-medium">Google Cloud Storage</td>
@@ -315,7 +320,7 @@ export default function PrivacyPage() {
         {/* ── 7 ─────────────────────────────────────────────────────────── */}
         <Section n="7" title="International Data Transfers">
           <p>
-            Kria&apos;s infrastructure and processors (Fly.io, Vercel, Google, OpenAI, Resend) are US-based. If you
+            Kria&apos;s infrastructure and processors (Fly.io, Vercel, Google, OpenAI, Anthropic, Resend) are US-based. If you
             are located in the EEA, UK, or elsewhere outside the US, your data will be transferred to and processed
             in the United States. Where required, we rely on Standard Contractual Clauses or an equivalent legally
             recognized transfer mechanism with our processors.

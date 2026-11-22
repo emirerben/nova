@@ -6,6 +6,7 @@ Covers two core invariants:
   2. region-masked MAD isolates the background from a text-band overlay
      (bg MAD ≈ 0 while text-band MAD is dominated by overlay motion).
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -17,15 +18,15 @@ import numpy as np
 _HERE = Path(__file__).parent
 _SCRIPT_PATH = _HERE.parent.parent / "scripts" / "analyze_scene_glitches.py"
 _spec = importlib.util.spec_from_file_location(
-    "analyze_scene_glitches", str(_SCRIPT_PATH),
+    "analyze_scene_glitches",
+    str(_SCRIPT_PATH),
 )
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["analyze_scene_glitches"] = _mod
 _spec.loader.exec_module(_mod)
 
 
-def _make_obs(mads_by_field: list[tuple[float, float, float]],
-              fps: float = 30.0) -> list:
+def _make_obs(mads_by_field: list[tuple[float, float, float]], fps: float = 30.0) -> list:
     """Build a list of FrameMAD from triples (full, bg, text)."""
     return [
         _mod.FrameMAD(
@@ -60,9 +61,7 @@ class TestStutterDetector:
             f"frozen-every-5-frames pattern. Clusters: {clusters}"
         )
         c = clusters[0]
-        assert abs(c.period_s - 5.0 / 30) < 0.02, (
-            f"period_s={c.period_s} expected ~0.167s"
-        )
+        assert abs(c.period_s - 5.0 / 30) < 0.02, f"period_s={c.period_s} expected ~0.167s"
         assert abs(c.implied_source_fps - 24.0) < 0.5, (
             f"implied_source_fps={c.implied_source_fps} expected ~24"
         )
@@ -72,31 +71,28 @@ class TestStutterDetector:
         """Random non-periodic motion should not register as a stutter
         cluster — false positives here would break the report."""
         rng = np.random.default_rng(seed=42)
-        triples = [
-            (float(m), float(m), float(m))
-            for m in rng.uniform(3.0, 10.0, size=40)
-        ]
+        triples = [(float(m), float(m), float(m)) for m in rng.uniform(3.0, 10.0, size=40)]
         obs = _make_obs(triples)
         clusters = _mod.detect_stutter_clusters(obs, field_name="bg_below_text")
-        assert clusters == [], (
-            f"unexpected cluster on random motion: {clusters}"
-        )
+        assert clusters == [], f"unexpected cluster on random motion: {clusters}"
 
     def test_below_minimum_count_does_not_emit_cluster(self):
         """Two frozen frames is not enough to call a 'cluster' — need at
         least 3 evenly-spaced low frames before we report a stutter."""
         triples = [
-            (6.0, 6.0, 6.0), (6.0, 6.0, 6.0), (6.0, 6.0, 6.0),
-            (0.2, 0.2, 0.2),    # freeze
-            (6.0, 6.0, 6.0), (6.0, 6.0, 6.0), (6.0, 6.0, 6.0),
-            (0.2, 0.2, 0.2),    # freeze
+            (6.0, 6.0, 6.0),
+            (6.0, 6.0, 6.0),
+            (6.0, 6.0, 6.0),
+            (0.2, 0.2, 0.2),  # freeze
+            (6.0, 6.0, 6.0),
+            (6.0, 6.0, 6.0),
+            (6.0, 6.0, 6.0),
+            (0.2, 0.2, 0.2),  # freeze
             (6.0, 6.0, 6.0),
         ]
         obs = _make_obs(triples)
         clusters = _mod.detect_stutter_clusters(obs, field_name="bg_below_text")
-        assert clusters == [], (
-            f"two-freeze pattern incorrectly reported as cluster: {clusters}"
-        )
+        assert clusters == [], f"two-freeze pattern incorrectly reported as cluster: {clusters}"
 
 
 class TestRegionMad:
@@ -118,8 +114,7 @@ class TestRegionMad:
         # Title band should straddle the expected center
         expected_center = int(960 * 0.45)
         assert text[0] < expected_center < text[1], (
-            f"title band [{text[0]},{text[1]}] doesn't contain expected "
-            f"center {expected_center}"
+            f"title band [{text[0]},{text[1]}] doesn't contain expected center {expected_center}"
         )
 
     def test_region_mad_isolates_bg_from_text_band(self):
@@ -146,8 +141,7 @@ class TestRegionMad:
             f"(bg is identical between frames)"
         )
         assert mads["text_band"] > 50, (
-            f"text_band MAD={mads['text_band']} should be high "
-            f"(red→blue is max channel motion)"
+            f"text_band MAD={mads['text_band']} should be high (red→blue is max channel motion)"
         )
         # Full-frame MAD should be somewhere in between
         assert mads["bg_below_text"] < mads["full"] < mads["text_band"], (

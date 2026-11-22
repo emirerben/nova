@@ -48,7 +48,8 @@
         "source_audio_media_ids",
         "visuals",
         "timed_cards",
-        "clip_tilts"
+        "clip_tilts",
+        "speech_source_windows"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=intro-].animation_phases.entrance",
@@ -81,7 +82,9 @@
         "inserts",
         "background_focus_open",
         "additional_speaker_keep_segments",
-        "closing_card"
+        "closing_card",
+        "music",
+        "speech_source_windows"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",

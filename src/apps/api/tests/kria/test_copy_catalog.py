@@ -51,6 +51,7 @@ import pytest
 from app.kria import copy_catalog
 from app.kria import reply_language as reply_language_module
 from app.kria.reply_language import reply_language_for, say
+from tests.git_history_required import git_history_required
 
 _API = Path(__file__).resolve().parents[2]
 _REPO = _API.parents[2]
@@ -256,6 +257,10 @@ def _merge_base() -> str:
     try:
         return _git("merge-base", "HEAD", "origin/main").strip()
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:  # shallow CI clone
+        if git_history_required():
+            pytest.fail(
+                f"NOVA_REQUIRE_GIT_HISTORY=1 but there is no merge-base with origin/main: {exc}"
+            )
         pytest.skip(f"no merge-base with origin/main: {exc}")
 
 
@@ -298,6 +303,7 @@ _ROUTED_PAIRS = _FIXTURES / "copy_routed_pairs.json"
 
 
 # Converts every say() file at the merge base (~30 s locally): above the 30 s default.
+@pytest.mark.needs_git_history
 @pytest.mark.timeout(180)
 def test_codemod_kept_every_en_tr_pair() -> None:
     """The (en, tr) pairs at the merge base, f-strings converted by the codemod's own function,

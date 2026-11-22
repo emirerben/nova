@@ -48,8 +48,18 @@ def _caption_style(value: Any, strategy: Mapping[str, Any]) -> str | None:
 
 _PLAN = "pipeline/unified_montage.py:plan_unified_montage"
 
+
 # Source of truth for "unread": `scripts/kria/score_route.py` (consumer gate) scans ``READERS``
 # for reads of every CreativeStrategy field. The entries that disclose come first, in card order.
+def _guided_sfx_limit():  # noqa: ANN202
+    """The montage runs through the guided worker, which plays the licensed effect while
+    `phone_rollout.phone_guided_sfx_supported` holds (the one answer the worker, Save and the
+    manifest read); the closed gate, else None."""
+    from app.services.sfx_capability import guided_sfx_limit  # noqa: PLC0415
+
+    return guided_sfx_limit()
+
+
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
@@ -72,7 +82,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "archetype": NotApplied(lines.archetype),
     "hero_media_id": NotApplied(lines.hero),
     "overlay_display": NotApplied(lines.overlay),
-    "licensed_sfx": NotApplied(lines.sfx),
+    "licensed_sfx": NotApplied(lines.sfx_unless(_guided_sfx_limit)),
     "editorial_plan": Applied(),
     "title_animation": Applied(),
     "label_position": Applied(),

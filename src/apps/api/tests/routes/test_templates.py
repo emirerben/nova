@@ -17,10 +17,12 @@ def client():
 
 def _db_with_template(template: object | None):
     """Dependency override that returns `template` from db.get(...)."""
+
     async def _gen():
         mock_db = AsyncMock()
         mock_db.get = AsyncMock(return_value=template)
         yield mock_db
+
     return _gen
 
 
@@ -50,14 +52,18 @@ def _make_template(
     t.archived_at = "2026-01-01T00:00:00Z" if archived else None
     t.published_at = "2026-01-01T00:00:00Z" if published else None
     t.required_inputs = required_inputs if required_inputs is not None else []
-    t.recipe_cached = recipe if recipe is not None else {
-        "slots": [
-            {"position": 1, "target_duration_s": 1.0, "media_type": "video"},
-            {"position": 2, "target_duration_s": 2.0, "media_type": "video"},
-        ],
-        "total_duration_s": 3.0,
-        "copy_tone": "energetic",
-    }
+    t.recipe_cached = (
+        recipe
+        if recipe is not None
+        else {
+            "slots": [
+                {"position": 1, "target_duration_s": 1.0, "media_type": "video"},
+                {"position": 2, "target_duration_s": 2.0, "media_type": "video"},
+            ],
+            "total_duration_s": 3.0,
+            "copy_tone": "energetic",
+        }
+    )
     return t
 
 
@@ -186,6 +192,7 @@ class TestGetTemplateById:
         The playback-url handler does its own DB lookup via execute(), so we
         just need to ensure the route isn't intercepted by the detail handler.
         """
+
         async def _gen():
             mock_db = AsyncMock()
             mock_db.get = AsyncMock(return_value=None)

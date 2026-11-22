@@ -1,0 +1,42 @@
+name: Install the API's locked Python environment
+description: >-
+  Installs exactly what src/apps/api/uv.lock pins into src/apps/api/.venv and
+  puts it on PATH. torch comes from the CPU-only index (pyproject.toml
+  [tool.uv.sources]). There is deliberately no cache: on a hosted runner uv
+  downloaded and installed all 155 packages in 5 s (PR #2434), which is less
+  than restoring a cache of that size takes. Guard: scripts/ci/test_api_lock.py.
+inputs:
+  extras:
+    description: Space-separated optional-dependency groups to install.
+    required: false
+    default: dev
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      # setup-uv publishes no moving major tag; this commit is v10.4.0.
+      uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
+      with:
+        version: "0.13.9"
+        enable-cache: false
+    - name: Install API dependencies
+      shell: bash
+      working-directory: src/apps/api
+      env:
+        EXTRAS: ${{ inputs.extras }}
+      run: |
+        extras=()
+        for extra in $EXTRAS; do extras+=(--extra "$extra"); done
+        # --frozen: install the lock as written, never resolve again.
+        uv sync --frozen --python 3.11 --group cpu-torch "${extras[@]}"
+        # The lock holds three OpenCV distributions (the project's headless one,
+        # mediapipe's contrib one and scenedetect's plain one). All unpack into
+        # the same cv2/ directory, uv unpacks in parallel, and only contrib has
+        # cv2.CascadeClassifier in OpenCV 5. Write contrib last, every time,
+        # which is what the old one-package-at-a-time install always did.
+        contrib="$(uv pip show opencv-contrib-python | sed -n 's/^Version: //p')"
+        [ -n "$contrib" ] || { echo "::error::opencv-contrib-python is not in the environment"; exit 1; }
+        uv pip install --reinstall --no-deps --quiet "opencv-contrib-python==$contrib"
+        .venv/bin/python -c 'import cv2; assert hasattr(cv2, "CascadeClassifier"), "cv2 has no CascadeClassifier: the wrong OpenCV build is on top"'
+        echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+        echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"

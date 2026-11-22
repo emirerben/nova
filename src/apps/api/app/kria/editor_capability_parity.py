@@ -212,9 +212,10 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "split_screen_create": _g("agent_ops", "createSplitScreen", ("create_split_screen",)),
     "split_screen_layout": _g(
         "agent_ops",
-        "setSplitScreenDuration setSplitScreenPanelCount setSplitScreenPanelWeight "
-        "setSplitScreenGutter setSplitScreenBackgroundColor beginSplitDividerDrag "
-        "updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag setSplitCollapse",
+        "setSplitScreenDuration trimEmptySplitEnd setSplitScreenPanelCount "
+        "setSplitScreenPanelWeight setSplitScreenGutter setSplitScreenBackgroundColor "
+        "beginSplitDividerDrag updateSplitDividerDrag endSplitDividerDrag cancelSplitDividerDrag "
+        "setSplitCollapse",
         ("update_split_screen",),
         fields=(
             "duration_s",
@@ -229,6 +230,11 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "split_screen_clip_order": _g("agent_ops", "moveSelectedSplitScreenClip", ("move_split_clip",)),
     "split_screen_section_order": _g(
         "agent_ops", "moveSelectedSplitScreenSection", ("move_split_screen",)
+    ),
+    "split_screen_clip_drop": _g(
+        "agent_unsupported",
+        "dropSplitClip",
+        reason="Chat can assign one clip to a gap, but cannot swap two clips in one edit.",
     ),
     "split_screen_clip_offset": _g(
         "agent_ops",
@@ -284,7 +290,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "split_screen_queries": _g(
         "not_an_edit",
         "canExtendSplitToWholeVideo canAddToSplitPanel canMakeSplitFullScreen splitClipsRemoved "
-        "canFillSplitPanelWithBlank",
+        "canFillSplitPanelWithBlank occupiedSplitEnd",
         reason="Read-only checks the Split panel uses to decide what to offer.",
     ),
     # ---------------------------------------------------------------- audio
@@ -293,13 +299,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "removeMusic setMusicLevel setMusicVolume setBackgroundMusicLevel",
         ("remove_music", "set_mix"),
     ),
+    # KRI-1562: chat adds, swaps and removes the library song under a phone Talking edit (its
+    # Save compiles the `background_music` section) while TALKING_MUSIC_ENABLED and a protocol 53
+    # build hold. Every other phone edit keeps the song it was rendered with: the authored phone
+    # compile only re-plays the pinned music asset, a guided phone plan refuses a music lane
+    # (phone_guided_plan, musicBed) and the Voiceover Save has no music section.
     "music_swap": _g(
-        "agent_unsupported",
+        "agent_ops",
         "setMusic setMusicWindow setBackgroundMusic",
-        reason="A phone-rendered edit keeps the song it was rendered with: the authored phone "
-        "compile only re-plays the pinned music asset, a guided phone plan refuses a music lane "
-        "(phone_guided_plan, musicBed) and the Talking and Voiceover Saves have no music "
-        "section. Chat can change the music level or remove it (set_mix, remove_music).",
+        ("swap_music", "remove_music"),
+        fields=("track_id",),
     ),
     # KRI-1394: the Sounds tab's Save section (`user_song`). A drag's move step writes the same
     # start or end as setUserSongStart / setUserSongEnd.

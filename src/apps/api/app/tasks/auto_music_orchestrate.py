@@ -525,12 +525,13 @@ def _load_matcher_candidates(n_clips: int, *, require_published: bool = True) ->
 
     ``require_published=False`` is the generative path: generative edits
     auto-pick a song (the user never browses the gallery), so the
-    public-gallery publish gate shouldn't constrain them — any analyzed,
+    public-gallery publish gate shouldn't constrain them — any non-archived, analyzed,
     current-version track is fair game. Auto-music keeps the default so its
     candidate set stays published-only.
     """
     with _sync_session() as db:
         where_clauses = [
+            MusicTrack.archived_at.is_(None),
             MusicTrack.ai_labels.is_not(None),
             MusicTrack.label_version == CURRENT_LABEL_VERSION,
             MusicTrack.best_sections.is_not(None),

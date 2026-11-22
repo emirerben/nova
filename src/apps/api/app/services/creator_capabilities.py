@@ -212,6 +212,22 @@ TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
     "to individual clips."
 )
+# KRI-1561: said when a general "add sound effects" ask on a phone edit that places sound only at
+# named moments (`reaction_beats`) names no moment. Turkish and German twins:
+# `app.kria.strategy_policy._KNOWN_TR` and `copy/de.json`.
+GENERIC_SOUND_EFFECT_NOTICE = (
+    "Sound effects on iPhone are placed only at spoken moments you name "
+    "(for example: \u201cwhen I say no, play a buzzer\u201d). No moment was "
+    "named, so no sound was added."
+)
+# KRI-1561: an optional treatment the manifest cannot render used to vanish from the plan with no
+# line at all. One fixed sentence per treatment (the Turkish twins are looked up by exact text).
+DROPPED_TREATMENT_NOTICES: dict[str, str] = {
+    "overlays": "Picture and video overlays aren't available for this edit yet; left them out.",
+    "sfx": "Sound effects aren't available for this edit yet; left them out.",
+    "transitions": "Transitions aren't available for this edit yet; left them out.",
+    "looks": "Wide looks aren't available for this edit yet; left them out.",
+}
 # Fixed wording on purpose (KRI-667): the time and the photo's name live in the receipt
 # (`brief_checks._check_timed_cards`), so the notice needs no variable parts and the Turkish
 # twin is an exact `_KNOWN_TR` lookup rather than a regex.
@@ -2092,6 +2108,33 @@ def _drop_talking_clip_intents(strategy: CreativeStrategy) -> tuple[CreativeStra
     return stripped, ([TALKING_CLIP_INTENTS_DROPPED_NOTICE] if len(kept) != len(intents) else [])
 
 
+def _dropped_treatment_notices(strategy: Any, manifest: Any) -> list[str]:
+    """One line for each optional treatment the manifest cannot render (KRI-1561).
+
+    A named-moment sound lane (`reaction_beats`) answers a sound ask in its own words (the
+    repair notice and `creator_sessions._generic_sound_effect_notice`), so "sfx" adds no
+    second sentence there."""
+    capabilities = {
+        "overlays": "media_overlays",
+        "sfx": "sound_effects",
+        "transitions": "transitions",
+        "looks": "wide_looks",
+    }
+    beats = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    beats_available = beats is not None and beats.available
+    out: list[str] = []
+    for treatment in dict.fromkeys(strategy.optional_treatments or []):
+        capability = manifest.capabilities.get(
+            capabilities.get(treatment, ""), _unavailable("not_advertised", "not advertised")
+        )
+        if capability.available or treatment not in DROPPED_TREATMENT_NOTICES:
+            continue
+        if treatment == "sfx" and beats_available:
+            continue
+        out.append(DROPPED_TREATMENT_NOTICES[treatment])
+    return out
+
+
 def compile_strategy_to_plan(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -2396,6 +2439,7 @@ def compile_strategy_to_plan(
             _unavailable("not_advertised", "capability not advertised"),
         ).available
     ]
+    shape_notices = [*shape_notices, *_dropped_treatment_notices(strategy, manifest)]
     effective_strategy = strategy.model_copy(
         update={
             "edit_format": strategy_format,
