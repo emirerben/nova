@@ -136,6 +136,17 @@ def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
 
 
 def unconfirmed_order_groups(resolved_intents: object) -> frozenset[SequenceGroupKey]:
+    """The described groups whose inner order nobody said (the marker is unset).
+
+    With ``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`` there are none: an unstated inner order is the
+    order the clips were added, so a draft stored with the marker unset reads as defaulted
+    without being rewritten (``ordered_members`` is part of the strategy digest). Every
+    consumer (the brief receipt, readiness, the approval re-check, the worker's group outcome)
+    reads this one function, so they cannot disagree."""
+    from app.services.order_mode import unstated_order_default_on  # noqa: PLC0415
+
+    if unstated_order_default_on():
+        return frozenset()
     legacy = [
         intent
         for intent in _sequence(resolved_intents)

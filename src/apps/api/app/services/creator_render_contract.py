@@ -1320,6 +1320,54 @@ def _creator_listed_order(
     return tuple(apply_sequence(list(shown), sequence))
 
 
+def _unstated_order_defaults_to_attachment(
+    raw: Mapping[str, Any],
+    brief: CreativeBrief | None,
+    sequence: Sequence[SequenceRow],
+    media_snapshot: Mapping[str, Any] | None,
+    edit_rows: Sequence[Any],
+    hidden_ids: frozenset[str],
+) -> bool:
+    """``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED``: may the contract pin the upload order under a
+    described sequence that names no basis?
+
+    Only where the pin is the order the worker plays and the phone verifier checks, so an
+    approved draft is never refused after render (KRI-503): the unified phone montage writer
+    (a montage-family format with phone proxy clips and no voiceover, the shape
+    ``defers_to_unified_montage`` mirrors, without the account), the planner's attachment basis
+    (no seeded shuffle, no "any order", no "group first" answer, no confirmed hand reorder,
+    not the native program that re-orders its clips by the intents) and no Visuals (a Visual is
+    spread, not seated by upload order). The caller has already seen a placed rule, so a single
+    "start with X" pin pins the rest of the order too: a pin-only brief is held today on "I can't
+    confirm this draft does it yet" for the same reason a group is. Reads fields, never words."""
+    from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+    from app.services.order_mode import (  # noqa: PLC0415
+        brief_order_mode,
+        unstated_order_default_on,
+    )
+
+    if not unstated_order_default_on() or brief is None or not edit_rows:
+        return False
+    # The pin reads the snapshot's clip rows only, like every other pin here, so the dry run,
+    # readiness and dispatch (whatever else each snapshot lists) decide it identically.
+    clip_paths = [str(row.get("gcs_path") or "") for row in edit_rows if isinstance(row, Mapping)]
+    ids = [str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)]
+    return bool(
+        raw.get("edit_format") in GUIDED_EDIT_FORMATS
+        and raw.get("audio_strategy") in {"original_audio", "licensed_music"}
+        and raw.get("render_program") != "native"
+        and raw.get("ordering_choice") not in {"random", "group_first"}
+        and clip_paths
+        and all(is_analysis_proxy_path(path) for path in clip_paths)
+        and brief_order_mode(brief) is None
+        and not _edit_visuals(media_snapshot, raw, hidden_ids)
+        and all(ids)
+        and len(set(ids)) == len(ids) == len(edit_rows)
+        and bool(sequence)
+    )
+
+
 def _pin_not_found(words: str) -> str:
     """A stated first / last clip the server could not place, in the chat's language."""
     return say(
@@ -2131,6 +2179,16 @@ def build_render_contract(
         )
         if listed:
             order_required, order_ids, order_basis = True, listed, CREATOR_LIST_ORDER_BASIS
+        elif not order_ids and _unstated_order_defaults_to_attachment(
+            raw, brief, sequence, media_snapshot, edit_rows, hidden_ids
+        ):
+            # Toroko (prod threads 666b996f, de471354): "the map video first, then the train
+            # entry, then ..." names no basis, so the order INSIDE each group (and of the clips
+            # nobody mentioned) was never said. It is the order the clips were added; the
+            # KRI-503 block below seats the described groups on it, so the pin is exactly the
+            # order the phone montage planner lays out.
+            ids = [str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)]
+            order_required, order_ids, order_basis = True, tuple(ids), "attachment_order"
     if (
         order_required
         and order_ids

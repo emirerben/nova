@@ -2460,6 +2460,11 @@
    "app/agents/edit_copilot.py",
    "you asked for no music, so I won't add a song",
    "müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "where you didn't say, the clips play in the order you added them",
+   "söylemediğin yerlerde klipler eklediğin sırayla oynar"
   ]
  ],
  "retired": [

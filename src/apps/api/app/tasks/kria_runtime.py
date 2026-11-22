@@ -3570,7 +3570,11 @@ def _complete_draft_turn(
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
             ]
         if readiness_required:
-            from app.kria.approval_readiness import APPROVABLE, readiness_reply  # noqa: PLC0415
+            from app.kria.approval_readiness import (  # noqa: PLC0415
+                APPROVABLE,
+                readiness_reply,
+                with_defaulted_order_receipts,
+            )
             from app.kria.brief_binding import snapshot_media as _readiness_media  # noqa: PLC0415
 
             if brief is None:
@@ -3699,6 +3703,10 @@ def _complete_draft_turn(
                 ]
                 if story_proofs and len(story_proofs) == len(readiness_report["requirements"]):
                     reply_text = arguments.summary
+            # Toroko: the order readiness proved by default is said on the draft's own receipt.
+            requirement_receipts = with_defaulted_order_receipts(
+                requirement_receipts, readiness_report
+            )
         unmet_ids = [
             str(receipt.get("requirement_id"))
             for receipt in requirement_receipts
