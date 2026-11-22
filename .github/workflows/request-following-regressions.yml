@@ -64,6 +64,8 @@ jobs:
       - name: Install dependencies
         working-directory: src/apps/api
         run: pip install -e '.[dev]'
+      - name: Leave one OpenCV distribution
+        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
       - name: Install renderer libraries
         run: |
           sudo bash scripts/ci/disable-unused-chrome-apt-source.sh

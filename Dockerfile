@@ -82,7 +82,15 @@ RUN pip install --no-cache-dir --upgrade pip setuptools && \
 # Also [speech-align] (transformers for the speech-cleanup filler check; it
 # reuses the CPU torch above). [dev] and [local-whisper] are intentionally excluded.
 # This layer only busts when pyproject.toml changes, not on source edits.
+#
+# One OpenCV: scenedetect requires opencv-python and mediapipe requires
+# opencv-contrib-python, both unpack into the same cv2/ directory, and pip
+# cannot leave a requirement out. opencv-install.py removes every OpenCV
+# distribution and puts opencv-contrib-python back alone, in this layer so the
+# removed files never reach the image, and fails the build unless that is what
+# is left and cv2 loads with CascadeClassifier. Guard: scripts/ci/test_api_lock.py.
 COPY src/apps/api/pyproject.toml /tmp/pyproject.toml
+COPY scripts/ci/opencv-install.py /tmp/opencv-install.py
 RUN python -c "import tomllib; \
       f = open('/tmp/pyproject.toml', 'rb'); \
       data = tomllib.load(f); \
@@ -90,7 +98,8 @@ RUN python -c "import tomllib; \
       deps = data['project']['dependencies'] + extras['observability'] + extras['speech-align']; \
       print('\n'.join(deps))" > /tmp/requirements.txt && \
     pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt /tmp/pyproject.toml
+    python /tmp/opencv-install.py --only opencv-contrib-python --require opencv-contrib-python && \
+    rm /tmp/requirements.txt /tmp/pyproject.toml /tmp/opencv-install.py
 
 # ---------- speech-cleanup forced aligner (~360 MB) ----------
 # The filler check (app/pipeline/speech_cleanup_alignment.py) places transcript words on the

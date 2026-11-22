@@ -610,25 +610,17 @@ for the 45s-not-clamped / 150s-clamped-with-warning pins.
   renders a small "⧉" badge (`title="Behind subject"`) when the flag is on,
   so editors know the toggle is set without a live preview of the effect.
   The real occlusion only appears in the rendered output after a save/reburn.
-- **`opencv-contrib` coexistence.** `mediapipe`'s own metadata declares
-  `opencv-contrib-python` (GUI-linked build) as a hard dependency — not
-  `opencv-python-headless`, which this project deliberately uses (slim
-  image, no X11). Both distributions ship the same top-level `cv2/` package
-  directory, and pip has no "provides" concept across
-  opencv-python/-headless/-contrib/-contrib-headless, so both get installed
-  side by side and whichever lands last physically overwrites the shared
-  `cv2/` directory on disk — non-deterministic across rebuilds. Verified
-  locally (2026-07-17) that both `import cv2` and `import mediapipe` work
-  afterward (the prod Dockerfile already installs libgl1/libegl1/
-  libglib2.0-0 for skia-python, which happen to satisfy
-  opencv-contrib-python's runtime needs too) — risk today is image-size
-  bloat (+~55MB) and non-determinism, not a hard crash. See the comment on
-  the `mediapipe` dependency in `pyproject.toml` for the escape hatch
-  (`--no-deps` + explicit transitive deps) if a future pass wants a
-  headless-only image. `docker-build.yml`'s smoke step
-  (`import cv2, skia, mediapipe`) runs against the actual built image —
-  not the dev venv — so a resolution conflict surfaces on the PR instead
-  of at Fly deploy time.
+- **One OpenCV distribution.** `mediapipe` requires `opencv-contrib-python`
+  (the GUI-linked build) by name, so that is the project's only OpenCV
+  distribution. The OpenCV distributions all unpack into the same `cv2/`
+  directory, and until 2026-11-22 the image held three, with the last one
+  written on top. `scenedetect` requires `opencv-python`; that requirement is
+  left out (`[tool.uv] exclude-dependencies` for the lock,
+  `scripts/ci/opencv-install.py --only` after every pip install, including
+  the production Dockerfile). The prod Dockerfile installs
+  libgl1/libegl1/libglib2.0-0, which the GUI-linked build needs to import.
+  `docker-build.yml` checks the built image, not the dev venv: one OpenCV
+  distribution, `import cv2, skia, mediapipe`, and a real scene detection.
 
 ## Key files
 

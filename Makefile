@@ -288,6 +288,7 @@ api-install-dev:
 	fi
 	$(API_PYTHON) -m pip install --upgrade pip setuptools
 	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pip install -e ".[dev]")
+	$(API_PYTHON) scripts/ci/opencv-install.py --only opencv-contrib-python > /dev/null
 
 test: api-install-dev
 	(cd src/apps/web && pnpm test)
