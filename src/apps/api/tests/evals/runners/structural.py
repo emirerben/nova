@@ -2689,6 +2689,20 @@ def check_scene_matcher(
     return failures
 
 
+def check_phone_typography(output: Any, input: Any) -> list[str]:  # noqa: A002
+    """KRI-1584: the prompt's readability rule, which parse() does not enforce. A script or
+    handwritten face only on one to three short words, and every stamped role gets a reason."""
+    failures: list[str] = []
+    for role, font in output.fonts.items():
+        category = input.fonts.get(font).category if font in input.fonts else ""
+        words = len(str(input.roles[role].get("wording", "")).split())
+        if category in {"script", "handwritten"} and words > 3:
+            failures.append(f"{role}: {category} face {font!r} on {words} words")
+        if input.fonts and not output.reasons.get(role):
+            failures.append(f"{role}: no reason")
+    return failures
+
+
 def check_spoken_cue_resolver(output: Any, input: Any) -> list[str]:  # noqa: A002
     """KRI-1356: the resolver contract, independently of parse(): one row per cue, real word
     ids, a short forward span, and a resolved span that is never just the creator's own words
@@ -3123,6 +3137,8 @@ def run_structural(
         return check_narrated_clip_alignment(output, input)
     if agent_name == "nova.compose.spoken_cue_resolver":
         return check_spoken_cue_resolver(output, input)
+    if agent_name == "nova.compose.phone_typography":
+        return check_phone_typography(output, input)
     if agent_name == "nova.compose.narrated_storyboard":
         return check_narrated_storyboard(output, input)
     if agent_name == "nova.compose.narration_annotations":

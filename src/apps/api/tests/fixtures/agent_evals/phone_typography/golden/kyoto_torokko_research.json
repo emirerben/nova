@@ -1,0 +1,91 @@
+{
+  "agent": "nova.compose.phone_typography",
+  "prompt_version": "2026-11-22-v3",
+  "prompt_sha": "faacca88fc4bdcaa",
+  "input": {
+    "roles": {
+      "research": {
+        "eligible_fonts": [
+          "Inter",
+          "Montserrat",
+          "Hanken Grotesk",
+          "Inter Tight",
+          "Montserrat Bold",
+          "Nunito ExtraBold",
+          "Pacifico",
+          "Poppins Bold",
+          "TikTok Sans Bold",
+          "Unbounded",
+          "Inter Medium"
+        ],
+        "wording": "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır. Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım. Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar.",
+        "preferred_fonts": [
+          "Inter",
+          "Montserrat"
+        ]
+      }
+    },
+    "mood": "map of a train route with photos; red and yellow train; people on a train; river and forested landscape from train window; people on a train viewing scenery; scenic landscape from a train; autumn mountain river landscape",
+    "fonts": {
+      "Inter": {
+        "category": "sans",
+        "vibe": "editorial"
+      },
+      "Montserrat": {
+        "category": "sans",
+        "vibe": "viral_headlines"
+      },
+      "Hanken Grotesk": {
+        "category": "sans",
+        "vibe": "clean_captions"
+      },
+      "Inter Tight": {
+        "category": "sans",
+        "vibe": "editorial"
+      },
+      "Montserrat Bold": {
+        "category": "sans",
+        "vibe": "clean_captions"
+      },
+      "Nunito ExtraBold": {
+        "category": "sans",
+        "vibe": "clean_captions"
+      },
+      "Pacifico": {
+        "category": "script",
+        "vibe": "script"
+      },
+      "Poppins Bold": {
+        "category": "sans",
+        "vibe": "clean_captions"
+      },
+      "TikTok Sans Bold": {
+        "category": "sans",
+        "vibe": "clean_captions"
+      },
+      "Unbounded": {
+        "category": "sans",
+        "vibe": "viral_headlines"
+      },
+      "Inter Medium": {
+        "category": "sans",
+        "vibe": "clean_captions"
+      }
+    }
+  },
+  "raw_text": "{\n  \"fonts\": {\n    \"research\": \"Inter\"\n  },\n  \"reasons\": {\n    \"research\": \"Inter is a preferred sans-serif font with an editorial vibe, well-suited for dense, informative text about train routes and scenery, ensuring excellent readability.\"\n  }\n}",
+  "output": {
+    "fonts": {
+      "research": "Inter"
+    },
+    "reasons": {
+      "research": "Inter is a preferred sans-serif font with an editorial vibe, well-suited for dense, informative text about train routes and scenery, ensuring excellent readability."
+    }
+  },
+  "meta": {
+    "source": "provider_smoke_capture",
+    "job_id": "3930c822-2d44-4251-bcf6-d45ef865c5ef",
+    "note": "Stamped (INFORMATIVE_TEXT_DESIGNS_ENABLED) font pick for prod job 3930c822's three Turkish research lines, built by select_fonts from tests/fixtures/kri1585_kyoto. A script face on these long fact lines is the KRI-1584 failure.",
+    "test_run_id": "kri1584-phone-typography-98f31f0a-r1"
+  }
+}
