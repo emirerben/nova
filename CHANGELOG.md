@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.83.0] - 2026-11-22
+
+### Changed
+- KRI-1554 Declare each format's source-length limit once and check it before upload (#2425) <!-- release-pr: 2425 -->
+
 ## [0.89.82.0] - 2026-11-22
 
 ### Changed
