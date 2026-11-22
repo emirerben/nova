@@ -205,6 +205,8 @@ def request_digest(body: SubmitTurnBody) -> str:
         | ({"protected_region"} if body.protected_region is None else set())
         # KRI-723: additive the same way.
         | ({"moment_order"} if body.moment_order is None else set())
+        # The order card's drag: additive the same way.
+        | ({"clip_order_ops"} if body.clip_order_ops is None else set())
     )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
@@ -856,6 +858,232 @@ async def _validate_scoped_turn(
     return scope
 
 
+async def _clip_order_events(
+    db: AsyncSession, thread_id: uuid.UUID
+) -> list[tuple[str, dict[str, Any] | None]]:
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role == "assistant",
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    return [(role, payload) for role, payload in rows]
+
+
+async def _submit_clip_order_turn(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    body: SubmitTurnBody,
+    digest: str,
+    locale: str | None,
+) -> tuple[TurnAccepted, bool]:
+    """The order card's drag / "use this order" (``clip_order_ops``): a ledger entry and a
+    refreshed ``clip_order_card``, completed in this request.
+
+    No model call, no worker, no chat prose: the turn is the card event itself, so it never
+    queues behind a running turn or a pending approval and is never a 409 / 422 dead end (the drag
+    rebases by media id, see `clip_order_card.rebase_drag`). Before a video exists the entry joins
+    the ledger and every reader (the next plan, the render contract, the worker) follows it; once
+    one exists the timeline is the order, so the card answers with the order as it stands and
+    ``editable: false`` instead of recording a change the timeline would overrule. A build or a
+    server that cannot take the card (flag off, kill switch, an old build) gets one plain line.
+    """
+    from app.kria.planner import _turn_clip_order  # noqa: PLC0415
+    from app.services import clip_order_card as card_mod  # noqa: PLC0415
+    from app.services import clip_order_ledger as ledger  # noqa: PLC0415
+
+    ops = body.clip_order_ops
+    assert ops is not None
+    language = thread_reply_language(thread) or locale_language(locale)
+    turn_id = uuid.uuid4()
+    item = (
+        await db.get(PlanItem, thread.active_plan_item_id)
+        if thread.active_plan_item_id is not None
+        else None
+    )
+    base_payload: dict[str, Any] = {
+        "request_digest": digest,
+        "runtime_version": 2,
+        "turn_id": str(turn_id),
+        "turn_status": "completed",
+        "inert": True,
+        **(
+            {"client_protocol": current_client_protocol()}
+            if current_client_protocol() is not None
+            else {}
+        ),
+    }
+    answer_payload: dict[str, Any] = {
+        "turn_id": str(turn_id),
+        "turn_value": "progress",
+        "receipt_ids": [],
+        "next_actions": [],
+        "schema_version": 2,
+    }
+    content: str | None = None
+    code = "clip_order_card"
+    user_extra: dict[str, Any] = {}
+    if card_mod.card_gate(current_client_protocol()) != "card" or item is None:
+        with reply_language_for(language):
+            content = card_mod.unavailable_reply()
+        code = "clip_order_unavailable"
+    else:
+        events = await _clip_order_events(db, thread.id)
+        turn_order = await _turn_clip_order(db, thread_id=thread.id, item=item, editor_state=None)
+        assignments = [row for row in (item.clip_assignments or []) if isinstance(row, dict)]
+        if turn_order is None:
+            attachment = tuple(
+                dict.fromkeys(
+                    row["media_id"]
+                    for row in assignments
+                    if isinstance(row.get("media_id"), str) and row["media_id"]
+                )
+            )
+            state = ledger.current_clip_order(
+                attachment_ids=attachment, entries=ledger.fold_clip_order(events)
+            )
+            rendered = False
+        else:
+            state, attachment, rendered = (
+                turn_order.state,
+                turn_order.attachment_ids,
+                turn_order.rendered,
+            )
+        # A video exists, is being made, or its render was approved: the timeline is the order (it
+        # overrules a drag the next turn), so the card shows it and records nothing.
+        rendered = (
+            rendered
+            or item.current_job_id is not None
+            or (
+                await db.execute(
+                    select(CreatorAgentApproval.id)
+                    .where(
+                        CreatorAgentApproval.thread_id == thread.id,
+                        CreatorAgentApproval.status.in_(("approved", "consumed")),
+                    )
+                    .limit(1)
+                )
+            ).first()
+            is not None
+        )
+        current = list(state.order)
+        requested = list(ops.ordered_media_ids)
+        previous = card_mod.last_card(events)
+        # The clips the creator's card shows (a draft that plays a subset names it); their order
+        # inside the full order is what the drag rearranges.
+        shown_ids = set(card_mod.card_order(previous)) or set(current)
+        in_card = [media_id for media_id in current if media_id in shown_ids]
+        rebased = (
+            len(set(requested)) != len(requested)
+            or set(requested) != shown_ids
+            or (previous is not None and previous.get("proposal_id") != ops.proposal_id)
+            # a video exists: the card answers with the order that plays, not the one asked for
+            or (rendered and requested != in_card)
+        )
+        entry = None
+        if not rendered:
+            entry = card_mod.drag_entry(
+                current,
+                card_mod.rebase_drag(current, requested),
+                str(turn_id),
+                coalesce=card_mod.latest_event_is_a_drag(events),
+            )
+        shown_state = (
+            ledger.current_clip_order(attachment_ids=attachment, entries=(*state.entries, entry))
+            if entry is not None
+            else state
+        )
+        brief = await load_latest_brief(db, thread.id)
+        answer_payload.update(
+            ledger_payload(entry, turn_id),
+            **{
+                card_mod.CARD_KEY: card_mod.build_card(
+                    shown_state,
+                    assignments,
+                    events=events,
+                    brief_version=brief.version if brief else 0,
+                    only=shown_ids if previous is not None else None,
+                    confirm=None if rendered else ops.confirm,
+                    editable=not rendered,
+                    rebased=rebased,
+                )
+            },
+        )
+        user_extra = {card_mod.OPS_KEY: ops.model_dump(mode="json")}
+    if answer_payload.get(ledger_key()):
+        thread.state = {**(thread.state or {}), CLIP_ORDER_DRAGGED_KEY: True}
+    # No `content`: the placeholder message is never stored, so no reader of the transcript (the
+    # planner's conversation, the full creator request, the title, a duplicate check) can take it
+    # for the creator's words. The payload carries the drag.
+    source = await _append_event(
+        db,
+        thread,
+        role="user",
+        event_type="user_message",
+        content=None,
+        payload={**base_payload, **user_extra},
+        client_event_id=body.client_event_id,
+    )
+    # The card event is none of the reply kinds that close an open question (`status_update` is
+    # not one either): a drag between a question and its answer must leave the question open.
+    observed = await _append_event(
+        db,
+        thread,
+        role="assistant",
+        event_type="clip_order_card" if content is None else "status_update",
+        content=content,
+        payload=answer_payload,
+    )
+    with reply_language_for(language):
+        stored_note = card_mod.stored_plan_note()
+    plan = KriaTurnPlan(
+        mode="respond",
+        turn_value="progress",
+        response=content or stored_note,
+        diagnostics=outcome_diagnostics("inert", code),
+    )
+    db.add(
+        CreatorAgentTurn(
+            id=turn_id,
+            thread_id=thread.id,
+            session_id=thread.active_creator_agent_session_id,
+            source_event_id=source.id,
+            client_event_id=body.client_event_id,
+            request_digest=digest,
+            status="completed",
+            plan_json=plan.model_dump(mode="json"),
+            observed_event_id=observed.id,
+            completed_at=datetime.now(UTC),
+        )
+    )
+    await db.flush()
+    await db.commit()
+    return (
+        TurnAccepted(
+            turn_id=str(turn_id), thread_revision=int(thread.revision), status="completed"
+        ),
+        False,
+    )
+
+
+def ledger_key() -> str:
+    from app.services.clip_order_ledger import LEDGER_KEY  # noqa: PLC0415
+
+    return LEDGER_KEY
+
+
+def ledger_payload(entry: Any, turn_id: uuid.UUID) -> dict[str, Any]:
+    """The ledger key of an assistant event for one entry (empty when there is none)."""
+    from app.services.clip_order_ledger import LEDGER_KEY  # noqa: PLC0415
+
+    return {LEDGER_KEY: [{**entry.to_payload(), "turn_id": str(turn_id)}]} if entry else {}
+
+
 async def submit_turn(
     db: AsyncSession,
     *,
@@ -883,6 +1111,28 @@ async def submit_turn(
         raise RuntimeFailure(
             404, "live_plan_review_unavailable", "Plan review is unavailable", phase="accept"
         )
+    if body.clip_order_ops is not None:
+        # The drag writes events and updates the thread row, whose foreign-key checks re-lock the
+        # item, job and session. An approval holds those FOR UPDATE while it waits for the thread,
+        # so take them first, in the canonical order, before the thread lock (as a Steer does).
+        parents = (
+            await db.execute(
+                select(
+                    CreationThread.active_plan_item_id,
+                    CreationThread.active_job_id,
+                    CreationThread.active_creator_agent_session_id,
+                ).where(CreationThread.id == thread_id, CreationThread.creator_id == creator_id)
+            )
+        ).first()
+        if parents is not None:
+            await acquire_key_share_rows(
+                db,
+                {
+                    PlanItem: parents.active_plan_item_id,
+                    Job: parents.active_job_id,
+                    CreatorAgentSession: parents.active_creator_agent_session_id,
+                },
+            )
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
     digest = request_digest(body)
     existing = (
@@ -924,6 +1174,12 @@ async def submit_turn(
                 suggestion_outcome="refused" if replayed_refusal == "refused" else None,
             ),
             should_publish,
+        )
+    if body.clip_order_ops is not None:
+        # The order card's drag never plans and never waits behind a running turn or a pending
+        # approval; it rebases by media id, so a stale thread revision is no reason to refuse it.
+        return await _submit_clip_order_turn(
+            db, thread=thread, body=body, digest=digest, locale=locale
         )
     if not await conversation_revision_matches(
         db,
@@ -2385,6 +2641,7 @@ async def _close_pending_approval(
     code: str,
     message: str,
     approval_status: str = "cancelled",
+    payload_extra: dict[str, Any] | None = None,
 ) -> int:
     """Close a pending approval that can no longer be decided; return the new revision.
 
@@ -2420,6 +2677,7 @@ async def _close_pending_approval(
             "approval_id": str(approval.id),
             "code": code,
             "recovery": "refresh_replan",
+            **(payload_extra or {}),
         },
     )
     await db.commit()
@@ -2430,6 +2688,232 @@ async def _close_pending_approval(
         await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
     await _promote_queued_successor(db, thread_id=thread.id)
     return revision
+
+
+CLIP_ORDER_CHANGED_CODE = "clip_order_changed"
+CLIP_ORDER_DRAGGED_KEY = "clip_order_dragged"
+
+
+async def _close_approval_over_dragged_order(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    session: CreatorAgentSession,
+    turn: CreatorAgentTurn,
+    approval: CreatorAgentApproval,
+    execution: CreatorAgentExecution | None,
+    plan_item: Any,
+    draft: Any,
+) -> None:
+    """The fallback when a dragged order cannot be carried into the draft safely: close the approval
+    rather than render the old order, say so in the chat with the refreshed ``clip_order_card``, and
+    raise the 409 (`clip_order_changed`). The creator's next message plans on the dragged order.
+    """
+    from app.services import clip_order_card as card_mod  # noqa: PLC0415
+    from app.services import clip_order_ledger as ledger  # noqa: PLC0415
+
+    item = plan_item or await db.get(PlanItem, session.plan_item_id)
+    payload_extra: dict[str, Any] = {}
+    if item is not None:
+        events = await _clip_order_events(db, thread.id)
+        entries = ledger.fold_clip_order(events)
+        attachment = [
+            row["media_id"]
+            for row in (item.clip_assignments or [])
+            if isinstance(row, dict) and isinstance(row.get("media_id"), str) and row["media_id"]
+        ]
+        state = ledger.current_clip_order(
+            attachment_ids=list(dict.fromkeys(attachment)), entries=entries
+        )
+        brief = await load_latest_brief(db, thread.id)
+        payload_extra = {
+            card_mod.CARD_KEY: card_mod.build_card(
+                state,
+                [row for row in (item.clip_assignments or []) if isinstance(row, dict)],
+                events=events,
+                brief_version=brief.version if brief else 0,
+            )
+        }
+    await _cancel_pending_approval(
+        db,
+        thread=thread,
+        session=session,
+        turn=turn,
+        approval=approval,
+        execution=execution,
+        plan_item=plan_item,
+        code=CLIP_ORDER_CHANGED_CODE,
+        message="The clip order changed after this approval was prepared.",
+        event_message=_thread_say(
+            thread,
+            en=(
+                "You changed the clip order after I prepared this plan, so I cancelled it. "
+                "Nothing was rendered. Tell me to go ahead and I'll prepare it again in your order."
+            ),
+            tr=(
+                "Bu planı hazırladıktan sonra klip sırasını değiştirdin, o yüzden planı iptal "
+                "ettim. Hiçbir video oluşturulmadı. Devam etmemi söylersen planı senin sıranla "
+                "yeniden hazırlarım."
+            ),
+        ),
+        payload_extra=payload_extra,
+    )
+
+
+async def _rebind_dragged_order(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    session: CreatorAgentSession,
+    turn: CreatorAgentTurn,
+    approval: CreatorAgentApproval,
+    execution: CreatorAgentExecution | None,
+    plan_item: Any,
+    draft: Any,
+) -> Any:
+    """Carry a card drag into the draft the creator is about to approve; return the rebound draft
+    document, or None when no drag followed the draft.
+
+    The approval binds the order the draft was planned on, so approving it as it stands would
+    render the old order. The creator confirmed the new one in the chat, so the draft is rewritten
+    INSIDE this approve transaction (every lock the rewrite needs is already held, in canonical
+    order: PlanItem, Session, Turn, Draft, Approval, Execution, Thread): the approval-bound media
+    snapshot stamps the dragged order, an order row the drag moved away from is marked
+    `already_seated` (`clip_order_card.rebound`), the binding digest and the draft hash are
+    recomputed, and the saved readiness is replaced by a fresh assessment of the SAME evidence.
+    Only a creator drag after the draft triggers it; an AI or server entry never rewrites what an
+    approval executes. The rewrite is refused (the approval is closed with 409
+    `clip_order_changed`, the old fallback) when it cannot be proven safe: the draft is not a
+    strategy draft, an entry other than a creator drag followed it, the fresh readiness is not
+    ready, or any evidence digest other than the strategy's moved. No-op with the ledger off.
+    """
+    from app.kria.approval_readiness import (  # noqa: PLC0415
+        READINESS_KEY,
+        assess_readiness,
+        resolve_readiness_manifest,
+        saved_protected_marks,
+    )
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.drafts import canonical_snapshot  # noqa: PLC0415
+    from app.services import clip_order_card as card_mod  # noqa: PLC0415
+    from app.services import clip_order_ledger as ledger  # noqa: PLC0415
+    from app.services.choice_questions import answered_brief  # noqa: PLC0415
+
+    state = getattr(thread, "state", None)
+    if (
+        not ledger.clip_order_ledger_on()
+        # Set by the first drag: a thread that never had one pays no query at every approval.
+        or not (isinstance(state, dict) and state.get(CLIP_ORDER_DRAGGED_KEY) is True)
+    ):
+        return None
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.event_type, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role == "assistant",
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    after = card_mod.entries_after_draft(str(draft.id), rows)
+    if not any(entry.actor == ledger.CREATOR_DRAG for entry in after):
+        return None
+    close = dict(
+        thread=thread,
+        session=session,
+        turn=turn,
+        approval=approval,
+        execution=execution,
+        plan_item=plan_item,
+        draft=draft,
+    )
+    document = _parse_draft_document(draft.snapshot_json)
+    item = plan_item or await db.get(PlanItem, session.plan_item_id)
+    if (
+        document is None
+        or document.kind != "strategy"
+        or document.brief_binding is None
+        or item is None
+        or any(entry.actor != ledger.CREATOR_DRAG for entry in after)
+    ):
+        await _close_approval_over_dragged_order(db, **close)
+    binding = document.brief_binding
+    events = await _clip_order_events(db, thread.id)
+    attachment = list(
+        dict.fromkeys(
+            row["media_id"]
+            for row in (item.clip_assignments or [])
+            if isinstance(row, dict) and isinstance(row.get("media_id"), str) and row["media_id"]
+        )
+    )
+    strategy, media, _state = card_mod.rebound(
+        document.strategy, binding.media_snapshot, ledger.fold_clip_order(events), attachment
+    )
+    coverage = dict(document.brief_coverage or {})
+    saved = coverage.get(READINESS_KEY)
+    fresh = None
+    if saved is not None:
+        with reply_language_for(thread_reply_language(thread)):
+            fresh = assess_readiness(
+                answered_brief(await load_latest_brief(db, thread.id), strategy),
+                strategy,
+                media=media,
+                manifest=await resolve_readiness_manifest(db, item, strategy),
+                editor_payload=document.editor_payload,
+                editor_text_diff=document.editor_text_diff,
+                creator_request=binding.creator_request,
+                protected_regions=list(binding.protected_regions or []),
+                protected_marks=saved_protected_marks(
+                    document, creator_id=thread.creator_id, item=item, saved=saved
+                ),
+                prepared_collection_story=document.prepared_collection_story,
+                creator_id=thread.creator_id,
+                prepared_research=binding.prepared_research,
+            )
+        if not fresh["ready"] or any(
+            fresh.get(key) != saved.get(key)
+            for key in (
+                "brief_version",
+                "brief_digest",
+                "media_digest",
+                "prepared_evidence_digest",
+                "capabilities_digest",
+            )
+        ):
+            await _close_approval_over_dragged_order(db, **close)
+        coverage[READINESS_KEY] = fresh
+    rebuilt = binding.model_copy(
+        update={
+            "media_snapshot": media,
+            "digest": BriefBinding._digest(
+                binding.thread_id,
+                binding.state,
+                binding.brief,
+                binding.creator_request,
+                media,
+                binding.choice_answers,
+                binding.protected_regions,
+                binding.prepared_research,
+            ),
+        }
+    )
+    new_document = document.model_copy(
+        update={"strategy": strategy, "brief_binding": rebuilt, "brief_coverage": coverage or None}
+    )
+    snapshot, snapshot_hash = canonical_snapshot(new_document)
+    if snapshot_hash != draft.snapshot_hash:
+        draft.snapshot_json = snapshot
+        draft.snapshot_hash = snapshot_hash
+        if fresh is not None and execution is not None:
+            execution.result = {
+                **(execution.result or {}),
+                "approval_readiness_digest": fresh["digest"],
+            }
+        if isinstance(session.active_plan, dict) and "strategy" in session.active_plan:
+            session.active_plan = {**session.active_plan, "strategy": strategy}
+        log.info("kria_clip_order_rebound", thread_id=str(thread.id), draft_id=str(draft.id))
+    return new_document
 
 
 async def _cancel_pending_approval(
@@ -2445,6 +2929,7 @@ async def _cancel_pending_approval(
     message: str,
     approval_status: str = "cancelled",
     event_message: str | None = None,
+    payload_extra: dict[str, Any] | None = None,
 ) -> None:
     """Close a pending approval (see `_close_pending_approval`), then raise its 409.
 
@@ -2462,6 +2947,7 @@ async def _cancel_pending_approval(
         code=code,
         message=event_message if event_message is not None else message,
         approval_status=approval_status,
+        payload_extra=payload_extra,
     )
     raise RuntimeFailure(
         409,
@@ -3254,10 +3740,25 @@ async def decide_approval(
             current_revision=int(thread.revision),
         )
 
+    rebound_document = None
+    if decision == "approve" and not is_render_retry:
+        rebound_document = await _rebind_dragged_order(
+            db,
+            thread=thread,
+            session=session,
+            turn=turn,
+            approval=approval,
+            execution=execution,
+            plan_item=plan_item,
+            draft=draft,
+        )
+        if rebound_document is not None:
+            document_peek = rebound_document
+
     if decision == "approve":
         from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
 
-        copy_document = _parse_draft_document(draft.snapshot_json)
+        copy_document = rebound_document or _parse_draft_document(draft.snapshot_json)
         copy_item = plan_item or await db.get(PlanItem, session.plan_item_id)
         if copy_document is not None and copy_document.prepared_collection_story is not None:
             from app.services.media_collection_preparation import (

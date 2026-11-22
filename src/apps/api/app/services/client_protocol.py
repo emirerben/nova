@@ -102,6 +102,8 @@ DUAL_CAPTIONS_PROTOCOL = 52
 # full-level music over the creator's voice, so it is told to update instead.
 SPEECH_DUCK_PROTOCOL = 53
 
+CLIP_ORDER_CARD_PROTOCOL = 54
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

@@ -117,6 +117,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode == 'enforce'
         working-directory: src/apps/api
         run: python -m pip install .
+      - name: Leave one OpenCV distribution
+        if: github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode == 'enforce'
+        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
 
       - name: Validate KRI-499 enforcement promotion evidence
         if: github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode == 'enforce'

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.89.0] - 2026-11-22
+
+### Changed
+- feat(kria): the draft carries the decided clip order as cards and a drag is a turn that needs no model call (cards gated by protocol 54) (#2471) <!-- release-pr: 2471 -->
+
+## [0.89.88.0] - 2026-11-22
+
+### Changed
+- build(api): one OpenCV distribution in the lock and the production image (KRI-1534) (#2466) <!-- release-pr: 2466 -->
+
 ## [0.89.87.0] - 2026-11-22
 
 ### Changed

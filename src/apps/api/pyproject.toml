@@ -37,8 +37,24 @@ dependencies = [
     "google-genai>=2.10,<3",
     "google-cloud-storage>=2.16",
     "google-cloud-vision>=3.7",
-    "scenedetect[opencv]>=0.6",
-    "opencv-python-headless>=4.9",
+    # One OpenCV distribution. opencv-python, -headless, -contrib-python and
+    # -contrib-python-headless all unpack into the same `cv2/` directory and no
+    # installer knows they overlap, so with two installed the last one written
+    # decides which `cv2` loads. It is contrib because mediapipe requires that
+    # one by name and only it has `cv2.CascadeClassifier` in OpenCV 5 (face
+    # sampler, thumbnails). scenedetect requires `opencv-python`; it runs on
+    # this `cv2`, and that requirement is left out:
+    # - uv (CI, the lock): `[tool.uv] exclude-dependencies` below;
+    # - pip (the production image and a few workflows, each a fresh install):
+    #   pip cannot leave a requirement out, so each runs
+    #   `scripts/ci/opencv-install.py --only opencv-contrib-python` afterwards.
+    #   A local pip venv is not repaired: the next plain `pip install` would
+    #   bring `opencv-python` back and write it on top (no CascadeClassifier).
+    #   Check one with `python scripts/ci/opencv-install.py --require
+    #   opencv-contrib-python`.
+    # Guards: scripts/ci/test_api_lock.py, and docker-build.yml on the image.
+    "scenedetect>=0.6",
+    "opencv-contrib-python>=4.9",
     "cryptography>=42",
     "slowapi>=0.1.9",
     "email-validator>=2.1",
@@ -54,7 +70,7 @@ dependencies = [
     # ships pre-built binaries for linux + darwin amd64/arm64.
     "skia-python>=87,<200",
     "yt-dlp[default]>=2024.12",
-    # numpy is a transitive of opencv-python-headless / scenedetect, but the
+    # numpy is a transitive of opencv-contrib-python / scenedetect, but the
     # font-identification pipeline depends on it directly for embedding math.
     # Pinning explicitly so the resolver can't silently downgrade it.
     "numpy>=1.26",
@@ -81,26 +97,10 @@ dependencies = [
     # (structural eval-CI constraint) and any matte failure degrades to
     # None instead of breaking a render job.
     #
-    # KNOWN COLLISION: mediapipe's own metadata declares `opencv-contrib-python`
-    # (GUI-linked build) as a hard dependency — NOT `opencv-python-headless`,
-    # which this project deliberately uses (slim image, no X11 needed). pip
-    # has no "provides" concept across opencv-python/-headless/-contrib/
-    # -contrib-headless distribution names, so both get installed side by
-    # side and whichever installs last physically overwrites the shared
-    # `cv2/` package directory on disk — non-deterministic across rebuilds.
-    # Verified locally (2026-07-17): `pip install mediapipe` pulls
-    # opencv-contrib-python 5.0.0.93 alongside the existing
-    # opencv-python-headless 5.0.0.93; both `import cv2` and `import
-    # mediapipe` work afterward because the prod Dockerfile already installs
-    # libgl1/libegl1/libglib2.0-0 for skia-python, which also happen to
-    # satisfy opencv-contrib-python's runtime needs. Risk is image-size
-    # bloat (+~55MB wheel) and non-determinism, not a hard crash — but if a
-    # future integration pass wants to keep the image headless-only, the
-    # clean fix is `pip install mediapipe --no-deps` in the Dockerfile pip
-    # layer plus explicitly listing mediapipe's other transitive deps
-    # (absl-py, flatbuffers, sounddevice, matplotlib) here, since the
-    # ImageSegmenter task API path does not import cv2 itself (only
-    # mediapipe's drawing_utils / legacy solutions API + its own tests do).
+    # mediapipe requires `opencv-contrib-python` by name, which is why that is
+    # the project's one OpenCV distribution (see `opencv-contrib-python` above).
+    # It is the GUI-linked build; the prod Dockerfile installs
+    # libgl1/libegl1/libglib2.0-0, which it needs to import.
     "mediapipe>=0.10,<0.11",
     # onnxruntime CPU for the RobustVideoMatting subject-matte backbone
     # (app.pipeline.subject_matte, MATTE_RVM_ENABLED). Imported LAZILY like
@@ -182,6 +182,15 @@ analysis = [
 cpu-torch = [
     "torch>=2.4,<3",
     "torchvision<1",
+]
+
+[tool.uv]
+# The OpenCV distributions the project does not use; see `opencv-contrib-python`
+# in [project] dependencies. scenedetect requires the first by name.
+exclude-dependencies = [
+    "opencv-python",
+    "opencv-python-headless",
+    "opencv-contrib-python-headless",
 ]
 
 [[tool.uv.index]]

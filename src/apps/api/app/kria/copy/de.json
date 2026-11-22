@@ -2177,6 +2177,9 @@
     "I found one opening in what you said. Use it, or type your own.": "Ich habe in dem, was du sagst, einen Einstieg gefunden. Nimm ihn oder schreib deinen eigenen.",
     "Once you choose, I'll do the rest of what you asked.": "Sobald du gewählt hast, mache ich den Rest von dem, was du wolltest.",
     "Which opening title should I use? Pick one, type your own, or skip it.": "Welchen Titel soll ich am Anfang zeigen? Wähl einen, schreib deinen eigenen oder lass ihn weg.",
-    "Your first sentence already pulls people in: “{line}”. I'd keep it without a title, or you can pick one of these.": "Dein erster Satz zieht die Leute schon rein: „{line}“. Ich würde ihn ohne Titel lassen, oder du wählst einen von diesen."
+    "Your first sentence already pulls people in: “{line}”. I'd keep it without a title, or you can pick one of these.": "Dein erster Satz zieht die Leute schon rein: „{line}“. Ich würde ihn ohne Titel lassen, oder du wählst einen von diesen.",
+    "I can't change the clip order from here right now. Tell me the order in the chat.": "Ich kann die Reihenfolge der Clips gerade nicht von hier aus ändern. Sag mir die Reihenfolge im Chat.",
+    "You changed the clip order after I prepared this plan, so I cancelled it. Nothing was rendered. Tell me to go ahead and I'll prepare it again in your order.": "Du hast die Reihenfolge der Clips geändert, nachdem ich diesen Plan vorbereitet hatte, deshalb habe ich ihn abgebrochen. Es wurde nichts gerendert. Sag mir, dass ich weitermachen soll, dann bereite ich ihn in deiner Reihenfolge neu vor.",
+    "Updated your clip order.": "Ich habe die Reihenfolge deiner Clips aktualisiert."
   }
 }
