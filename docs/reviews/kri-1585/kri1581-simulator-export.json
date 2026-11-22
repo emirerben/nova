@@ -1,5 +1,5 @@
 {
- "_source": "KRI-1581. Numbers only (no footage): scripts/ios/kri-1581-text-designs-e2e.py score, after prepare and the simulator export (DeviceInformativeTextRenderE2ETests, iPhone 17 Pro, iOS 26.5). Boxes are [left, top, right, bottom] px at 1080x1920; delta is phone or Skia minus the mock-up; bottom_ratio is the band y 0.80-0.86 against the base.",
+ "_source": "KRI-1581. Numbers only (no footage): scripts/ios/kri-1581-text-designs-e2e.py score, after prepare and the simulator export (DeviceInformativeTextRenderE2ETests, iPhone 17 Pro, iOS 26.5). Boxes are [left, top, right, bottom] px at 1080x1920; delta is phone or Skia minus the mock-up; bottom_ratio is the band y 0.80-0.86 against the base; halo is the luminance ratio in a 2-7 px ring around the glyphs.",
  "pass": true,
  "designs": {
   "A1": [
@@ -13,6 +13,7 @@
     ],
     "mock_bottom_ratio": 0.995,
     "under_scrim": false,
+    "mock_halo": 0.914,
     "phone": {
      "box": [
       116,
@@ -27,6 +28,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.92,
      "pass": true
     },
     "skia": {
@@ -43,6 +45,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.89,
      "pass": true
     }
    },
@@ -56,36 +59,39 @@
     ],
     "mock_bottom_ratio": 1.041,
     "under_scrim": false,
+    "mock_halo": 0.951,
     "phone": {
      "box": [
       76,
-      1124,
+      1120,
       909,
       1321
      ],
      "delta": [
       -2,
-      6,
+      2,
       12,
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.935,
      "pass": true
     },
     "skia": {
      "box": [
       76,
-      1124,
+      1118,
       897,
       1321
      ],
      "delta": [
       -2,
-      6,
+      0,
       0,
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.917,
      "pass": true
     }
    },
@@ -99,36 +105,39 @@
     ],
     "mock_bottom_ratio": 1.004,
     "under_scrim": false,
+    "mock_halo": 0.909,
     "phone": {
      "box": [
       76,
-      1122,
+      1112,
       897,
       1323
      ],
      "delta": [
       -2,
-      12,
+      2,
       6,
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.939,
      "pass": true
     },
     "skia": {
      "box": [
       76,
-      1122,
+      1110,
       889,
       1323
      ],
      "delta": [
       -2,
-      12,
+      0,
       -2,
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.927,
      "pass": true
     }
    },
@@ -142,36 +151,39 @@
     ],
     "mock_bottom_ratio": 0.938,
     "under_scrim": false,
+    "mock_halo": 0.939,
     "phone": {
      "box": [
       76,
-      1124,
-      731,
+      1118,
+      729,
       1323
      ],
      "delta": [
       0,
-      6,
-      6,
+      0,
+      4,
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.935,
      "pass": true
     },
     "skia": {
      "box": [
       76,
-      1122,
+      1118,
       725,
       1323
      ],
      "delta": [
       0,
-      4,
+      0,
       0,
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.926,
      "pass": true
     }
    },
@@ -185,36 +197,39 @@
     ],
     "mock_bottom_ratio": 1.01,
     "under_scrim": false,
+    "mock_halo": 0.945,
     "phone": {
      "box": [
       76,
-      1122,
+      1112,
       793,
       1333
      ],
      "delta": [
       -2,
-      12,
+      2,
       12,
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.943,
      "pass": true
     },
     "skia": {
      "box": [
       76,
-      1122,
+      1110,
       781,
       1333
      ],
      "delta": [
       -2,
-      12,
+      0,
       0,
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.93,
      "pass": true
     }
    },
@@ -228,36 +243,39 @@
     ],
     "mock_bottom_ratio": 1.013,
     "under_scrim": false,
+    "mock_halo": 0.947,
     "phone": {
      "box": [
-      76,
-      1122,
+      78,
+      1112,
       801,
       1333
      ],
      "delta": [
-      -2,
-      10,
+      0,
+      0,
       4,
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.928,
      "pass": true
     },
     "skia": {
      "box": [
       78,
-      1122,
+      1112,
       797,
       1333
      ],
      "delta": [
       0,
-      10,
+      0,
       0,
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.921,
      "pass": true
     }
    }
@@ -273,6 +291,7 @@
     ],
     "mock_bottom_ratio": 0.995,
     "under_scrim": false,
+    "mock_halo": 0.902,
     "phone": {
      "box": [
       124,
@@ -287,6 +306,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.906,
      "pass": true
     },
     "skia": {
@@ -303,6 +323,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.885,
      "pass": true
     }
    },
@@ -533,6 +554,7 @@
     ],
     "mock_bottom_ratio": 0.995,
     "under_scrim": false,
+    "mock_halo": 0.924,
     "phone": {
      "box": [
       120,
@@ -547,6 +569,7 @@
       4
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.933,
      "pass": true
     },
     "skia": {
@@ -563,6 +586,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.899,
      "pass": true
     }
    },
@@ -576,6 +600,7 @@
     ],
     "mock_bottom_ratio": 1.041,
     "under_scrim": false,
+    "mock_halo": 0.963,
     "phone": {
      "box": [
       168,
@@ -590,6 +615,7 @@
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.947,
      "pass": true
     },
     "skia": {
@@ -606,6 +632,7 @@
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.936,
      "pass": true
     }
    },
@@ -619,6 +646,7 @@
     ],
     "mock_bottom_ratio": 1.004,
     "under_scrim": false,
+    "mock_halo": 0.929,
     "phone": {
      "box": [
       182,
@@ -633,6 +661,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.943,
      "pass": true
     },
     "skia": {
@@ -649,6 +678,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.939,
      "pass": true
     }
    },
@@ -662,6 +692,7 @@
     ],
     "mock_bottom_ratio": 0.938,
     "under_scrim": false,
+    "mock_halo": 0.944,
     "phone": {
      "box": [
       252,
@@ -676,6 +707,7 @@
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.941,
      "pass": true
     },
     "skia": {
@@ -692,6 +724,7 @@
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.935,
      "pass": true
     }
    },
@@ -705,6 +738,7 @@
     ],
     "mock_bottom_ratio": 1.01,
     "under_scrim": false,
+    "mock_halo": 0.951,
     "phone": {
      "box": [
       226,
@@ -719,6 +753,7 @@
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.951,
      "pass": true
     },
     "skia": {
@@ -735,6 +770,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.942,
      "pass": true
     }
    },
@@ -748,6 +784,7 @@
     ],
     "mock_bottom_ratio": 1.013,
     "under_scrim": false,
+    "mock_halo": 0.956,
     "phone": {
      "box": [
       162,
@@ -762,6 +799,7 @@
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.937,
      "pass": true
     },
     "skia": {
@@ -778,6 +816,7 @@
       0
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.932,
      "pass": true
     }
    }
@@ -793,6 +832,7 @@
     ],
     "mock_bottom_ratio": 0.995,
     "under_scrim": false,
+    "mock_halo": 0.924,
     "phone": {
      "box": [
       120,
@@ -807,6 +847,7 @@
       4
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.933,
      "pass": true
     },
     "skia": {
@@ -823,6 +864,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.899,
      "pass": true
     }
    },
@@ -836,6 +878,7 @@
     ],
     "mock_bottom_ratio": 1.041,
     "under_scrim": false,
+    "mock_halo": 0.952,
     "phone": {
      "box": [
       104,
@@ -850,6 +893,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.929,
      "pass": true
     },
     "skia": {
@@ -866,6 +910,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.917,
      "pass": true
     }
    },
@@ -879,6 +924,7 @@
     ],
     "mock_bottom_ratio": 1.003,
     "under_scrim": false,
+    "mock_halo": 0.903,
     "phone": {
      "box": [
       166,
@@ -893,6 +939,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.926,
      "pass": true
     },
     "skia": {
@@ -909,6 +956,7 @@
       4
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.924,
      "pass": true
     }
    },
@@ -922,6 +970,7 @@
     ],
     "mock_bottom_ratio": 0.938,
     "under_scrim": false,
+    "mock_halo": 0.932,
     "phone": {
      "box": [
       190,
@@ -936,6 +985,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.924,
      "pass": true
     },
     "skia": {
@@ -952,6 +1002,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.921,
      "pass": true
     }
    },
@@ -965,6 +1016,7 @@
     ],
     "mock_bottom_ratio": 0.977,
     "under_scrim": false,
+    "mock_halo": 0.949,
     "phone": {
      "box": [
       182,
@@ -979,6 +1031,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.935,
      "pass": true
     },
     "skia": {
@@ -995,6 +1048,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.922,
      "pass": true
     }
    },
@@ -1008,20 +1062,22 @@
     ],
     "mock_bottom_ratio": 1.004,
     "under_scrim": false,
+    "mock_halo": 0.929,
     "phone": {
      "box": [
-      138,
+      140,
       1268,
       947,
-      1317
+      1315
      ],
      "delta": [
-      0,
+      2,
       4,
       4,
-      4
+      2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.923,
      "pass": true
     },
     "skia": {
@@ -1038,6 +1094,7 @@
       4
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.918,
      "pass": true
     }
    },
@@ -1051,6 +1108,7 @@
     ],
     "mock_bottom_ratio": 1.01,
     "under_scrim": false,
+    "mock_halo": 0.935,
     "phone": {
      "box": [
       254,
@@ -1065,6 +1123,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.93,
      "pass": true
     },
     "skia": {
@@ -1081,6 +1140,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.925,
      "pass": true
     }
    },
@@ -1094,6 +1154,7 @@
     ],
     "mock_bottom_ratio": 1.013,
     "under_scrim": false,
+    "mock_halo": 0.936,
     "phone": {
      "box": [
       152,
@@ -1108,6 +1169,7 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.918,
      "pass": true
     },
     "skia": {
@@ -1124,10 +1186,16 @@
       2
      ],
      "bottom_ratio": 1.0,
+     "halo": 0.917,
      "pass": true
     }
    }
   ],
+  "halo_median": {
+   "phone": 0.933,
+   "mock": 0.936,
+   "skia": 0.922
+  },
   "control": {
    "what": "A1 hook without shadow_blur, shadow_offset_y or scrim, exported on the phone",
    "box": [

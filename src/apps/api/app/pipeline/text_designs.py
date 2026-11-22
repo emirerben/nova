@@ -110,8 +110,8 @@ TEXT_DESIGNS: dict[str, TextDesign] = {
             hook=TextLevel("Literata", 92, HOOK_COLOR, line_spacing=1.02),
             heading=TextLevel("Inter", 32, HEADING_COLOR, text_case="upper", letter_spacing=0.14),
             detail=TextLevel("Literata", 54, DETAIL_COLOR, line_spacing=1.08),
-            # 14 px in the mock-up, after a heading line box at its 1.12 spacing (~5 px more).
-            pair_gap_px=18.0,
+            # The mock-up's 14 px follows the heading's whole 1.12 line box; fitted to its still.
+            pair_gap_px=23.0,
         ),
         TextDesign(
             id="A2",
@@ -188,6 +188,52 @@ def _line_box_trailing_px(level: TextLevel) -> float:
     return (metrics.fDescent - metrics.fAscent) * (level.line_spacing - 1)
 
 
+def _apply(row: dict, values: dict[str, Any], design_id: str) -> None:
+    """Write ``values`` as design fields, first dropping what an earlier design wrote that this
+    one does not (A1's caps and tracking, A2's scrim). Her own fields stay untouched."""
+    from app.pipeline.informative_text import (  # noqa: PLC0415
+        DESIGN_FIELDS_KEY,
+        apply_design_values,
+        creator_fields,
+    )
+
+    earlier = set((row.get("source_params") or {}).get(DESIGN_FIELDS_KEY) or [])
+    for field in earlier - set(values) - creator_fields(row):
+        row.pop(field, None)
+    apply_design_values(row, values, design_id)
+
+
+def _with_writer_tag(row: dict) -> dict:
+    """Read the research writer's own tag (KRI-1580 ``research.design``: ``id``, ``level``,
+    ``pair``) into this module's shape, and return the row's ``source_params``.
+
+    A ``text_design`` already on the row wins, so a later design switch keeps its pick. A pair
+    becomes one ``text_stack_v1`` group: the heading at level 2, the detail at level 3.
+    """
+    from app.pipeline.informative_text import DESIGN_ID_KEY, HOOK_ROLE  # noqa: PLC0415
+    from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM  # noqa: PLC0415
+
+    source = dict(row.get("source_params") or {})
+    tag = (
+        (source.get("research") or {}).get("design")
+        if isinstance(source.get("research"), dict)
+        else None
+    )
+    if not isinstance(tag, dict) or tag.get("id") not in TEXT_DESIGNS:
+        return source
+    source.setdefault(DESIGN_ID_KEY, tag["id"])
+    level, pair = tag.get("level"), tag.get("pair")
+    if level == "hook":
+        source.setdefault("phone_text_role", HOOK_ROLE)
+    elif level in ("heading", "detail") and pair is not None:
+        source.setdefault(
+            STACK_LAYOUT_PARAM,
+            {"stack_id": f"pair-{pair}", "heading_level": 2 if level == "heading" else 3},
+        )
+    row["source_params"] = source
+    return source
+
+
 def apply_text_design(rows: list[dict]) -> list[dict]:
     """Style every hook and research row that names a design, in place.
 
@@ -198,14 +244,13 @@ def apply_text_design(rows: list[dict]) -> list[dict]:
     """
     from app.pipeline.informative_text import (  # noqa: PLC0415
         DESIGN_ID_KEY,
-        apply_design_values,
         authored_fields,
     )
     from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM  # noqa: PLC0415
 
     scrimmed: set[str] = set()
     for row in rows:
-        source = row.get("source_params") or {}
+        source = _with_writer_tag(row)
         design = TEXT_DESIGNS.get(str(source.get(DESIGN_ID_KEY) or ""))
         level = row_level(row, design) if design is not None else None
         if design is None or level is None:
@@ -219,7 +264,7 @@ def apply_text_design(rows: list[dict]) -> list[dict]:
                 alignment="center",
                 max_width_frac=HOOK_WIDTH_FRAC,
             )
-            apply_design_values(row, values, design.id)
+            _apply(row, values, design.id)
             continue
         values.update(alignment=design.alignment, max_width_frac=design.max_width_frac)
         stack = dict((row.get("source_params") or {}).get(STACK_LAYOUT_PARAM) or {})
@@ -227,7 +272,7 @@ def apply_text_design(rows: list[dict]) -> list[dict]:
         if design.scrim is not None and stack_id not in scrimmed:
             values["scrim"] = dict(design.scrim)
             scrimmed.add(stack_id)
-        apply_design_values(row, values, design.id)
+        _apply(row, values, design.id)
         stack.update(
             stack_id=stack_id,
             corner="bottom_left" if design.alignment == "left" else "bottom",

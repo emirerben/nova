@@ -22,6 +22,7 @@ Ways this can fail, written before the code:
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -113,13 +114,8 @@ def test_kyoto_designs_draw_where_the_mockups_drew_them(design):
     for index, (group, expected) in enumerate(zip(groups, mockup, strict=True)):
         frame = _burn(group)
         drawn = _ink_box(frame)
-        # The mock-up's A1 caps follow Turkish rules for every word ("ROMANTİK"); ours only for
-        # words with a Turkish letter, so a dotted capital sits about 11 px higher there.
-        top_slack = 12 if design == "A1" else 5
-        assert abs(drawn[0] - expected[0]) <= 4, (design, index, drawn, expected)
-        assert abs(drawn[2] - expected[2]) <= 4, (design, index, drawn, expected)
-        assert abs(drawn[3] - expected[3]) <= 4, (design, index, drawn, expected)
-        assert -2 <= drawn[1] - expected[1] <= top_slack, (design, index, drawn, expected)
+        for edge in range(4):
+            assert abs(drawn[edge] - expected[edge]) <= 4, (design, index, drawn, expected)
         # The scrim reaches the canvas bottom at the design's peak, exactly once per pair.
         bottom_alpha = int(frame[_CANVAS[1] - 1, _CANVAS[0] // 2, 3])
         scrim = TEXT_DESIGNS[design].scrim
@@ -175,6 +171,8 @@ def test_phone_layers_carry_the_design_shadow_and_one_scrim_per_pair(monkeypatch
             (b.sigma, b.dy, round(b.color.alpha, 2)) for r in layer.runs for b in r.blur_layers
         }
         assert blur == (14.0, 3.0, 0.55), layer.id
+    # Every designed layer blends in sRGB values on the device, as the cloud burn does.
+    assert all(layer.srgb_blend is True for layer in layers)
     scrims = [layer.scrim for layer in layers if layer.scrim is not None]
     assert len(scrims) == 5  # one per fact pair, none on the hook
     scrim = scrims[0]
@@ -201,8 +199,8 @@ def test_a_device_that_cannot_draw_the_scrim_gets_the_text_without_it(
         layers = _phone_layers(_resolve(_design_rows("A2")))
     finally:
         set_client_protocol(None)
-    assert all(layer.scrim is None for layer in layers)
-    assert all("scrim" not in layer.model_dump(mode="json") for layer in layers)
+    assert all(layer.scrim is None and not layer.srgb_blend for layer in layers)
+    assert all(not {"scrim", "srgb_blend"} & set(layer.model_dump(mode="json")) for layer in layers)
     assert {b.sigma for layer in layers for r in layer.runs for b in r.blur_layers} == {14.0}
 
 
@@ -311,3 +309,109 @@ def test_flag_off_rows_layers_and_pixels_are_byte_identical_to_main():
         for element in elements:
             digest.update(json.dumps(element.model_dump(mode="json"), sort_keys=True).encode())
     assert digest.hexdigest() == _FLAG_OFF_SHA256
+
+
+def _set_fields(rows: list[dict]) -> list[dict]:
+    """Rows with unset (None) fields dropped: a cleared field and a never-set one are the same."""
+    return [{key: value for key, value in row.items() if value is not None} for row in rows]
+
+
+@pytest.mark.parametrize("start, switch", [("A1", "A2"), ("A2", "A3"), ("A3", "A1")])
+def test_switching_design_draws_what_a_fresh_pick_draws_and_keeps_her_edit(start, switch):
+    first = _resolve(_design_rows(start))
+    for row in first:
+        row["source_params"]["text_design"] = switch
+    assert _set_fields(_resolve(first)) == _set_fields(_resolve(_design_rows(switch)))
+
+    edited = _resolve(_design_rows(start))
+    detail = next(row for row in edited if row["id"] == "kri1585-fact-2-detail")
+    detail["color"] = "#9AD0FF"
+    detail["source_params"]["creator_style_fields"] = ["color"]
+    for row in edited:
+        row["source_params"]["text_design"] = switch
+    switched = {row["id"]: row for row in _resolve(edited)}
+    assert switched["kri1585-fact-2-detail"]["color"] == "#9AD0FF"
+    assert (
+        switched["kri1585-fact-2-detail"]["font_family"] == TEXT_DESIGNS[switch].detail.font_family
+    )
+
+
+def test_a_save_keeps_the_design_and_records_only_what_she_changed(monkeypatch):
+    """Through `prepare_editor_commit` (the iPhone Save and a chat draft's commit) on a guided
+    story whose plan carries the A2 hook and pairs: a wording edit to one detail keeps every
+    row's shadow, drop and scrim, and makes no style field hers."""
+    import app.routes.generative_jobs as gj
+    from app.services.phone_text_styling import PHONE_TEXT_STYLE_FIELD
+    from tests.routes.test_editor_commit import _arm, _narrated_guided_job
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(settings, "informative_text_designs_enabled", True)
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    designed = [row for row in _resolve(_design_rows("A2")) if row["end_s"] <= 25]
+    job = _narrated_guided_job()
+    job.assembly_plan["guided_story_execution_plan"]["text_elements"].extend(
+        copy.deepcopy(designed)
+    )
+    variant = job.assembly_plan["variants"][0]
+    variant["text_elements"].extend(copy.deepcopy(designed))
+    variant[PHONE_TEXT_STYLE_FIELD] = {
+        "version": 1,
+        "preferences": {},
+        "requested": {},
+        POLICY_KEY: True,
+        SHAPES_KEY: True,
+    }
+    revision = gj._guided_v2_revision(job, variant)
+    elements = copy.deepcopy(revision["text_elements"])
+    edited = next(row for row in elements if row["id"] == "kri1585-fact-1-detail")
+    edited["text"] = "Hozukyo boyunca tarihi hat"
+    gj.prepare_editor_commit(
+        job,
+        variant["variant_id"],
+        gj.EditorCommitRequest(
+            base_generation=revision["base_generation"],
+            guided_revision_number=1,
+            text_elements=elements,
+        ),
+    )
+    saved_variant = job.assembly_plan["variants"][0]
+    before = {row["id"]: row for row in designed}
+    for rows in (
+        saved_variant["guided_edit_revision"]["text_elements"],
+        saved_variant["text_elements"],
+    ):
+        saved = {row["id"]: row for row in rows if row["id"] in before}
+        assert set(saved) == set(before)
+        for row_id, row in saved.items():
+            for field in ("shadow_blur", "shadow_offset_y", "scrim", "font_family", "color"):
+                assert row.get(field) == before[row_id].get(field), (row_id, field)
+            assert not (row.get("source_params") or {}).get("creator_style_fields"), row_id
+        assert saved["kri1585-fact-1-detail"]["text"] == "Hozukyo boyunca tarihi hat"
+
+
+@pytest.mark.parametrize("design", ["A2", "B1"])
+def test_rows_tagged_by_the_research_writer_draw_the_same_design(design):
+    """KRI-1580's writer tags each row ``research.design`` (``id``, ``level``, ``pair``) instead
+    of ``text_design`` and ``text_stack_v1``; both shapes must draw the same video."""
+    tagged = []
+    for row in _design_rows(design):
+        source = dict(row["source_params"])
+        stack = source.pop("text_stack_v1", None)
+        source.pop("text_design")
+        if source.get("phone_text_role") == "hook":
+            level, pair = "hook", None
+        elif stack is None:
+            level, pair = "line", None
+        else:
+            level = "heading" if stack["heading_level"] == 2 else "detail"
+            pair = int(stack["stack_id"].split("-")[1])
+        source.pop("phone_text_role", None)
+        tag = {"id": design, "level": level, **({"pair": pair} if pair is not None else {})}
+        source["research"] = {**source.get("research", {}), "design": tag}
+        tagged.append({**row, "source_params": source})
+
+    def drawn(rows: list[dict]) -> list[dict]:
+        return [{k: v for k, v in row.items() if k != "source_params"} for row in rows]
+
+    assert drawn(_resolve(tagged)) == drawn(_resolve(_design_rows(design)))

@@ -182,7 +182,9 @@ def drawable_family(family: str | None, texts, excluded=()) -> str | None:
 def displayed_text(row: dict) -> str:
     from app.agents._schemas.text_element import apply_text_case
 
-    return apply_text_case(str(row.get("text") or ""), row.get("text_case"))
+    return apply_text_case(
+        str(row.get("text") or ""), row.get("text_case"), row.get("text_language")
+    )
 
 
 def cursor_text(row: dict) -> str:

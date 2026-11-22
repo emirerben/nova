@@ -1064,11 +1064,16 @@ def build_overlays_from_text_elements(
 
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
-        elem_text = apply_text_case(elem.text, elem.text_case)
+        elem_text = apply_text_case(elem.text, elem.text_case, elem.text_language)
         elem_word_timings = elem.word_timings
         if elem.text_case and elem.text_case != "none" and elem_word_timings:
             elem_word_timings = [
-                {**wt, "text": apply_text_case(str(wt.get("text", "")), elem.text_case)}
+                {
+                    **wt,
+                    "text": apply_text_case(
+                        str(wt.get("text", "")), elem.text_case, elem.text_language
+                    ),
+                }
                 for wt in elem_word_timings
             ]
 

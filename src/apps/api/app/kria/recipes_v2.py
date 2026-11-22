@@ -286,7 +286,7 @@ class EditRecipeV2(EditRecipeV1):
             for layer in self.text_layers
         ):
             self.required_capabilities = self.required_capabilities | {"authoredText"}
-        if any(layer.scrim is not None for layer in self.text_layers):
+        if any(layer.scrim is not None or layer.srgb_blend for layer in self.text_layers):
             self.required_capabilities = self.required_capabilities | {"textDesigns"}
         for layer in self.text_layers:
             if layer.end > self.duration:

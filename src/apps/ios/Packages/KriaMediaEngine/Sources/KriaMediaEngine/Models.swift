@@ -275,7 +275,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
         if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
-        if textLayers.contains(where: { $0.scrim != nil }) { result.insert(.textDesigns) }
+        if textLayers.contains(where: { $0.scrim != nil || $0.srgbBlend == true }) { result.insert(.textDesigns) }
         // KRI-1192: a run drawn in a script-fallback face (Noto Sans KR / Arabic) needs a build that bundles it.
         // Mirrors `EditRecipeV2`, which reads the run's font asset file from the manifest.
         let scriptFontAssets = Set((assetManifest?.assets ?? []).compactMap { asset -> String? in

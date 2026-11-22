@@ -441,9 +441,9 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         )
     # KRI-1581: same explicit gate for a text scrim (`compile_text_overlay` drops it before it
     # gets here unless verified; this catches a caller that added one afterwards).
-    if any(layer.scrim is not None for layer in recipe.text_layers) and "textDesigns" not in set(
-        settings.phone_render_verified_features
-    ):
+    if any(
+        layer.scrim is not None or layer.srgb_blend for layer in recipe.text_layers
+    ) and "textDesigns" not in set(settings.phone_render_verified_features):
         raise PhoneCapabilityUnavailable(
             "Designed text backgrounds await native parity and device qualification",
             capability="textDesigns",

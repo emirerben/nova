@@ -388,6 +388,9 @@ class TextElement(BaseModel):
     shadow_blur: float | None = Field(default=None, ge=0, le=60, allow_inf_nan=False)
     shadow_offset_y: float | None = Field(default=None, ge=-40, le=40, allow_inf_nan=False)
     scrim: TextScrim | None = None
+    # KRI-1581: the copy's language, so text_case follows its rules everywhere ("Romantik" in
+    # Turkish caps is "ROMANTİK"). Set by the writer that knows it; unset keeps per-word rules.
+    text_language: str | None = Field(default=None, max_length=16, pattern=r"^[A-Za-z-]+$")
     background_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     editor_preset: Literal["Simple", "Bold", "Highlight"] | None = None
     animation_phases: TextAnimationPhases | None = None
@@ -401,7 +404,7 @@ class TextElement(BaseModel):
             payload.pop("wrap_lines", None)
         # KRI-646: an unset bend adds no key, so every plan, snapshot and replay hash recorded
         # before Bend stays byte-identical. KRI-1581's shadow and scrim keys follow suit.
-        for field in ("bend", "shadow_blur", "shadow_offset_y", "scrim"):
+        for field in ("bend", "shadow_blur", "shadow_offset_y", "scrim", "text_language"):
             if getattr(self, field) is None:
                 payload.pop(field, None)
         return payload

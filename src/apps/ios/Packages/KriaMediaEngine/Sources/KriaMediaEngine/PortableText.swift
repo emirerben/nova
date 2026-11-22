@@ -295,20 +295,25 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     public var behindSubject: Bool?
     /// KRI-1581: the soft gradient behind informative text (design A2). Omitted from the wire when nil.
     public var scrim: TextScrim?
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background, bend, behindSubject, scrim }
+    /// KRI-1581: composite this layer (and its scrim) in sRGB-encoded values, as the cloud burn does. The
+    /// compositor's working space is linear, where a 0.55 shadow darkens about half as much. Omitted when nil.
+    public var srgbBlend: Bool?
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background, bend, behindSubject, scrim, srgbBlend }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil, bend: Double? = nil, behindSubject: Bool? = nil, scrim: TextScrim? = nil) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil, bend: Double? = nil, behindSubject: Bool? = nil, scrim: TextScrim? = nil, srgbBlend: Bool? = nil) {
         self.bend = bend
         self.behindSubject = behindSubject
         self.scrim = scrim
+        self.srgbBlend = srgbBlend
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
         self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade; self.giantTitle = giantTitle; self.animationPhases = animationPhases; self.background = background
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background", "bend", "behindSubject", "scrim"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background", "bend", "behindSubject", "scrim", "srgbBlend"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         bend = try c.decodeIfPresent(Double.self, forKey: .bend)
         scrim = try c.decodeIfPresent(TextScrim.self, forKey: .scrim)
+        srgbBlend = try c.decodeIfPresent(Bool.self, forKey: .srgbBlend)
         behindSubject = try c.decodeIfPresent(Bool.self, forKey: .behindSubject)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)

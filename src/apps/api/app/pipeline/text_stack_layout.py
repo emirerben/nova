@@ -32,7 +32,9 @@ def measure_text_block(row: dict, *, width: float | None = None) -> dict:
     width = row_canvas(row).width if width is None else width
     # KRI-781: measure exactly what the burn draws (apply_text_case, Turkish-aware),
     # never str.title() ("Don'T" was measured while "Don't" was drawn).
-    text = apply_text_case(str(row.get("text") or ""), row.get("text_case"))
+    text = apply_text_case(
+        str(row.get("text") or ""), row.get("text_case"), row.get("text_language")
+    )
     face = renderer._resolve_typeface_for_overlay(row).typeface
     size = float(
         row.get("size_px")

@@ -27,10 +27,11 @@ and Skia against ``base.mp4``, the phone against its own ``cases/none/phone.mp4`
 and frame timing cancel out). The scrim is the luminance ratio against the base in the band
 y 0.80-0.86, under the text and above the footage's letterbox. It asserts, at 1080x1920:
 
-* each text box's left and bottom edge within 8 px of the mock-up's, the top within 8 px
-  (16 px on A1, whose mock-up capitalises "i" as a dotted İ in every word), the right edge
+* each text box's left, top and bottom edge within 8 px of the mock-up's, the right edge
   within 8 px for Skia and 20 px for the phone;
 * under a scrim the band's ratio within 0.06 of the mock-up's (0.40), elsewhere of 1.00;
+* the soft shadow: the luminance ratio in a 2-7 px ring around the glyphs (where the Skia text
+  is) within 0.04 of the mock-up's on every still outside a scrim, and the medians within 0.02;
 * the same for the Skia burn, so the phone and the cloud agree with each other too.
 
 The phone's right-edge allowance: the device shapes these runs itself, and in Literata,
@@ -67,6 +68,8 @@ TEST_ENV = {
     "ALLOWED_ORIGINS": '["http://localhost:3000"]',
 }
 BOX_SLACK_PX = 8
+HALO_SLACK = 0.04
+HALO_MEDIAN_SLACK = 0.02
 PHONE_RIGHT_SLACK_PX = 20
 SCRIM_SLACK = 0.06
 
@@ -354,10 +357,24 @@ def _bottom_ratio(image, base) -> float:
     return float(np.median(shown[keep] / under[keep])) if keep.any() else 1.0
 
 
+def _halo_ratio(image, base, text_mask) -> float:
+    """Median luminance ratio against the base in a 2-7 px ring around the text: the shadow."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    mask = Image.fromarray((text_mask * 255).astype(np.uint8))
+    outer = np.asarray(mask.filter(ImageFilter.MaxFilter(15))) > 0
+    inner = np.asarray(mask.filter(ImageFilter.MaxFilter(3))) > 0
+    ring = outer & ~inner
+    shown, under = _luma(image)[ring], _luma(base)[ring]
+    keep = under > 40
+    return float(np.median(shown[keep] / under[keep]))
+
+
 def score(out: Path) -> int:
     from PIL import Image, ImageDraw
 
-    results, tiles, ok = {}, [], True
+    results, tiles, ok, halos = {}, [], True, {}
     for design in DESIGNS:
         video = out / "cases" / design / "phone.mp4"
         if not video.exists():
@@ -390,16 +407,24 @@ def score(out: Path) -> int:
                 "under_scrim": any(s <= t < e for s, e in scrim_windows),
             }
             target = mock_ratio if entry["under_scrim"] else 1.0
+            text_mask = (_luma(skia) - _luma(base)) > 60
+            if not entry["under_scrim"]:
+                entry["mock_halo"] = round(_halo_ratio(mock, base, text_mask), 3)
             for name, image, under in (("phone", phone, phone_base), ("skia", skia, base)):
                 box = _text_box(image, under)
                 ratio = _bottom_ratio(image, under)
+                if "mock_halo" in entry:
+                    halo = _halo_ratio(image, under, text_mask)
+                    halos.setdefault(name, []).append(halo)
+                    if name == "phone":
+                        halos.setdefault("mock", []).append(entry["mock_halo"])
+                    ok &= abs(halo - entry["mock_halo"]) <= HALO_SLACK
                 deltas = [b - m for b, m in zip(box, mock_box, strict=True)] if box else None
-                top = 16 if design == "A1" else BOX_SLACK_PX
                 right = PHONE_RIGHT_SLACK_PX if name == "phone" else BOX_SLACK_PX
                 passed = (
                     deltas is not None
                     and all(abs(d) <= BOX_SLACK_PX for d in (deltas[0], deltas[3]))
-                    and abs(deltas[1]) <= top
+                    and abs(deltas[1]) <= BOX_SLACK_PX
                     and abs(deltas[2]) <= right
                     and abs(ratio - target) <= SCRIM_SLACK
                 )
@@ -407,6 +432,7 @@ def score(out: Path) -> int:
                     "box": box,
                     "delta": deltas,
                     "bottom_ratio": round(ratio, 3),
+                    **({"halo": round(halos[name][-1], 3)} if "mock_halo" in entry else {}),
                 }
                 entry[name]["pass"] = passed
                 ok &= passed
@@ -422,6 +448,11 @@ def score(out: Path) -> int:
                     fill="black",
                 )
             tiles.append(tile.resize((810, 498)))
+    medians = {name: round(float(sorted(v)[len(v) // 2]), 3) for name, v in halos.items()}
+    results["halo_median"] = medians
+    ok &= all(
+        abs(medians[name] - medians["mock"]) <= HALO_MEDIAN_SLACK for name in ("phone", "skia")
+    )
     t = _still_times("A1")[0]
     control = Image.open(
         _frame(out / "cases" / "control" / "phone.mp4", t, out / "cases" / "control" / "still0.png")

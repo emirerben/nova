@@ -761,15 +761,18 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     // Text behind people: the multiply happens AFTER placement, in canvas space, where the
                     // mask lives (F1). No mask this frame = plain text, never a missing layer (F3, F13).
                     if layer.behindSubject == true, let occlusion { placed = SubjectOcclusion.apply(to: placed, mask: occlusion) }
-                    // KRI-1581: the scrim fades with the text but stays put while the text moves. It blends in
-                    // sRGB-encoded values, as the cloud burn and the approved mock-ups do; blended in this
-                    // compositor's linear working space, black at 0.6 only darkens to 0.66, not 0.4.
-                    if let scrim = layer.scrim {
-                        frame = opacity(scrimImage(scrim, canvas: canvas), state.alpha)
-                            .composited(over: frame.applyingFilter("CILinearToSRGBToneCurve"))
-                            .applyingFilter("CISRGBToneCurveToLinear")
+                    // KRI-1581: a designed layer (and its scrim) blends in sRGB-encoded values, as the cloud burn
+                    // and the approved mock-ups do. In this compositor's linear working space black at 0.6 only
+                    // darkens the picture to 0.66, and a 0.55 shadow about half as much as in the cloud. The scrim
+                    // fades with the text but stays put while the text moves.
+                    if layer.srgbBlend == true || layer.scrim != nil {
+                        var encoded = frame.applyingFilter("CILinearToSRGBToneCurve")
+                        if let scrim = layer.scrim { encoded = opacity(scrimImage(scrim, canvas: canvas), state.alpha).composited(over: encoded) }
+                        encoded = opacity(placed.applyingFilter("CILinearToSRGBToneCurve"), state.alpha).composited(over: encoded)
+                        frame = encoded.applyingFilter("CISRGBToneCurveToLinear")
+                    } else {
+                        frame = opacity(placed, state.alpha).composited(over: frame)
                     }
-                    frame = opacity(placed, state.alpha).composited(over: frame)
                 } catch { throw error }
                 continue
             }

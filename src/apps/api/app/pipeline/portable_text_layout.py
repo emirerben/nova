@@ -272,16 +272,16 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         layer = layer.model_copy(update={"bend": bend})
     if overlay.get("behind_subject"):
         layer = _stamp_behind_subject(layer, layer_id=layer_id)
-    if isinstance(overlay.get("scrim"), dict):
-        layer = _stamp_scrim(layer, overlay["scrim"], layer_id=layer_id, canvas=canvas)
+    if isinstance(overlay.get("scrim"), dict) or overlay.get("shadow_blur") is not None:
+        layer = _stamp_design_paint(layer, overlay, layer_id=layer_id, canvas=canvas)
     return layer, font
 
 
-def _stamp_scrim(layer, scrim: dict, *, layer_id: str, canvas):
-    """Draw a row's scrim on device only where the gate is open and the painter supports it.
+def _stamp_design_paint(layer, overlay: dict, *, layer_id: str, canvas):
+    """KRI-1581: a designed row's scrim and sRGB blending, only where the gate is open.
 
-    Otherwise the scrim is dropped and the text keeps its own shadow, so an older build or an
-    unverified device gets the text without the gradient, never a recipe it cannot decode.
+    Otherwise both are dropped: an older build or an unverified device gets the text with its
+    own shadow, blended as today, never a recipe it cannot decode.
     """
     from app.kria.portable_text import (  # noqa: PLC0415
         SCRIM_SUPPORTED_EFFECTS,
@@ -293,14 +293,22 @@ def _stamp_scrim(layer, scrim: dict, *, layer_id: str, canvas):
     from app.services.phone_rollout import text_designs_phone_supported  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    reason = None
-    if layer.effect not in SCRIM_SUPPORTED_EFFECTS or layer.giant_title is not None:
-        reason = "unsupported_effect"
-    elif not text_designs_phone_supported():
-        reason = "phone_gate_closed"
-    if reason is not None:
+    if not text_designs_phone_supported():
         record_pipeline_event(
-            "overlay", "text_scrim_phone_fallback", {"layer_id": layer_id, "reason": reason}
+            "overlay",
+            "text_design_phone_fallback",
+            {"layer_id": layer_id, "reason": "phone_gate_closed"},
+        )
+        return layer
+    layer = layer.model_copy(update={"srgb_blend": True})
+    scrim = overlay.get("scrim")
+    if not isinstance(scrim, dict):
+        return layer
+    if layer.effect not in SCRIM_SUPPORTED_EFFECTS or layer.giant_title is not None:
+        record_pipeline_event(
+            "overlay",
+            "text_design_phone_fallback",
+            {"layer_id": layer_id, "reason": "scrim_unsupported_effect"},
         )
         return layer
     top = float(scrim["top_frac"]) * canvas.height

@@ -55,6 +55,7 @@ import KriaMediaEngine
         XCTAssertEqual(scrim.stops.map(\.position), [0, 0.6, 1])
         XCTAssertEqual(scrim.stops.map(\.color.alpha), [0, 0.6, 0.6])
         XCTAssertEqual(Set(scrim.stops.map { [$0.color.red, $0.color.green, $0.color.blue] }), [[0, 0, 0]])
+        XCTAssertEqual(layer.srgbBlend, true)
         XCTAssertTrue(recipe.effectiveCapabilities.contains(.textDesigns))
     }
 
@@ -65,6 +66,7 @@ import KriaMediaEngine
         let recipe = try compile(row)
         let layer = try XCTUnwrap(recipe.textLayers.first)
         XCTAssertNil(layer.scrim)
+        XCTAssertNil(layer.srgbBlend)
         XCTAssertEqual(Set(layer.runs.flatMap(\.blurLayers).map { [$0.sigma, $0.dy] }), [[12, 6]])
         XCTAssertFalse(recipe.effectiveCapabilities.contains(.textDesigns))
     }

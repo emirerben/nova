@@ -777,7 +777,9 @@ enum NativeEditorRenderError: Error, Equatable {
                 motion: explicitPhases ? nil : try Self.normalizedMotion(effect: legacy, raw: raw["motion"]))
             layout.behindSubject = behindSubject
             let scrim = try textScrim(raw["scrim"], canvas: canvas)
+            let srgbBlend: Bool? = scrim != nil || raw["shadow_blur"]?.numberValue != nil ? true : nil
             layout.scrim = PortableTextLayer.scrimSupported(effect: layout.effect) ? scrim : nil
+            layout.srgbBlend = srgbBlend
             if explicitPhases || ["typewriter", "stream-in", "smooth-type", "ink-reveal"].contains(legacy) {
                 text.append(layout)
             } else {
@@ -791,7 +793,8 @@ enum NativeEditorRenderError: Error, Equatable {
                     // `layout` was compiled as a plain effect; the real effect decides whether the arc survives.
                     bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil,
                     behindSubject: behindSubject,
-                    scrim: PortableTextLayer.scrimSupported(effect: legacyEffect) ? scrim : nil))
+                    scrim: PortableTextLayer.scrimSupported(effect: legacyEffect) ? scrim : nil,
+                    srgbBlend: srgbBlend))
             }
         }
         if !document.captionCues.isEmpty && document.captionMeta["enabled"] != .bool(false) {
@@ -1336,7 +1339,7 @@ enum NativeEditorRenderError: Error, Equatable {
     }
 
     private static func displayText(_ element: EditorTextElement) -> String {
-        KriaTextCase.apply(element.text, element.raw["text_case"]?.stringValue)
+        KriaTextCase.apply(element.text, element.raw["text_case"]?.stringValue, language: element.raw["text_language"]?.stringValue)
     }
 
     static func projectSentenceCaptions(

@@ -374,6 +374,10 @@ class PortableTextLayer(_TextModel):
     animation_phases: TextAnimationPhases | None = None
     background: TextBackground | None = None
     scrim: TextScrim | None = None
+    # KRI-1581: composite this layer (and its scrim) in sRGB-encoded values, as the cloud burn
+    # does. The device's working space is linear, where a 0.55 shadow darkens about half as much.
+    # Set for rows using the explicit shadow knobs; omitted when False. Needs ``textDesigns``.
+    srgb_blend: bool | None = None
     runs: list[PositionedTextRun] = Field(default_factory=list, max_length=100)
     effect: Literal[
         "static",
@@ -416,6 +420,8 @@ class PortableTextLayer(_TextModel):
             payload.pop("background", None)
         if self.scrim is None:
             payload.pop("scrim", None)
+        if not self.srgb_blend:
+            payload.pop("srgb_blend", None)
         if not self.bend:
             payload.pop("bend", None)
         if not self.behind_subject:
