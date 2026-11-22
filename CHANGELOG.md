@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.78.0] - 2026-11-22
+
+### Changed
+- test(evals): compare independent reviews of local export packs (KRI-1427) (#2413) <!-- release-pr: 2413 -->
+
 ## [0.89.77.0] - 2026-11-22
 
 ### Changed
