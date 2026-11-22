@@ -18,9 +18,14 @@ B6  a window too short to loop under the video in 100 clips is played cut short,
 B7  her level or the duck is not the Talking one (-18 dB gap, -12 dB under speech), the voice is
     turned down, or the song never ducks on her words
 B8  choices made for one upload play over another (a replaced song keeps an old window)
+B9  a caller outside the app's tests (the iPhone e2e and parity scripts) still builds or reads a
+    bed with fields it no longer has: CI's journey-offline broke on exactly this
 """
 
 from __future__ import annotations
+
+import ast
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +35,8 @@ from app.pipeline.phone_recipe_shared import (
     CreatorSongSource,
     LibraryMusicSource,
     PhoneMusicBed,
+    PhoneNarrationBed,
+    PhoneSongBed,
     music_bed_from_user_song,
 )
 from app.services.talking_music import UploadedSong, default_talking_song
@@ -171,3 +178,84 @@ def test_choices_made_for_another_upload_never_play():
         _bed_for(_song(60.0, window_start_s=12.0), source=replaced)
     with pytest.raises(ValueError):
         _bed_for(_song(60.0).model_copy(update={"mode": "lipsync"}))
+
+
+# --- B9: every bed built or read anywhere in the repo uses fields the model has -----------------
+
+_REPO = Path(__file__).resolve().parents[5]
+_BED_MODELS = {
+    model.__name__: model
+    for model in (
+        PhoneMusicBed,
+        LibraryMusicSource,
+        CreatorSongSource,
+        PhoneSongBed,
+        PhoneNarrationBed,
+    )
+}
+
+
+def _bed_callers() -> list[Path]:
+    roots = (_REPO / "src/apps/api/app", _REPO / "src/apps/api/scripts", _REPO / "scripts")
+    return [
+        path
+        for root in roots
+        for path in sorted(root.rglob("*.py"))
+        if any(name in path.read_text(encoding="utf-8") for name in _BED_MODELS)
+    ]
+
+
+def _own_nodes(scope: ast.AST):
+    """``scope``'s nodes without descending into the functions and classes it defines."""
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _bed_misuse(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    for scope in ast.walk(tree):
+        if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        built: dict[str, type] = {}
+        for node in _own_nodes(scope):
+            if isinstance(node, ast.Call):
+                name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                model = _BED_MODELS.get(name or "")
+                if model is None or node.args or any(kw.arg is None for kw in node.keywords):
+                    continue
+                given = {kw.arg for kw in node.keywords}
+                required = {n for n, f in model.model_fields.items() if f.is_required()}
+                for field in sorted(given - set(model.model_fields)):
+                    problems.append(f"{path.name}:{node.lineno} {name}({field}=...) is not a field")
+                for field in sorted(required - given):
+                    problems.append(f"{path.name}:{node.lineno} {name} misses {field}")
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                name = getattr(node.value.func, "id", None) or getattr(
+                    node.value.func, "attr", None
+                )
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and name in _BED_MODELS:
+                        built[target.id] = _BED_MODELS[name]
+        for node in _own_nodes(scope):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in built
+                and not hasattr(built[node.value.id], node.attr)
+                and node.attr not in built[node.value.id].model_fields
+            ):
+                problems.append(
+                    f"{path.name}:{node.lineno} {node.value.id}.{node.attr} is not a field"
+                )
+    return problems
+
+
+def test_every_bed_built_or_read_outside_the_tests_uses_fields_the_model_has():
+    callers = _bed_callers()
+    assert any(path.name == "phone-montage-render-e2e.py" for path in callers), "scan found nothing"
+    assert [problem for path in callers for problem in _bed_misuse(path)] == []
