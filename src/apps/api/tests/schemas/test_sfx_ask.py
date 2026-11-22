@@ -1,8 +1,9 @@
 """KRI-1561: the general sound-effect ask on CreativeStrategy.
 
 Same contract as reaction beats (tests/schemas/test_reaction_beats.py): the field stays OUT of
-every derived JSON schema (the planner does not see it yet, and the Kria `apply_strategy` tool
-schema stays byte-identical), OUT of a default dump, and round-trips when set directly.
+every derived JSON schema (the Kria `apply_strategy` tool schema stays byte-identical), OUT of a
+default dump, and round-trips when set directly. The Main Creator wire schema adds it back
+(`MODEL_HIDDEN`), and the creator prompt teaches it only where the manifest advertises it.
 """
 
 import pytest
@@ -44,7 +45,15 @@ def test_sfx_ask_rejects_a_blank_or_unbounded_ask(bad):
         SfxAskIntent.model_validate(bad)
 
 
-def test_the_planner_never_sees_sfx_ask():
+def test_the_derived_schemas_never_mention_sfx_ask():
     assert "sfx_ask" not in CreativeStrategy.model_json_schema()["properties"]
     schema_text = str(ApplyStrategyArguments.model_json_schema())
     assert "sfx_ask" not in schema_text and "SfxAskIntent" not in schema_text
+
+
+def test_the_main_creator_wire_schema_lets_the_model_author_it():
+    from app.agents._creator_wire import MODEL_HIDDEN, main_creator_schema
+
+    assert "sfx_ask" in MODEL_HIDDEN
+    wire_text = str(main_creator_schema())
+    assert "sfx_ask" in wire_text and "request_text" in wire_text

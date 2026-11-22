@@ -94,6 +94,8 @@ def test_chat_media_capabilities_expose_the_existing_plan_item_pools() -> None:
         "max": 50,
         "server_max": 50,
         "max_file_bytes": 4 * 1024 * 1024 * 1024,
+        # KRI-1554: a montage clip takes the library limit (30 minutes).
+        "max_duration_s": 1800.0,
         "content_types": ["video/mp4", "video/quicktime"],
         "format": "montage",
     }

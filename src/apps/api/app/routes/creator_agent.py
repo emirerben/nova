@@ -98,6 +98,7 @@ from app.models import (
     AgentRun,
     ContentPlan,
     CreationThread,
+    CreationThreadEvent,
     CreatorAgentEvent,
     CreatorAgentExecution,
     CreatorAgentSession,
@@ -139,6 +140,11 @@ from app.services.clip_intent_answers import (
 )
 from app.services.clip_intent_planning import plan_and_resolve_clip_intents
 from app.services.clip_intent_resolution import IntentResolution
+from app.services.clip_order_ledger import (
+    CREATOR_ACTORS,
+    clip_order_ledger_on,
+    fold_clip_order,
+)
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creative_copy_decisions import (
     authorship_question,
@@ -1642,6 +1648,25 @@ def _source_matches_item_path(previous_path: str, item_path: str) -> bool:
     return previous_name == item_name or previous_name.split("_", 1)[-1] == item_name
 
 
+async def _ledger_keeps_creator_order(db: AsyncSession, item: PlanItem, creator_id: Any) -> bool:
+    """True when a creator actor (their message, a drag, a hand edit) changed this item's clip
+    order in any of its chats (`clip_order_ledger`)."""
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .join(CreationThread, CreationThread.id == CreationThreadEvent.thread_id)
+            .where(
+                CreationThread.creator_id == creator_id,
+                CreationThread.active_plan_item_id == item.id,
+                CreationThreadEvent.role == "assistant",
+            )
+            .order_by(CreationThreadEvent.thread_id, CreationThreadEvent.sequence)
+        )
+    ).all()
+    entries = fold_clip_order((role, payload) for role, payload in rows)
+    return any(entry.actor in CREATOR_ACTORS for entry in entries)
+
+
 async def _previous_creator_clip_order(
     db: AsyncSession,
     item: PlanItem,
@@ -1650,7 +1675,14 @@ async def _previous_creator_clip_order(
 ) -> list[int] | None:
     """Resolve the prior rendered first-appearance order for an explicit preserve request."""
 
-    if not _requests_preserved_clip_order(creator_request) or not item.current_job_id:
+    if not item.current_job_id:
+        return None
+    if not _requests_preserved_clip_order(creator_request) and not (
+        # KRIA_CLIP_ORDER_LEDGER_ENABLED: the order the creator last set is always the base of a
+        # re-plan, whatever they typed; nobody has to say "keep the order". The phrase still
+        # counts for a thread with no ledger entry.
+        clip_order_ledger_on() and await _ledger_keeps_creator_order(db, item, session.creator_id)
+    ):
         return None
     previous_job = await db.get(Job, item.current_job_id)
     if previous_job is None or previous_job.user_id != session.creator_id:

@@ -566,6 +566,12 @@ class PlanFacts:
     # creator already knows about: noted (partial), never a failure.
     sequence_unlocated: tuple[str, ...] = ()
     sequence_unlocated_intent_ids: tuple[str | None, ...] = ()
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: the creator's described order was applied by an earlier turn
+    # and no longer seats anything (a newer order of theirs stands); never judged for position.
+    sequence_replaced: bool = False
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: a creator actor changed the order (the approved snapshot
+    # carries it), so the order a draft pins is theirs, not the order the clips were added in.
+    order_confirmed: bool = False
     # Leverkusen M2 run 3: (the creator's words, the clip's app number) of each named moment
     # inside one of several clips that no cut is shown to hold (codes in _CLIP_MOMENT_CODES).
     sequence_clip_moments: tuple[tuple[str, int | None], ...] = ()
@@ -1847,6 +1853,7 @@ def plan_facts_from_strategy(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
         sequence_conflicts=_strategy_sequence_conflicts(strategy),
+        sequence_replaced=_strategy_sequence_replaced(strategy),
         sequence_unlocated=tuple(row["code"] for row in creator_omission_outcomes(strategy)),
         sequence_unlocated_intent_ids=tuple(
             row["intent_id"] for row in creator_omission_outcomes(strategy)
@@ -2039,6 +2046,19 @@ def _sequence_problems(record: Mapping[str, Any], codes: tuple[str | None, ...])
     return tuple(out)
 
 
+def _strategy_sequence_replaced(strategy: Mapping[str, Any]) -> bool:
+    """True when every order row the strategy carries was seated by an earlier turn."""
+    rows = [
+        row
+        for row in strategy.get("resolved_clip_intents") or []
+        if isinstance(row, Mapping)
+        and row.get("op") == "order"
+        and not row.get("order_by")
+        and not row.get("placeholder")
+    ]
+    return bool(rows) and all(row.get("already_seated") for row in rows)
+
+
 def _strategy_sequence_conflicts(strategy: Mapping[str, Any]) -> tuple[str, ...]:
     """Draft-time twin of ``_sequence_problems(record, ("conflict",))`` (KRI-764).
 
@@ -2138,6 +2158,10 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         sequence_unconfirmed=_sequence_problems(record, ("member_order_unknown",)),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
+        sequence_replaced=any(
+            isinstance(row, Mapping) and row.get("op") == "order" and row.get("code") == "replaced"
+            for row in record.get("intent_outcomes") or []
+        ),
         sequence_unlocated=tuple(
             str(row.get("code"))
             for row in record.get("intent_outcomes") or []
@@ -3868,6 +3892,7 @@ _MONTAGE_ORDER_FIELDS = (
     "sequence_conflicts",
     "sequence_unlocated",
     "sequence_unlocated_intent_ids",
+    "sequence_replaced",
     "sequence_clip_moments",
     "sequence_spots_met",
     "route_start",
@@ -4495,6 +4520,12 @@ _ORDER_VERIFIED_ELSEWHERE = frozenset({"song_time", "confirmed", "editor", "atta
 # they added the clips (`KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`); said on the card, a lowercase
 # clause like the "group first" one below it.
 _UNSTATED_ORDER_DEFAULTED = "where you didn't say, the clips play in the order you added them"
+# ... and once the creator has moved the clips themselves (a drag, an edit, a message) what they
+# did not say stays in the order they have them now, not the order they were added in.
+_UNSTATED_ORDER_KEPT = "where you didn't say, the clips play in the order you have them now"
+# KRIA_CLIP_ORDER_LEDGER_ENABLED: an order the creator described earlier was applied then, and a
+# later order of theirs (a drag, an edit, a message) replaced it; the newest statement stands.
+_ORDER_SET_SINCE = "you set the order yourself since, and the order you set is the one that plays"
 _PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
 
 
@@ -4677,6 +4708,17 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
+    if (
+        facts.sequence_replaced
+        and key not in _CAPTURE_ORDER_KEYS
+        and not facts.sequence_unmet
+        and not facts.sequence_absent
+        and not facts.sequence_conflicts
+        and facts.ordering_basis not in {"random", "capture_time"}
+    ):
+        # The described order was applied earlier and a newer order of the creator's stands: an
+        # old ask is never judged against what they did since (`clip_order_ledger`).
+        return _receipt(req, "met", _ORDER_SET_SINCE)
     if not facts.ordering_basis:
         if required and facts.rendered_output:
             return _receipt(req, "not_possible", _ORDER_NOT_RECORDED)
@@ -4696,7 +4738,9 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         # default for what the creator left unsaid; the phone verifier refuses any other order).
         if facts.sequence_unlocated:
             return _receipt(req, "partial", _unlocated_moments_reason(facts))
-        return _receipt(req, "met", _UNSTATED_ORDER_DEFAULTED)
+        return _receipt(
+            req, "met", _UNSTATED_ORDER_KEPT if facts.order_confirmed else _UNSTATED_ORDER_DEFAULTED
+        )
     if basis == _CREATOR_LIST_BASIS and key not in _CAPTURE_ORDER_KEYS:
         # KRI-1112: the creator listed every clip the edit shows, one at a time, and the render
         # contract pins that list (`creator_render_contract._creator_listed_order`).
@@ -12155,6 +12199,8 @@ _ANIMATION_UNAVAILABLE = (
     "without animation"
 )
 _REASON_TR[_UNSTATED_ORDER_DEFAULTED] = "söylemediğin yerlerde klipler eklediğin sırayla oynar"
+_REASON_TR[_UNSTATED_ORDER_KEPT] = "söylemediğin yerlerde klipler şu an olduğu sırayla oynar"
+_REASON_TR[_ORDER_SET_SINCE] = "sırayı sonradan kendin belirledin, oynayan senin belirlediğin sıra"
 _REASON_TR[_ANIMATION_PLANNED] = (
     "yazı belirirken animasyonlu girecek; bitmiş videoda kontrol edeceğim"
 )

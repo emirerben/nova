@@ -2123,6 +2123,7 @@
         "src/apps/api/app/services/plan_item_media.py",
         "src/apps/api/app/services/speech_cleanup_selection.py",
         "src/apps/api/app/services/speech_cleanup_preflight.py",
+        "src/apps/api/app/pipeline/talking_head_assembler.py",
         "src/apps/api/app/services/speech_cleanup_decision.py",
         "src/apps/api/app/kria/api_schemas.py",
         "src/apps/api/app/kria/runtime.py",

@@ -6,6 +6,7 @@ import pytest
 
 from app.services.active_narration_source import (
     ActiveNarrationRequest,
+    AnalysisWindowClamp,
     RegisteredNarrationMedia,
     resolve_active_narration_source,
 )
@@ -231,6 +232,8 @@ def test_talking_head_window_is_trimmed_then_capped_by_renderer_policy() -> None
     assert result.source is not None
     # min(max(target * 2, 120), 300), relative to the active trim start.
     assert (result.source.window_start_s, result.source.window_end_s) == (10.0, 130.0)
+    # KRI-1554: the spine plays past its cut window, and the source says so.
+    assert result.source.window_clamp == AnalysisWindowClamp(source_end_s=450.0, window_end_s=130.0)
 
 
 @pytest.mark.parametrize(
@@ -240,11 +243,14 @@ def test_talking_head_window_is_trimmed_then_capped_by_renderer_policy() -> None
         ("narrated", "voiceover", media("take.wav", kind="audio", duration_s=900.0)),
     ],
 )
-def test_every_source_kind_is_bounded_to_the_global_analysis_window(
+def test_a_source_the_renderer_plays_in_full_is_never_analysed_in_part(
     edit_format: str,
     audio_mode: str,
     voiceover: RegisteredNarrationMedia | None,
 ) -> None:
+    """KRI-1554: a voiceover or Talking take longer than the analysis window plays in full, so
+    analysing its first 300 s would offer cuts for part of it and state the wrong length."""
+
     clips = () if voiceover is not None else (media("long.mp4", duration_s=900.0),)
     result = resolve_active_narration_source(
         request(
@@ -255,8 +261,8 @@ def test_every_source_kind_is_bounded_to_the_global_analysis_window(
         )
     )
 
-    assert result.source is not None
-    assert result.source.window_duration_s == 300.0
+    assert result.source is None
+    assert result.reason == "source_too_long"
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -22,6 +23,7 @@ from app.routes.creation_threads import (
     attach_media,
     capabilities,
 )
+from app.services import source_length_policy
 
 PHONE_FEATURES = ["basicComposition", "musicBed", "audioMix"]
 
@@ -45,7 +47,6 @@ def _song_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "ios_device_only_mode", False)
     monkeypatch.setattr(settings, "phone_render_verified_features", PHONE_FEATURES)
     monkeypatch.setattr(settings, "user_song_montage_enabled", True)
-    monkeypatch.setattr(settings, "user_song_max_duration_s", 600.0)
 
 
 # ── request validation ───────────────────────────────────────────────────────
@@ -228,7 +229,12 @@ async def test_second_song_is_409_song_exists(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_song_longer_than_the_cap_is_rejected(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "user_song_max_duration_s", 20.0)
+    song = source_length_policy.rule("creator_song")
+    monkeypatch.setitem(
+        source_length_policy.SOURCE_LENGTH_POLICY,
+        "creator_song",
+        dataclasses.replace(song, max_duration_s=20.0),
+    )
     item = _item()
     with pytest.raises(HTTPException) as exc:
         await _attach(

@@ -69,6 +69,7 @@ from app.services.creator_capabilities import (
     ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE,
     ENDING_CLIP_NOTICES,
     GENERIC_SOUND_EFFECT_NOTICE,
+    SFX_ASK_UNAVAILABLE_NOTICE,
     SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE,
     SPEAKER_BACKGROUND_NOTICES,
     SPEAKER_FULL_OPENING_NOTICES,
@@ -357,6 +358,9 @@ _KNOWN_TR: dict[str, str] = {
     DROPPED_TREATMENT_NOTICES["sfx"]: "Ses efektleri bu düzenleme için henüz yok; koymadım.",
     DROPPED_TREATMENT_NOTICES["transitions"]: ("Geçişler bu düzenleme için henüz yok; koymadım."),
     DROPPED_TREATMENT_NOTICES["looks"]: "Geniş görünümler bu düzenleme için henüz yok; koymadım.",
+    SFX_ASK_UNAVAILABLE_NOTICE: (
+        "Senin için seçilen ses efektleri bu düzenleme için henüz yok; koymadım."
+    ),
 }
 _SHAPE_NAMES_TR = {"Day vlog": "Günlük vlog", "Single-hero": "Tek kahraman"}
 # Notices with a value in them, rebuilt as `say()` templates (KRI-1362) so a catalog language

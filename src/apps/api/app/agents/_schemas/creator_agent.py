@@ -571,10 +571,17 @@ class CreativeStrategy(_CreatorModel):
     # describes this field only when the `reaction_beats` capability is
     # available on the manifest.
     # KRI-1561: a general "add sound effects where they fit" ask. Same pattern as
-    # `reaction_beats`: out of every derived JSON schema (the planner does not see it yet), omitted
-    # when None so stored strategies and hashes stay byte-identical, and read by the phone
-    # Talking and Voiceover workers only (`sfx_chooser.choose_sfx`).
-    sfx_ask: SkipJsonSchema[SfxAskIntent | None] = Field(default=None)
+    # `reaction_beats`: out of every derived JSON schema, omitted when None so stored strategies
+    # and hashes stay byte-identical, re-added to the Main Creator wire schema (`MODEL_HIDDEN`),
+    # taught in the creator prompt only where the manifest advertises `sfx_ask`, and read by the
+    # phone Talking, Voiceover and montage-with-voiceover workers (`sfx_chooser.choose_sfx`).
+    sfx_ask: SkipJsonSchema[SfxAskIntent | None] = Field(
+        default=None,
+        description=(
+            "A general ask for sound effects with no effect and no moment named: the server "
+            "chooses the moments from what is said. Carries only the creator's own words."
+        ),
+    )
     reaction_beats: SkipJsonSchema[list[ReactionBeat] | None] = Field(
         default=None,
         max_length=MAX_REACTION_BEATS,

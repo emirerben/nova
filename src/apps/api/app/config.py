@@ -1342,8 +1342,8 @@ class Settings(BaseSettings):
     # FALSE (dark). Off = no events, no job metadata, capability false, byte-identical.
     # Kill switch = false + restart (api + worker). Contract: docs/pipelines/live-plan-blocks.md.
     live_plan_review_enabled: bool = False
-    # Longest song accepted (seconds); a song-owned montage is capped at 120 s.
-    user_song_max_duration_s: float = Field(default=600.0, gt=0)
+    # The longest song accepted is `source_length_policy` ``creator_song`` (KRI-1554);
+    # a song-owned montage is capped at 120 s.
     # How long a planner turn waits for song analysis / take alignment before it
     # answers "still checking your clips".
     song_alignment_turn_deadline_s: float = Field(default=45.0, ge=0)
@@ -3256,6 +3256,14 @@ class Settings(BaseSettings):
     # they did say. false = the previous hold, byte-identical. Apply: fly secret + restart
     # api and worker.
     kria_unstated_order_default_enabled: bool = False
+    # Clip order is one live, AI-aware state (PR 2): every order change (the creator's message,
+    # a drag, a manual timeline edit, the AI's own story order) is one ledger entry; the chat
+    # reads the current order before and after a render, a chat reorder is an editor op composed
+    # with the rest of the message, an order row is applied once and a later statement replaces
+    # an earlier one, and the AI never reorders on its own initiative. false = the previous
+    # behaviour, prompts, ops and receipts byte-identical. Apply: fly secret + restart api and
+    # worker.
+    kria_clip_order_ledger_enabled: bool = False
     # KRI-1358 (de1): approval readiness reads the same "the phone Voiceover compiler renders
     # this" fact the draft turn reads, so one clip's own sound under the voice is judged on the
     # phone draft instead of refused as "only works in a voiceover edit made on your iPhone".

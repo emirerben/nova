@@ -211,6 +211,7 @@ from app.services.kria_editor_ops import (
     KriaEditorOpError,
     TextTimingConflict,
     _clip_label_links,
+    _variant_slots,
     build_editor_snapshot,
     compile_editor_ops,
     editor_payload_dump,
@@ -230,6 +231,7 @@ from app.services.phone_speaker_background import (
 )
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
+from app.services.source_length_policy import max_duration_s
 from app.services.suggestions.commit_readiness import (
     MARK_NEEDED,
     REQUIREMENTS_NOT_READY,
@@ -803,10 +805,12 @@ def _complete_response_turn(
     pinned_refusal: dict[str, Any] | None = None,
     pinned_spend: dict[str, Any] | None = None,
     conversation_language: str | None = None,
+    clip_order_entries: Sequence[Mapping[str, Any]] = (),
 ) -> _Completion:
-    """``conversation_language`` is the language the model that read the creator's message
-    reported (`PlannedKriaTurn.conversation_language`); stored on the thread in this commit,
-    after the lease and revision fences. None keeps the stored language."""
+    """``clip_order_entries`` are the ledger entries a plain reply turn carries (a hand reorder the
+    turn found; `clip_order_ledger`). ``conversation_language`` is the language the model that
+    read the creator's message reported (`PlannedKriaTurn.conversation_language`); stored on the
+    thread in this commit, after the lease and revision fences. None keeps the stored language."""
     plan = classify_response_turn(plan, brief_coverage, pinned_refusal)
     if pinned_spend is not None:
         plan = plan.model_copy(
@@ -915,6 +919,7 @@ def _complete_response_turn(
                 "schema_version": plan.schema_version,
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
                 **({"brief_coverage": brief_coverage} if brief_coverage is not None else {}),
+                **_clip_order_payload(clip_order_entries, turn.id),
                 **({"clip_question": plan.clip_question} if plan.clip_question else {}),
                 # KRI-374: persisted so the answer can be validated + folded later.
                 **(
@@ -2979,6 +2984,8 @@ def _complete_draft_turn(
                     raise KriaEditorOpError(rewritten)
             changes = compiled.changes
             editor_diff_trace = compiled.diff.to_json()
+            planned = _with_editor_order_entry(planned, editor_base.projected, compiled)
+            changes = _with_order_receipt(changes, planned, item)
             state_id = (
                 client_state.client_state_id if editor_base.source == "client_state" else None
             )
@@ -4658,6 +4665,7 @@ def _complete_draft_turn(
                 ),
                 "draft_revision": draft.draft_revision,
                 "snapshot_hash": draft.snapshot_hash,
+                **_clip_order_payload(planned.clip_order_entries, turn.id),
                 "changes": changes,
                 "can_undo": parent_draft is not None,
                 "receipt_ids": [str(draft_execution.id)],
@@ -5032,6 +5040,79 @@ async def _plan_pinned_turn(
     finally:
         unbind_sending_build(sender)
         await engine.dispose()
+
+
+def _with_editor_order_entry(
+    planned: PlannedKriaTurn, projected: Mapping[str, Any], compiled: Any
+) -> PlannedKriaTurn:
+    """The draft's order change as one ledger entry (`clip_order_ledger`), read off the compiled
+    draft: the clips' media order before the ops and after them. A reorder the creator asked for
+    is theirs (``creator_text``); one a turn without an order ask made is the AI's. No entry with
+    the flag off, or when the media order did not change."""
+    from app.services import clip_order_ledger  # noqa: PLC0415
+
+    if not clip_order_ledger.clip_order_ledger_on() or not isinstance(
+        compiled.payload, EditorCommitRequest
+    ):
+        return planned
+    slots = compiled.payload.timeline_slots
+    if slots is None:
+        return planned
+    rows = [row for row in _variant_slots(dict(projected)) if isinstance(row, dict)]
+    media_by_slot = {
+        str(row.get("slot_id")): str(row.get("media_id") or "")
+        for row in rows
+        if row.get("slot_id")
+    }
+    before = clip_order_ledger.first_appearance(
+        row.get("media_id") for row in rows if not row.get("removed")
+    )
+    after = clip_order_ledger.first_appearance(
+        media_by_slot.get(str(getattr(slot, "slot_id", None) or ""))
+        for slot in slots
+        if not getattr(slot, "removed", False)
+    )
+    if not before or sorted(before) != sorted(after) or before == after:
+        return planned
+    asked = any(update.kind in {"order", "select"} for update in planned.brief_updates)
+    entry = clip_order_ledger.LedgerEntry(
+        clip_order_ledger.CREATOR_TEXT if asked else clip_order_ledger.AI_STORY,
+        tuple(before),
+        tuple(after),
+    )
+    return replace(planned, clip_order_entries=(*planned.clip_order_entries, entry.to_payload()))
+
+
+def _with_order_receipt(changes: list[str], planned: PlannedKriaTurn, item: Any) -> list[str]:
+    """The draft's change list with its reorder said by name ("Moved “swing video” before
+    “map”."), built from the ledger entry's before/after ids (`clip_order_ledger.reorder_receipt`).
+    The handler's generic "Reorder clips" is replaced; everything else is untouched. No change at
+    all without an entry (flag off, or the media order did not move)."""
+    from app.services import clip_order_ledger  # noqa: PLC0415
+
+    entry = (
+        clip_order_ledger.LedgerEntry.from_payload(planned.clip_order_entries[-1])
+        if planned.clip_order_entries
+        else None
+    )
+    if entry is None:
+        return changes
+    labels = clip_order_ledger.labels_for(entry.after_ids, item.clip_assignments or [])
+    line = clip_order_ledger.reorder_receipt(entry.before_ids, entry.after_ids, labels)
+    if "Reorder clips" in changes:
+        return [line if change == "Reorder clips" else change for change in changes]
+    return [*changes, line]
+
+
+def _clip_order_payload(entries: Sequence[Mapping[str, Any]], turn_id: uuid.UUID) -> dict[str, Any]:
+    """The turn's clip-order ledger entries for its assistant event (`clip_order_ledger`): the
+    same thread event that records the turn is the record, nothing new is stored. Empty (no key)
+    with the flag off, and for a turn that changed no order."""
+    if not entries:
+        return {}
+    from app.services.clip_order_ledger import LEDGER_KEY  # noqa: PLC0415
+
+    return {LEDGER_KEY: [{**entry, "turn_id": str(turn_id)} for entry in entries]}
 
 
 def _append_sync_event(
@@ -6031,6 +6112,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
                     conversation_language=planned.conversation_language,
+                    clip_order_entries=planned.clip_order_entries,
                     plan=planned.plan,
                     brief_updates=planned.brief_updates,
                     creative_copy_resolution=planned.creative_copy_resolution,
@@ -8035,6 +8117,11 @@ _VOICEOVER_UNAVAILABLE_TR = (
     "iPhone'da oluşturuluyor. Bu düzenlemeyi seslendirme olmadan iste. Yedek bir düzenleme "
     "oluşturulmadı."
 )
+# KRI-1554: a template; `{limit_minutes:g}` is the Talking clip limit from `source_length_policy`.
+_TALKING_CLIP_TOO_LONG_TR = (
+    "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan "
+    "kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+)
 _PHONE_GATE_MESSAGES_TR = {
     "device_render_unsupported": (
         "Bu proje tamamen bu iPhone'da oluşturulamıyor. Mevcut videon değişmedi."
@@ -8059,9 +8146,10 @@ _PHONE_GATE_MESSAGES_TR = {
         "klipleri kaldır (ya da bir klip ekle) ve tekrar dene. Yedek bir düzenleme "
         "oluşturulmadı."
     ),
-    "subtitled_clip_too_long": (
-        "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir "
-        "klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+    # Formatted like `PHONE_GATE_MESSAGES` reads it; `_phone_gate_refusal_copy` fills the template
+    # itself so the reply follows the policy's current limit.
+    "subtitled_clip_too_long": _TALKING_CLIP_TOO_LONG_TR.format(
+        limit_minutes=max_duration_s("talking_clip") / 60
     ),
     "self_narration_multi_clip": (
         "Birden fazla klip üzerinde anlatım iPhone'da henüz yok. Bir seslendirme kaydet ya da "
@@ -8077,7 +8165,9 @@ _PHONE_GATE_MESSAGES_TR = {
 def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import (  # noqa: PLC0415
         PHONE_GATE_MESSAGES,
+        TALKING_CLIP_TOO_LONG_MESSAGE,
         TALKING_MULTI_CLIP_COUNT_MESSAGE,
+        talking_clip_limit_minutes,
     )
 
     multi_clip = False
@@ -8098,6 +8188,12 @@ def _phone_gate_refusal_copy(reason: str) -> str:
                 "oluşturulmadı."
             ),
             max_clips=TALKING_MULTI_CLIP_MAX_CLIPS,
+        )
+    elif reason == "subtitled_clip_too_long":
+        message = say(
+            en=TALKING_CLIP_TOO_LONG_MESSAGE,
+            tr=_TALKING_CLIP_TOO_LONG_TR,
+            limit_minutes=talking_clip_limit_minutes(),
         )
     elif reason in PHONE_GATE_MESSAGES and reason in _PHONE_GATE_MESSAGES_TR:
         message = say(en=PHONE_GATE_MESSAGES[reason][1], tr=_PHONE_GATE_MESSAGES_TR[reason])
