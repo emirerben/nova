@@ -151,11 +151,16 @@ log = structlog.get_logger()
 # v130 (KRI-1457): add_split_blank and set_split_blank_color, a flat-colour block in a split panel
 # (prompts/edit_copilot_ops/split_blank.txt), printed only where split_blank_available is true (a
 # protocol 51 build with splitBlankPanel verified), so every other prompt is byte-identical.
-# v131 (KRI-1558): arrange_sections / set_section_layout / remove_background_window /
+# v131 (KRI-1562): swap_music adds, swaps and remove_music removes the library song under a phone
+# Talking edit, choosing from CANDIDATES (id, title, mood, genre, energy) and refusing a song while
+# MUSIC shows no_music=True (prompts/edit_copilot_ops/talking_music.txt), printed only where the
+# snapshot offers the `music_library` family (TALKING_MUSIC_ENABLED and a protocol 53 build), so
+# every other prompt is byte-identical.
+# v132 (KRI-1558): arrange_sections / set_section_layout / remove_background_window /
 # retime_background_window and the SECTIONS + LAYOUT WINDOWS lines (prompts/edit_copilot_ops/
 # speaker_sections.txt), printed only where the sections gate is open (a protocol 54 build with
 # speakerSections verified), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-22-v131"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-22-v132"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2513,6 +2518,7 @@ def _format_snapshot(snapshot: dict) -> str:
             f"swappable={bool(music.get('swappable'))} "
             f"removable={music.get('removable', True) is not False} "
             f"removed={bool(music.get('removed'))}"
+            + (" no_music=True" if music.get("no_music") is True else "")
         )
         lines.append("CANDIDATES (use track_id exactly as shown):")
         if candidates:
@@ -2522,6 +2528,12 @@ def _format_snapshot(snapshot: dict) -> str:
                 lines.append(
                     f"- id={_field(track.get('id'), max_chars=80)!r} "
                     f"title={_field(track.get('title'), max_chars=40)!r}"
+                    # KRI-1562: how a library song sounds (MusicLabels), when the row says.
+                    + "".join(
+                        f" {key}={_field(track[key], max_chars=60)!r}"
+                        for key in ("mood", "genre", "energy")
+                        if track.get(key)
+                    )
                 )
         else:
             lines.append("(none)")
@@ -6315,6 +6327,15 @@ def _coerce_payload(
         return None
     if name == "swap_music":
         music = snapshot.get("music") if isinstance(snapshot, dict) else None
+        if isinstance(music, dict) and music.get("no_music") is True:
+            # KRI-1562: the creator's "no music" holds until they withdraw it.
+            state.invalid_value(
+                note=say(
+                    en="you asked for no music, so I won't add a song",
+                    tr="müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum",
+                )
+            )
+            return None
         if not isinstance(music, dict) or music.get("swappable") is not True:
             state.invalid_value()
             return None

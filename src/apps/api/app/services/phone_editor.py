@@ -89,7 +89,12 @@ from app.services.creator_render_contract import (
     decline_payload,
     read_render_contract,
 )
-from app.services.device_render import CONTRACT_REVISIONS_FIELD, device_status, pin_device_request
+from app.services.device_render import (
+    CONTRACT_REVISIONS_FIELD,
+    DEVICE_RENDER_FIELD,
+    device_status,
+    pin_device_request,
+)
 from app.services.phone_editor_sources import (
     editor_source_bindings,
     editor_sources_for_variant,
@@ -1778,12 +1783,20 @@ def _compile_subtitled_editor_commit(
         )
 
     # KRI-1562: the creator's song rides every Save (a caption or sound Save never drops it), on
-    # the transcript's spoken windows, which a deleted caption line never moves.
+    # the transcript's spoken windows, which a deleted caption line never moves. A "no music" in
+    # the brief this Save is bound to takes off a song carried from before; one the creator picks
+    # in this very Save is their later choice and plays.
+    drop_song = (
+        talking_music
+        and "background_music" not in active_sections
+        and isinstance(variant.get("smart_music_treatment"), dict)
+        and _bound_brief_asks_no_music(assembly, prep.get("generation"), variant_id)
+    )
     music = (
         music_bed_from_treatment(
             variant.get("smart_music_treatment"), _saved_music_pin(previous.recipe)
         )
-        if talking_music
+        if talking_music and not drop_song
         else None
     )
     recipe = compile_phone_subtitled_plan(
@@ -1914,6 +1927,11 @@ def _compile_subtitled_editor_commit(
         row["render_status"] = "awaiting_device"
         row["render_destination"] = "device"
         row["duration_s"] = recipe.duration
+        if drop_song:
+            row["smart_music_treatment"] = None
+        if drop_song or "background_music" in active_sections:
+            # The worker's record of how the asked song turned out no longer describes this one.
+            row.pop("talking_music", None)
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
         if framing_receipt is not None:
@@ -1935,6 +1953,30 @@ def _compile_subtitled_editor_commit(
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )
+
+
+def _bound_brief_asks_no_music(
+    assembly: Mapping[str, Any], generation: object, variant_id: str
+) -> bool:
+    """KRI-1562: does the newest brief this edit is bound to hold a live "no music"? This
+    Save's generation, else the one it replaces (a chat turn binds the brief it read to the
+    generation it saved), else the approved one. Unreadable reads as no."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.draft_sound_carry import asks_no_music  # noqa: PLC0415
+
+    bindings = assembly.get("creator_brief_bindings")
+    bindings = bindings if isinstance(bindings, Mapping) else {}
+    record = (assembly.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
+    replaced = record.get("base_generation") if isinstance(record, Mapping) else None
+    raw = next(
+        (bindings[key] for key in (str(generation), str(replaced)) if key in bindings),
+        assembly.get("creator_brief_binding"),
+    )
+    try:
+        brief = BriefBinding.model_validate(raw).resolve()
+    except (ValueError, TypeError):
+        return False
+    return asks_no_music(brief)
 
 
 def _saved_music_pin(previous: Any) -> Callable[[str, str], tuple[Any, float | None]]:
