@@ -129,7 +129,7 @@ from app.pipeline.phone_narrated_plan import (
     compile_phone_narrated_plan,
     narrated_title_text_elements,
 )
-from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
+from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed, PhoneNarrationBed
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, SubtitledOverlayCard
 from app.pipeline.phone_subtitled_plan import PhoneCutaway, compile_phone_subtitled_plan
 from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
@@ -444,9 +444,11 @@ def main() -> None:
     # --- case (b): licensed music bed replaces original audio ---------
     tone_sha, tone_bytes = _fingerprint(tone_path)
     music_bed = PhoneMusicBed(
-        catalog_id="e2e-track",
-        generation="7",
-        fingerprint=RenderFingerprint(sha256=tone_sha, byte_count=tone_bytes),
+        source=LibraryMusicSource(
+            catalog_id="e2e-track",
+            generation="7",
+            fingerprint=RenderFingerprint(sha256=tone_sha, byte_count=tone_bytes),
+        ),
         duration_s=8.0,
         start_s=0.0,
         volume=1.0,
@@ -841,7 +843,7 @@ def main() -> None:
                     {"media_id": "music-c0", "file": "music-c0.mp4"},
                     {"media_id": "music-c1", "file": "music-c1.mp4"},
                 ],
-                "music_asset_id": f"music-{music_bed.catalog_id}",
+                "music_asset_id": music_bed.source.render_asset().id,
                 "music_file": tone_path.name,
                 "expects_source_audio": False,
                 "expects_music_audio": True,

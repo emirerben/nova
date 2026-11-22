@@ -1583,6 +1583,10 @@
       "source": "default",
       "value": true
     },
+    "talking_library_music_enabled": {
+      "source": "default",
+      "value": false
+    },
     "talking_multi_clip_enabled": {
       "source": "default",
       "value": false
