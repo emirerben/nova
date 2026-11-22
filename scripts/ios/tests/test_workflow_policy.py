@@ -149,6 +149,27 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
                 condition = self.workflow.split(f"- name: {step}", 1)[1]
                 self.assertIn(first, condition.split("\n", 2)[1])
 
+    def test_full_regression_never_holds_more_than_three_macs(self):
+        """The plan gives five hosted Macs at once. On 2026-11-21 the nightly legs
+        and main's own lane kept all of them busy for 65 minutes and two PRs
+        waited 43 and 53 minutes for an iPhone job.
+
+        Ways the cap can fail: it is missing; it is above three; it is an
+        expression nobody can check offline; it sits on another job; or it is met
+        by dropping a leg instead of queueing it (the matrix tests hold the legs).
+        """
+        import re
+
+        job = self.workflow.split("\n  ios-tests:\n", 1)[1].split("\n    runs-on:", 1)[0]
+        strategy = job.split("\n    strategy:\n", 1)[1]
+        caps = re.findall(r"^      max-parallel: (.+)$", strategy, re.M)
+        self.assertEqual(len(caps), 1, "ios-tests needs one max-parallel")
+        self.assertRegex(caps[0], r"^\d+$", "a literal, so this test can read it")
+        hosted_macs, kept_free = 5, 2
+        self.assertLessEqual(int(caps[0]), hosted_macs - kept_free)
+        # The cap must still let the unsharded main lane run both of its legs at once.
+        self.assertGreaterEqual(int(caps[0]), len(self.matrices()[1]))
+
     def test_contract_checks_are_portable_and_native_work_stays_on_macos(self):
         contracts = self.workflow.split(
             "- name: Install contract generator dependencies", 1
