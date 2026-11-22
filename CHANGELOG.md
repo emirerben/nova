@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.88.0] - 2026-11-22
+
+### Changed
+- build(api): one OpenCV distribution in the lock and the production image (KRI-1534) (#2466) <!-- release-pr: 2466 -->
+
 ## [0.89.87.0] - 2026-11-22
 
 ### Changed
