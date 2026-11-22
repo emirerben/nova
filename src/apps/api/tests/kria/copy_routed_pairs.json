@@ -2588,8 +2588,8 @@
   ],
   [
    "app/services/researched_text.py",
-   "I couldn't tell where clip {number} plays in your video, because its length wasn't saved. Your video is unchanged. I can still add titles without researched facts.",
-   "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü uzunluğu kaydedilmemiş. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
+   "I couldn't tell where clip {number} plays in your video, because it has no usable length. Your video is unchanged. I can still add titles without researched facts.",
+   "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü kullanılabilir bir uzunluğu yok. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
   ]
  ],
  "retired": [

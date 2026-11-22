@@ -578,7 +578,7 @@
     "I couldn't tell exactly where \"{quote}\" is said in that clip": "\"{quote}\" sözünün o klipte tam nerede söylendiğini anlayamadım",
     "I couldn't tell if these are \"{work_intent_attribute}\"": "Şunların \"{work_intent_attribute}\" olup olmadığını anlayamadım",
     "I couldn't tell the {work_intent_attribute}": "Anlayamadım: {work_intent_attribute}",
-    "I couldn't tell where clip {number} plays in your video, because its length wasn't saved. Your video is unchanged. I can still add titles without researched facts.": "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü uzunluğu kaydedilmemiş. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim.",
+    "I couldn't tell where clip {number} plays in your video, because it has no usable length. Your video is unchanged. I can still add titles without researched facts.": "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü kullanılabilir bir uzunluğu yok. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim.",
     "I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.": "\"{literal}\" yazısının hangi klibe gideceğini anlayamadım, o yüzden bu yazıyı doğrulayamıyorum.",
     "I couldn't tell which clip \"{words}\" means, so I can't confirm the order.": "\"{words}\" derken hangi klibi kastettiğini anlayamadım, o yüzden sırayı doğrulayamıyorum.",
     "I couldn't tell which clip is on screen when you say {v1}": "{v1} dediğinde ekranda hangi klibin olduğunu anlayamadım",

@@ -49,12 +49,12 @@ class ResearchUnavailable(ValueError):
 
 
 _CLIP_TIMING_MISSING = (
-    "I couldn't tell where clip {number} plays in your video, because its length wasn't "
-    "saved. Your video is unchanged. I can still add titles without researched facts."
+    "I couldn't tell where clip {number} plays in your video, because it has no usable "
+    "length. Your video is unchanged. I can still add titles without researched facts."
 )
 _CLIP_TIMING_MISSING_TR = (
-    "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü uzunluğu kaydedilmemiş. "
-    "Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
+    "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü kullanılabilir bir "
+    "uzunluğu yok. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
 )
 
 
@@ -68,7 +68,9 @@ class ClipTimingMissing(ResearchUnavailable):
     def __init__(self, number: int) -> None:
         from app.kria.reply_language import say  # noqa: PLC0415
 
-        super().__init__(f"Clip {number} has no saved length, so its place in the video is unknown")
+        super().__init__(
+            f"Clip {number} has no usable length, so its place in the video is unknown"
+        )
         self.reply = say(en=_CLIP_TIMING_MISSING, tr=_CLIP_TIMING_MISSING_TR, number=number)
 
 
@@ -667,6 +669,8 @@ def _timed_slots(slots: list[dict]) -> list[dict]:
     rows = []
     for number, (slot, window) in enumerate(zip(live, stated, strict=True), 1):
         length = window[1] - window[0] if window else _seconds(slot.get("duration_s"))
+        # A stated start still anchors a clip whose stated end is unusable.
+        anchor = window[0] if window else _seconds(slot.get("output_start_s"))
         if length is None or length <= 0:
             _log_untimed("research.clip_timing_missing", slots, clip_number=number)
             raise ClipTimingMissing(number)
@@ -676,7 +680,7 @@ def _timed_slots(slots: list[dict]) -> list[dict]:
                 "duration_s": length,
                 "transition_after": transition if isinstance(transition, str) else "cut",
                 "transition_duration_s": _seconds(slot.get("transition_duration_s")),
-                **({"_speech_output_start_s": window[0]} if window else {}),
+                **({"_speech_output_start_s": anchor} if anchor is not None else {}),
             }
         )
     clock = iter(_segments(rows))

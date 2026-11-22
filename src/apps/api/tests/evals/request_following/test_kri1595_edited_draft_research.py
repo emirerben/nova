@@ -305,7 +305,7 @@ def test_a_clip_with_no_length_is_named_in_the_creators_language(monkeypatch, le
 
     assert calls == []  # refused before any paid search
     assert replies["en"] == (
-        "I couldn't tell where clip 4 plays in your video, because its length wasn't saved. "
+        "I couldn't tell where clip 4 plays in your video, because it has no usable length. "
         "Your video is unchanged. I can still add titles without researched facts."
     )
     assert replies["tr"].startswith("4. klibin videonda nerede oynadığını anlayamadım")
@@ -317,4 +317,4 @@ def test_a_clip_with_no_length_is_named_in_the_creators_language(monkeypatch, le
 def test_timing_refusal_reads_in_english_for_other_callers():
     """The render-time composer wraps ``str(exc)``; it stays an English reason."""
     exc = ClipTimingMissing(2)
-    assert str(exc) == "Clip 2 has no saved length, so its place in the video is unknown"
+    assert str(exc) == "Clip 2 has no usable length, so its place in the video is unknown"
