@@ -35,16 +35,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.agents._schemas.creator_policy import (
-    USER_SONG_TALKING_LIPSYNC_CODE,
-    UserSongUnavailableError,
-    repair_creator_user_song,
-)
+from app.agents._schemas.creator_policy import USER_SONG_TALKING_LIPSYNC_CODE
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import build_receipts, plan_facts_from_phone_variant
 from app.kria.render_assets import RenderFingerprint, SongRenderAsset
 from app.kria.reply_language import reply_language_for
-from app.kria.strategy_policy import localize_known_message
 from app.routes import generative_jobs as gj
 from app.services import talking_music
 from app.services.client_protocol import (
@@ -91,16 +86,16 @@ def _no_request_context():
 
 
 def _item(*, generation: int = 7, duration_s: float = 120.0, path: str | None = None, **changes):
-    return SimpleNamespace(
-        id=ITEM_ID,
-        song_gcs_path=path or f"users/u/creation-threads/t/song-{generation}.m4a",
-        song_generation=generation,
-        song_duration_s=duration_s,
-        song_filename="Sunday Song.m4a",
-        audio_mode="original",
-        edit_format="subtitled",
-        **changes,
-    )
+    fields = {
+        "id": ITEM_ID,
+        "song_gcs_path": path or f"users/u/creation-threads/t/song-{generation}.m4a",
+        "song_generation": generation,
+        "song_duration_s": duration_s,
+        "song_filename": "Sunday Song.m4a",
+        "audio_mode": "original",
+        "edit_format": "subtitled",
+    }
+    return SimpleNamespace(**{**fields, **changes})
 
 
 class _Storage:
@@ -642,34 +637,50 @@ def test_chat_answers_a_music_ask_with_send_me_the_song_while_the_library_is_clo
 
 
 @pytest.mark.parametrize("language", ["en", "tr"])
-def test_lipsync_on_a_talking_edit_is_refused_in_words_and_background_plays_under_her_voice(
-    monkeypatch, language
-):
+def test_lipsync_on_a_talking_edit_is_refused_in_words(monkeypatch, language):
     from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.kria.strategy_policy import check_strategy_for_runtime_v2
 
-    monkeypatch.setattr(gb.settings, "talking_music_enabled", True)
-    manifest = SimpleNamespace(
-        capabilities={
-            "phone_source_audio": SimpleNamespace(available=True),
-            "user_song": SimpleNamespace(available=True),
-        },
-        has_user_song=True,
-        chosen_format=None,
+    _song_settings(monkeypatch, talking=True)
+    manifest = song_manifest(song=song_item(), edit_format="subtitled")
+    lipsync = CreativeStrategy(
+        edit_format="subtitled", audio_strategy="user_song", song_sync="lipsync"
     )
-    base = CreativeStrategy.model_validate(
-        {"edit_format": "subtitled", "audio_strategy": "user_song", "song_sync": "lipsync"}
-    )
-    with pytest.raises(UserSongUnavailableError) as refused:
-        repair_creator_user_song(manifest, base)
-    assert refused.value.code == USER_SONG_TALKING_LIPSYNC_CODE
     with reply_language_for(language):
-        question = localize_known_message(str(refused.value))
-    assert ("Lip-sync" if language == "en" else "Dudak senkronu") in question
-    repaired, notices = repair_creator_user_song(
-        manifest, base.model_copy(update={"song_sync": "background"})
+        refused = check_strategy_for_runtime_v2(manifest, lipsync)
+    assert refused.code == USER_SONG_TALKING_LIPSYNC_CODE
+    assert ("Lip-sync needs a Lip-sync video" if language == "en" else "Dudak senkronu") in (
+        refused.question
     )
-    assert (repaired.audio_strategy, repaired.song_sync) == ("original_audio", None)
-    assert notices == ["I'll play your song quietly under your voice."]
+
+
+def test_background_user_song_on_a_talking_edit_becomes_the_plain_talking_plan(monkeypatch):
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.services import creator_capabilities as capabilities
+
+    _song_settings(monkeypatch, talking=True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-song",
+        edit_format="subtitled",
+        media=[{"media_id": "take", "kind": "video", "duration_s": 20.0}],
+        phone_source_media_ids=["take"],
+        phone_rendering_allowed=True,
+        has_voiceover=False,
+        user_song_item=song_item(),
+    )
+    assert manifest.has_user_song is True
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="subtitled",
+            audio_strategy="user_song",
+            song_sync="background",
+            selected_media_ids=["take"],
+        ),
+    )
+    assert (plan.strategy.audio_strategy, plan.strategy.song_sync) == ("original_audio", None)
+    assert plan.strategy.render_program == "native"
+    assert "I'll play your song quietly under your voice." in plan.notices
 
 
 # --- C11 / C12: the planner's manifest, prompt and draft receipt ---------------------------------
@@ -798,3 +809,105 @@ async def test_a_song_upload_onto_a_talking_item_needs_the_talking_song_lane(
         detail = None  # past every gate: the stand-in session has no reservation to write
     talking_refusal = "Your own song can't play under a Talking video yet"
     assert (talking_refusal in str(detail)) is refused
+
+
+# --- the sending build, the writer's scope and the planner's context --------------------------
+
+
+def test_chat_from_a_build_below_53_cannot_touch_her_song(monkeypatch):
+    from app.services.kria_editor_ops import build_editor_snapshot, project_editor_draft
+
+    job, _variant, _storage = _render(monkeypatch, item=_item())
+    set_client_protocol(SPEECH_DUCK_PROTOCOL - 1)
+    base = project_editor_draft(job.assembly_plan["variants"][0], {}, job)
+    snapshot = build_editor_snapshot(
+        job, base, clip_context={"music_library_closed": True, "uploaded_song": {"duration_s": 9}}
+    )
+    assert "user_song" not in snapshot["allowed_op_families"]
+    assert "user_song" not in snapshot
+
+
+def test_a_self_narrated_item_never_plays_an_uploaded_song(monkeypatch):
+    from contextlib import contextmanager
+
+    narrated = _item(edit_format="narrated", audio_mode="song")
+    talking = _item()
+
+    def session_for(item):
+        @contextmanager
+        def session():
+            yield SimpleNamespace(
+                get=lambda model, _key: (
+                    SimpleNamespace(content_plan_item_id=ITEM_ID) if model is gb.Job else item
+                )
+            )
+
+        return session
+
+    monkeypatch.setattr(gb, "_sync_session", session_for(narrated))
+    assert gb._job_uploaded_song(str(uuid.uuid4())) is None
+    monkeypatch.setattr(gb, "_sync_session", session_for(talking))
+    assert gb._job_uploaded_song(str(uuid.uuid4())).generation == 7
+
+
+@pytest.mark.asyncio
+async def test_the_planner_offers_her_upload_and_reads_no_library_while_it_is_closed(monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.config import settings
+    from app.kria import planner
+    from app.kria.brief import CreativeBrief
+    from app.services import kria_editor_ops
+
+    monkeypatch.setattr(kria_editor_ops, "talking_song_open", lambda *_: True)
+
+    async def no_library(_db):
+        raise AssertionError("the closed library must never be read")
+
+    monkeypatch.setattr(planner, "_talking_song_rows", no_library)
+    thread = SimpleNamespace(creator_id=uuid.uuid4())
+    job = SimpleNamespace(
+        id=uuid.uuid4(), user_id=thread.creator_id, all_candidates={}, assembly_plan={}
+    )
+    variant = {"variant_id": "subtitled", "render_destination": "device"}
+
+    async def context(item, reqs):
+        token = planner._turn_brief.set(CreativeBrief(version=2, requirements=list(reqs)))
+        engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+                return await planner._copilot_clip_context(
+                    db, thread=thread, thread_id=uuid.uuid4(), job=job, variant=variant, item=item
+                )
+        finally:
+            planner._turn_brief.reset(token)
+            await engine.dispose()
+
+    with_song = await context(_item(clip_assignments=[]), [MUSIC_EN])
+    assert with_song["music_library_closed"] is True
+    assert with_song["uploaded_song"] == {"duration_s": 120.0}
+    without = await context(_item(clip_assignments=[], song_gcs_path=None), [MUSIC_EN])
+    assert without["music_library_closed"] is True and "uploaded_song" not in without
+    held = await context(_item(clip_assignments=[]), [NO_MUSIC])
+    assert held.get("no_music") is True and "uploaded_song" not in held
+
+
+def test_the_model_is_told_a_talking_edit_never_lip_syncs_when_it_tries(talking_lane):
+    from app.agents.main_creator import MainCreatorAgent
+    from tests.agents.test_main_creator_user_song import _raw
+
+    talking = song_input()
+    talking = talking.model_copy(
+        update={
+            "capability_manifest": talking.capability_manifest.model_copy(
+                update={"edit_format": "subtitled"}
+            )
+        }
+    )
+    agent = MainCreatorAgent(None)  # type: ignore[arg-type]
+    with pytest.raises(Exception, match="invalid output"):
+        agent.parse(
+            _raw(edit_format="subtitled", song_sync="lipsync", render_program="native"), talking
+        )
+    assert "never lip-syncs" in agent.schema_clarification()

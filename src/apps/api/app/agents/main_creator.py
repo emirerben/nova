@@ -2158,7 +2158,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # KRI-374: the creator-facing copy is a question for the creator;
                 # the retry needs the rule it broke.
                 self._schema_feedback = (
-                    'audio_strategy "user_song" needs a usable uploaded song on this '
+                    # KRI-1578: a Talking edit keeps its song under the voice.
+                    'a Talking edit never lip-syncs: keep audio_strategy "original_audio", '
+                    "song_sync null, and say in summary that lip-sync needs a Lip-sync video"
+                    if exc.code == "user_song_lipsync_talking"
+                    else 'audio_strategy "user_song" needs a usable uploaded song on this '
                     "manifest (manifest.user_song); choose another audio_strategy"
                 )
             elif isinstance(exc, ValueError):

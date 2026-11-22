@@ -787,7 +787,9 @@ three extra lanes on top of the unchanged speaker clip + captions:
   `user_song.{volume,window,remove,trim}`; a Save's `user_song` section adds
   (`{}`), moves, re-levels, re-pins a replaced upload or removes it. Library songs
   need `TALKING_LIBRARY_MUSIC_ENABLED`; without an upload a music ask is answered
-  "send me the song". Guards: `tests/kria/test_talking_creator_song.py`,
+  "send me the song". In chat, `set_user_song` changes, removes or (for a song sent after
+  the render, YOUR SONG `on_edit: false`) adds it, and "no music" takes it off; protocol 53
+  only. Guards: `tests/kria/test_talking_creator_song.py`,
   `tests/pipeline/test_creator_song_bed.py`.
 - **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
   main video track with per-clip `volume=0` (muted), which sidesteps the five

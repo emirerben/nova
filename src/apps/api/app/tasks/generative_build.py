@@ -5624,14 +5624,19 @@ def _talking_music_bed(
 
 
 def _job_uploaded_song(job_id: str) -> Any:
-    """KRI-1578: the song uploaded to this job's plan item now (`talking_music.uploaded_song`)."""
+    """KRI-1578: the song uploaded to this job's Talking plan item now
+    (`talking_music.uploaded_song`). A self-narrated item shares this writer but not the lane:
+    its manifest never offers the song, so neither does its render."""
     from app.models import PlanItem  # noqa: PLC0415
     from app.services.talking_music import uploaded_song  # noqa: PLC0415
 
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         item_id = getattr(job, "content_plan_item_id", None) if job is not None else None
-        return uploaded_song(db.get(PlanItem, item_id) if item_id is not None else None)
+        item = db.get(PlanItem, item_id) if item_id is not None else None
+        if str(getattr(item, "edit_format", None) or "") != "subtitled":
+            return None
+        return uploaded_song(item)
 
 
 def _creator_song_bed(song: Any, uploaded: Any) -> Any:

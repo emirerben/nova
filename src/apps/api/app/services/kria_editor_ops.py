@@ -1045,8 +1045,11 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     if on_device and isinstance(caps.get("user_song"), dict):
         from app.agents.editor_ops_v2.user_song import song_state  # noqa: PLC0415
 
-        # KRI-1394: the creator's own song, where the editor's Sounds tab offers it.
-        if song_state(job, variant) is not None:
+        # KRI-1394: the creator's own song, where the editor's Sounds tab offers it. KRI-1578: on
+        # a Talking edit only for a sending build that ducks it under her voice (protocol 53).
+        if song_state(job, variant) is not None and (
+            not _talking_song_variant(variant) or talking_song_open(job, variant)
+        ):
             families.append("user_song")
     if talking_song_open(job, variant):
         families.extend(("music", "music_library"))
