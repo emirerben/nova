@@ -30,6 +30,7 @@ on:
     paths:
       - "Dockerfile"
       - ".dockerignore"
+      - "scripts/ci/opencv-install.py"
       - "src/apps/api/**"
       - "src/packages/motion-runtime/**"
 
@@ -60,12 +61,19 @@ jobs:
           cache-from: type=gha,scope=docker-build-check
           cache-to: type=gha,scope=docker-build-check,mode=max
 
-      # Runtime smoke check — text-behind-subject added mediapipe as a prod
-      # dep. mediapipe pulls in opencv-contrib-python as a transitive dep,
-      # which ships the same top-level `cv2` module name as
-      # opencv-python-headless (already installed for other pipeline code) —
-      # a version conflict between the two resolves fine at `pip install`
-      # but can explode at first `import cv2` inside the actual built image.
+      # One OpenCV in the image. The OpenCV distributions all unpack into one
+      # cv2/ directory; scenedetect requires opencv-python and mediapipe
+      # requires opencv-contrib-python, and until 2026-11-22 the image held
+      # three with whichever was written last on top. The Dockerfile now leaves
+      # opencv-contrib-python alone; this reads the image's own install
+      # records and fails on a second distribution, a file left behind, or a
+      # cv2 without CascadeClassifier.
+      - name: Check the image holds one OpenCV distribution
+        run: |
+          docker run --rm -v "$PWD/scripts/ci:/ci:ro" --entrypoint python nova-build-test:ci \
+            /ci/opencv-install.py --require opencv-contrib-python
+          docker image inspect nova-build-test:ci --format 'image bytes: {{.Size}}'
+
       # Proves the three imports resolve together in the image, not just the
       # dev venv (local pytest never builds the Docker image).
       - name: Smoke-check cv2/skia/mediapipe import at runtime
@@ -73,11 +81,28 @@ jobs:
           docker run --rm --entrypoint python nova-build-test:ci -c \
             'import cv2, skia, mediapipe; print("cv2/skia/mediapipe import OK")'
 
+      # scenedetect declares opencv-python, which the image no longer holds; it
+      # runs on the cv2 from opencv-contrib-python. detect_scenes returns no
+      # cuts when scenedetect fails to import, so an import check proves
+      # nothing: run it on a clip with one cut and require that cut.
+      - name: Smoke-check scene detection finds a cut at runtime
+        run: |
+          docker run --rm --entrypoint sh nova-build-test:ci -c '
+            ffmpeg -v error -y -f lavfi -i "testsrc=d=2:s=320x240:r=30" -f lavfi -i "mandelbrot=s=320x240:r=30" \
+              -filter_complex "[1:v]trim=duration=2,setpts=PTS-STARTPTS[b];[0:v][b]concat=n=2:v=1[v]" \
+              -map "[v]" -pix_fmt yuv420p /tmp/two-scenes.mp4 &&
+            python -c "
+          from app.pipeline.scene_detect import detect_scenes
+          cuts = [round(cut.timestamp_s, 2) for cut in detect_scenes(\"/tmp/two-scenes.mp4\")]
+          assert cuts == [0.0, 2.0], cuts
+          print(\"scene detection smoke check passed:\", cuts)
+          "
+          '
+
       # Face-sampler cascade — the class of bug this workflow exists for: works
       # locally (dev cv2 wheel ships haarcascades/), breaks only in the built
-      # image (mediapipe's opencv-contrib-python wheel wins dependency
-      # resolution over opencv-python-headless there, and its cv2.data.haarcascades
-      # dir does not ship the cascade XML at all). Prod incident: every job's
+      # image (the opencv-contrib-python wheel's cv2.data.haarcascades dir does
+      # not ship the cascade XML at all). Prod incident: every job's
       # face-aware caption/thumbnail placement silently fell back to preset
       # placement (`caption_placement_chosen: reason=sampler_error`). This
       # asserts the vendored assets/cv/ cascade actually made it into the
