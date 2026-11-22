@@ -182,3 +182,22 @@ def test_a_compiler_that_refuses_the_effects_keeps_the_recipe_and_says_so(monkey
     assert not any(t.id == "sfx" for t in recipe.tracks)
     receipt = job.assembly_plan["variants"][0]["phone_sfx_choice_receipt"]
     assert receipt["placed"] == [] and receipt["declined"] == "nothing_fit"
+
+
+def test_a_live_no_sound_effects_in_the_approved_brief_outranks_the_ask_montage(monkeypatch):
+    """KRI-1561 PR 7: the montage-with-voiceover worker transcribes nothing and places nothing
+    while the approved brief holds "no sound effects"."""
+    from tests.kria.test_no_effects_gate import NO_SFX, _binding
+
+    job, _snapshot, _session, _bindings, _cloud = setup(monkeypatch)
+    _gates(monkeypatch)
+    calls = _transcribe(monkeypatch)
+    payloads = _picks(monkeypatch, ("fx-pop", 1.0))
+    job.assembly_plan["creator_brief_binding"] = _binding(NO_SFX)
+    job.all_candidates["creator_strategy"] = {"sfx_ask": ASK}
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert calls == [] and payloads == []
+    receipt = job.assembly_plan["variants"][0]["phone_sfx_choice_receipt"]
+    assert receipt["declined"] == "creator_said_no" and receipt["placed"] == []

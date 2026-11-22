@@ -2086,6 +2086,11 @@ def _format_snapshot(snapshot: dict) -> str:
         placements = sfx.get("placements") if isinstance(sfx.get("placements"), list) else []
         catalog = sfx.get("catalog") if isinstance(sfx.get("catalog"), list) else []
         lines.append("\nSFX PINS (sfx_index values are authoritative for this turn):")
+        if sfx.get("no_sound_effects") is True:
+            lines.append(
+                "no_sound_effects=True: the creator asked for no sound effects; add none "
+                "(remove_sfx and patch_sfx on the pins below stay fine)."
+            )
         if placements:
             for placement in _component_rows(placements, 15, component_context_enabled):
                 if not isinstance(placement, dict):
@@ -6277,6 +6282,17 @@ def _coerce_payload(
             state.invalid_value()
             return None
 
+    if name == "add_sfx":
+        sfx_section = snapshot.get("sfx") if isinstance(snapshot, dict) else None
+        if isinstance(sfx_section, dict) and sfx_section.get("no_sound_effects") is True:
+            # KRI-1561: the creator's "no sound effects" holds until they withdraw it.
+            state.invalid_value(
+                note=say(
+                    en="you asked for no sound effects, so I won't add any",
+                    tr="ses efekti istemediğini söylemiştin, o yüzden eklemiyorum",
+                )
+            )
+            return None
     if name == "add_sfx" and not _id_in_section(
         out.get("effect_id"), snapshot, "sfx", "catalog", "id"
     ):

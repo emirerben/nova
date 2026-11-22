@@ -2090,6 +2090,12 @@ def build_editor_snapshot(
             # via clip_context; empty => add_sfx fails closed in the parser.
             "catalog": list(clip_context.get("sfx_catalog") or []),
         }
+        if clip_context.get("no_sound_effects") is True:
+            # KRI-1561: the creator's "no sound effects" holds until they withdraw it: nothing to
+            # add from, so the copilot adds none (`add_sfx` is refused in the parser); the pins
+            # already placed can still be patched or removed.
+            snapshot["sfx"]["catalog"] = []
+            snapshot["sfx"]["no_sound_effects"] = True
     if "overlay" in snapshot["allowed_op_families"]:
         snapshot["overlays"] = _overlay_snapshot(
             variant,
