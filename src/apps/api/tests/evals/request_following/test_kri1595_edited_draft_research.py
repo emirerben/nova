@@ -235,9 +235,10 @@ def test_edited_phone_draft_gets_sourced_captions_on_the_renderer_clock(monkeypa
     assert op["end_s"] == pytest.approx(RECORDED_EDIT_DURATION_S)
     # The writer saw every clip at its place on that clock, and only those windows.
     [_search, (_copy, windows, bound)] = calls
-    assert {
-        row["media_id"]: (row["output_start_s"], row["output_end_s"]) for row in bound
-    } == pytest.approx(CLOCK)
+    placed = {row["media_id"]: (row["output_start_s"], row["output_end_s"]) for row in bound}
+    assert placed.keys() == CLOCK.keys()
+    for media_id, span in CLOCK.items():
+        assert placed[media_id] == pytest.approx(span), media_id
     assert spans(windows) == WINDOWS
     # Nothing but the cited text is touched: the snapshot the editor keeps is unchanged.
     assert all(slot["output_start_s"] is None for slot in snapshot["slots"])
