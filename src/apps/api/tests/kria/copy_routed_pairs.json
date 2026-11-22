@@ -2610,6 +2610,11 @@
    "app/services/clip_order_card.py",
    "Updated your clip order.",
    "Klip sıranı güncelledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "you asked for no sound effects, so I won't add any",
+   "ses efekti istemediğini söylemiştin, o yüzden eklemiyorum"
   ]
  ],
  "retired": [

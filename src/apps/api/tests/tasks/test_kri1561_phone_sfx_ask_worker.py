@@ -376,3 +376,52 @@ def test_narrated_compile_that_refuses_the_effects_drops_them_and_the_receipt_sa
     assert calls["n"] == 2
     receipt = job.assembly_plan["variants"][0]["phone_sfx_choice_receipt"]
     assert receipt["placed"] == [] and receipt["declined"] == "nothing_fit"
+
+
+def _no_effects_binding() -> dict:
+    from tests.kria.test_no_effects_gate import NO_SFX, _binding
+
+    return _binding(NO_SFX)
+
+
+def test_a_live_no_sound_effects_in_the_approved_brief_outranks_the_ask_talking(monkeypatch):
+    """KRI-1561 PR 7: a plan that carries `sfx_ask` (stale, approved, or set by a model anyway)
+    places nothing while the approved brief holds "no sound effects", and says why."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(
+        monkeypatch, transcript_words=SPOKEN, duration_s=16.0
+    )
+    _open_gates(monkeypatch)
+    payloads = _agent_picks(monkeypatch, ("fx-pop", 2.0))
+    compiled = _spy_compile(monkeypatch)
+    job.assembly_plan["creator_brief_binding"] = _no_effects_binding()
+    job.all_candidates["creator_strategy"] = {"sfx_ask": ASK}
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert payloads == []
+    assert not any(t.id == "sfx" for t in compiled[-1].tracks)
+    receipt = job.assembly_plan["variants"][0]["phone_sfx_choice_receipt"]
+    assert receipt["declined"] == "creator_said_no" and receipt["placed"] == []
+
+
+def test_a_live_no_sound_effects_in_the_approved_brief_outranks_the_ask_voiceover(monkeypatch):
+    from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_narrated
+
+    job, _snapshot, _session, _bindings = _setup_narrated(monkeypatch, spoken_words=NARRATION)
+    _open_voiceover_gates(monkeypatch)
+    payloads = _agent_picks(monkeypatch, ("fx-pop", 1.5))
+    job.assembly_plan["creator_brief_binding"] = _no_effects_binding()
+    job.all_candidates["creator_strategy"] = {"sfx_ask": ASK}
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert payloads == []
+    receipt = job.assembly_plan["variants"][0]["phone_sfx_choice_receipt"]
+    assert receipt["declined"] == "creator_said_no"
+
+
+def test_without_that_brief_row_the_same_plan_places_effects(monkeypatch):
+    """Control: the same job with the row withdrawn (no binding) places effects."""
+    job, payloads, _compiled = _run(monkeypatch)
+    assert job.status == "awaiting_device" and payloads
+    assert job.assembly_plan["variants"][0]["phone_sfx_choice_receipt"]["declined"] is None

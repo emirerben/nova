@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.92.0] - 2026-11-22
+
+### Changed
+- feat(kria): "no sound effects" holds through later chat edits and a stale plan (KRI-1561) (#2469) <!-- release-pr: 2469 -->
+
+## [0.89.91.0] - 2026-11-22
+
+### Changed
+- feat(ios): the draft shows the decided clip order as a strip you can reorder in a sheet, with a larger preview of each clip (KRI-1591) (#2476) <!-- release-pr: 2476 -->
+
+## [0.89.90.0] - 2026-11-22
+
+### Changed
+- KRI-1584: one font owner that sees font traits and the footage, favourites ranked (KRI-1585 PR4) (#2472) <!-- release-pr: 2472 -->
+
 ## [0.89.89.0] - 2026-11-22
 
 ### Changed

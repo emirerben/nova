@@ -79,6 +79,14 @@ def asks_no_music(brief: CreativeBrief | None) -> bool:
     return brief is not None and any(wants_no_music(req) for req in brief.live())
 
 
+def asks_no_sound_effects(brief: CreativeBrief | None) -> bool:
+    """True when a live ask is the typed "no sound effects" (KRI-1405). KRI-1561: it holds through
+    later chat edits until the creator withdraws it (the brief writer removes it then)."""
+    from app.kria.brief_checks import wants_no_sound_effects  # noqa: PLC0415
+
+    return brief is not None and any(wants_no_sound_effects(req) for req in brief.live())
+
+
 @dataclass(frozen=True)
 class MusicAsk:
     """A live typed music ask (KRI-1562) with the kind of music named, if any."""

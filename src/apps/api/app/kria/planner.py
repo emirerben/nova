@@ -18,7 +18,7 @@ import time
 import unicodedata
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -2401,6 +2401,16 @@ async def _copilot_clip_context(
             "kria_copilot_music_library_unavailable", thread_id=str(thread_id), exc_info=True
         )
     try:
+        # KRI-1561: "no sound effects" holds through later chat edits until the creator withdraws
+        # it. What the creator said this turn (`_turn_brief`) decides, else the saved brief.
+        from app.kria.draft_sound_carry import asks_no_sound_effects  # noqa: PLC0415
+
+        sfx_turn_brief = _turn_brief.get()
+        if asks_no_sound_effects(sfx_turn_brief if sfx_turn_brief is not None else brief):
+            context["no_sound_effects"] = True
+    except Exception:  # noqa: BLE001 - fail closed: the effects stay as they are
+        log.warning("kria_copilot_no_sound_effects_unread", thread_id=str(thread_id), exc_info=True)
+    try:
         # KRI-1117: the photos and videos a Talking edit's background can be. No query while
         # the lane is closed for this variant, so every other turn reads exactly what it read.
         # KRI-1139: the same pool backs a tilt's media backdrop, so that edit reads it too.
@@ -2665,6 +2675,19 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
 _turn_brief: contextvars.ContextVar[CreativeBrief | None] = contextvars.ContextVar(
     "kria_turn_brief", default=None
 )
+
+
+@contextmanager
+def _turn_brief_is(brief: CreativeBrief | None):  # noqa: ANN202
+    """KRI-1561: the copilot turn itself reads the brief WITH this turn's updates, not only the
+    routing step: "actually add music" (which withdraws a live "no music") used to be refused by
+    the copilot because it still saw the saved brief, so the creator had to ask twice."""
+    token = _turn_brief.set(brief)
+    try:
+        yield
+    finally:
+        _turn_brief.reset(token)
+
 
 # `time.monotonic()` by which the running turn must have planned (set by the turn task
 # from its soft time limit). None = no deadline known: only the settings cap applies.
@@ -3235,6 +3258,13 @@ class _CreatorInputs:
     delegation_read_ids: tuple[str, ...] = ()
     # KRI-1560: what the creator said in her clips, as numbered sentences, for opening titles.
     talk: tuple = ()
+
+
+async def _plan_editor_revision_with_brief(effective, *args, **kwargs):  # noqa: ANN001, ANN202
+    """`_plan_editor_revision` with this turn's brief updates folded into what chat may do
+    (KRI-1561): the copilot's snapshot flags (`no_music`, `no_sound_effects`) read `_turn_brief`."""
+    with _turn_brief_is(effective):
+        return await _plan_editor_revision(*args, **kwargs)
 
 
 async def _unrecorded_creator_lines(
@@ -8827,7 +8857,8 @@ async def _plan_live_turn(
                 editor_plan = (
                     first_editor_result[0]
                     if first_editor_result is not None
-                    else await _plan_editor_revision(
+                    else await _plan_editor_revision_with_brief(
+                        effective,
                         db,
                         thread_id=thread_id,
                         item=await _refetch_item(db, item_id),
@@ -9192,7 +9223,8 @@ async def _plan_live_turn(
             editor_plan = first_editor_result[0]
         else:
             item = await _refetch_item(db, item_id)
-            editor_plan = await _plan_editor_revision(
+            editor_plan = await _plan_editor_revision_with_brief(
+                effective,
                 db,
                 thread_id=thread_id,
                 item=item,
