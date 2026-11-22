@@ -132,7 +132,11 @@ from app.pipeline.phone_narrated_plan import (  # noqa: E402
     NarratedPhoneStep,
     compile_phone_narrated_plan,
 )
-from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed  # noqa: E402
+from app.pipeline.phone_recipe_shared import (  # noqa: E402
+    LibraryMusicSource,
+    PhoneMusicBed,
+    PhoneNarrationBed,
+)
 from app.pipeline.phone_voiceover_montage_plan import (  # noqa: E402
     compile_phone_voiceover_montage_plan,
 )
@@ -375,9 +379,11 @@ def prepare_parity(out: Path) -> None:
 
     # 1. Voiceover over a matched music bed (voiceover_music, mix 0.7 -> bed 0.3).
     music = PhoneMusicBed(
-        catalog_id="track",
-        generation="1",
-        fingerprint=_fingerprint(files["music"]),
+        source=LibraryMusicSource(
+            catalog_id="track",
+            generation="1",
+            fingerprint=_fingerprint(files["music"]),
+        ),
         duration_s=_duration(files["music"]),
         start_s=MUSIC_START_S,
     )
@@ -1186,9 +1192,11 @@ def prepare_voiceover_music_authored(out: Path) -> None:
     _write_tone_clip(files["footage"], (74, 107, 138), FOOTAGE_HZ, LEVELS_SECONDS + 2)
     binding = _binding_for("footage", files["footage"])
     music = PhoneMusicBed(
-        catalog_id="track",
-        generation="1",
-        fingerprint=_fingerprint(files["music"]),
+        source=LibraryMusicSource(
+            catalog_id="track",
+            generation="1",
+            fingerprint=_fingerprint(files["music"]),
+        ),
         duration_s=_duration(files["music"]),
         start_s=LEVELS_MUSIC_START_S,
     )
@@ -1300,9 +1308,11 @@ def prepare_speech_music(out: Path) -> None:
         broll.append(_binding_for(name, files[name]))
     speaker = _binding_for("speaker", files["speaker"])
     music = PhoneMusicBed(
-        catalog_id="track",
-        generation="1",
-        fingerprint=_fingerprint(files["music"]),
+        source=LibraryMusicSource(
+            catalog_id="track",
+            generation="1",
+            fingerprint=_fingerprint(files["music"]),
+        ),
         duration_s=_duration(files["music"]),
         start_s=LEVELS_MUSIC_START_S,
         volume=0.4,

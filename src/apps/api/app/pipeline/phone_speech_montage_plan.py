@@ -75,7 +75,7 @@ from app.kria.recipes import (
     TimelineTrack,
 )
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import LibraryRenderAsset, RenderAssetManifest
+from app.kria.render_assets import RenderAssetManifest
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
@@ -612,14 +612,8 @@ def _music_clips(
             merged[-1][1] = end
         else:
             merged.append([start, end])
-    asset_id = f"music-{music.catalog_id}"
-    asset = LibraryRenderAsset(
-        id=asset_id,
-        catalog="music",
-        catalog_id=music.catalog_id,
-        generation=music.generation,
-        fingerprint=music.fingerprint,
-    )
+    asset = music.source.render_asset()
+    asset_id = asset.id
     clips: list[TimelineClip] = []
     position = max(0.0, float(music.start_s))
     available = float(music.duration_s) if music.duration_s else None
@@ -652,7 +646,7 @@ def _music_clips(
             id=asset_id,
             relative_path=asset_id,
             fingerprint=AssetFingerprint(
-                hex=music.fingerprint.sha256, byte_count=music.fingerprint.byte_count
+                hex=asset.fingerprint.sha256, byte_count=asset.fingerprint.byte_count
             ),
             duration=music.duration_s,
         )
