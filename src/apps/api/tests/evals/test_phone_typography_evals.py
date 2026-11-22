@@ -38,3 +38,26 @@ def test_replay_rejects_unavailable_or_incomplete_selection(fonts, live_model_cl
     input = PhoneTypographyInput(roles={"title": {"eligible_fonts": ["Inter"]}})
     with pytest.raises(SchemaError):
         agent.parse(json.dumps({"fonts": fonts}), input)
+
+
+def test_informative_input_keeps_the_pick_when_the_reason_runs_long(live_model_client):
+    input = PhoneTypographyInput(
+        roles={
+            "research": {
+                "eligible_fonts": ["Inter", "Pacifico"],
+                "preferred_fonts": ["Inter"],
+                "wording": "Hozukyo Gecidi sonbahar yapraklariyla renkli manzaralar sunar.",
+            }
+        },
+        mood="autumn mountain river landscape from a train window",
+        fonts={"Inter": {"category": "sans"}, "Pacifico": {"category": "script"}},
+    )
+    agent = PhoneTypographyAgent(live_model_client)
+    prompt = agent.render_prompt(input)
+    assert '"category": "script"' in prompt and "very short, common words" in prompt
+    result = agent.parse(
+        json.dumps({"fonts": {"research": "Inter"}, "reasons": {"research": "long " * 200}}),
+        input,
+    )
+    assert result.fonts == {"research": "Inter"}
+    assert 0 < len(result.reasons["research"]) <= 200

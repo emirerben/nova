@@ -238,21 +238,36 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
     from app.agents._model_client import default_client
     from app.agents._runtime import RunContext
     from app.agents.phone_typography import PhoneTypographyAgent, PhoneTypographyInput
-    from app.pipeline.informative_text import authored_fields
+    from app.pipeline.informative_text import CREATOR_FIELDS_KEY, authored_fields, policy_enabled
     from app.pipeline.phone_text_style import _covers, coverage_text, text_role
     from app.services.pipeline_trace import record_pipeline_event
 
-    roles = {}
+    # KRI-1584: on a stamped job this is the one font owner. Favourites are ranked, not a
+    # filter; the footage, not the edit type, is the mood; a font a design or the creator set
+    # is never re-picked; and every role's decision is traced with its reason.
+    informative = policy_enabled(policy)
+    if informative:
+        mood = str(policy.get("_footage_mood") or "")
+    roles, decisions = {}, {}
     preferences, requested = policy.get("preferences") or {}, policy.get("requested") or {}
     for role in sorted({text_role(row) for row in rows}):
         rule = effective_text_rule(preferences, requested, role)
         if rule.get("font_family"):
+            decisions[role] = {"font": rule["font_family"], "source": "saved_rule"}
             continue
-        texts = [
-            coverage_text(row)
-            for row in rows
-            if text_role(row) == role and "font_family" not in authored_fields(row)
-        ]
+        role_rows = [row for row in rows if text_role(row) == role]
+        open_rows = [row for row in role_rows if "font_family" not in authored_fields(row)]
+        if informative and not open_rows:
+            mine = any(
+                "font_family" in ((row.get("source_params") or {}).get(CREATOR_FIELDS_KEY) or [])
+                for row in role_rows
+            )
+            decisions[role] = {
+                "font": role_rows[0].get("font_family"),
+                "source": "creator" if mine else "design",
+            }
+            continue
+        texts = [coverage_text(row) for row in open_rows]
         eligible = [
             font
             for font in dict.fromkeys([*rule.get("favorite_fonts", []), *CURATED_PHONE_FONTS])
@@ -260,25 +275,116 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
             and all(_covers(font, text) for text in texts)
         ]
         favorites = [font for font in rule.get("favorite_fonts", []) if font in eligible]
-        roles[role] = {"eligible_fonts": favorites or eligible, "wording": " ".join(texts)[:1200]}
+        roles[role] = {
+            "eligible_fonts": eligible if informative else favorites or eligible,
+            "wording": " ".join(texts)[:1200],
+        }
+        if not informative:
+            continue
+        if favorites:
+            roles[role]["preferred_fonts"] = favorites
+        if hint := _earlier_font(open_rows, eligible, policy):
+            roles[role]["hint"] = hint
     if not roles:
+        _record_font_decision(decisions, mood, informative=informative)
         return {}
     try:
         result = PhoneTypographyAgent(default_client()).run(
-            PhoneTypographyInput(roles=roles, mood=mood[:300]), ctx=RunContext(job_id=job_id)
+            PhoneTypographyInput(
+                roles=roles,
+                mood=mood[:300],
+                fonts=_font_traits(roles) if informative else {},
+            ),
+            ctx=RunContext(job_id=job_id),
         )
-        return {
+        chosen = {
             role: font
             for role, font in result.fonts.items()
             if role in roles and font in roles[role]["eligible_fonts"]
         }
+        for role, font in chosen.items():
+            decisions[role] = {
+                "font": font,
+                "source": "agent",
+                "reason": result.reasons.get(role, ""),
+            }
+        _record_font_decision(decisions, mood, informative=informative)
+        return chosen
     except Exception:  # noqa: BLE001 - bounded best-effort aesthetic selection
         record_pipeline_event(
             "text",
             "font_selection_fallback",
             {"roles": list(roles), "version": PHONE_TEXT_STYLE_VERSION},
         )
-        return {}
+        if not informative:
+            return {}
+        # Still one decision: the first eligible font, her favourites first.
+        fallback = {
+            role: entry["eligible_fonts"][0]
+            for role, entry in roles.items()
+            if entry["eligible_fonts"]
+        }
+        for role in roles:
+            decisions[role] = {"font": fallback.get(role), "source": "fallback"}
+        _record_font_decision(decisions, mood, informative=informative)
+        return fallback
+
+
+def _earlier_font(rows: list[dict], eligible: list[str], policy: dict) -> str | None:
+    """The font an earlier layer chose for these rows, as a hint for the one decision.
+
+    A row's own font counts unless the writer marked it a default (the chat ``add_text``
+    Playfair); otherwise the approved proposal's font. Only an eligible font is a hint.
+    """
+    from app.pipeline.informative_text import DEFAULT_FIELDS_KEY
+
+    for row in rows:
+        defaults = (row.get("source_params") or {}).get(DEFAULT_FIELDS_KEY) or []
+        if "font_family" not in defaults and row.get("font_family") in eligible:
+            return row["font_family"]
+    proposal = policy.get("_proposal_font")
+    return proposal if proposal in eligible else None
+
+
+def _font_traits(roles: dict) -> dict:
+    from app.pipeline.font_coverage import _registry
+
+    registry = _registry().get("fonts") or {}
+    return {
+        font: {
+            "category": str(registry.get(font, {}).get("category") or ""),
+            "vibe": str(registry.get(font, {}).get("vibe") or ""),
+        }
+        for role in roles.values()
+        for font in role["eligible_fonts"]
+    }
+
+
+def _record_font_decision(decisions: dict, mood: str, *, informative: bool) -> None:
+    if not informative or not decisions:
+        return
+    from app.services.pipeline_trace import record_pipeline_event
+
+    record_pipeline_event(
+        "text",
+        "font_decision",
+        {"version": 1, "mood": mood[:300], "roles": decisions},
+    )
+
+
+def footage_mood(snapshot: dict) -> str:
+    """What the approved footage looks like, from its clip analysis, for the font choice."""
+    from app.services.clip_understanding import clip_record
+
+    proposal = (snapshot.get("guided_edit") or {}).get("approved_proposal") or {}
+    selected = set(proposal.get("selected_media_ids") or [])
+    phrases: list[str] = []
+    for media in proposal.get("media") or []:
+        if not isinstance(media, dict) or (selected and media.get("media_id") not in selected):
+            continue
+        record = clip_record(media.get("analysis"), kind=str(media.get("kind") or "video"))
+        phrases += [record.setting, record.subject, record.activity, record.visibility]
+    return "; ".join(dict.fromkeys(p.strip() for p in phrases if p and p.strip()))[:300]
 
 
 @contextmanager
@@ -319,6 +425,12 @@ def _scoped_generation(function, job_id, snapshot, *args, **kwargs):
         from app.services.phone_sources import PHONE_SOURCES_FIELD
 
         policy["_source_bindings"] = snapshot.get(PHONE_SOURCES_FIELD) or []
+        from app.pipeline.informative_text import policy_enabled
+
+        if policy_enabled(policy):
+            proposal = (snapshot.get("guided_edit") or {}).get("approved_proposal") or {}
+            policy["_footage_mood"] = footage_mood(snapshot)
+            policy["_proposal_font"] = proposal.get("font_family")
     return function(job_id, snapshot, *args, **kwargs)
 
 
