@@ -17996,7 +17996,13 @@ def _narrated_alignment_record(
         name = " ".join(str(intent.get("attribute") or "").split())
         if not name:
             continue
-        spot = intent.get("position") if intent.get("op") == "order" else None
+        # A first / last row an earlier turn already seated names the clip, but no longer puts it
+        # there (KRI-1594: the creator has moved the clips since): its words stay, its spot goes.
+        spot = (
+            intent.get("position")
+            if intent.get("op") == "order" and not intent.get("already_seated")
+            else None
+        )
         for assignment in intent.get("assignments") or []:
             key = assignment.get("media_id") if isinstance(assignment, Mapping) else None
             if not key:
@@ -35000,19 +35006,18 @@ def _narrated_creator_clip_labels(
             clip_by_media.setdefault(key, clip_id)
 
     # Same seating as `clip_order_sequence.apply_sequence`: walk the order intents in
-    # listed order; a clip named by two intents belongs to the first one.
+    # listed order; a clip named by two intents belongs to the first one. Which rows seat is
+    # the one rule the planner, the contract and the phone preflight read (KRI-1594,
+    # `clip_order_sequence.seats_now`): a row an earlier turn already seated, which the
+    # creator has moved the clips away from since, seats nothing.
+    from app.services.clip_order_sequence import seats_now  # noqa: PLC0415
+
     pinned: dict[str, list[str]] = {"first": [], "last": []}
     groups: list[list[str]] = []
     claimed: set[str] = set()
     for intent in resolved:
         position = intent.get("position")
-        if (
-            intent.get("op") != "order"
-            or position not in (None, "first", "last")
-            or intent.get("order_by")
-            or intent.get("placeholder")
-            or intent.get("status") not in (None, "resolved")
-        ):
+        if not seats_now(intent) or intent.get("status") not in (None, "resolved"):
             continue
         members: list[str] = []
         for assignment in intent.get("assignments") or []:

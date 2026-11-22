@@ -917,7 +917,7 @@ def _complete_response_turn(
                 client_protocol=client_protocol,
                 editable=False,
             )
-            if clip_order_entries
+            if _retraction_rows(clip_order_entries) != tuple(clip_order_entries)
             else ({}, None)
         )
         event = _append_sync_event(
@@ -4172,6 +4172,9 @@ def _complete_draft_turn(
                 claimed_thread_revision=claimed_thread_revision,
                 conversation_language=planned.conversation_language,
                 plan=recovery,
+                # A restart the held turn's brief withdraws still takes the old order back
+                # (KRI-1594); the rows it would have seated were never drafted.
+                clip_order_entries=_retraction_rows(planned.clip_order_entries),
                 brief_updates=_refusal_brief_updates(planned, planned.brief_updates),
                 brief_delegated=planned.brief_delegated,
                 brief_delegation_read_ids=planned.brief_delegation_read_ids,
@@ -5128,11 +5131,21 @@ def _with_order_receipt(changes: list[str], planned: PlannedKriaTurn, item: Any)
     )
     if entry is None:
         return changes
-    labels = clip_order_ledger.labels_for(entry.after_ids, item.clip_assignments or [])
+    # KRI-1594: the clips' names the planner read (group words included), never a second guess.
+    labels = clip_order_ledger.labels_for(
+        entry.after_ids, item.clip_assignments or [], group_words=planned.clip_order_groups
+    )
     line = clip_order_ledger.reorder_receipt(entry.before_ids, entry.after_ids, labels)
     if "Reorder clips" in changes:
         return [line if change == "Reorder clips" else change for change in changes]
     return [*changes, line]
+
+
+def _retraction_rows(entries: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any], ...]:
+    """The rows of ``entries`` that take the order back (`clip_order_ledger.RETRACT`)."""
+    from app.services.clip_order_ledger import RETRACT  # noqa: PLC0415
+
+    return tuple(entry for entry in entries if entry.get("actor") == RETRACT)
 
 
 def _clip_order_payload(entries: Sequence[Mapping[str, Any]], turn_id: uuid.UUID) -> dict[str, Any]:
@@ -5172,10 +5185,7 @@ def _clip_order_card_block(
     try:
         rows = db.execute(
             select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(
-                CreationThreadEvent.thread_id == thread.id,
-                CreationThreadEvent.role == "assistant",
-            )
+            .where(CreationThreadEvent.thread_id == thread.id, ledger.ledger_events_clause())
             .order_by(CreationThreadEvent.sequence)
         ).all()
         events = [(role, payload) for role, payload in rows]
@@ -5187,13 +5197,12 @@ def _clip_order_card_block(
                 if isinstance(row.get("media_id"), str) and row["media_id"]
             )
         )
-        new = [
-            entry
-            for entry in (ledger.LedgerEntry.from_payload(raw) for raw in entries)
-            if entry is not None
-        ]
+        # This turn's rows fold with the thread's (a reset row takes the older entries back).
         state = ledger.current_clip_order(
-            attachment_ids=attachment, entries=(*ledger.fold_clip_order(events), *new)
+            attachment_ids=attachment,
+            entries=ledger.fold_clip_order(
+                [*events, ("assistant", {ledger.LEDGER_KEY: list(entries)})]
+            ),
         )
         brief = load_latest_brief_sync(db, thread.id)
         card = card_mod.build_card(
@@ -5202,8 +5211,8 @@ def _clip_order_card_block(
             events=events,
             brief_version=brief.version if brief else 0,
             applies=card_mod.card_applies(strategy) if strategy is not None else None,
-            groups=ledger.group_words_by_clip(
-                (strategy or {}).get("resolved_clip_intents") if strategy else None
+            groups=card_mod.known_group_words(
+                (), (strategy or {}).get("resolved_clip_intents") if strategy else None
             ),
             stated=card_mod.stated_ids(strategy),
             only=card_mod.played_ids(strategy),

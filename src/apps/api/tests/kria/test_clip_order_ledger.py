@@ -1128,11 +1128,15 @@ from app.kria import planner as planner_module  # noqa: E402
 
 
 class _FakeDb:
-    def __init__(self, payloads: list[dict[str, Any]]) -> None:
+    def __init__(
+        self, payloads: list[dict[str, Any]], *, active_plan: dict[str, Any] | None = None
+    ) -> None:
         self.rows = [("assistant", payload) for payload in payloads]
+        self.active_plan = active_plan
 
     async def execute(self, _statement: Any) -> Any:
-        return SimpleNamespace(all=lambda: self.rows)
+        # The events read (`.all()`) and the active plan read (`.scalar_one_or_none()`).
+        return SimpleNamespace(all=lambda: self.rows, scalar_one_or_none=lambda: self.active_plan)
 
 
 def _turn_state(
@@ -1404,7 +1408,9 @@ def test_plan_live_turn_a_chat_reorder_writes_one_entry_an_unrelated_edit_writes
             return item
 
         async def execute(self, _statement: Any) -> Any:
-            return SimpleNamespace(all=lambda: [("assistant", p) for p in events])
+            return SimpleNamespace(
+                all=lambda: [("assistant", p) for p in events], scalar_one_or_none=lambda: None
+            )
 
     async def load_target(*_a: Any, **_kw: Any) -> Any:
         slots = [{"media_id": s["media_id"]} for s in state["variant"]["ai_timeline"]["slots"]]
@@ -1524,7 +1530,7 @@ def test_plan_live_turn_declines_the_move_only_with_the_flag_on_and_before_a_ren
             return item
 
         async def execute(self, _s: Any) -> Any:
-            return SimpleNamespace(all=lambda: [])
+            return SimpleNamespace(all=lambda: [], scalar_one_or_none=lambda: None)
 
     async def no_target(*_a: Any, **_k: Any) -> Any:
         return None
