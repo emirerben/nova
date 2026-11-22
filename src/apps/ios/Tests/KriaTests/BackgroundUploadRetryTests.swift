@@ -984,6 +984,29 @@ private let reservationResponse = Data(#"[{"media_id":"clip-1","upload_url":"htt
     }
 }
 
+/// A `loadFile` the test keeps in flight: cancelling its selection does not end it, `release()` does.
+@MainActor private final class HeldFile {
+    private var waiting: CheckedContinuation<Void, Never>?
+    private let (requests, noteRequested) = AsyncStream<Void>.makeStream()
+    private let (cancellations, noteCancelled) = AsyncStream<Void>.makeStream()
+
+    func load() async throws -> URL {
+        noteRequested.yield()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { waiting = $0 }
+        } onCancel: { [noteCancelled] in noteCancelled.yield() }
+        throw CancellationError()
+    }
+
+    /// Returns once the selection is waiting for its file.
+    func requested() async { for await _ in requests { return } }
+
+    /// Returns once the selection waiting for its file has been cancelled.
+    func cancelled() async { for await _ in cancellations { return } }
+
+    func release() { waiting?.resume(); waiting = nil }
+}
+
 /// The persisted `PreparingUpload` entries under `key`, as `recoverInterruptedPreparations` sees them.
 private func persistedPreparing(_ key: String) -> [PreparingUpload] {
     (UserDefaults.standard.data(forKey: "\(key).preparing").flatMap { try? JSONDecoder().decode([PreparingUpload].self, from: $0) }) ?? []
@@ -1130,17 +1153,40 @@ extension BackgroundUploadRetryTests {
     /// The picker re-diffs after an un-choose finishes. If a second `deselect` for the same asset just
     /// reported `.discarded` while the first was still running, that re-diff would find the same removal
     /// again (the ledger has not changed yet) and re-issue it in a loop for the length of the round trip.
+    ///
+    /// Ways this test can go wrong: the first call finishes before the second starts (then the second is a
+    /// late call, not an overlapping one: CI run 45007886433 failed that way when the two were only started
+    /// together); the first is cancelled before the selection reached its file, so nothing holds it; the
+    /// second call starts first, claims the un-choose and waits on the held file, which nothing releases.
+    /// So the first call is held on a file the test controls, and the second is issued only once the first
+    /// has cancelled the selection, which it does after claiming the un-choose.
     func testASecondUnchooseWhileTheFirstIsRunningDefersToItInsteadOfLooping() async throws {
         let h = harness()
-        try h.select("asset-1", debounce: .seconds(30))
+        let file = HeldFile()
+        // A choice that starts no work would never ask for the file, and the wait below would not end.
+        _ = try XCTUnwrap(h.coordinator.select(.init(assetIdentifier: "asset-1", projectID: h.projectID, role: .clip, purpose: .cloudRenderSource, itemID: nil, limit: nil, attachedMediaIDs: []), debounce: .zero) { try await file.load() })
+        await file.requested()
 
-        async let first = h.deselect("asset-1")
-        async let second = h.deselect("asset-1")
-        let outcomes = await [first, second]
+        let first = Task { await h.deselect("asset-1") }
+        await file.cancelled()   // the first call owns the un-choose and waits for the selection to end
 
-        XCTAssertTrue(outcomes.contains(.discarded), "one call does the work")
-        XCTAssertTrue(outcomes.contains(.alreadyInProgress), "the other must say it is deferring, not report a result")
+        // Only for a broken guard: the second call would then wait on the held file as well and nothing
+        // would end the test. Started here and not earlier, because nothing can run between this line and
+        // the second call's answer, so a slow runner cannot release the file before that answer.
+        let unblock = Task { try await Task.sleep(for: .seconds(5)); file.release() }
+        let second = await h.deselect("asset-1")
+        unblock.cancel()
+        XCTAssertEqual(second, .alreadyInProgress, "a call that overlaps the first must say it is deferring, not report a result")
+
+        file.release()
+        let firstOutcome = await first.value
+        XCTAssertEqual(firstOutcome, .discarded, "the first call does the work")
         XCTAssertEqual(h.received, 0)
+
+        // A call after the first has finished is not an overlap: the ledger is up to date, so the picker's
+        // re-diff finds nothing to remove again.
+        let late = await h.deselect("asset-1")
+        XCTAssertEqual(late, .notTracked)
     }
 
     func testStartingANewBatchClearsThatRolesEarlierFailuresOnly() async throws {
