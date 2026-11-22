@@ -15,7 +15,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ORIGIN_URL="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || echo "https://github.com/emirerben/nova.git")"
+ORIGIN_URL="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || echo "https://github.com/Kria-AI/kria.git")"
 
 DEV_LOOP_REPO="${NOVA_DEV_LOOP_REPO:-$HOME/.nova/loop/nova}"
 ENV_FILE="${NOVA_DEV_LOOP_ENV:-$HOME/.nova/dev-loop.env}"

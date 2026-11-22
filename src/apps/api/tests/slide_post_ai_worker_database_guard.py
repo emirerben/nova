@@ -18,7 +18,7 @@ def validate_database_url(url, environment):
         for key, value in {
             "CI": "true",
             "GITHUB_ACTIONS": "true",
-            "GITHUB_REPOSITORY": "emirerben/nova",
+            "GITHUB_REPOSITORY": "Kria-AI/kria",
         }.items()
     ):
         allowed.update({"nova_test", "nova_journey_test"})

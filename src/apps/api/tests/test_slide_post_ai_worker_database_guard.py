@@ -5,7 +5,7 @@ import pytest
 from tests.slide_post_ai_worker_database_guard import validate_database_url
 
 PRIVATE = "nova_auto_convergence_ai_20261106_test"
-TRUSTED = {"CI": "true", "GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "emirerben/nova"}
+TRUSTED = {"CI": "true", "GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "Kria-AI/kria"}
 
 
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
@@ -19,7 +19,15 @@ def test_private_database_requires_no_ci_environment():
 
 
 @pytest.mark.parametrize(
-    "changed", [{}, {"CI": "1"}, {"GITHUB_ACTIONS": "false"}, {"GITHUB_REPOSITORY": "other/nova"}]
+    "changed",
+    [
+        {},
+        {"CI": "1"},
+        {"GITHUB_ACTIONS": "false"},
+        {"GITHUB_REPOSITORY": "other/nova"},
+        # The repository's name until 2026-11-22; anyone can now create a repository there.
+        {"GITHUB_REPOSITORY": "emirerben/nova"},
+    ],
 )
 @pytest.mark.parametrize("name", ["nova_test", "nova_journey_test"])
 def test_ci_names_require_all_exact_trusted_signals(name, changed):
