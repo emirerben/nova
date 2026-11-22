@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Kyoto Torokko informative-text fixture (KRI-1585), production job 3930c822.
 
-    python3 scripts/kri1585_kyoto_fixture.py freeze   # GET-only: rebuild the checked-in JSON
+    python3 scripts/kri1585_kyoto_fixture.py freeze --job-debug <pre-edit job debug JSON>
     src/apps/api/.venv/bin/python scripts/kri1585_kyoto_fixture.py cache   # footage + frames
 
-``freeze`` reads the job debug, the plan item's proposal trace and the thread events from
-production with ``scripts/admin.py --prod GET`` and writes the no-network fixture under
+``freeze`` reads a job debug saved before the creator's 11:53 UTC editor save (production now
+serves the edited job, so the render as produced cannot be re-pulled), plus the plan item's
+proposal trace and the thread events from production with ``scripts/admin.py --prod GET``, and
+writes the no-network fixture under
 ``src/apps/api/tests/fixtures/kri1585_kyoto/``. The repository is public, so it keeps fields
 by allowlist: no owner or thread id, no bucket path, no signed URL, no clip transcript or
 people notes. The media digests it records were computed over the unscrubbed paths, so they do
@@ -94,7 +96,13 @@ def freeze(args: argparse.Namespace) -> int:
     # The creator kept editing this job in the iPhone editor after it rendered (11:53 UTC added
     # a hook row and moved row 0). The fixture pins the render as produced, from the job debug
     # pulled before that save; the live rows are kept beside it as the editor's evidence.
-    debug = json.loads(Path(args.job_debug).read_text(encoding="utf-8")) if args.job_debug else live
+    debug = json.loads(Path(args.job_debug).read_text(encoding="utf-8"))
+    if debug["job"]["updated_at"] > "2026-11-22T11:53":
+        print(
+            "that job debug already holds the 11:53 editor save; pass the pre-edit one",
+            file=sys.stderr,
+        )
+        return 2
     job = debug["job"]
     item_id = job["content_plan_item_id"]
     thread_id = debug["thread_id"]
@@ -349,7 +357,9 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     frozen = sub.add_parser("freeze")
     frozen.add_argument(
-        "--job-debug", help="a saved job debug JSON to freeze instead of the live one"
+        "--job-debug",
+        required=True,
+        help="the job debug saved before the 11:53 UTC editor save (prod no longer serves it)",
     )
     frozen.set_defaults(run=freeze)
     sub.add_parser("cache").set_defaults(run=cache)

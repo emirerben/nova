@@ -31,7 +31,7 @@
   "label_grounding": [
    {"row": "creation-f286f919bed8-0", "label": "Torokko Saga İstasyonu", "in_cited_fact": true},
    {"row": "creation-f286f919bed8-1", "label": "Kyoto Demiryolu", "in_cited_fact": false, "only_in": ["fact-1"], "note": "The cited fact-11 says only 'Tren'. The label passed because the check searches every fact; fact-1 was given to the writer but not cited by this row."},
-   {"row": "creation-f286f919bed8-2", "label": "Hozukyo Geçidi", "in_cited_fact": false, "only_in": ["fact-6", "fact-7"], "note": "The cited fact-8 never names the gorge."}
+   {"row": "creation-f286f919bed8-2", "label": "Hozukyo Geçidi", "in_cited_fact": false, "only_in": ["fact-6"], "note": "The cited fact-8 never names the gorge; fact-6 is row 0's fact."}
   ],
   "dropped_number": {"row": "creation-f286f919bed8-0", "fact": "fact-6", "kept": "7.3", "dropped": "25 dakika"},
   "train_name_not_in_any_fact": "Sagano Romantik Treni"
@@ -61,10 +61,10 @@
    "never_black_on_mixed_footage": true
   },
   "designs": {
-   "A1": {"mode": "title_details", "hook_font": "Literata", "hook_size_px": 91, "heading": "tracked caps, #FFE7A0, about 32 px by cap height", "detail_font": "Literata", "detail_size_px": 53, "align": "left", "anchor": "bottom_left", "bare_clip_indexes": [3, 4]},
-   "A2": {"mode": "title_details", "hook_font": "Schibsted Grotesk", "hook_size_px": 98, "heading_font": "Schibsted Grotesk", "heading_size_px": 64, "detail_font": "Inter", "detail_weight": "regular", "detail_size_px": 36, "scrim": "bottom gradient", "align": "left", "anchor": "bottom_left", "bare_clip_indexes": [3, 4]},
-   "A3": {"mode": "title_details", "hook_font": "Instrument Serif", "hook_size_px": 130, "heading_font": "Instrument Serif", "heading_size_px": 82, "detail_font": "Inter", "detail_size_px": 37, "align": "center", "bare_clip_indexes": [3, 4]},
-   "B1": {"mode": "running_guide", "hook": "same as A3 in the teardown (b1_still0 is byte-identical to a3_still0)", "line_font": "Inter", "line_weight": "medium", "line_size_px": 51, "line_color": "#FFFFFF", "shadow": "soft", "align": "center", "one_line_per_clip": true, "covers_every_clip": true, "headings": false}
+   "A1": {"mode": "title_details", "hook_font": "Literata", "hook_size_px": 91, "heading": "tracked caps, #FFE7A0, about 32 px by cap height; font not fitted (looks like Inter)", "detail_font": "Literata", "detail_size_px": 53, "align": "left", "anchor": "bottom_left", "bare_clips": "teardown: 'Mode A (title + details) leaves clips 3 and 4 without text'; index base not verified"},
+   "A2": {"mode": "title_details", "hook_font": "Schibsted Grotesk", "hook_size_px": 98, "heading_font": "Schibsted Grotesk", "heading_size_px": 64, "detail_font": "Inter", "detail_weight": "regular", "detail_size_px": 36, "scrim": "bottom gradient", "align": "left", "anchor": "bottom_left", "bare_clips": "teardown: 'Mode A (title + details) leaves clips 3 and 4 without text'; index base not verified"},
+   "A3": {"mode": "title_details", "hook_font": "Instrument Serif", "hook_size_px": 130, "heading_font": "Instrument Serif", "heading_size_px": 82, "detail_font": "Inter", "detail_size_px": 37, "align": "center", "bare_clips": "teardown: 'Mode A (title + details) leaves clips 3 and 4 without text'; index base not verified"},
+   "B1": {"mode": "running_guide", "hook": "same as A3 in the teardown (b1_still0 is byte-identical to a3_still0)", "line_font": "Inter", "line_weight": "unresolved (Medium fits 51 by width, Bold 49-50; height at half scale cannot separate them)", "line_size_px": 50, "line_size_range_px": [49, 51], "line_color": "#FFFFFF", "shadow": "soft", "align": "center", "one_line_per_clip": true, "covers_every_clip": true, "headings": false}
   },
   "hook_widest_line_px": [830, 850],
   "measurement_tolerance_px": 2
