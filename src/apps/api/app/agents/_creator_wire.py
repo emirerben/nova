@@ -54,6 +54,7 @@ MODEL_HIDDEN = {
     "song_sync",
     "voice_mode",
     "pinned_texts",
+    "sfx_ask",
 }
 
 

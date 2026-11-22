@@ -2465,6 +2465,11 @@
    "app/kria/brief_checks.py",
    "where you didn't say, the clips play in the order you added them",
    "söylemediğin yerlerde klipler eklediğin sırayla oynar"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Sound effects chosen for your edit aren't available for it yet; left them out.",
+   "Senin için seçilen ses efektleri bu düzenleme için henüz yok; koymadım."
   ]
  ],
  "retired": [

@@ -990,6 +990,10 @@ def _generic_sound_effect_notice(
     strategy = edit_plan.strategy
     if getattr(strategy, "licensed_sfx", None) is not None:
         return None
+    if getattr(strategy, "sfx_ask", None) is not None:
+        # KRI-1561: the writer chooses the moments for this ask, so "no moment was named, so no
+        # sound was added" would contradict what it is about to do.
+        return None
     if any(getattr(beat, "sound", None) for beat in (strategy.reaction_beats or [])):
         return None
     return _GENERIC_SOUND_EFFECT_NOTICE
