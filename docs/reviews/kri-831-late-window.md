@@ -92,6 +92,29 @@ The three Lisbon windows in
 [kri-1042-picture-profile-replay.json](kri-1042-picture-profile-replay.json) have no
 next-frame samples and leads of +0.05 to +0.37, so they pass unchanged.
 
+## Failure modes of the picture check
+
+This is the fourth fix to the export check's verdicts since KRI-1042 opened (text proof v4,
+frame profile v5, evidence precision, and this), so the ways the picture check can still be
+wrong are listed with the test that holds each.
+
+Failure modes for KRI-1042 (after fix #3)
+- correct export of detailed handheld footage against the soft proxy -> checked | covered by test_correct_export_against_a_soft_proxy_passes_on_its_frame_profile
+- one or two frames late or early, wrong window, 2% zoom or 1% offset against the soft proxy -> rejected | covered by test_frame_profile_never_accepts_a_shifted_or_wrong_picture
+- one frame late with a sample on a held frame (25 fps original, 30 fps proxy), held sample first, middle, last or twice -> rejected | uncovered - adding test_one_frame_late_is_rejected_when_samples_match_either_frame
+- one frame late with a low-motion sample that matches both frames -> rejected | uncovered - adding test_one_frame_late_is_rejected_when_samples_match_either_frame (calm_25 and handheld_25-phase1)
+- correct export whose samples land on held or slow frames -> checked | uncovered - adding test_correct_export_with_either_frame_samples_passes_against_a_sharp_proxy
+- near-still footage where noise tips one sample to its next frame -> checked | uncovered - adding test_late_window_rule_reads_only_samples_that_tell_the_two_frames_apart
+- a sample in a long hold with no next frame beside late samples -> rejected | uncovered - adding test_late_window_rule_reads_only_samples_that_tell_the_two_frames_apart
+- every sample on the grid needed its next frame -> rejected | covered by test_on_grid_whole_clip_frame_shift_never_counts_as_checked
+- correct export on the grid with a single next-frame sample -> checked | covered by test_on_grid_single_neighbour_frame_remains_allowed
+- off-grid source start, where next frames are legitimate -> checked | covered by test_off_grid_source_start_compares_the_displayed_frame_without_widening_the_window
+- variable-rate proxy with held frames, correct export -> checked | covered by test_variable_frame_rate_proxy_with_held_frames_matches_its_cfr_export
+- still footage below the exact bar -> rejected, no profile to pass on | covered by test_still_footage_below_the_exact_bar_has_no_profile_to_pass_on
+- a stored report that the current rule would reject goes unlisted before a bump -> listed, exit 1 | uncovered - adding test_a_checked_report_the_current_rule_rejects_is_listed_as_an_upper_bound
+
+Still open, with no test because the check cannot see it: the cases under Limits.
+
 ## Limits
 
 - Footage where consecutive frames both clear the exact bar in every sample (a still, light
