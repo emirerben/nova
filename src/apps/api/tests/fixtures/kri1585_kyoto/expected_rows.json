@@ -66,6 +66,13 @@
    "A3": {"mode": "title_details", "hook_font": "Instrument Serif", "hook_size_px": 132, "hook_align": "center", "hook_x_frac": 0.5, "hook_y_frac": 0.42, "hook_max_width_frac": 0.8, "heading_font": "Instrument Serif", "heading_size_px": 88, "detail_font": "Inter Medium", "detail_size_px": 36, "detail_letter_spacing": 0.02, "align": "center", "x_frac": 0.5, "bottom_frac": 0.7, "max_width_frac": 0.84, "shadow": {"blur": 14, "opacity": 0.55, "dy": 3}, "bare_clips": "teardown: 'Mode A (title + details) leaves clips 3 and 4 without text'; index base not verified"},
    "B1": {"mode": "running_guide", "hook": "same as A3 in the teardown (b1_still0 is byte-identical to a3_still0)", "hook_size_px": 132, "line_font": "Inter", "line_weight": "bold", "line_size_px": 50, "line_color": "#FFFFFF", "shadow": {"blur": 14, "opacity": 0.55, "dy": 3}, "align": "center", "x_frac": 0.5, "bottom_frac": 0.69, "max_width_frac": 0.82, "one_line_per_clip": true, "covers_every_clip": true, "headings": false}
   },
+  "mockup_ink_boxes": {
+   "_note": "KRI-1581. Per design, the glyph-core box (alpha > 250) of each mock-up row layer (out/<design>/row<i>.png from the teardown generator), [left, top, right, bottom] px on 1080x1920: row 0 is the hook, then one box per fact pair (A1-A3) or guide line (B1).",
+   "A1": [[115, 704, 967, 915], [77, 1118, 896, 1320], [78, 1112, 890, 1320], [77, 1118, 724, 1321], [78, 1112, 781, 1333], [78, 1112, 796, 1333]],
+   "A2": [[123, 707, 952, 923], [77, 1218, 790, 1336], [78, 1215, 815, 1336], [78, 1218, 625, 1336], [79, 1215, 678, 1336], [78, 1165, 801, 1336]],
+   "A3": [[120, 665, 960, 937], [169, 1194, 911, 1336], [184, 1194, 899, 1336], [254, 1194, 826, 1336], [228, 1194, 856, 1335], [163, 1144, 917, 1336]],
+   "B1": [[120, 665, 960, 937], [104, 1197, 977, 1312], [166, 1188, 915, 1303], [191, 1198, 886, 1313], [184, 1197, 895, 1313], [138, 1264, 942, 1313], [255, 1197, 823, 1313], [152, 1188, 927, 1313]]
+  },
   "hook_widest_line_px": [830, 850],
   "measurement_tolerance_px": 2
  }

@@ -173,6 +173,21 @@ def row_level(row: dict, design: TextDesign) -> TextLevelName | None:
     return "detail"
 
 
+def _line_box_trailing_px(level: TextLevel) -> float:
+    """The space a level's last line box holds below its ink box at the level's line spacing.
+
+    The mock-ups anchor a block by the bottom of its last line box; the stack layout anchors
+    the last line's own height, so the design's bottom is raised by the difference.
+    """
+    import skia  # noqa: PLC0415
+
+    from app.pipeline.text_overlay_skia import _resolve_typeface_for_overlay  # noqa: PLC0415
+
+    face = _resolve_typeface_for_overlay({"font_family": level.font_family}).typeface
+    metrics = skia.Font(face, level.size_px).getMetrics()
+    return (metrics.fDescent - metrics.fAscent) * (level.line_spacing - 1)
+
+
 def apply_text_design(rows: list[dict]) -> list[dict]:
     """Style every hook and research row that names a design, in place.
 
@@ -216,7 +231,10 @@ def apply_text_design(rows: list[dict]) -> list[dict]:
         stack.update(
             stack_id=stack_id,
             corner="bottom_left" if design.alignment == "left" else "bottom",
-            bottom_frac=design.pair_bottom_frac,
+            bottom_frac=round(
+                design.pair_bottom_frac - _line_box_trailing_px(design.detail) / 1920, 6
+            ),
+            shaped=True,
         )
         if level == "detail" and stack.get("heading_level") == 3:
             stack["gap_before_px"] = design.pair_gap_px
