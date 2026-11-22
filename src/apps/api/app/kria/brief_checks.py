@@ -8066,11 +8066,6 @@ _REASON_TR: dict[str, str] = {
         "Bazı anlar senin kararın: kliplerinde olmadığını söylediklerin ya da bana bıraktıkların"
     ),
     _MOMENT_NOT_IN_CLIP: "Oynayan klip parçasının söylediğin anı gösterdiğini doğrulayamadım",
-    # Before the format-limit list below reads it (`reasons_in_every_language`).
-    _ORDER_NOT_PROMISED: (
-        "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi "
-        "olmayabilir"
-    ),
     _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
     _ORDER_RULE_NOT_APPLIED: (
         "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
@@ -8429,6 +8424,12 @@ _REASON_TR: dict[str, str] = {
         "video ekli değil. Onları Visuals'a ekle"
     ),
 }
+# KRI-1592: after the literal (its first entries are pinned in order by test_copy_routing), and
+# before the format-limit list below reads it (`reasons_in_every_language`).
+_REASON_TR[_ORDER_NOT_PROMISED] = (
+    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi "
+    "olmayabilir"
+)
 
 
 def _loc(reason: str) -> str:
