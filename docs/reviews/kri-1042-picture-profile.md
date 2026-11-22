@@ -88,6 +88,6 @@ low-quality re-encodes. No zoom or offset window flips.
   passed the same change on sharp-proxy footage. The check reads luma structure, not colour.
 - A one-frame-late export on calm footage can pass through the next-frame tolerance, in v4
   and v5 alike. The whole-window rule catches it only when every sample needed the next
-  frame.
+  frame. v6 closes most of this: [kri-831-late-window](kri-831-late-window.md).
 - Still footage below the bar is still rejected. A noisy still shot of a correct export
   scores about 0.86 and has no lead.

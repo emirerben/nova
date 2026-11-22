@@ -122,6 +122,7 @@ def load_ratings(file, rows):
         reader = csv.DictReader(stream)
         if set(reader.fieldnames or ()) != {"video_sha256", "dimension", "rating"}:
             raise ValueError(f"Expected video_sha256,dimension,rating in {file}")
+        seen = set()
         for record in reader:
             video = record["video_sha256"]
             dimension = record["dimension"]
@@ -129,13 +130,15 @@ def load_ratings(file, rows):
             key = (video, dimension)
             if video not in exports or dimension not in EDIT_FEEDBACK_DIMENSIONS:
                 raise ValueError(f"Unknown video or dimension in {file}: {key}")
-            if key in ratings or rating not in EDIT_FEEDBACK_RATINGS:
+            if key in seen or (rating != "" and rating not in EDIT_FEEDBACK_RATINGS):
                 raise ValueError(f"Duplicate or invalid rating in {file}: {key}")
-            ratings[key] = rating
+            seen.add(key)
+            if rating != "":
+                ratings[key] = rating
     return ratings
 
 
-def calibration(human, judge):
+def calibration(human, judge, *, scope="synthetic fixture review only"):
     pairs = []
     dimensions = {}
     for dimension in EDIT_FEEDBACK_DIMENSIONS:
@@ -175,7 +178,7 @@ def calibration(human, judge):
         d: result["agreement"] for d, result in dimensions.items() if result["paired"]
     }
     return {
-        "scope": "synthetic fixture review only",
+        "scope": scope,
         "decided_edits": matrix.decided,
         "agreement_pct": matrix.band_agreement_pct if matrix.decided else None,
         "fixture_gate_passed": passed,

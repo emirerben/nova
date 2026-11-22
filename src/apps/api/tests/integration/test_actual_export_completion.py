@@ -76,7 +76,7 @@ def test_actual_bytes_are_measured_and_published_whatever_the_verdict(
     record = device_record(fixture.job, "first")
     assert record["actual_export_policy"] == {
         "version": 1,
-        "verifier_version": "phone-simple-cut-v5",
+        "verifier_version": "phone-simple-cut-v6",
         "source_receipts_digest": export_source_digest(bindings),
     }
     save_device_record(fixture.job, "first", record)
@@ -187,7 +187,7 @@ def test_prepared_story_cannot_drop_actual_output_checks_when_enrollment_is_with
     monkeypatch.setattr(settings, "phone_actual_export_verification_enabled", False)
     pin_device_request(fixture.job, fixture.request, base_generation="approved")
     policy = device_record(fixture.job, "first")["actual_export_policy"]
-    assert policy["verifier_version"] == "phone-simple-cut-v5"
+    assert policy["verifier_version"] == "phone-simple-cut-v6"
     assert policy["source_receipts_digest"] == export_source_digest(
         approved_export_sources(fixture.job, fixture.request)
     )

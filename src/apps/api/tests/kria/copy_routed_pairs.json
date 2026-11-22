@@ -2462,6 +2462,11 @@
    "müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum"
   ],
   [
+   "app/kria/brief_checks.py",
+   "where you didn't say, the clips play in the order you added them",
+   "söylemediğin yerlerde klipler eklediğin sırayla oynar"
+  ],
+  [
    "app/tasks/kria_runtime.py",
    "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under {limit_minutes:g} minutes) and try again. No fallback edit was rendered.",
    "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
