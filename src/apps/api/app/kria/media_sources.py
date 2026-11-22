@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.services.source_length_policy import library_max_s
+
 PROJECT_AUDIO_CONTENT_TYPES = frozenset(
     {
         "audio/mpeg",
@@ -151,7 +153,7 @@ class OriginalMediaDescriptor(BaseModel):
     kind: MediaSourceKind = "video"
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     byte_count: int = Field(gt=0, le=16 * 1024**3)
-    duration_s: float = Field(gt=0, le=1800)
+    duration_s: float = Field(gt=0, le=library_max_s())
     width: int | None = Field(default=None, gt=0, le=32768)
     height: int | None = Field(default=None, gt=0, le=32768)
     orientation_degrees: Literal[0, 90, 180, 270] = 0
@@ -182,7 +184,7 @@ class AnalysisProxyDescriptor(BaseModel):
     # V1 proxies cover the complete original with orientation baked into pixels.
     # Analysis timestamps are original timestamps; no trim or retiming is allowed.
     timing_version: Literal[1] = 1
-    duration_s: float = Field(gt=0, le=1800)
+    duration_s: float = Field(gt=0, le=library_max_s())
     width: int | None = Field(default=None, gt=0, le=640)
     height: int | None = Field(default=None, gt=0, le=640)
     frame_rate: float | None = Field(default=None, ge=1, le=30)

@@ -28,7 +28,12 @@ enum CameraRollItemReason: String, Sendable, CaseIterable {
         case .budgetPaused: String(localized: "Analysis is paused for now. Try again a little later.")
         case .unsupportedType: String(localized: "Kria can't read this file type. Photos need to be JPEG, PNG, WebP or HEIC.")
         case .tooLarge: String(localized: "This file is too large to analyze. Photos can be up to 25 MB.")
-        case .tooLong: String(localized: "This video is longer than 30 minutes, which is too long to analyze.")
+        case .tooLong:
+            if let limit = CameraRollPreflight.knownMaximumVideoSeconds {
+                String(localized: "This video is too long to analyze. Kria can analyze videos up to \(CreationUploadError.lengthText(limit)).")
+            } else {
+                String(localized: "This video is too long to analyze.")
+            }
         case .icloudUnavailable: String(localized: "Couldn't download this from iCloud in time. Try again on Wi-Fi.")
         case .noUsableMoment: String(localized: "Kria couldn't find a usable moment in this one.")
         case .accessRevoked: String(localized: "Kria no longer has access to this item in Photos.")

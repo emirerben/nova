@@ -454,6 +454,26 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     if criterion == "custom":
         live = [index for index, slot in enumerate(slots) if not slot.get("removed")]
         order = payload.get("order")
+        from app.services.clip_order_ledger import apply_order, clip_order_ledger_on  # noqa: PLC0415
+
+        if (
+            clip_order_ledger_on()
+            and isinstance(order, list)
+            and all(isinstance(i, int) and not isinstance(i, bool) for i in order)
+            and sorted(order) not in (live, list(range(len(slots))))
+        ):
+            # KRIA_CLIP_ORDER_LEDGER_ENABLED: an order that omits clips (or names one that is no
+            # longer there) is completed, never rejected: the clips it names lead in its sequence,
+            # the rest keep the order they had (`clip_order_ledger.apply_order`).
+            named = [index for index in dict.fromkeys(order) if index in set(live)]
+            if len(named) != len(set(order)):
+                state.reply_notes.append(
+                    say(
+                        en="A clip you named is no longer in the edit, so I left it out.",
+                        tr="Adını verdiğin bir klip artık videoda yok, onu dışarıda bıraktım.",
+                    )
+                )
+            order = apply_order(live, named)
         if (
             not isinstance(order, list)
             or any(isinstance(i, bool) or not isinstance(i, int) for i in order)
@@ -1127,6 +1147,39 @@ def _op_set_total_duration(state: Any, op: dict[str, Any]) -> None:
     _write_durations(state, idx, d)
 
 
+def _rebased_permutation(
+    rows: list[dict[str, Any]], permutation: list[int], media_ids: list[str]
+) -> list[int] | None:
+    """The permutation of ``rows`` a reorder written against an EARLIER timeline asks for, by
+    media id (KRIA_CLIP_ORDER_LEDGER_ENABLED), or None to keep the "timeline changed" refusal.
+
+    The clips the bundle knew take its requested sequence in the slots those clips hold now; a
+    clip added since keeps its slot and a removed one is dropped. Only for a plain timeline where
+    every live slot names its own clip (no legacy row without a media id, no split take)."""
+    from app.services.clip_order_ledger import apply_order, clip_order_ledger_on  # noqa: PLC0415
+
+    if not clip_order_ledger_on() or any(
+        isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(media_ids)
+        for i in permutation
+    ):
+        return None
+    live = [index for index, row in enumerate(rows) if not row.get("removed")]
+    current = [str(rows[index].get("media_id") or "") for index in live]
+    if (
+        not current
+        or any(not media_id for media_id in current)
+        or len(set(current)) != len(current)
+        or any(row.get("split_section_id") for row in rows if not row.get("removed"))
+    ):
+        return None
+    wanted = [media_ids[i] for i in permutation if media_ids[i]]
+    seated = apply_order(current, wanted, known={m for m in media_ids if m})
+    result = list(range(len(rows)))
+    for position, media_id in zip(live, seated, strict=True):
+        result[position] = live[current.index(media_id)]
+    return result
+
+
 def _op_reorder_clips_by(state: Any, op: dict[str, Any]) -> None:
     permutation = op.get("permutation")
     media_ids = op.get("media_ids")
@@ -1134,14 +1187,19 @@ def _op_reorder_clips_by(state: Any, op: dict[str, Any]) -> None:
     if (
         not isinstance(permutation, list)
         or not isinstance(media_ids, list)
-        or len(permutation) != len(rows)
-        or len(media_ids) != len(rows)
-        or sorted(permutation) != list(range(len(rows)))
+        or len(permutation) != len(media_ids)
+        or sorted(permutation) != list(range(len(media_ids)))
         or any(isinstance(i, bool) or not isinstance(i, int) for i in permutation)
     ):
         raise _err("The timeline changed before this reorder could be drafted")
-    if any(str(row.get("media_id") or "") != media_ids[i] for i, row in enumerate(rows)):
-        raise _err("The timeline changed before this reorder could be drafted")
+    if len(media_ids) != len(rows) or any(
+        str(row.get("media_id") or "") != media_ids[i] for i, row in enumerate(rows)
+    ):
+        # The timeline moved since the bundle was written (a clip added, removed or reordered).
+        rebased = _rebased_permutation(rows, permutation, media_ids)
+        if rebased is None:
+            raise _err("The timeline changed before this reorder could be drafted")
+        permutation = rebased
     criterion = op.get("criterion")
     if criterion not in _ORDER_CRITERIA:
         raise _err("That ordering is not supported")

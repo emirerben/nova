@@ -21,6 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, get_args
 
+from app.services.source_length_policy import max_duration_s
+
 PlatformProfile = Literal["tiktok_photo", "instagram_carousel"]
 
 PLATFORM_PROFILE_IDS: tuple[str, ...] = get_args(PlatformProfile)
@@ -88,7 +90,7 @@ PLATFORM_PROFILES: dict[PlatformProfile, PlatformProfileSpec] = {
         allowed_kinds=frozenset({"image", "video"}),
         min_slides=2,
         max_slides=20,
-        max_video_duration_s=90.0,
+        max_video_duration_s=max_duration_s("slide_video"),
         canvas=_INSTAGRAM_CAROUSEL_CANVAS,
         default_aspect="4:5",
         allowed_aspects=("4:5", "3:4", "1:1", "1.91:1"),

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Literal
@@ -56,6 +56,7 @@ from app.services.slide_post_generation_receipts import (
     lookup_receipt,
     record_publication,
 )
+from app.services.source_length_policy import exceeds, max_duration_s
 from app.services.tiktok_style_observations import effective_persona_style
 from app.worker import celery_app
 
@@ -767,6 +768,18 @@ class DispatchResult:
 # a Job ever exists. Keep the two in sync if either wording changes.
 # The live `subtitled_clip_count_unsupported` sentence while multi-clip Talking is on; a
 # template so the chat copy (`kria_runtime._phone_gate_refusal_copy`) keys it once.
+# KRI-1554: the Talking clip limit comes from `source_length_policy`; a template so the Turkish and
+# German lines (keyed by this English text) follow the number.
+TALKING_CLIP_TOO_LONG_MESSAGE = (
+    "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip "
+    "(under {limit_minutes:g} minutes) and try again. No fallback edit was rendered."
+)
+
+
+def talking_clip_limit_minutes() -> float:
+    return max_duration_s("talking_clip") / 60
+
+
 TALKING_MULTI_CLIP_COUNT_MESSAGE = (
     "Talking-to-camera videos render on your iPhone with up to {max_clips} clips. Remove the "
     "extra clips and try again. No fallback edit was rendered."
@@ -787,6 +800,12 @@ class _PhoneGateMessages(dict[str, tuple[str, str]]):
     _KEY = "subtitled_clip_count_unsupported"
 
     def _live(self, key: object, stored: tuple[str, str]) -> tuple[str, str]:
+        if key == "subtitled_clip_too_long":
+            # KRI-1554: the limit as the policy states it now, not as it was at import.
+            return (
+                stored[0],
+                TALKING_CLIP_TOO_LONG_MESSAGE.format(limit_minutes=talking_clip_limit_minutes()),
+            )
         if key != self._KEY:
             return stored
         from app.services.phone_rollout import (  # noqa: PLC0415
@@ -882,8 +901,7 @@ _PHONE_GATE_MESSAGES_STORED: dict[str, tuple[str, str]] = {
     # render; refuse at dispatch instead of minting a Job that fails post-approval.
     "subtitled_clip_too_long": (
         "phone_format_unavailable",
-        "This clip is too long for talking-to-camera on your iPhone. Use a shorter "
-        "clip (under 5 minutes) and try again. No fallback edit was rendered.",
+        TALKING_CLIP_TOO_LONG_MESSAGE.format(limit_minutes=talking_clip_limit_minutes()),
     ),
     # KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
     # clips has no phone compiler (`talking_head` isn't phone-supported).
@@ -1439,6 +1457,23 @@ def _creator_selected_clip_paths(
     return [path_by_id[media_id] for media_id in selected if media_id in path_by_id]
 
 
+def _ledger_ordered_paths(
+    item: PlanItem, clip_paths: list[str], order_ids: Sequence[str]
+) -> list[str]:
+    """``clip_paths`` in the order the creator has the clips now (``order_ids``: media ids from
+    the approved snapshot's ledger order, `clip_order_ledger.snapshot_order`), so the worker, the
+    phone preflight and the render contract all start from the SAME order and seat the creator's
+    rows on top of it. A path the order does not list keeps its place after the listed ones."""
+    from app.services.clip_order_ledger import ordered_by_ids  # noqa: PLC0415
+
+    media_by_path = {
+        str(row.get("gcs_path")): str(row.get("media_id"))
+        for row in (item.clip_assignments or [])
+        if isinstance(row, dict) and row.get("gcs_path") and row.get("media_id")
+    }
+    return ordered_by_ids(clip_paths, order_ids, key=lambda path: media_by_path.get(path, ""))
+
+
 def _collapse_duplicate_uploads(
     item: PlanItem,
     clip_paths: list[str],
@@ -1519,6 +1554,8 @@ def order_paths_by_resolved_intents(
         if not isinstance(intent, dict) or intent.get("op") != "order":
             continue
         if intent.get("order_by") or intent.get("status", "resolved") != "resolved":
+            continue
+        if intent.get("already_seated"):
             continue
         position = intent.get("position")
         if position not in (None, "first", "last"):
@@ -2158,6 +2195,13 @@ def _dispatch_item_render(
             from app.kria.duplicate_uploads import collapse_strategy  # noqa: PLC0415
 
             intent_strategy = collapse_strategy(creator_strategy, duplicate_aliases)
+    from app.services.clip_order_ledger import snapshot_order  # noqa: PLC0415
+
+    ledger_order = snapshot_order((creator_brief_binding or {}).get("media_snapshot"))
+    if ledger_order:
+        # KRIA_CLIP_ORDER_LEDGER_ENABLED: the approved draft was planned on the order the creator
+        # has the clips in now; the preflight (`phone_montage_preflight`) starts from the same one.
+        clip_paths = _ledger_ordered_paths(item, clip_paths, ledger_order)
     intent_order_placed = 0
     if not creator_clip_order:
         # An explicit preserved-order revision fence wins; otherwise the resolved
@@ -2467,10 +2511,6 @@ def _dispatch_item_render(
                     raise ValueError("phone rendering does not yet support voiceover edits")
             phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
             if phone_subtitled_eligible and phone_sources:
-                from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
-                    _MAX_CLIP_DURATION_S as _SUBTITLED_MAX_CLIP_S,
-                )
-
                 # KRI-719: a multi-clip declared Talking item checks EVERY
                 # source (any over-cap clip dooms the render); anything else
                 # keeps the first-source-only check byte-identical.
@@ -2482,7 +2522,7 @@ def _dispatch_item_render(
                 for _source in _checked_sources:
                     _original = getattr(_source, "original", None)
                     _duration = getattr(_original, "duration_s", None)
-                    if isinstance(_duration, int | float) and _duration > _SUBTITLED_MAX_CLIP_S:
+                    if isinstance(_duration, int | float) and exceeds(_duration, "talking_clip"):
                         # Deterministic compiler reject otherwise: fail closed
                         # before minting a Job that can never render.
                         phone_gate = "subtitled_clip_too_long"

@@ -52,9 +52,9 @@ from app.pipeline.speech_cleanup_analysis import (
 from app.pipeline.transcribe import TranscribeError
 from app.services.clip_speech import audio_presence
 from app.services.mixed_language_transcript import reference_languages
+from app.services.source_length_policy import speech_analysis_window_s
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
-    SPEECH_CLEANUP_MAX_DURATION_S,
     SPEECH_CLEANUP_MIXED_GAP_MODE,
     SPEECH_CLEANUP_OVER_BUDGET_POLICY,
     SPEECH_CLEANUP_RECONCILE_BATCH,
@@ -252,7 +252,7 @@ def _validate_work(work: _ClaimedWork) -> None:
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="non_finite_window")
     if work.window_start_s < 0 or work.duration_s <= 0:
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="invalid_window")
-    if work.duration_s > SPEECH_CLEANUP_MAX_DURATION_S:
+    if work.duration_s > speech_analysis_window_s():
         raise SpeechCleanupOperationalError("unsupported_media", detail="window_too_long")
     if work.engine_version != SPEECH_CLEANUP_ENGINE_VERSION:
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="engine_version")

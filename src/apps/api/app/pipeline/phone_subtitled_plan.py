@@ -85,6 +85,7 @@ from app.kria.portable_speaker_background import (
 from app.kria.portable_text import TextInk
 from app.kria.portable_visual import AudioMuteWindow, VisualCanvasFill, VisualMediaPlacement
 from app.kria.recipes import (
+    MAX_ASSET_DURATION_S,
     AssetFingerprint,
     AudioMixRecipe,
     Canvas,
@@ -137,16 +138,20 @@ from app.services.phone_sources import (
     PhoneVisualBinding,
     require_bound_visual,
 )
+from app.services.source_length_policy import exceeds, limit_phrase, max_duration_s
 
 # Old private name, kept importable (moved to `phone_recipe_shared.display_dims`).
 _display_dims = display_dims
 
-# Mirrors `_render_subtitled_variant`'s own cap (generative_build.py, the
-# `probe.duration_s > 300.0` check ~line 20690): "subtitled clips are capped
-# at 5 minutes". Named up front rather than surfacing as a bare recipe
-# validation error. The phone worker checks the same number (KRI-841 included).
-MAX_CLIP_DURATION_S = 300.0
-_MAX_CLIP_DURATION_S = MAX_CLIP_DURATION_S
+
+def _talking_clip_too_long() -> str:
+    """Named up front rather than surfacing as a bare recipe validation error."""
+
+    return (
+        f"subtitled clips are capped at {limit_phrase(max_duration_s('talking_clip'))} "
+        "-- trim the clip and re-upload"
+    )
+
 
 # The phone story canvas for a portrait subtitled render -- subtitled has no
 # `decision.orientation`/`extras["canvas"]` to read (unlike the montage
@@ -440,7 +445,8 @@ def compile_phone_subtitled_plan(
     (possibly cut) segments: each plays in full with its own audio and its
     own ``landscape_fit`` transform. ``caption_cues``, ``text_elements`` and
     ``cutaways`` are then expressed on that combined timeline. Rejects a
-    duplicate speaker, a non-video one, or one longer than 300 s.
+    duplicate speaker, a non-video one, or one over the Talking clip limit
+    (`source_length_policy`, ``talking_clip``).
 
     ``additional_speaker_keep_segments`` (KRI-720, optional) is the speech cleanup cut of an
     extra speaker, keyed by its binding's ``media_id``: that take plays as one clip per kept
@@ -473,8 +479,8 @@ def compile_phone_subtitled_plan(
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
       - a non-video source (no probed width/height).
-      - a clip longer than 300s (`_MAX_CLIP_DURATION_S`), matching the
-        cloud's own cap.
+      - a clip over the Talking clip limit (`source_length_policy`,
+        ``talking_clip``), the same row the cloud render reads.
       - any `lanes` content that cannot compile -- raised as
         `app.pipeline.phone_subtitled_lanes.SubtitledLaneError`, a
         `UnsupportedPhonePlan` subclass naming the failing lane so a caller
@@ -500,10 +506,8 @@ def compile_phone_subtitled_plan(
     original = binding.original
     if original.width is None or original.height is None:
         raise UnsupportedPhonePlan("phone subtitled plan requires a video source clip")
-    if original.duration_s > _MAX_CLIP_DURATION_S:
-        raise UnsupportedPhonePlan(
-            "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
-        )
+    if exceeds(original.duration_s, "talking_clip"):
+        raise UnsupportedPhonePlan(_talking_clip_too_long())
     display_width, display_height = _display_dims(original)
     if speaker_position_x is not None and display_width > display_height:
         speaker_transform = face_fill_transform(
@@ -654,10 +658,8 @@ def compile_phone_subtitled_plan(
         seen_speakers.add(extra.media_id)
         if extra_original.width is None or extra_original.height is None:
             raise UnsupportedPhonePlan("phone subtitled plan requires a video source clip")
-        if extra_original.duration_s > _MAX_CLIP_DURATION_S:
-            raise UnsupportedPhonePlan(
-                "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
-            )
+        if exceeds(extra_original.duration_s, "talking_clip"):
+            raise UnsupportedPhonePlan(_talking_clip_too_long())
         extra_asset = extra.render_asset()
         manifest[extra_asset.id] = extra_asset
         assets[extra_asset.id] = MediaAsset(
@@ -1096,8 +1098,11 @@ def _validated_inserts(
         seen.add(insert.binding.media_id)
         if original.width is None or original.height is None:
             raise UnsupportedPhonePlan("an inserted Talking clip must be a video")
-        if original.duration_s <= 0 or original.duration_s > _MAX_CLIP_DURATION_S:
-            raise UnsupportedPhonePlan("an inserted Talking clip must be at most 5 minutes")
+        if original.duration_s <= 0 or exceeds(original.duration_s, "talking_clip"):
+            raise UnsupportedPhonePlan(
+                "an inserted Talking clip must be at most "
+                f"{limit_phrase(max_duration_s('talking_clip'))}"
+            )
         if insert.at_take_s > take_s + _MIN_SPEAKER_PIECE_S:
             raise UnsupportedPhonePlan("an insert must fall inside the take")
     # The start and the end of the take are seams too: a point a hair from either leaves no
@@ -1449,7 +1454,7 @@ def _pin_background_visual(
             id=f"visual-{visual.media_id}",
             relative_path=f"visual-{visual.media_id}",
             fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
-            duration=duration if duration <= 1800 else None,
+            duration=duration if duration <= MAX_ASSET_DURATION_S else None,
             natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
             orientation_degrees=visual.orientation_degrees,
         )
@@ -1563,7 +1568,7 @@ def _compile_ending_clip(
         fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
         duration=(
             visual.duration_s
-            if visual.duration_s is not None and visual.duration_s <= 1800
+            if visual.duration_s is not None and visual.duration_s <= MAX_ASSET_DURATION_S
             else None
         ),
         natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
@@ -1841,7 +1846,7 @@ def _compile_fullscreen_track(
                 fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
                 duration=(
                     visual.duration_s
-                    if visual.duration_s is not None and visual.duration_s <= 1800
+                    if visual.duration_s is not None and visual.duration_s <= MAX_ASSET_DURATION_S
                     else None
                 ),
                 natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
@@ -1919,7 +1924,7 @@ def _compile_video_overlay_clip(
         fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
         duration=(
             visual.duration_s
-            if visual.duration_s is not None and visual.duration_s <= 1800
+            if visual.duration_s is not None and visual.duration_s <= MAX_ASSET_DURATION_S
             else None
         ),
         natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),

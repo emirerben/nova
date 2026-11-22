@@ -247,12 +247,42 @@ struct CreationMediaLimit: Codable, Equatable, Sendable {
     let max: Int
     let maxFileBytes: JSONValue
     let contentTypes: [String]
-    enum CodingKeys: String, CodingKey { case max; case maxFileBytes = "max_file_bytes", contentTypes = "content_types" }
+    /// KRI-1554: the longest source this role takes, in seconds — a number, or `{"video": …}` for Visuals.
+    /// Nil from a server that predates it: nothing is checked here and upload registration still refuses.
+    var maxDurationS: JSONValue? = nil
+    enum CodingKeys: String, CodingKey {
+        case max; case maxFileBytes = "max_file_bytes", contentTypes = "content_types", maxDurationS = "max_duration_s"
+    }
     func byteLimit(contentType: String) -> Int64? {
         if case .number(let value) = maxFileBytes { return Int64(value) }
         if case .object(let values) = maxFileBytes,
            case .number(let value) = values[contentType.hasPrefix("image/") ? "image" : "video"] { return Int64(value) }
         return nil
+    }
+    /// Seconds, or nil when this file kind has no length limit (a photo) or the server sent none.
+    func durationLimit(isImage: Bool) -> Double? {
+        guard !isImage else { return nil }
+        if case .number(let value) = maxDurationS { return value }
+        if case .object(let values) = maxDurationS, case .number(let value) = values["video"] { return value }
+        return nil
+    }
+    /// This limit with a format's own length limit for `role` in place of the role's default.
+    func withDurationLimit(_ seconds: Double, role: CreationMediaRole) -> CreationMediaLimit {
+        var copy = self
+        copy.maxDurationS = role == .visual ? .object(["video": .number(seconds)]) : .number(seconds)
+        return copy
+    }
+}
+
+extension CreationCapabilities {
+    /// KRI-1554: `media[role]` with the chosen format's own length limit (`formats[].max_duration_s`),
+    /// so the picker refuses a recording that format can never use before anything uploads.
+    func mediaLimit(for role: CreationMediaRole, format: CreationFormat?) -> CreationMediaLimit? {
+        guard let base = media?[role.capabilityKey] else { return nil }
+        guard let format,
+              let row = formats.first(where: { CreationFormat(serverValue: $0.id) == format }),
+              let seconds = row.maxDurationS?[role.durationLimitKey] else { return base }
+        return base.withDurationLimit(seconds, role: role)
     }
 }
 
@@ -260,6 +290,8 @@ enum CreationMediaRole: String, Codable, CaseIterable, Sendable {
     case clip, visual, voiceover, song
     var title: String { switch self { case .clip: String(localized: "Footage"); case .visual: String(localized: "Visuals"); case .voiceover: String(localized: "Voiceover"); case .song: String(localized: "Song", comment: "Media role: a music track") } }
     var capabilityKey: String { switch self { case .clip: "clips"; case .visual: "visuals"; case .voiceover: "voiceover"; case .song: "song" } }
+    /// The key of this role in a format's `max_duration_s` (KRI-1554).
+    var durationLimitKey: String { switch self { case .clip: "clip"; case .visual: "visual_video"; case .voiceover: "voiceover"; case .song: "song" } }
     /// Audio roles upload their full file as an audio attachment (never an analysis proxy).
     var isAudio: Bool { self == .voiceover || self == .song }
     func accepts(_ contentType: String) -> Bool {

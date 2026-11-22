@@ -3,6 +3,7 @@ import Photos
 import PhotosUI
 import SwiftUI
 import Observation
+import os
 
 // KRI-944: the per-item engine behind the camera roll. A bounded upload loop in which one item's failure never
 // stops its siblings, a 3 s poll of the server's per-item states, and a per-id store so one progress tick redraws
@@ -11,12 +12,18 @@ import Observation
 /// Checks that need no network: refuse what can never be analyzed before spending an iCloud download or an upload.
 enum CameraRollPreflight {
     static let maximumImageBytes: Int64 = 25 * 1024 * 1024
-    static let maximumVideoSeconds: Double = 30 * 60
     static let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "webp", "heic", "heif"]
+    /// KRI-1554: the server's library length limit (`/capabilities` `media.clips.max_duration_s`), kept from the
+    /// last read so a "too long" tile can name it. Nil until the server has said.
+    private static let knownVideoLimit = OSAllocatedUnfairLock<Double?>(initialState: nil)
+    static var knownMaximumVideoSeconds: Double? { knownVideoLimit.withLock { $0 } }
+    static func remember(maximumVideoSeconds: Double?) { knownVideoLimit.withLock { $0 = maximumVideoSeconds } }
 
     /// Known from Photos metadata, so a 40-minute video is refused before it is downloaded from iCloud.
-    static func checkMetadata(kind: String, duration: Double) -> CameraRollItemReason? {
-        kind == "video" && duration > maximumVideoSeconds ? .tooLong : nil
+    /// No limit (the server has not said) checks nothing here: library ingest still refuses it.
+    static func checkMetadata(kind: String, duration: Double, maximumVideoSeconds: Double?) -> CameraRollItemReason? {
+        guard kind == "video", let maximumVideoSeconds else { return nil }
+        return duration > maximumVideoSeconds ? .tooLong : nil
     }
 
     /// Known once the file exists. Videos are proxied on the phone, so only images have a type and size gate.
@@ -83,6 +90,8 @@ struct CameraRollUploadLoop: Sendable {
 
     var concurrency = Self.concurrency
     var exportTimeout = Self.exportTimeout
+    /// The server's library length limit (KRI-1554); nil skips the metadata length check.
+    var maximumVideoSeconds: Double? = nil
     var export: @Sendable (CameraRollUploadItem) async throws -> URL
     var upload: @Sendable (URL, String, @escaping @Sendable (Double) -> Void) async throws -> SavedMediaAsset
 
@@ -96,7 +105,7 @@ struct CameraRollUploadLoop: Sendable {
 
     private func process(_ item: CameraRollUploadItem, uploaded: Uploaded, report: @escaping Report) async {
         let id = item.id
-        if let reason = CameraRollPreflight.checkMetadata(kind: item.kind, duration: item.duration) {
+        if let reason = CameraRollPreflight.checkMetadata(kind: item.kind, duration: item.duration, maximumVideoSeconds: maximumVideoSeconds) {
             await report(id, .rejected(reason)); return
         }
         await report(id, .exportStarted)
@@ -134,8 +143,9 @@ struct CameraRollUploadLoop: Sendable {
 extension CameraRollUploadLoop {
     /// Photos export (or the picker's own provider file) followed by the existing proxy-and-upload import.
     /// Images are byte-capped inside the exporter, so an oversized photo stops downloading early.
-    static func live(api: any KriaAPIClient, providers: [String: PhotosPickerItem]) -> Self {
+    static func live(api: any KriaAPIClient, providers: [String: PhotosPickerItem], maximumVideoSeconds: Double?) -> Self {
         CameraRollUploadLoop(
+            maximumVideoSeconds: maximumVideoSeconds,
             export: { item in
                 let exporter = PhotosLibraryAssetExporter(maximumBytes: item.kind == "image" ? CameraRollPreflight.maximumImageBytes : nil)
                 let picked = providers[item.id] ?? PhotosPickerItem(itemIdentifier: item.id)

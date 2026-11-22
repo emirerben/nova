@@ -34,7 +34,6 @@ SPEECH_CLEANUP_LEASE_S = 960
 SPEECH_CLEANUP_CLOCK_SKEW_S = 30
 SPEECH_CLEANUP_RECONCILE_BATCH = 25
 SPEECH_CLEANUP_MAX_ATTEMPTS = 3
-SPEECH_CLEANUP_MAX_DURATION_S = 300.0
 # These are execution-policy inputs, unlike the off/shadow/enforce exposure
 # controls. Keep them explicit and shared by fingerprinting and the worker so
 # an analysis identity always describes the algorithm that produced it.

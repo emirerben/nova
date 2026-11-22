@@ -91,6 +91,7 @@ from app.schemas.edit_proposal import (
     pace_selection_limits,
 )
 from app.services.phone_sources import PhoneSourceBinding
+from app.services.source_length_policy import exceeds, limit_phrase, max_duration_s
 
 _STORY_CANVAS = Canvas(width=1080, height=1920)
 
@@ -98,8 +99,6 @@ MAIN_TRACK_ID = "speech-montage"
 SPEECH_AUDIO_TRACK_ID = "speech-audio"
 MUSIC_TRACK_ID = "music"
 
-# Mirrors `phone_subtitled_plan._MAX_CLIP_DURATION_S`: the speaker clip cap.
-_MAX_SPEAKER_CLIP_S = 300.0
 # TimelineTrack allows 100 clips; stay clear of it so a later editor edit can
 # still add a cut.
 _MAX_MAIN_CLIPS = 92
@@ -372,9 +371,10 @@ def compile_phone_speech_montage_plan(
         original = section.speaker.original
         if original.width is None or original.height is None:
             raise UnsupportedPhonePlan("the speaking clip must be a video")
-        if original.duration_s > _MAX_SPEAKER_CLIP_S:
+        if exceeds(original.duration_s, "speech_cut_speaker"):
             raise UnsupportedPhonePlan(
-                "the speaking clip is longer than 5 minutes; trim it and try again"
+                "the speaking clip is longer than "
+                f"{limit_phrase(max_duration_s('speech_cut_speaker'))}; trim it and try again"
             )
         display_w, display_h = _display_dims(original)
         if display_w <= 0 or display_h <= 0:

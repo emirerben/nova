@@ -94,6 +94,29 @@ Phone render lifecycle (killer-screens train):
   variant or Job.
 The pilot does not satisfy or remove the remaining KRI-29 release gates.
 
+## Source-length limits (KRI-1554)
+
+How long a source may be is one table, `SOURCE_LENGTH_POLICY` in
+`src/apps/api/app/services/source_length_policy.py`: one row per format and source kind
+(library media 1800 s, Talking clip 300 s, speech-cut speaker 300 s, speech-cleanup analysis
+window 300 s, slide video 90 s, creator song 600 s). To change a limit, change its row; every
+reader follows:
+
+- `/capabilities` `formats[].max_duration_s` and the thread's `media_capabilities.*.max_duration_s`.
+  The iPhone refuses a longer file when it is picked (`CreationUploadError.tooLong`, before the
+  copy, proxy or upload) and the camera roll reads the library row the same way.
+- `upload-urls` refuses a proxy whose original is too long, and attach/replace refuse from the
+  probed length, so a build without the pick-time check is refused before any plan exists.
+- The dispatch gate, the phone compilers and the workers read the same rows.
+- Speech cleanup never analyses part of a source it plays in full: a voiceover or Talking take
+  longer than the analysis window is `source_too_long`. The window limits cleanup only: a
+  voiceover longer than it is still accepted at pick and registration. A talking-head spine's cut window is
+  reported as `window_clamp`.
+
+`tests/test_source_length_policy.py` fails when a compiler, gate or preflight writes one of
+these numbers itself. The speech-cut speaker row binds at plan time (a montage becomes a
+speech-cut montage only once the planner reads its clips), so it has no pick-time check.
+
 ## Adding media to a saved guided edit (KRI-145)
 
 `PHONE_EDITOR_MEDIA_ENABLED` defaults to `false`. It enables the native editor's
@@ -3879,7 +3902,9 @@ Flags and rollout:
   `SONG_ALIGNMENT_PROXY_OFFSET_S` (default 0) is added to every delta to absorb a
   measured analysis-proxy vs original audio offset (AAC priming, `.mov` edit
   lists); measure it with the device fixture before relying on frame-exact sync.
-  `USER_SONG_MAX_DURATION_S` (600) caps the upload; a montage is capped at 120 s.
+  The song length limit (600 s) is the `creator_song` row of
+  `app/services/source_length_policy.py` (KRI-1554; the old `USER_SONG_MAX_DURATION_S`
+  setting is gone); a montage is capped at 120 s.
 
 Troubleshooting:
 

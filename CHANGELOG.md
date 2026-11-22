@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.84.0] - 2026-11-22
+
+### Changed
+- feat(kria): the clip order is one live history the AI always sees and can edit; chat reorder composes with other edits (flag off) (#2461) <!-- release-pr: 2461 -->
+
+## [0.89.83.0] - 2026-11-22
+
+### Changed
+- KRI-1554 Declare each format's source-length limit once and check it before upload (#2425) <!-- release-pr: 2425 -->
+
+## [0.89.82.0] - 2026-11-22
+
+### Changed
+- test(ios): the second un-choose test forces the overlap it asserts (KRI-1534) (#2463) <!-- release-pr: 2463 -->
+
+## [0.89.81.0] - 2026-11-22
+
+### Changed
+- ci(ios): a full regression holds at most three Macs (KRI-1534) (#2462) <!-- release-pr: 2462 -->
+
 ## [0.89.80.0] - 2026-11-22
 
 ### Changed
