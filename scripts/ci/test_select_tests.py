@@ -2295,6 +2295,10 @@ class MainPushMacTests(GitRepoCase):
             "not JSON": (api, {"ios": "<html>rate limited</html>"}),
             "runs not a list": (api, {"ios": '{"workflow_runs": {"id": 1}}'}),
             "no runs key": (api, {"ios": "{}"}),
+            "null field": (
+                api,
+                {"ios": json.dumps({"workflow_runs": [{**green[0], "path": None}]})},
+            ),
             "no gh": (api, {"ios": green, "PATH": str(no_gh)}),
             "no repository": (api, {"ios": green, "GITHUB_REPOSITORY": None}),
             "no commit": ("", {"ios": green}),

@@ -625,6 +625,7 @@ TESTFLIGHT_WORKFLOW = "testflight.yml"
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 # Errors that mean "history or diff unknown": the Mac runs.
 HISTORY_ERRORS = (
+    AttributeError,
     subprocess.SubprocessError,
     OSError,
     UnicodeError,

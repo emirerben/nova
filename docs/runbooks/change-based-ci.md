@@ -701,8 +701,9 @@ in minutes, so runs cover fewer commits. Most ranges that need a Mac touch
 `src/apps/ios/` (239 of 304); after that `src/apps/api/app/config.py` (131, a
 TestFlight release input that changes with every new flag), a native journey
 row (103) and unclassified root paths such as `.gitignore` and `fly.toml`.
-In the same period 20 pushes would have run the Mac only to retry a red
-TestFlight run.
+In the same period 20 pushes would have run the Mac because the last
+TestFlight run was red (the replay checks that first, so some of them changed
+an input too).
 
 To see what a push would decide, read-only:
 
