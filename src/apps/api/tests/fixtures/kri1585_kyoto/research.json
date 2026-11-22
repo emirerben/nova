@@ -1,0 +1,1364 @@
+{
+ "public_facts": {
+  "created_at": "2026-11-22T10:15:05.243443Z",
+  "model": "gemini-2.5-flash",
+  "prompt_version": "v4-local-institution-search",
+  "input": {
+   "topic": "Kyoto'daki Toroko treni",
+   "request_quote": "Bu Kyoto'daki Toroko treni tren hakkında bilgilendirici alt yazı istiyorum"
+  },
+  "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+  "all_facts": [
+   {
+    "id": "fact-0",
+    "text": "(嵯峨野観光鉄道株式会社) tarafından işletilen bir gezi trenidir",
+    "sources": [
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHcGak_Y9vdLoMsGBXXrn6QjWKTgJGssR6S9cH_9iD7ZkT-cKwxHtJCx3-H0JHhP-OMfxhU3FPXDwD2CItjEjBvda8B4snUdMDQjCEwz_c85QTP_kKGnaQ0n1nNLVoi6gZqEg=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHk1fMFzDxO90vGih4W0N1xLkC5IUEEu4r3EZksYbcofzvcz-yqCUeWAfW_LK1xBvSiRxqGBZz0_iY1g7Q1BG5dzLBmclqTKuTfZ134cZzcC9jXVaQftF8wRU23_0i7rQIOlqw="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGUudhfX5NXOl9WJpgLluKXujiPdPfxcl72jcGk6I2OqfFDOFX1NrHA4xm3j5Nor_6GiXxVxMzg6hAXQ3ut18vj4y15f3cuEkMLnivYFrXTWalspQwuSmH3ejc2R3ttIQ=="
+     },
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHOqyGJhPGT8Iqh4lPWeubt0W4OJ_7W8vDNwr5GJHp5unNzP7OMJwVSP65SuHNsumqmPSfCMPcV51B8njXJtjBxzCX10Bdv7bjuFNDb8OdfEROr9iETV8GI7tuyMnfzuTkFljgCXXRmYUiBBm5udH2VUIkPLoK5yvEXOuA19cJx_63nuGmi7u1NjFOsBkD-ehASC9Cxbtl0"
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH_d8tBkH8wboZ_CVm8FrA5gDhUNkFBEXG5okQbA__UubKNm1dwQZ-fgbmV6SoC15UeIVoGlXJmST6lKcpdcn886y-V84qglHIL1sfePaloR-h_KBs0_FRztQ=="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     }
+    ]
+   },
+   {
+    "id": "fact-1",
+    "text": "**Hat Tarihi ve İşletmesi:**\n*   Tren hattı, başlangıçta 1899 yılında Kyoto Demiryolu'nun ana hattının bir parçası olarak Kyoto'yu Sonobe'ye bağlamak üzere açılmıştır",
+    "sources": [
+     {
+      "title": "japan.travel",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI"
+     },
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF7qGDh97eIKZcsTKemYac9lYh6TNK51RcDH8AKYqH3cX-KixWu6aooQFbziqs35LRvaWMQAXQL6AG-pKelpVw87mNViErnh90oTLLjVB7zv1zkhIfUFHNqUAXvB92I4mBI2mXPFn3Ga3p2mPh9"
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHk1fMFzDxO90vGih4W0N1xLkC5IUEEu4r3EZksYbcofzvcz-yqCUeWAfW_LK1xBvSiRxqGBZz0_iY1g7Q1BG5dzLBmclqTKuTfZ134cZzcC9jXVaQftF8wRU23_0i7rQIOlqw="
+     },
+     {
+      "title": "ismedia.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGGWw2qHwyNq2lkKiAEJmH86UTDo8oEk-QV_CItT65JaFty5jMBl4xeouAjYB6f_gEqN8vUUGOLeSxXK7Un1EHVsoOvyDf10r5SoxE07ZgjFaTSBsWY717In-SMTv-YZGG630LN1w=="
+     },
+     {
+      "title": "kajima.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFc_DFp17Unei6spVVItSElIXCDmeDF3DN9_lf1kNXMeK1gyMW2TTU_F6Y2LvnnunXAi97GIP0JmQpBg-7mMJPRz5QvlKpNYjwOMv6jDyByhTL8yOl3OaXG-Ff_oygX8uERqBCk_IuwXKmv4RLVyO3lT7zegIagiQ=="
+     }
+    ]
+   },
+   {
+    "id": "fact-2",
+    "text": "*   1989 yılında San'in Ana Hattı'nın daha yeni ve çift hatlı bir bölümle değiştirilmesinin ardından, orijinal kavisli ve tünelli güzergahın bir kısmı devre dışı kalmıştır",
+    "sources": [
+     {
+      "title": "ejrcf.or.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFqBFvkmiFFQ0rYYAXrNLCPHAtpE1a2244L_4gr88nQYTXccuD1nsb4bZpGmStBPCI-WpFYq5ZIrp5uSJCUvhUZY3Cw6uI81DQC8pCoE5Rk9dz1kGAQhwHXIG5oKSaGNuNMbiP3qZgspLUN1Cb4kw=="
+     },
+     {
+      "title": "japan-experience.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE09FUsf1mT3bm_6h00pPm44OjpDo3g2Xh_xSRxmj6XBfVDk9gjldKwA6rUEzEI7Rud8GGTI0x3wKctn3GrZBzzENnowXfuiSz9j2U74Hfg2RBl6RphJwSTiALZqLV_3GVHAiaWSWAFY_TWqKjRyDXxxwgz6EmzqC2PbWKyya8rqvz0aUkJnuMp-6eEcXJWUGjCA3lGUv1K1riG_3tPSh-9ejbLvnaqXbE="
+     },
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfgnTrGS7PRog5wqiPmtz0LUhGmqyTPY0vwU4nFLppcqJ-V1tgw8IjTAQp1wDGPq2a4BVpc2TZ4BvHJksVtuOWZjECSpgz5hPhpWNOr8FshBOZDw1NVqJyWAE_dKVxv8SU5K_YIG8F3X7LZm_qUDnmXgUrZMl0hipwrPagrH-LkEfm7h3NKyprKV-89rwQ0owSrIfnJekc2gPITBmGmVlVZokHblKaSVbrLCVsT5WVlpunU7YCbahffUF9Ma86j1p9DTHF3fsT1lwsRoEnbw=="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     }
+    ]
+   },
+   {
+    "id": "fact-3",
+    "text": "bu kullanılmayan demiryolu raylarını turistik amaçlarla değerlendirmek üzere 1990 yılında kurulmuştur",
+    "sources": [
+     {
+      "title": "ejrcf.or.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFqBFvkmiFFQ0rYYAXrNLCPHAtpE1a2244L_4gr88nQYTXccuD1nsb4bZpGmStBPCI-WpFYq5ZIrp5uSJCUvhUZY3Cw6uI81DQC8pCoE5Rk9dz1kGAQhwHXIG5oKSaGNuNMbiP3qZgspLUN1Cb4kw=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHcGak_Y9vdLoMsGBXXrn6QjWKTgJGssR6S9cH_9iD7ZkT-cKwxHtJCx3-H0JHhP-OMfxhU3FPXDwD2CItjEjBvda8B4snUdMDQjCEwz_c85QTP_kKGnaQ0n1nNLVoi6gZqEg=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHk1fMFzDxO90vGih4W0N1xLkC5IUEEu4r3EZksYbcofzvcz-yqCUeWAfW_LK1xBvSiRxqGBZz0_iY1g7Q1BG5dzLBmclqTKuTfZ134cZzcC9jXVaQftF8wRU23_0i7rQIOlqw="
+     },
+     {
+      "title": "allabout-japan.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQENwyvU5FBCTobjxfIfG5pmZ1XfOvXOtFaqtWI2YYJ4EgkmX2X0HDkgXclZotQh8wHOJtn8yjCV5Xj1j2dxMAoXr737MraAXnnldsY-1tJTCCXFUSJcpq4S_BSDq10J7UxL8lSfqQ=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGUudhfX5NXOl9WJpgLluKXujiPdPfxcl72jcGk6I2OqfFDOFX1NrHA4xm3j5Nor_6GiXxVxMzg6hAXQ3ut18vj4y15f3cuEkMLnivYFrXTWalspQwuSmH3ejc2R3ttIQ=="
+     },
+     {
+      "title": "kajima.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFc_DFp17Unei6spVVItSElIXCDmeDF3DN9_lf1kNXMeK1gyMW2TTU_F6Y2LvnnunXAi97GIP0JmQpBg-7mMJPRz5QvlKpNYjwOMv6jDyByhTL8yOl3OaXG-Ff_oygX8uERqBCk_IuwXKmv4RLVyO3lT7zegIagiQ=="
+     },
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfgnTrGS7PRog5wqiPmtz0LUhGmqyTPY0vwU4nFLppcqJ-V1tgw8IjTAQp1wDGPq2a4BVpc2TZ4BvHJksVtuOWZjECSpgz5hPhpWNOr8FshBOZDw1NVqJyWAE_dKVxv8SU5K_YIG8F3X7LZm_qUDnmXgUrZMl0hipwrPagrH-LkEfm7h3NKyprKV-89rwQ0owSrIfnJekc2gPITBmGmVlVZokHblKaSVbrLCVsT5WVlpunU7YCbahffUF9Ma86j1p9DTHF3fsT1lwsRoEnbw=="
+     },
+     {
+      "title": "popondetta.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH6Juzxg8Vq8qsgVvK1E-bh_bChP2OUKavFXTt9suuqwaTo_n2TZnqlwJ9DMQv8MIOtlPSU-RAgOorpSyy2fiHgA1PmBz-zkMvLp7VRAUhIsJyeyz4O11tZhODLcKQbQ9TMY-oj0HJQ2E7Xq9E3P9E2Vjgu2uArgEQUsGXkJ-8lr5F8SZkdszXsn-S_WI9xD8vjBy-dwa6V9YyLlwwd6U4Rf3Bi3QkpzlZtV68XUKtwQvrD_DTMGxnGX94Q2GOBXjwU89zCndaoGTbY2fw1B64qO7hT8BkT_mrQvUIQD5E7EifcNsH-iRH84vPIxJGOpJ9ifg4UUPPs6TmWgXCnQkEhRhpCXD1OIDud"
+     }
+    ]
+   },
+   {
+    "id": "fact-4",
+    "text": "*   Turistik tren seferleri Nisan 1991'de başlamıştır",
+    "sources": [
+     {
+      "title": "ejrcf.or.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFqBFvkmiFFQ0rYYAXrNLCPHAtpE1a2244L_4gr88nQYTXccuD1nsb4bZpGmStBPCI-WpFYq5ZIrp5uSJCUvhUZY3Cw6uI81DQC8pCoE5Rk9dz1kGAQhwHXIG5oKSaGNuNMbiP3qZgspLUN1Cb4kw=="
+     },
+     {
+      "title": "allabout-japan.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQENwyvU5FBCTobjxfIfG5pmZ1XfOvXOtFaqtWI2YYJ4EgkmX2X0HDkgXclZotQh8wHOJtn8yjCV5Xj1j2dxMAoXr737MraAXnnldsY-1tJTCCXFUSJcpq4S_BSDq10J7UxL8lSfqQ=="
+     },
+     {
+      "title": "kajima.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFc_DFp17Unei6spVVItSElIXCDmeDF3DN9_lf1kNXMeK1gyMW2TTU_F6Y2LvnnunXAi97GIP0JmQpBg-7mMJPRz5QvlKpNYjwOMv6jDyByhTL8yOl3OaXG-Ff_oygX8uERqBCk_IuwXKmv4RLVyO3lT7zegIagiQ=="
+     },
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfgnTrGS7PRog5wqiPmtz0LUhGmqyTPY0vwU4nFLppcqJ-V1tgw8IjTAQp1wDGPq2a4BVpc2TZ4BvHJksVtuOWZjECSpgz5hPhpWNOr8FshBOZDw1NVqJyWAE_dKVxv8SU5K_YIG8F3X7LZm_qUDnmXgUrZMl0hipwrPagrH-LkEfm7h3NKyprKV-89rwQ0owSrIfnJekc2gPITBmGmVlVZokHblKaSVbrLCVsT5WVlpunU7YCbahffUF9Ma86j1p9DTHF3fsT1lwsRoEnbw=="
+     },
+     {
+      "title": "popondetta.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH6Juzxg8Vq8qsgVvK1E-bh_bChP2OUKavFXTt9suuqwaTo_n2TZnqlwJ9DMQv8MIOtlPSU-RAgOorpSyy2fiHgA1PmBz-zkMvLp7VRAUhIsJyeyz4O11tZhODLcKQbQ9TMY-oj0HJQ2E7Xq9E3P9E2Vjgu2uArgEQUsGXkJ-8lr5F8SZkdszXsn-S_WI9xD8vjBy-dwa6V9YyLlwwd6U4Rf3Bi3QkpzlZtV68XUKtwQvrD_DTMGxnGX94Q2GOBXjwU89zCndaoGTbY2fw1B64qO7hT8BkT_mrQvUIQD5E7EifcNsH-iRH84vPIxJGOpJ9ifg4UUPPs6TmWgXCnQkEhRhpCXD1OIDud"
+     }
+    ]
+   },
+   {
+    "id": "fact-5",
+    "text": "*   Demiryolu hattı, inşaat firması Kajima tarafından 1899 yılında inşa edilen 8 tünel ve 51 köprü ayağını hala kullanmaktadır",
+    "sources": [
+     {
+      "title": "kajima.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFc_DFp17Unei6spVVItSElIXCDmeDF3DN9_lf1kNXMeK1gyMW2TTU_F6Y2LvnnunXAi97GIP0JmQpBg-7mMJPRz5QvlKpNYjwOMv6jDyByhTL8yOl3OaXG-Ff_oygX8uERqBCk_IuwXKmv4RLVyO3lT7zegIagiQ=="
+     },
+     {
+      "title": "city.kameoka.kyoto.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHGJuQGXdKz3M2kcVS9yp0Khlyvj2JfF22jm3urLzkB4i0AXmyZGNDAnbJCkhv0BXOGXSK9YR3M5pFMyqmy1H5dAiBddQsTz0ZNcwXNodL-Qjvp-384v6SbzS5JuddPOjXTuNEjD-bKbwB9U_rrCWGS"
+     }
+    ]
+   },
+   {
+    "id": "fact-6",
+    "text": "**Güzergah ve Seyir Bilgileri:**\n*   Tren, Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na kadar Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik (bazı kaynaklarda 8.8 km olarak da belirtilir) bir güzergahta yaklaşık 25 dakikalık bir yolculuk sunmaktadır",
+    "sources": [
+     {
+      "title": "japan.travel",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI"
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGUudhfX5NXOl9WJpgLluKXujiPdPfxcl72jcGk6I2OqfFDOFX1NrHA4xm3j5Nor_6GiXxVxMzg6hAXQ3ut18vj4y15f3cuEkMLnivYFrXTWalspQwuSmH3ejc2R3ttIQ=="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     },
+     {
+      "title": "city.kameoka.kyoto.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHGJuQGXdKz3M2kcVS9yp0Khlyvj2JfF22jm3urLzkB4i0AXmyZGNDAnbJCkhv0BXOGXSK9YR3M5pFMyqmy1H5dAiBddQsTz0ZNcwXNodL-Qjvp-384v6SbzS5JuddPOjXTuNEjD-bKbwB9U_rrCWGS"
+     }
+    ]
+   },
+   {
+    "id": "fact-7",
+    "text": "*   Güzergah üzerinde Torokko Saga, Torokko Arashiyama, Torokko Hozukyo ve Torokko Kameoka olmak üzere dört istasyon bulunmaktadır",
+    "sources": [
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH_d8tBkH8wboZ_CVm8FrA5gDhUNkFBEXG5okQbA__UubKNm1dwQZ-fgbmV6SoC15UeIVoGlXJmST6lKcpdcn886y-V84qglHIL1sfePaloR-h_KBs0_FRztQ=="
+     },
+     {
+      "title": "jrailpass.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHrqQofgHfCEZR4IG4zTCohdoe7YA83t6TIY6_qphvYBQsB12FNvkHN5nZQmMoIdhGKNKmcCAu3rbLfBoCbcxCMzf1hTU-V7s1a2DjI0p-DZQgdPQSQXhV-brCh9D90_Nleybw85sucT5V3UES5ag=="
+     }
+    ]
+   },
+   {
+    "id": "fact-8",
+    "text": "*   Tren, mevsimlere göre değişen manzaralar sunar; ilkbaharda kiraz çiçekleri, yazın yeşil doğa ve sonbaharda sonbahar yaprakları görülebilir",
+    "sources": [
+     {
+      "title": "japan.travel",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI"
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGUudhfX5NXOl9WJpgLluKXujiPdPfxcl72jcGk6I2OqfFDOFX1NrHA4xm3j5Nor_6GiXxVxMzg6hAXQ3ut18vj4y15f3cuEkMLnivYFrXTWalspQwuSmH3ejc2R3ttIQ=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQELpOK89NWsV1iY5T5i3MeQ6hxwYDZeQIBTSkKzgpsH3LSqHdzx4GIYpmft1nxM8LAw9p3EyymUgXSo_X1fjnS4GaL40Dlb470tDEJ-vaIwBcS4V6adpsfIhT3M728="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     },
+     {
+      "title": "jrailpass.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHrqQofgHfCEZR4IG4zTCohdoe7YA83t6TIY6_qphvYBQsB12FNvkHN5nZQmMoIdhGKNKmcCAu3rbLfBoCbcxCMzf1hTU-V7s1a2DjI0p-DZQgdPQSQXhV-brCh9D90_Nleybw85sucT5V3UES5ag=="
+     },
+     {
+      "title": "city.kameoka.kyoto.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHGJuQGXdKz3M2kcVS9yp0Khlyvj2JfF22jm3urLzkB4i0AXmyZGNDAnbJCkhv0BXOGXSK9YR3M5pFMyqmy1H5dAiBddQsTz0ZNcwXNodL-Qjvp-384v6SbzS5JuddPOjXTuNEjD-bKbwB9U_rrCWGS"
+     }
+    ]
+   },
+   {
+    "id": "fact-9",
+    "text": "*   Genellikle Mart'tan Aralık sonuna kadar sefer yapar ve Ocak ile Şubat aylarında kapalıdır",
+    "sources": [
+     {
+      "title": "japan-experience.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE09FUsf1mT3bm_6h00pPm44OjpDo3g2Xh_xSRxmj6XBfVDk9gjldKwA6rUEzEI7Rud8GGTI0x3wKctn3GrZBzzENnowXfuiSz9j2U74Hfg2RBl6RphJwSTiALZqLV_3GVHAiaWSWAFY_TWqKjRyDXxxwgz6EmzqC2PbWKyya8rqvz0aUkJnuMp-6eEcXJWUGjCA3lGUv1K1riG_3tPSh-9ejbLvnaqXbE="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     },
+     {
+      "title": "jrailpass.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHrqQofgHfCEZR4IG4zTCohdoe7YA83t6TIY6_qphvYBQsB12FNvkHN5nZQmMoIdhGKNKmcCAu3rbLfBoCbcxCMzf1hTU-V7s1a2DjI0p-DZQgdPQSQXhV-brCh9D90_Nleybw85sucT5V3UES5ag=="
+     }
+    ]
+   },
+   {
+    "id": "fact-10",
+    "text": "Çarşamba günleri de kapalı olabilir, ancak yoğun sezonlarda istisnalar mevcuttur",
+    "sources": [
+     {
+      "title": "japan-experience.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE09FUsf1mT3bm_6h00pPm44OjpDo3g2Xh_xSRxmj6XBfVDk9gjldKwA6rUEzEI7Rud8GGTI0x3wKctn3GrZBzzENnowXfuiSz9j2U74Hfg2RBl6RphJwSTiALZqLV_3GVHAiaWSWAFY_TWqKjRyDXxxwgz6EmzqC2PbWKyya8rqvz0aUkJnuMp-6eEcXJWUGjCA3lGUv1K1riG_3tPSh-9ejbLvnaqXbE="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     }
+    ]
+   },
+   {
+    "id": "fact-11",
+    "text": "**Tren ve Vagonlar:**\n*   Tren, eski tarz ahşap banklarla donatılmış retro bir tasarıma sahiptir",
+    "sources": [
+     {
+      "title": "japan.travel",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI"
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHcGak_Y9vdLoMsGBXXrn6QjWKTgJGssR6S9cH_9iD7ZkT-cKwxHtJCx3-H0JHhP-OMfxhU3FPXDwD2CItjEjBvda8B4snUdMDQjCEwz_c85QTP_kKGnaQ0n1nNLVoi6gZqEg=="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     },
+     {
+      "title": "jrailpass.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHrqQofgHfCEZR4IG4zTCohdoe7YA83t6TIY6_qphvYBQsB12FNvkHN5nZQmMoIdhGKNKmcCAu3rbLfBoCbcxCMzf1hTU-V7s1a2DjI0p-DZQgdPQSQXhV-brCh9D90_Nleybw85sucT5V3UES5ag=="
+     }
+    ]
+   },
+   {
+    "id": "fact-12",
+    "text": "*   Beş vagonlu olup, bunlardan biri \"The Rich\" (ザ・リッチ) olarak bilinen tamamen açık vagon (5 numaralı vagon) ve dört tanesi pencereleri açılabilen kapalı vagonlardır",
+    "sources": [
+     {
+      "title": "japan.travel",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI"
+     },
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF7qGDh97eIKZcsTKemYac9lYh6TNK51RcDH8AKYqH3cX-KixWu6aooQFbziqs35LRvaWMQAXQL6AG-pKelpVw87mNViErnh90oTLLjVB7zv1zkhIfUFHNqUAXvB92I4mBI2mXPFn3Ga3p2mPh9"
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHcGak_Y9vdLoMsGBXXrn6QjWKTgJGssR6S9cH_9iD7ZkT-cKwxHtJCx3-H0JHhP-OMfxhU3FPXDwD2CItjEjBvda8B4snUdMDQjCEwz_c85QTP_kKGnaQ0n1nNLVoi6gZqEg=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGUudhfX5NXOl9WJpgLluKXujiPdPfxcl72jcGk6I2OqfFDOFX1NrHA4xm3j5Nor_6GiXxVxMzg6hAXQ3ut18vj4y15f3cuEkMLnivYFrXTWalspQwuSmH3ejc2R3ttIQ=="
+     },
+     {
+      "title": "japan-guide.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGn_Kv7KEOMN93U8SZPSg60RFqNiSsz3kAgEOWtmcVW_wPaz-3BI807ERnyfNPFuqVetYlIcz6Dvvnu3-ynXYOdHvnLjtp9XEKxQ-p9hCBEXgT-c3bjzWij0-7X6L34C2iiWw=="
+     },
+     {
+      "title": "jrailpass.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHrqQofgHfCEZR4IG4zTCohdoe7YA83t6TIY6_qphvYBQsB12FNvkHN5nZQmMoIdhGKNKmcCAu3rbLfBoCbcxCMzf1hTU-V7s1a2DjI0p-DZQgdPQSQXhV-brCh9D90_Nleybw85sucT5V3UES5ag=="
+     }
+    ]
+   },
+   {
+    "id": "fact-13",
+    "text": "*   Trenler, DE10 sınıfı dizel lokomotifler tarafından çekilmektedir",
+    "sources": [
+     {
+      "title": "ejrcf.or.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFqBFvkmiFFQ0rYYAXrNLCPHAtpE1a2244L_4gr88nQYTXccuD1nsb4bZpGmStBPCI-WpFYq5ZIrp5uSJCUvhUZY3Cw6uI81DQC8pCoE5Rk9dz1kGAQhwHXIG5oKSaGNuNMbiP3qZgspLUN1Cb4kw=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHcGak_Y9vdLoMsGBXXrn6QjWKTgJGssR6S9cH_9iD7ZkT-cKwxHtJCx3-H0JHhP-OMfxhU3FPXDwD2CItjEjBvda8B4snUdMDQjCEwz_c85QTP_kKGnaQ0n1nNLVoi6gZqEg=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGUudhfX5NXOl9WJpgLluKXujiPdPfxcl72jcGk6I2OqfFDOFX1NrHA4xm3j5Nor_6GiXxVxMzg6hAXQ3ut18vj4y15f3cuEkMLnivYFrXTWalspQwuSmH3ejc2R3ttIQ=="
+     },
+     {
+      "title": "popondetta.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH6Juzxg8Vq8qsgVvK1E-bh_bChP2OUKavFXTt9suuqwaTo_n2TZnqlwJ9DMQv8MIOtlPSU-RAgOorpSyy2fiHgA1PmBz-zkMvLp7VRAUhIsJyeyz4O11tZhODLcKQbQ9TMY-oj0HJQ2E7Xq9E3P9E2Vjgu2uArgEQUsGXkJ-8lr5F8SZkdszXsn-S_WI9xD8vjBy-dwa6V9YyLlwwd6U4Rf3Bi3QkpzlZtV68XUKtwQvrD_DTMGxnGX94Q2GOBXjwU89zCndaoGTbY2fw1B64qO7hT8BkT_mrQvUIQD5E7EifcNsH-iRH84vPIxJGOpJ9ifg4UUPPs6TmWgXCnQkEhRhpCXD1OIDud"
+     },
+     {
+      "title": "city.kameoka.kyoto.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHGJuQGXdKz3M2kcVS9yp0Khlyvj2JfF22jm3urLzkB4i0AXmyZGNDAnbJCkhv0BXOGXSK9YR3M5pFMyqmy1H5dAiBddQsTz0ZNcwXNodL-Qjvp-384v6SbzS5JuddPOjXTuNEjD-bKbwB9U_rrCWGS"
+     },
+     {
+      "title": "ameblo.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH4-Xb4SLcr-QdcOOdijRbT1OmIQFb_0DjspIINhQ64vm-vCzWAKGI1qvBwi_ejmtQSnc4ZRgD6dQZzTvD6vvHgaP5cNkCnokwWV-WT2qa1Gy9oB2U66e6ojdVlLiD2iqBNksqhq4ex8cyKA0j__w=="
+     }
+    ]
+   },
+   {
+    "id": "fact-14",
+    "text": "2027 yılından itibaren yeni hibrit dizel vagonların kullanılmaya başlanması planlanmaktadır",
+    "sources": [
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHOqyGJhPGT8Iqh4lPWeubt0W4OJ_7W8vDNwr5GJHp5unNzP7OMJwVSP65SuHNsumqmPSfCMPcV51B8njXJtjBxzCX10Bdv7bjuFNDb8OdfEROr9iETV8GI7tuyMnfzuTkFljgCXXRmYUiBBm5udH2VUIkPLoK5yvEXOuA19cJx_63nuGmi7u1NjFOsBkD-ehASC9Cxbtl0"
+     },
+     {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfgnTrGS7PRog5wqiPmtz0LUhGmqyTPY0vwU4nFLppcqJ-V1tgw8IjTAQp1wDGPq2a4BVpc2TZ4BvHJksVtuOWZjECSpgz5hPhpWNOr8FshBOZDw1NVqJyWAE_dKVxv8SU5K_YIG8F3X7LZm_qUDnmXgUrZMl0hipwrPagrH-LkEfm7h3NKyprKV-89rwQ0owSrIfnJekc2gPITBmGmVlVZokHblKaSVbrLCVsT5WVlpunU7YCbahffUF9Ma86j1p9DTHF3fsT1lwsRoEnbw=="
+     },
+     {
+      "title": "popondetta.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH6Juzxg8Vq8qsgVvK1E-bh_bChP2OUKavFXTt9suuqwaTo_n2TZnqlwJ9DMQv8MIOtlPSU-RAgOorpSyy2fiHgA1PmBz-zkMvLp7VRAUhIsJyeyz4O11tZhODLcKQbQ9TMY-oj0HJQ2E7Xq9E3P9E2Vjgu2uArgEQUsGXkJ-8lr5F8SZkdszXsn-S_WI9xD8vjBy-dwa6V9YyLlwwd6U4Rf3Bi3QkpzlZtV68XUKtwQvrD_DTMGxnGX94Q2GOBXjwU89zCndaoGTbY2fw1B64qO7hT8BkT_mrQvUIQD5E7EifcNsH-iRH84vPIxJGOpJ9ifg4UUPPs6TmWgXCnQkEhRhpCXD1OIDud"
+     }
+    ]
+   },
+   {
+    "id": "fact-15",
+    "text": "**Müze ve Ek Tesisler:**\n*   Torokko Saga İstasyonu'nda tarihi lokomotiflerin sergilendiği bir müze ve Kyoto'nun ünlü yerlerini içeren büyük ölçekli bir demiryolu dioraması olan \"Diorama Kyoto JAPAN\" bulunmaktadır",
+    "sources": [
+     {
+      "title": "japan.travel",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI"
+     },
+     {
+      "title": "kyoto.travel",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHrZeGAQUX8TjkBD8kyHh8joAP7nhsJMmBa-zPPPosIXQfbJsjqV8iPf9X4YEz_RA7By4byElaHdF11hyU_qJiuf8I6ijZiWxQ6Dd8SHjGNaqqby7lfyAvWfbOruFdabdu9IdUb0TI7LlSnNCN46619vRVL1DYYDTUwIr71FfR7Hnu7TA=="
+     },
+     {
+      "title": "sagano-kanko.co.jp",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE5fzGeN_8HTjEsGL2siGj4cr4LL1a24kWykZCWngiZUy00EaFzPA4fbHswftoN0Katwbx4wn54nPRO4PZjNNGio53bTh77M_-evXLHFe2AHV2xnqEuX25iAvcRvUa6Gi1c"
+     }
+    ]
+   }
+  ],
+  "facts_given_to_writer": [
+   "fact-1",
+   "fact-6",
+   "fact-8",
+   "fact-11",
+   "fact-12",
+   "fact-15"
+  ],
+  "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+ },
+ "caption_binding_attempts": [
+  {
+   "created_at": "2026-11-22T10:15:31.459958Z",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "rc-a80c44032b9a",
+   "input": {
+    "request": "Bir dakikayı geçmeyecek şekilde. Haritayı gösterdiğim video ilk video olacak. Trene giriş kısımları ikinci video. Tren içerisinde arkadaşlarımı gösterdiğim videolar ve sonrasında manzaralar olacak. Bu Kyoto'daki Toroko treni tren hakkında bilgilendirici alt yazı istiyorum videoların seslerini de kapat\nDaha basit sürüm kartında belirtilen çıkarmaları onayladım.",
+    "evidence": {
+     "facts": [
+      {
+       "id": "fact-1",
+       "text": "**Hat Tarihi ve İşletmesi:**\n*   Tren hattı, başlangıçta 1899 yılında Kyoto Demiryolu'nun ana hattının bir parçası olarak Kyoto'yu Sonobe'ye bağlamak üzere açılmıştır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-6",
+       "text": "**Güzergah ve Seyir Bilgileri:**\n*   Tren, Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na kadar Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik (bazı kaynaklarda 8.8 km olarak da belirtilir) bir güzergahta yaklaşık 25 dakikalık bir yolculuk sunmaktadır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-8",
+       "text": "*   Tren, mevsimlere göre değişen manzaralar sunar; ilkbaharda kiraz çiçekleri, yazın yeşil doğa ve sonbaharda sonbahar yaprakları görülebilir",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-11",
+       "text": "**Tren ve Vagonlar:**\n*   Tren, eski tarz ahşap banklarla donatılmış retro bir tasarıma sahiptir",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-12",
+       "text": "*   Beş vagonlu olup, bunlardan biri \"The Rich\" (ザ・リッチ) olarak bilinen tamamen açık vagon (5 numaralı vagon) ve dört tanesi pencereleri açılabilen kapalı vagonlardır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-15",
+       "text": "**Müze ve Ek Tesisler:**\n*   Torokko Saga İstasyonu'nda tarihi lokomotiflerin sergilendiği bir müze ve Kyoto'nun ünlü yerlerini içeren büyük ölçekli bir demiryolu dioraması olan \"Diorama Kyoto JAPAN\" bulunmaktadır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      }
+     ],
+     "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+     "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+    },
+    "snapshot": {
+     "slots": [
+      {
+       "seen": {
+        "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+       },
+       "media_id": "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+       "duration_s": 9.52,
+       "output_end_s": 9.52,
+       "visible_text": "",
+       "output_start_s": 0.0
+      },
+      {
+       "seen": {
+        "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+       },
+       "media_id": "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+       "duration_s": 8.787,
+       "output_end_s": 18.187,
+       "visible_text": "",
+       "output_start_s": 9.4
+      },
+      {
+       "seen": {
+        "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+       },
+       "media_id": "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+       "duration_s": 6.82,
+       "output_end_s": 24.887,
+       "visible_text": "",
+       "output_start_s": 18.067
+      },
+      {
+       "seen": {
+        "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+       },
+       "media_id": "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+       "duration_s": 6.787,
+       "output_end_s": 31.554,
+       "visible_text": "",
+       "output_start_s": 24.767
+      },
+      {
+       "seen": {
+        "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+       },
+       "media_id": "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+       "duration_s": 9.453,
+       "output_end_s": 40.887,
+       "visible_text": "",
+       "output_start_s": 31.434
+      },
+      {
+       "seen": {
+        "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+       },
+       "media_id": "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+       "duration_s": 9.487,
+       "output_end_s": 50.254,
+       "visible_text": "",
+       "output_start_s": 40.767
+      },
+      {
+       "seen": {
+        "text": "autumn mountain river landscape The video shows a scenic view of a river and mountains covered in vibrant autumn foliage, as seen from a moving vehicle. An announcement is made in Japanese regarding arrival at Togetsukyo bridge. mountain valley with a river and autumn trees traveling through a scenic route"
+       },
+       "media_id": "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4",
+       "duration_s": 9.867,
+       "output_end_s": 60.001,
+       "visible_text": "",
+       "output_start_s": 50.134
+      }
+     ],
+     "text_bars": [],
+     "copy_constraints": {},
+     "research_windows": [
+      {
+       "id": "window-0",
+       "seen": [
+        {
+         "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+        },
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        }
+       ],
+       "end_s": 9.52,
+       "start_s": 0.0,
+       "media_ids": [
+        "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+       ],
+       "visible_text": [
+        "",
+        ""
+       ],
+       "max_characters": 142
+      },
+      {
+       "id": "window-1",
+       "seen": [
+        {
+         "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+        },
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        }
+       ],
+       "end_s": 18.067,
+       "start_s": 0.0,
+       "media_ids": [
+        "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+       ],
+       "visible_text": [
+        "",
+        ""
+       ],
+       "max_characters": 271
+      },
+      {
+       "id": "window-2",
+       "seen": [
+        {
+         "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+        },
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        },
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        }
+       ],
+       "end_s": 18.187,
+       "start_s": 9.4,
+       "media_ids": [
+        "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 131
+      },
+      {
+       "id": "window-3",
+       "seen": [
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        },
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        },
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        }
+       ],
+       "end_s": 24.887,
+       "start_s": 18.067,
+       "media_ids": [
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 102
+      },
+      {
+       "id": "window-4",
+       "seen": [
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        },
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        },
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        }
+       ],
+       "end_s": 31.434,
+       "start_s": 18.067,
+       "media_ids": [
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 200
+      },
+      {
+       "id": "window-5",
+       "seen": [
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        },
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        },
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        }
+       ],
+       "end_s": 31.554,
+       "start_s": 24.767,
+       "media_ids": [
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 101
+      },
+      {
+       "id": "window-6",
+       "seen": [
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        },
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        },
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        }
+       ],
+       "end_s": 40.887,
+       "start_s": 31.434,
+       "media_ids": [
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 141
+      },
+      {
+       "id": "window-7",
+       "seen": [
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        },
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        },
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        }
+       ],
+       "end_s": 50.134,
+       "start_s": 31.434,
+       "media_ids": [
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 280
+      },
+      {
+       "id": "window-8",
+       "seen": [
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        },
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        },
+        {
+         "text": "autumn mountain river landscape The video shows a scenic view of a river and mountains covered in vibrant autumn foliage, as seen from a moving vehicle. An announcement is made in Japanese regarding arrival at Togetsukyo bridge. mountain valley with a river and autumn trees traveling through a scenic route"
+        }
+       ],
+       "end_s": 50.254,
+       "start_s": 40.767,
+       "media_ids": [
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+        "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 142
+      },
+      {
+       "id": "window-9",
+       "seen": [
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        },
+        {
+         "text": "autumn mountain river landscape The video shows a scenic view of a river and mountains covered in vibrant autumn foliage, as seen from a moving vehicle. An announcement is made in Japanese regarding arrival at Togetsukyo bridge. mountain valley with a river and autumn trees traveling through a scenic route"
+        }
+       ],
+       "end_s": 60.001,
+       "start_s": 50.134,
+       "media_ids": [
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+        "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+       ],
+       "visible_text": [
+        "",
+        ""
+       ],
+       "max_characters": 148
+      }
+     ]
+    },
+    "correction": "",
+    "handled_elsewhere": []
+   },
+   "output": {
+    "captions": [
+     {
+      "text": "Kyoto Torokko Treni: Hozukyo Geçidi'nde 7,3 kilometrelik güzergah",
+      "scope": "context",
+      "media_ids": [
+       "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+       "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+      ],
+      "window_id": "window-0",
+      "evidence_ids": [
+       "fact-6"
+      ],
+      "subject_name": "",
+      "visual_quote": "pointing at a map while explaining a train route",
+      "context_label": "Kyoto Torokko Treni",
+      "identity_quote": ""
+     },
+     {
+      "text": "Kyoto Torokko Treni: Ahşap banklı retro tasarım",
+      "scope": "context",
+      "media_ids": [
+       "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+       "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+       "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+      ],
+      "window_id": "window-3",
+      "evidence_ids": [
+       "fact-11"
+      ],
+      "subject_name": "",
+      "visual_quote": "boarding a train and sitting inside it",
+      "context_label": "Kyoto Torokko Treni",
+      "identity_quote": ""
+     },
+     {
+      "text": "Kyoto Torokko Treni: Sonbahar yapraklarıyla mevsimsel manzaralar",
+      "scope": "context",
+      "media_ids": [
+       "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+       "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+       "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4"
+      ],
+      "window_id": "window-7",
+      "evidence_ids": [
+       "fact-8"
+      ],
+      "subject_name": "",
+      "visual_quote": "traveling alongside a river in a wooded area",
+      "context_label": "Kyoto Torokko Treni",
+      "identity_quote": ""
+     },
+     {
+      "text": "Kyoto Torokko Treni: İlk olarak 1899 yılında açılan hat",
+      "scope": "context",
+      "media_ids": [
+       "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+       "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+      ],
+      "window_id": "window-9",
+      "evidence_ids": [
+       "fact-1"
+      ],
+      "subject_name": "",
+      "visual_quote": "mountain valley with a river and autumn trees",
+      "context_label": "Kyoto Torokko Treni",
+      "identity_quote": ""
+     }
+    ],
+    "limitations": "",
+    "unmet_requests": []
+   }
+  },
+  {
+   "created_at": "2026-11-22T10:15:50.650152Z",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "rc-a80c44032b9a",
+   "input": {
+    "request": "Bir dakikayı geçmeyecek şekilde. Haritayı gösterdiğim video ilk video olacak. Trene giriş kısımları ikinci video. Tren içerisinde arkadaşlarımı gösterdiğim videolar ve sonrasında manzaralar olacak. Bu Kyoto'daki Toroko treni tren hakkında bilgilendirici alt yazı istiyorum videoların seslerini de kapat\nDaha basit sürüm kartında belirtilen çıkarmaları onayladım.",
+    "evidence": {
+     "facts": [
+      {
+       "id": "fact-1",
+       "text": "**Hat Tarihi ve İşletmesi:**\n*   Tren hattı, başlangıçta 1899 yılında Kyoto Demiryolu'nun ana hattının bir parçası olarak Kyoto'yu Sonobe'ye bağlamak üzere açılmıştır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-6",
+       "text": "**Güzergah ve Seyir Bilgileri:**\n*   Tren, Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na kadar Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik (bazı kaynaklarda 8.8 km olarak da belirtilir) bir güzergahta yaklaşık 25 dakikalık bir yolculuk sunmaktadır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-8",
+       "text": "*   Tren, mevsimlere göre değişen manzaralar sunar; ilkbaharda kiraz çiçekleri, yazın yeşil doğa ve sonbaharda sonbahar yaprakları görülebilir",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-11",
+       "text": "**Tren ve Vagonlar:**\n*   Tren, eski tarz ahşap banklarla donatılmış retro bir tasarıma sahiptir",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-12",
+       "text": "*   Beş vagonlu olup, bunlardan biri \"The Rich\" (ザ・リッチ) olarak bilinen tamamen açık vagon (5 numaralı vagon) ve dört tanesi pencereleri açılabilen kapalı vagonlardır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      },
+      {
+       "id": "fact-15",
+       "text": "**Müze ve Ek Tesisler:**\n*   Torokko Saga İstasyonu'nda tarihi lokomotiflerin sergilendiği bir müze ve Kyoto'nun ünlü yerlerini içeren büyük ölçekli bir demiryolu dioraması olan \"Diorama Kyoto JAPAN\" bulunmaktadır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      }
+     ],
+     "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+     "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+    },
+    "snapshot": {
+     "slots": [
+      {
+       "seen": {
+        "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+       },
+       "media_id": "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+       "duration_s": 9.52,
+       "output_end_s": 9.52,
+       "visible_text": "",
+       "output_start_s": 0.0
+      },
+      {
+       "seen": {
+        "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+       },
+       "media_id": "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+       "duration_s": 8.787,
+       "output_end_s": 18.187,
+       "visible_text": "",
+       "output_start_s": 9.4
+      },
+      {
+       "seen": {
+        "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+       },
+       "media_id": "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+       "duration_s": 6.82,
+       "output_end_s": 24.887,
+       "visible_text": "",
+       "output_start_s": 18.067
+      },
+      {
+       "seen": {
+        "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+       },
+       "media_id": "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+       "duration_s": 6.787,
+       "output_end_s": 31.554,
+       "visible_text": "",
+       "output_start_s": 24.767
+      },
+      {
+       "seen": {
+        "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+       },
+       "media_id": "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+       "duration_s": 9.453,
+       "output_end_s": 40.887,
+       "visible_text": "",
+       "output_start_s": 31.434
+      },
+      {
+       "seen": {
+        "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+       },
+       "media_id": "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+       "duration_s": 9.487,
+       "output_end_s": 50.254,
+       "visible_text": "",
+       "output_start_s": 40.767
+      },
+      {
+       "seen": {
+        "text": "autumn mountain river landscape The video shows a scenic view of a river and mountains covered in vibrant autumn foliage, as seen from a moving vehicle. An announcement is made in Japanese regarding arrival at Togetsukyo bridge. mountain valley with a river and autumn trees traveling through a scenic route"
+       },
+       "media_id": "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4",
+       "duration_s": 9.867,
+       "output_end_s": 60.001,
+       "visible_text": "",
+       "output_start_s": 50.134
+      }
+     ],
+     "text_bars": [],
+     "copy_constraints": {},
+     "research_windows": [
+      {
+       "id": "window-0",
+       "seen": [
+        {
+         "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+        },
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        }
+       ],
+       "end_s": 9.52,
+       "start_s": 0.0,
+       "media_ids": [
+        "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+       ],
+       "visible_text": [
+        "",
+        ""
+       ],
+       "max_characters": 142
+      },
+      {
+       "id": "window-1",
+       "seen": [
+        {
+         "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+        },
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        }
+       ],
+       "end_s": 18.067,
+       "start_s": 0.0,
+       "media_ids": [
+        "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+       ],
+       "visible_text": [
+        "",
+        ""
+       ],
+       "max_characters": 271
+      },
+      {
+       "id": "window-2",
+       "seen": [
+        {
+         "text": "map of a train route with photos The speaker introduces a scenic train journey, tracing the route on a large map displayed on a wall. He explains the train's path and mentions that passengers will see various sights and landscapes along the way, encouraging viewers to visit this attraction in Kyoto. train station waiting area pointing at a map while explaining a train route"
+        },
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        },
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        }
+       ],
+       "end_s": 18.187,
+       "start_s": 9.4,
+       "media_ids": [
+        "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 131
+      },
+      {
+       "id": "window-3",
+       "seen": [
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        },
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        },
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        }
+       ],
+       "end_s": 24.887,
+       "start_s": 18.067,
+       "media_ids": [
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 102
+      },
+      {
+       "id": "window-4",
+       "seen": [
+        {
+         "text": "red and yellow train A small red and yellow train is shown at a station platform with passengers inside. A station attendant guides passengers on the platform. train station platform train arriving and passengers on platform"
+        },
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        },
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        }
+       ],
+       "end_s": 31.434,
+       "start_s": 18.067,
+       "media_ids": [
+        "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 200
+      },
+      {
+       "id": "window-5",
+       "seen": [
+        {
+         "text": "people on a train The video shows people boarding and sitting inside a train, then briefly captures the train station platform and a train conductor before returning to the train interior. A man walks through the train cabin. train interior and station platform boarding a train and sitting inside it"
+        },
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        },
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        }
+       ],
+       "end_s": 31.554,
+       "start_s": 24.767,
+       "media_ids": [
+        "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 101
+      },
+      {
+       "id": "window-6",
+       "seen": [
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        },
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        },
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        }
+       ],
+       "end_s": 40.887,
+       "start_s": 31.434,
+       "media_ids": [
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 141
+      },
+      {
+       "id": "window-7",
+       "seen": [
+        {
+         "text": "river and forested landscape from train window The video shows a scenic view from a train window as it travels alongside a river, passing by forested hills with autumn foliage. mountainous riverside from a train traveling by train, viewing scenery"
+        },
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        },
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        }
+       ],
+       "end_s": 50.134,
+       "start_s": 31.434,
+       "media_ids": [
+        "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 280
+      },
+      {
+       "id": "window-8",
+       "seen": [
+        {
+         "text": "people on a train viewing scenery People are riding a train, looking out the window at a beautiful river and forested landscape, commenting on the scenery. inside a train car traveling alongside a river in a wooded area riding a train, looking out the window, pointing at scenery, talking"
+        },
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        },
+        {
+         "text": "autumn mountain river landscape The video shows a scenic view of a river and mountains covered in vibrant autumn foliage, as seen from a moving vehicle. An announcement is made in Japanese regarding arrival at Togetsukyo bridge. mountain valley with a river and autumn trees traveling through a scenic route"
+        }
+       ],
+       "end_s": 50.254,
+       "start_s": 40.767,
+       "media_ids": [
+        "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+        "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+       ],
+       "visible_text": [
+        "",
+        "",
+        ""
+       ],
+       "max_characters": 142
+      },
+      {
+       "id": "window-9",
+       "seen": [
+        {
+         "text": "scenic landscape from a train The video captures a scenic view from a moving train, showcasing a river winding through a valley surrounded by lush green and some autumnal trees under a cloudy sky. mountainous valley beside a river, viewed from a moving train traveling through a valley by train"
+        },
+        {
+         "text": "autumn mountain river landscape The video shows a scenic view of a river and mountains covered in vibrant autumn foliage, as seen from a moving vehicle. An announcement is made in Japanese regarding arrival at Togetsukyo bridge. mountain valley with a river and autumn trees traveling through a scenic route"
+        }
+       ],
+       "end_s": 60.001,
+       "start_s": 50.134,
+       "media_ids": [
+        "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+        "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+       ],
+       "visible_text": [
+        "",
+        ""
+       ],
+       "max_characters": 148
+      }
+     ]
+    },
+    "correction": "The context explanation needs a supported site or collection name",
+    "handled_elsewhere": []
+   },
+   "output": {
+    "captions": [
+     {
+      "text": "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır.",
+      "scope": "context",
+      "media_ids": [
+       "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+       "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+      ],
+      "window_id": "window-0",
+      "evidence_ids": [
+       "fact-6"
+      ],
+      "subject_name": "",
+      "visual_quote": "pointing at a map while explaining a train route",
+      "context_label": "Torokko Saga İstasyonu",
+      "identity_quote": ""
+     },
+     {
+      "text": "Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım.",
+      "scope": "context",
+      "media_ids": [
+       "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+       "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+       "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+      ],
+      "window_id": "window-3",
+      "evidence_ids": [
+       "fact-11"
+      ],
+      "subject_name": "",
+      "visual_quote": "boarding a train and sitting inside it",
+      "context_label": "Kyoto Demiryolu",
+      "identity_quote": ""
+     },
+     {
+      "text": "Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar.",
+      "scope": "context",
+      "media_ids": [
+       "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+       "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+       "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+      ],
+      "window_id": "window-8",
+      "evidence_ids": [
+       "fact-8"
+      ],
+      "subject_name": "",
+      "visual_quote": "mountainous valley beside a river, viewed from a moving train",
+      "context_label": "Hozukyo Geçidi",
+      "identity_quote": ""
+     }
+    ],
+    "limitations": "",
+    "unmet_requests": []
+   }
+  }
+ ],
+ "claim_review": [
+  {
+   "created_at": "2026-11-22T10:15:53.404520Z",
+   "prompt_version": "rr-a80c44032b9a",
+   "output": {
+    "reason": "The proposed captions are supported by the provided facts and accurately reflect the visual content. The context names are properly derived from the facts and address the correction request without making unsupported specific identifications.",
+    "approved": true
+   }
+  }
+ ],
+ "cited_fact_ids_by_row": {
+  "creation-f286f919bed8-0": [
+   "fact-6"
+  ],
+  "creation-f286f919bed8-1": [
+   "fact-11"
+  ],
+  "creation-f286f919bed8-2": [
+   "fact-8"
+  ]
+ }
+}

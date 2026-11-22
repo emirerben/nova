@@ -123,3 +123,6 @@ brand/social/dist/**/*.mov
 .ios-caption-verify/
 # Use take prewarm A/B runs (`scripts/ios/talk-usetake-ab.sh`)
 .talk-usetake/
+
+# KRI-1585 Kyoto fixture footage and proxy frames (scripts/kri1585_kyoto_fixture.py cache); creator footage never enters git
+/.cache/kri1585-kyoto/

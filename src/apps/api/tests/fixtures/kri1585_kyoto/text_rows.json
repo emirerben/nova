@@ -1,0 +1,387 @@
+{
+ "text_elements": [
+  {
+   "z": null,
+   "id": "creation-f286f919bed8-0",
+   "role": "generative_intro",
+   "text": "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır.",
+   "color": "#000000",
+   "end_s": 9.52,
+   "effect": "static",
+   "motion": null,
+   "x_frac": 0.5,
+   "y_frac": 0.20854,
+   "removed": false,
+   "size_px": 62,
+   "start_s": 0.0,
+   "position": "custom",
+   "reveal_s": null,
+   "alignment": "center",
+   "text_case": null,
+   "glow_color": null,
+   "size_class": null,
+   "fade_out_ms": null,
+   "font_family": "Schibsted Grotesk",
+   "line_spacing": null,
+   "rotation_deg": null,
+   "shadow_color": null,
+   "shadow_style": null,
+   "stroke_color": null,
+   "stroke_width": 0.0,
+   "word_timings": null,
+   "editor_preset": null,
+   "glow_strength": 0,
+   "source_params": {
+    "research": {
+     "end_s": 9.52,
+     "facts": [
+      {
+       "id": "fact-6",
+       "text": "**Güzergah ve Seyir Bilgileri:**\n*   Tren, Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na kadar Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik (bazı kaynaklarda 8.8 km olarak da belirtilir) bir güzergahta yaklaşık 25 dakikalık bir yolculuk sunmaktadır",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      }
+     ],
+     "sources": [
+      {
+       "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+       "title": "japan.travel"
+      }
+     ],
+     "start_s": 0.0,
+     "version": 1,
+     "media_ids": [
+      "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+      "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+     ],
+     "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+     "original_text": "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır.",
+     "timeline_binding": [
+      {
+       "in_s": 24.059,
+       "clip_index": 0,
+       "duration_s": 9.52,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.006,
+       "clip_index": 1,
+       "duration_s": 8.787,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.26,
+       "clip_index": 2,
+       "duration_s": 6.82,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.0,
+       "clip_index": 3,
+       "duration_s": 6.787,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 13.24,
+       "clip_index": 4,
+       "duration_s": 9.453,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 10.352,
+       "clip_index": 5,
+       "duration_s": 9.487,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 4.059,
+       "clip_index": 6,
+       "duration_s": 9.867,
+       "transition_after": null,
+       "transition_duration_s": null
+      }
+     ],
+     "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+    },
+    "creator_style_fields": [],
+    "phone_text_style_version": 1
+   },
+   "behind_subject": false,
+   "letter_spacing": null,
+   "max_width_frac": 0.68,
+   "shadow_enabled": false,
+   "shadow_opacity": null,
+   "highlight_color": null,
+   "visual_block_id": null,
+   "animation_phases": null,
+   "background_color": null,
+   "theme_transition": null
+  },
+  {
+   "z": null,
+   "id": "creation-f286f919bed8-1",
+   "role": "generative_intro",
+   "text": "Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım.",
+   "color": "#000000",
+   "end_s": 24.887,
+   "effect": "static",
+   "motion": null,
+   "x_frac": 0.5,
+   "y_frac": 0.18354,
+   "removed": false,
+   "size_px": 60,
+   "start_s": 18.067,
+   "position": "custom",
+   "reveal_s": null,
+   "alignment": "center",
+   "text_case": null,
+   "glow_color": null,
+   "size_class": null,
+   "fade_out_ms": null,
+   "font_family": "Schibsted Grotesk",
+   "line_spacing": null,
+   "rotation_deg": null,
+   "shadow_color": null,
+   "shadow_style": null,
+   "stroke_color": null,
+   "stroke_width": 0.0,
+   "word_timings": null,
+   "editor_preset": null,
+   "glow_strength": 0,
+   "source_params": {
+    "research": {
+     "end_s": 24.887,
+     "facts": [
+      {
+       "id": "fact-11",
+       "text": "**Tren ve Vagonlar:**\n*   Tren, eski tarz ahşap banklarla donatılmış retro bir tasarıma sahiptir",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      }
+     ],
+     "sources": [
+      {
+       "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+       "title": "japan.travel"
+      }
+     ],
+     "start_s": 18.067,
+     "version": 1,
+     "media_ids": [
+      "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+      "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+      "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+     ],
+     "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+     "original_text": "Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım.",
+     "timeline_binding": [
+      {
+       "in_s": 24.059,
+       "clip_index": 0,
+       "duration_s": 9.52,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.006,
+       "clip_index": 1,
+       "duration_s": 8.787,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.26,
+       "clip_index": 2,
+       "duration_s": 6.82,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.0,
+       "clip_index": 3,
+       "duration_s": 6.787,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 13.24,
+       "clip_index": 4,
+       "duration_s": 9.453,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 10.352,
+       "clip_index": 5,
+       "duration_s": 9.487,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 4.059,
+       "clip_index": 6,
+       "duration_s": 9.867,
+       "transition_after": null,
+       "transition_duration_s": null
+      }
+     ],
+     "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+    },
+    "creator_style_fields": [],
+    "phone_text_style_version": 1
+   },
+   "behind_subject": false,
+   "letter_spacing": null,
+   "max_width_frac": 0.68,
+   "shadow_enabled": false,
+   "shadow_opacity": null,
+   "highlight_color": null,
+   "visual_block_id": null,
+   "animation_phases": null,
+   "background_color": null,
+   "theme_transition": null
+  },
+  {
+   "z": null,
+   "id": "creation-f286f919bed8-2",
+   "role": "generative_intro",
+   "text": "Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar.",
+   "color": "#FFFFFF",
+   "end_s": 50.254,
+   "effect": "static",
+   "motion": null,
+   "x_frac": 0.5,
+   "y_frac": 0.5974,
+   "removed": false,
+   "size_px": 72,
+   "start_s": 40.767,
+   "position": "custom",
+   "reveal_s": null,
+   "alignment": "center",
+   "text_case": null,
+   "glow_color": null,
+   "size_class": null,
+   "fade_out_ms": null,
+   "font_family": "Schibsted Grotesk",
+   "line_spacing": null,
+   "rotation_deg": null,
+   "shadow_color": null,
+   "shadow_style": null,
+   "stroke_color": null,
+   "stroke_width": 0.0,
+   "word_timings": null,
+   "editor_preset": null,
+   "glow_strength": 0,
+   "source_params": {
+    "research": {
+     "end_s": 50.254,
+     "facts": [
+      {
+       "id": "fact-8",
+       "text": "*   Tren, mevsimlere göre değişen manzaralar sunar; ilkbaharda kiraz çiçekleri, yazın yeşil doğa ve sonbaharda sonbahar yaprakları görülebilir",
+       "sources": [
+        {
+         "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+         "title": "japan.travel"
+        }
+       ]
+      }
+     ],
+     "sources": [
+      {
+       "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+       "title": "japan.travel"
+      }
+     ],
+     "start_s": 40.767,
+     "version": 1,
+     "media_ids": [
+      "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+      "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+      "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+     ],
+     "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+     "original_text": "Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar.",
+     "timeline_binding": [
+      {
+       "in_s": 24.059,
+       "clip_index": 0,
+       "duration_s": 9.52,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.006,
+       "clip_index": 1,
+       "duration_s": 8.787,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.26,
+       "clip_index": 2,
+       "duration_s": 6.82,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 0.0,
+       "clip_index": 3,
+       "duration_s": 6.787,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 13.24,
+       "clip_index": 4,
+       "duration_s": 9.453,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 10.352,
+       "clip_index": 5,
+       "duration_s": 9.487,
+       "transition_after": null,
+       "transition_duration_s": null
+      },
+      {
+       "in_s": 4.059,
+       "clip_index": 6,
+       "duration_s": 9.867,
+       "transition_after": null,
+       "transition_duration_s": null
+      }
+     ],
+     "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+    },
+    "creator_style_fields": [],
+    "phone_text_style_version": 1
+   },
+   "behind_subject": false,
+   "letter_spacing": null,
+   "max_width_frac": 0.76,
+   "shadow_enabled": false,
+   "shadow_opacity": null,
+   "highlight_color": null,
+   "visual_block_id": null,
+   "animation_phases": null,
+   "background_color": null,
+   "theme_transition": null
+  }
+ ]
+}
