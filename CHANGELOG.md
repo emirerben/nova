@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.85.0] - 2026-11-22
+
+### Changed
+- feat(kria): a general sound-effect ask in chat is judged by what the worker did, not the catch-all (KRI-1561) (#2465) <!-- release-pr: 2465 -->
+
 ## [0.89.84.0] - 2026-11-22
 
 ### Changed
