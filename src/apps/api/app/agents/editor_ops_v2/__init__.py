@@ -71,6 +71,8 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "caption_lines": "caption_lines.txt",
     # KRI-1394: portrait / landscape and bars / crop, only where the editor opens an axis.
     "video_shape": "video_shape.txt",
+    # KRI-1562: the library song under a phone Talking edit, only while chat may pick one.
+    "music_library": "talking_music.txt",
 }
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt

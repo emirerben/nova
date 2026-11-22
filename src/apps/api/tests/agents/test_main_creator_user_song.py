@@ -118,10 +118,12 @@ pytestmark = pytest.mark.journey("kri-586-hook-copy")
 # 4ad9471f… / 68d42cab…).
 # KRI-1405: the brief section teaches `no_sound_effects` and restating a kept ask: the two
 # brief-on hashes re-pinned (before: 1dd7c57f… / 389e0842…); brief-off unchanged.
+# KRI-1413: the brief section also routes informative text about a public place or route to the
+# typed `research` fact; the two brief-on hashes re-pinned (before: c017d2f4… / 42af559e…).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "c017d2f4a74f003fcc6f6d0550d15ff81550adea85353283afff1c7e27f29ebb",
+    (True, True): "640a80bb59ab1c856e9d4bc8a2bb09105514f382b75604e955d19cc5345923f0",
     (True, False): "67797ad5d4390601c8802c280fe68759ecdd697c64d2093aede2f1a7c4c063d1",
-    (False, True): "42af559e0ce1c14a60b9cedb4f88e0b89f8e152c43caeacfe8f82845ab5c8017",
+    (False, True): "afe0a5952626fe872166adda5c910fa12df47b238f95abe3c12e55b9ac295525",
     (False, False): "05f0b6f7a774d08fa47fe57ebc60baaab793b0cda14625cfbdef91d03bac09c2",
 }
 
