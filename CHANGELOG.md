@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.79.0] - 2026-11-22
+
+### Changed
+- feat(kria): an unstated clip order defaults to the order the clips were added instead of blocking the draft (flag off) (#2458) <!-- release-pr: 2458 -->
+
 ## [0.89.78.0] - 2026-11-22
 
 ### Changed
