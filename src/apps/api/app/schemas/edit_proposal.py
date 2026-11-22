@@ -29,6 +29,7 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
+from app.pipeline.text_designs import TextDesignId
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
 from app.schemas.editorial_plan import EditorialPlan
@@ -1962,6 +1963,9 @@ class EditProposalSnapshot(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    # KRI-1585: the informative text design the creator picked (`pipeline.text_designs`).
+    # Absent until she picks one, so legacy snapshots and their hashes are unchanged.
+    text_design: TextDesignId | None = Field(default=None, exclude_if=lambda value: value is None)
     direction: ProposalDirection = "guided_story"
     goal: str = Field(default="", max_length=500)
     editorial_plan: EditorialPlan | None = Field(

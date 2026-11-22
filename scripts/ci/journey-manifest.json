@@ -3973,6 +3973,9 @@
         "src/apps/api/tests/fixtures/kri1585_kyoto/media_manifest.json",
         "src/apps/api/tests/fixtures/kri1585_kyoto/expected_rows.json",
         "src/apps/api/tests/pipeline/test_kri1585_kyoto_fixture.py",
+        "src/apps/api/tests/pipeline/test_kri1579_creator_edits_win.py",
+        "src/apps/api/app/pipeline/informative_text.py",
+        "src/apps/api/app/pipeline/text_designs.py",
         "scripts/kri1585_kyoto_fixture.py"
       ]
     }

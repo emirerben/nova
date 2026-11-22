@@ -480,8 +480,24 @@ def _apply_look(row: dict, pin: PinnedText, *, text_color: str | None) -> None:
         row["max_width_frac"] = look["max_width_frac"]
         row["alignment"] = look["alignment"]
     kept = [f for f in LOOK_STYLE_FIELDS if middle or f not in ("alignment", "max_width_frac")]
+    from app.pipeline.informative_text import (  # noqa: PLC0415
+        CREATOR_FIELDS_KEY,
+        DESIGN_FIELDS_KEY,
+        informative_text_active,
+    )
+
+    if informative_text_active():
+        # KRI-1585: the look is a design she chose; only the colour or size she named is hers.
+        named = {"color"} if text_color else set()
+        named |= {"size_px"} if pin.size_px is not None else set()
+        fields = {
+            CREATOR_FIELDS_KEY: sorted(set(kept) & named),
+            DESIGN_FIELDS_KEY: sorted(set(kept) - named),
+        }
+    else:
+        fields = {CREATOR_FIELDS_KEY: sorted(kept)}
     row["source_params"] = {
         **(row.get("source_params") or {}),
         "clip_text_look": pin.look,
-        "creator_style_fields": sorted(kept),
+        **fields,
     }
