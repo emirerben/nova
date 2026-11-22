@@ -55,6 +55,7 @@ class ProvenanceCLITests(unittest.TestCase):
         elif a[1:3] == ['run','list']: print(json.dumps(f['runs']))
         elif '--log' in a: print(f['logs'][a[3]])
         elif f['jobless'] and a[3] == '2' and a[a.index('--attempt')+1] == str(f.get('empty_attempt',1)): print(json.dumps({'jobs':[]}))
+        elif f.get('run2_jobs') and a[3] == '2': print(json.dumps({'jobs': f['run2_jobs']}))
         elif f['unallocated'] and a[3] == '2': print(json.dumps({'jobs':[{'databaseId':22,'name':'release','conclusion':'cancelled','completedAt':'2','steps':[]}]}))
         else: print(json.dumps({'jobs': f.get('job_override') or [{'name':'release','conclusion': f.get('job_conclusion','success'),'completedAt':a[3], 'steps':f['steps']}]}))
         """)
@@ -123,6 +124,15 @@ class ProvenanceCLITests(unittest.TestCase):
                 ("no jobs rerun preserves upload", [old, head], head + " true"),
                 ("cancelled after transfer", [old, head], head + " true"),
                 ("ambiguous releases", [old], None),
+                # KRI-1551: `release` needs the Linux `gate` job. A run
+                # cancelled while the gate waited leaves `release` cancelled
+                # with no steps and null runner fields: no upload, but only
+                # when exactly one gate did not succeed in that attempt.
+                ("gate cancelled before the mac", [old, "unknown"], old + " false"),
+                ("gate failed before the mac", [old, "unknown"], old + " false"),
+                ("gate succeeded mac never started", [old, "unknown"], None),
+                ("gate missing mac never started", [old, "unknown"], None),
+                ("two gates mac never started", [old, "unknown"], None),
                 ("wrong job name", [old], None),
             ]:
                 data["runs"] = [
@@ -157,6 +167,38 @@ class ProvenanceCLITests(unittest.TestCase):
                     "cancelled" if name == "cancelled after transfer" else "success"
                 )
                 data["job_override"] = None
+                data["run2_jobs"] = None
+                gate_cases = {
+                    "gate cancelled before the mac": ["cancelled"],
+                    "gate failed before the mac": ["failure"],
+                    "gate succeeded mac never started": ["success"],
+                    "gate missing mac never started": [],
+                    "two gates mac never started": ["cancelled", "cancelled"],
+                }
+                if name in gate_cases:
+                    data["run2_jobs"] = [
+                        {"name": "gate", "conclusion": conclusion, "completedAt": "2", "steps": []}
+                        for conclusion in gate_cases[name]
+                    ] + [
+                        {
+                            "databaseId": 22,
+                            "name": "release",
+                            "conclusion": "cancelled",
+                            "completedAt": "2",
+                            "steps": [],
+                        }
+                    ]
+                    # What Actions reports for a job that never got a runner
+                    # because its run was cancelled (seen on run 45074551471).
+                    data["raw_job"] = {
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                        "runner_id": None,
+                        "runner_name": None,
+                        "runner_group_id": None,
+                        "runner_group_name": None,
+                        "steps": [],
+                    }
                 if name == "ambiguous releases":
                     data["job_override"] = [{"name": "release"}, {"name": "release"}]
                 if name == "wrong job name":

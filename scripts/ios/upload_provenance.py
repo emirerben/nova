@@ -12,6 +12,9 @@ import sys
 
 ARCHIVE = "Archive signed Release IPA"
 UPLOAD = "Upload and distribute to external TestFlight"
+# The Linux job that decides eligibility and waits for the API deploy; the Mac
+# `release` job needs it (KRI-1551).
+GATE = "gate"
 SHA = re.compile(r"[0-9a-f]{40}")
 ANSI = re.compile(r"(?:\x1b|\^\[)\[[0-9;]*m")
 
@@ -236,6 +239,20 @@ def main():
         if job["conclusion"] == "skipped":
             continue
         if job["conclusion"] == "cancelled" and job["steps"] == []:
+            # `release` needs `gate` and has no always(): it cannot start
+            # unless the gate succeeded in this same attempt. Cancelling a run
+            # while the gate waits leaves `release` cancelled with no runner
+            # and null assignment fields, which never_executed() rightly does
+            # not accept. Exactly one gate is required; anything else stays
+            # unknown.
+            gates = [candidate for candidate in jobs if candidate["name"] == GATE]
+            if len(gates) == 1 and gates[0].get("conclusion") in (
+                "cancelled",
+                "failure",
+                "skipped",
+                "timed_out",
+            ):
+                continue
             # Query exact raw Actions metadata using existing actions:read.
             # Never infer no-upload from cancellation or absent logs alone.
             repo = os.environ["GITHUB_REPOSITORY"]
