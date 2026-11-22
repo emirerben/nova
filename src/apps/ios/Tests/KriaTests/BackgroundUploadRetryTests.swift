@@ -1163,7 +1163,8 @@ extension BackgroundUploadRetryTests {
     func testASecondUnchooseWhileTheFirstIsRunningDefersToItInsteadOfLooping() async throws {
         let h = harness()
         let file = HeldFile()
-        _ = h.coordinator.select(.init(assetIdentifier: "asset-1", projectID: h.projectID, role: .clip, purpose: .cloudRenderSource, itemID: nil, limit: nil, attachedMediaIDs: []), debounce: .zero) { try await file.load() }
+        // A choice that starts no work would never ask for the file, and the wait below would not end.
+        _ = try XCTUnwrap(h.coordinator.select(.init(assetIdentifier: "asset-1", projectID: h.projectID, role: .clip, purpose: .cloudRenderSource, itemID: nil, limit: nil, attachedMediaIDs: []), debounce: .zero) { try await file.load() })
         await file.requested()
 
         let first = Task { await h.deselect("asset-1") }
