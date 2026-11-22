@@ -326,7 +326,7 @@ MediaCapability = Literal[
     "sourceCrop",
     "freehandDrawing",
     "textBend",
-    # KRI-1581: a text layer carries a `scrim` (protocol 54).
+    # KRI-1581: a text layer carries a `scrim` or `srgb_blend` (protocol 55).
     "textDesigns",
     "singleWordText",
     # KRI-828: a creator's freeze frame (a main-video hold longer than one frame).

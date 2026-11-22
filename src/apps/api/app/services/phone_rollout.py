@@ -441,9 +441,9 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         )
     # KRI-1581: same explicit gate for a text scrim (`compile_text_overlay` drops it before it
     # gets here unless verified; this catches a caller that added one afterwards).
-    if any(
-        layer.scrim is not None or layer.srgb_blend for layer in recipe.text_layers
-    ) and "textDesigns" not in set(settings.phone_render_verified_features):
+    if recipe_has_text_designs(recipe) and "textDesigns" not in set(
+        settings.phone_render_verified_features
+    ):
         raise PhoneCapabilityUnavailable(
             "Designed text backgrounds await native parity and device qualification",
             capability="textDesigns",
@@ -935,6 +935,32 @@ def text_designs_planned_for(client_protocol: int | None) -> bool:
         and client_protocol is not None
         and client_protocol >= INFORMATIVE_TEXT_DESIGNS_PROTOCOL
     )
+
+
+def recipe_has_text_designs(recipe: Any) -> bool:
+    """Does a text layer of ``recipe`` carry design paint (a ``scrim`` or ``srgb_blend``)?"""
+    return any(
+        getattr(layer, "scrim", None) is not None or getattr(layer, "srgb_blend", None)
+        for layer in getattr(recipe, "text_layers", None) or []
+    )
+
+
+def text_designs_update_detail(recipe: Any) -> dict | None:
+    """The 426 detail for a build that cannot decode ``recipe``'s designed text, else None.
+
+    Compile drops the paint for such a build's own saves; this covers a recipe the worker or a
+    newer build pinned. Only the build is checked, never the flag or the verified token: turning
+    those off must not lock a protocol-55 phone out of a recipe that is already pinned.
+    """
+    from app.services.client_protocol import INFORMATIVE_TEXT_DESIGNS_PROTOCOL  # noqa: PLC0415
+
+    if not recipe_has_text_designs(recipe) or text_designs_client_supported():
+        return None
+    return {
+        "code": "client_update_required",
+        "feature": "text_designs",
+        "minimum_client_protocol": INFORMATIVE_TEXT_DESIGNS_PROTOCOL,
+    }
 
 
 def speaker_background_client_supported(*, require_client: bool | None = None) -> bool:

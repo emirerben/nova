@@ -18,6 +18,10 @@ Ways this can fail, written before the code:
 6. A creator's edit is overwritten by the design.
 7. A job approved from an older build is stamped for designs its editor cannot redraw.
 8. The cloud receipt reads the scrim, which reaches the bottom edge, as clipped text.
+9. A Save that patches the pinned recipe (a Narrated caption edit) from a build below the
+   designs protocol keeps the worker's design paint and commits a recipe that build cannot
+   decode, or a 55 build's Save drops it. (`tests/routes/test_device_render.py` covers the
+   same recipe read over the device-render GET.)
 """
 
 from __future__ import annotations
@@ -421,3 +425,62 @@ def test_rows_tagged_by_the_research_writer_draw_the_same_design(design):
         return [{k: v for k, v in row.items() if k != "source_params"} for row in rows]
 
     assert drawn(_resolve(tagged)) == drawn(_resolve(_design_rows(design)))
+
+
+def test_a_patching_save_from_an_older_build_never_commits_the_pinned_design(monkeypatch):
+    """Through `prepare_editor_commit` on a phone Narrated variant whose title the worker
+    compiled from an A2 pair: a caption Save keeps the pinned title layers as they are."""
+    from fastapi import HTTPException
+
+    from app.kria.device_render import make_device_request
+    from app.pipeline.phone_narrated_plan import replace_narrated_title
+    from app.services.client_protocol import clear_request_context
+    from app.services.device_render import device_status, pin_device_request
+    from tests.routes.test_phone_narrated_editor_commit import _CUES, phone_job, save
+
+    job = phone_job(monkeypatch, title="3 things we loved")
+    _with_gate(monkeypatch)
+    clear_request_context()
+    pair = [
+        {**row, "start_s": 0.0, "end_s": 3.0}
+        for row in _resolve(_design_rows("A2"))
+        if row["id"].startswith("kri1585-fact-0-")
+    ]
+    pinned = replace_narrated_title(device_status(job, "narrated").request.recipe, pair)
+    titles = [layer for layer in pinned.text_layers if layer.id.startswith("title-")]
+    assert [layer.scrim is not None for layer in titles] == [True, False]
+    assert all(layer.srgb_blend for layer in titles)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        sorted({*settings.phone_render_verified_features, *pinned.required_capabilities}),
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="narrated", revision=2, recipe=pinned),
+        base_generation="first",
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    edited_cues = [dict(_CUES[0], text="First we pack it all"), _CUES[1]]
+
+    set_client_protocol(INFORMATIVE_TEXT_DESIGNS_PROTOCOL - 1)
+    try:
+        with pytest.raises(HTTPException) as refused:
+            save(job, caption_cues=edited_cues)
+        assert refused.value.status_code == 426
+        assert refused.value.detail == {
+            "code": "client_update_required",
+            "feature": "text_designs",
+            "minimum_client_protocol": INFORMATIVE_TEXT_DESIGNS_PROTOCOL,
+        }
+        assert job.assembly_plan == before
+
+        set_client_protocol(INFORMATIVE_TEXT_DESIGNS_PROTOCOL)
+        save(job, caption_cues=edited_cues)
+    finally:
+        clear_request_context()
+    request = device_status(job, "narrated").request
+    assert request.identity.recipe_revision == 3
+    saved = request.recipe
+    assert [layer for layer in saved.text_layers if layer.id.startswith("title-")] == titles
+    assert "textDesigns" in saved.required_capabilities
