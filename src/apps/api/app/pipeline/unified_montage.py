@@ -1446,6 +1446,35 @@ def _group_landed(
     return min(here) > max(before, default=-1) and max(here) < min(after, default=len(spot))
 
 
+def _replaced_order_outcomes(strategy: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """One ``met`` outcome (``code: replaced``) per order row an earlier turn already seated
+    (``already_seated``, KRIA_CLIP_ORDER_LEDGER_ENABLED): it seats nothing now and is never
+    judged against the order the creator set since. Empty for every strategy without such a row."""
+    out: list[dict[str, Any]] = []
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if (
+            isinstance(intent, Mapping)
+            and intent.get("op") == "order"
+            and intent.get("already_seated")
+            and not intent.get("order_by")
+            and not intent.get("placeholder")
+        ):
+            name = _nfc(intent.get("attribute"))
+            position = intent.get("position")
+            out.append(
+                {
+                    "op": "order",
+                    "name": f"{position or 'then'}: {name}" if name else "the order you described",
+                    "position": position or "then",
+                    "status": "met",
+                    "code": "replaced",
+                    "reason": None,
+                    "intent_id": intent.get("intent_id"),
+                }
+            )
+    return out
+
+
 def _sequence_outcomes(
     rows: Sequence[tuple[str | None, str, list[str], str]],
     ordered: Sequence[UnifiedClip],
@@ -4553,6 +4582,7 @@ def _intent_outcomes(
             else:
                 out.append({**row, "status": "met", "reason": None})
     out.extend(sequence)
+    out.extend(_replaced_order_outcomes(strategy))
     if groups:
         out.append(_group_outcome(groups, _ordering_choice(strategy, enabled)))
         names = {fold_text(n) for n, _spots in groups}

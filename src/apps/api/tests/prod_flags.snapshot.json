@@ -497,6 +497,10 @@
       "source": "default",
       "value": true
     },
+    "kria_clip_order_ledger_enabled": {
+      "source": "default",
+      "value": false
+    },
     "kria_clip_selection_questions_enabled": {
       "source": "default",
       "value": true

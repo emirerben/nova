@@ -2470,6 +2470,76 @@
    "app/kria/strategy_policy.py",
    "Sound effects chosen for your edit aren't available for it yet; left them out.",
    "Senin için seçilen ses efektleri bu düzenleme için henüz yok; koymadım."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "A clip you named is no longer in the edit, so I left it out.",
+   "Adını verdiğin bir klip artık videoda yok, onu dışarıda bıraktım."
+  ],
+  [
+   "app/kria/planner.py",
+   "I left your clip order as it was.",
+   "Klip sıranı olduğu gibi bıraktım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {count} clips, starting with {first}.",
+   "{count} klibi taşıdım, ilki {first}."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {moved} before {anchor}.",
+   "{moved} klibini {anchor} klibinin önüne aldım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {moved} to the end.",
+   "{moved} klibini sona aldım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Moved {moved} to the start.",
+   "{moved} klibini başa aldım."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "The clips are already in that order.",
+   "Klipler zaten bu sırada."
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Your clips play in this order:",
+   "Kliplerin şu sırayla oynuyor:"
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "a clip",
+   "bir klip"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "where you didn't say, the clips play in the order you have them now",
+   "söylemediğin yerlerde klipler şu an olduğu sırayla oynar"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "you set the order yourself since, and the order you set is the one that plays",
+   "sırayı sonradan kendin belirledin, oynayan senin belirlediğin sıra"
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "your clip {position}",
+   "{position}. klibin"
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "your clip {position}, “{label}”",
+   "{position}. klibin, “{label}”"
+  ],
+  [
+   "app/kria/planner.py",
+   "I can move a clip, swap two clips or undo a reorder once your video is made. Until then your clips stay in the order they are in now.",
+   "Bir klibi taşımayı, iki klibin yerini değiştirmeyi ya da bir sıralamayı geri almayı videon hazır olunca yapabilirim. O zamana kadar klipler şu anki sıralarında kalıyor."
   ]
  ],
  "retired": [

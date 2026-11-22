@@ -168,9 +168,14 @@ def test_reorder_needs_a_v2_snapshot(guided) -> None:
     assert _parse(snap, [{"op": "reorder_clips_by", "criterion": "capture_time"}]).ops == []
 
 
-def test_stale_permutation_is_refused_at_compile(guided) -> None:
+@pytest.mark.parametrize("ledger", [False, True], ids=["flag-off", "flag-on"])
+def test_stale_permutation_is_refused_at_compile(guided, ledger, monkeypatch) -> None:
+    """Flag off the stale bundle is the "timeline changed" dead end; with the clip-order ledger it
+    rebases by media id (named clips take the requested sequence), never a refusal."""
+    from app.config import settings
     from app.services.kria_editor_ops import KriaEditorOpError
 
+    monkeypatch.setattr(settings, "kria_clip_order_ledger_enabled", ledger)
     job, variant, _rev = guided
     bad = {
         "op": "reorder_clips_by",
@@ -178,8 +183,12 @@ def test_stale_permutation_is_refused_at_compile(guided) -> None:
         "permutation": [1, 0],
         "media_ids": ["m1", "m0"],
     }
-    with pytest.raises(KriaEditorOpError):
-        compile_editor_ops(job, variant, [bad])
+    if not ledger:
+        with pytest.raises(KriaEditorOpError):
+            compile_editor_ops(job, variant, [bad])
+        return
+    draft = compile_editor_ops(job, variant, [bad])
+    assert draft.payload is not None
 
 
 def test_ordered_capture_media_descending_keeps_pins_and_ties() -> None:

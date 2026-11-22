@@ -1893,6 +1893,21 @@ def build_editor_snapshot(
         if len(brief) > _MAX_BRIEF_CHARS:
             raise BriefCoverageError("editor request exceeds 12,000-character limit")
         snapshot["brief"] = brief
+    previous_media = clip_context.get("previous_media_order")
+    if isinstance(previous_media, list) and previous_media:
+        # KRIA_CLIP_ORDER_LEDGER_ENABLED: the order before the creator's last reorder, as the exact
+        # `order` (slot indexes) that restores it, for "undo my reorder". Absent when it would
+        # change nothing.
+        rank = {str(media_id): at for at, media_id in enumerate(previous_media)}
+        live = [at for at, slot in enumerate(slots) if not slot.get("removed")]
+        restored = sorted(
+            live, key=lambda at: (rank.get(str(slots[at].get("media_id") or ""), len(rank)), at)
+        )
+        if restored != live:
+            snapshot["previous_order"] = restored
+    listing = clip_context.get("order_listing")
+    if isinstance(listing, str) and listing.strip():
+        snapshot["order_listing"] = listing[:2000]
     if "text" in families and any(slot.get("facts") for slot in slots):
         # Server-only capability: `label_each_clip` needs grounded per-clip facts
         # that the web drawer's snapshot never carries, so the parser refuses the

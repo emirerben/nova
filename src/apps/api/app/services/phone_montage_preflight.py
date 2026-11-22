@@ -284,6 +284,7 @@ def preflight_montage_plan(
         _collapse_duplicate_uploads,
         _creator_intent_clip_order,
         _creator_selected_clip_paths,
+        _ledger_ordered_paths,
     )
     from app.tasks.generative_build import (  # noqa: PLC0415
         _plan_phone_unified_montage,
@@ -324,6 +325,12 @@ def preflight_montage_plan(
         owner, paths, strategy, brief_binding={"brief": brief.model_dump(mode="json")}
     )
     planned_strategy = collapse_strategy(strategy, aliases) if aliases else strategy
+    from app.services.clip_order_ledger import snapshot_order  # noqa: PLC0415
+
+    ledger_order = snapshot_order(media)
+    if ledger_order:
+        # The order the creator has the clips in now (dispatch starts from the same one).
+        paths = _ledger_ordered_paths(owner, paths, ledger_order)
     paths, _placed = _creator_intent_clip_order(owner, paths, planned_strategy)
     if not paths:
         return None

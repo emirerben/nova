@@ -3252,6 +3252,14 @@ class Settings(BaseSettings):
     # they did say. false = the previous hold, byte-identical. Apply: fly secret + restart
     # api and worker.
     kria_unstated_order_default_enabled: bool = False
+    # Clip order is one live, AI-aware state (PR 2): every order change (the creator's message,
+    # a drag, a manual timeline edit, the AI's own story order) is one ledger entry; the chat
+    # reads the current order before and after a render, a chat reorder is an editor op composed
+    # with the rest of the message, an order row is applied once and a later statement replaces
+    # an earlier one, and the AI never reorders on its own initiative. false = the previous
+    # behaviour, prompts, ops and receipts byte-identical. Apply: fly secret + restart api and
+    # worker.
+    kria_clip_order_ledger_enabled: bool = False
     # KRI-1358 (de1): approval readiness reads the same "the phone Voiceover compiler renders
     # this" fact the draft turn reads, so one clip's own sound under the voice is judged on the
     # phone draft instead of refused as "only works in a voiceover edit made on your iPhone".
