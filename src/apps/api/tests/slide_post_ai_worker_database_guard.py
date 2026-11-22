@@ -13,13 +13,12 @@ def validate_database_url(url, environment):
     assert parsed.hostname in LOOPBACK_HOSTS
     assert (5432 if parsed.port is None else parsed.port) == 5432
     allowed = {PRIVATE_DATABASE}
-    if all(
-        environment.get(key) == value
-        for key, value in {
-            "CI": "true",
-            "GITHUB_ACTIONS": "true",
-            "GITHUB_REPOSITORY": "emirerben/nova",
-        }.items()
+    # The repository moved from emirerben/nova to Kria-AI/kria; CI on either name may use the
+    # service databases the API job provisions. Nothing outside CI on this repository does.
+    if (
+        environment.get("CI") == "true"
+        and environment.get("GITHUB_ACTIONS") == "true"
+        and environment.get("GITHUB_REPOSITORY") in {"emirerben/nova", "Kria-AI/kria"}
     ):
         allowed.update({"nova_test", "nova_journey_test"})
     assert parsed.path in {f"/{name}" for name in allowed}

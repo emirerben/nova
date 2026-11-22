@@ -6,6 +6,9 @@ from tests.slide_post_ai_worker_database_guard import validate_database_url
 
 PRIVATE = "nova_auto_convergence_ai_20261106_test"
 TRUSTED = {"CI": "true", "GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "emirerben/nova"}
+# The repository moved to Kria-AI/kria; CI there must be admitted exactly as CI on the old name
+# was (the process-death tests failed on every run after the move: "assert parsed.path in ...").
+MOVED = {**TRUSTED, "GITHUB_REPOSITORY": "Kria-AI/kria"}
 
 
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
@@ -14,12 +17,24 @@ def test_exact_trusted_databases(name, host):
     assert validate_database_url(f"postgresql://test@{host}:5432/{name}", TRUSTED) == name
 
 
+@pytest.mark.parametrize("name", ["nova_test", "nova_journey_test"])
+def test_the_moved_repository_is_trusted(name):
+    assert validate_database_url(f"postgresql://localhost/{name}", MOVED) == name
+
+
 def test_private_database_requires_no_ci_environment():
     assert validate_database_url(f"postgres://localhost/{PRIVATE}", {}) == PRIVATE
 
 
 @pytest.mark.parametrize(
-    "changed", [{}, {"CI": "1"}, {"GITHUB_ACTIONS": "false"}, {"GITHUB_REPOSITORY": "other/nova"}]
+    "changed",
+    [
+        {},
+        {"CI": "1"},
+        {"GITHUB_ACTIONS": "false"},
+        {"GITHUB_REPOSITORY": "other/nova"},
+        {"GITHUB_REPOSITORY": "Kria-AI/other"},
+    ],
 )
 @pytest.mark.parametrize("name", ["nova_test", "nova_journey_test"])
 def test_ci_names_require_all_exact_trusted_signals(name, changed):
