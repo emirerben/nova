@@ -153,6 +153,7 @@ from app.services.phone_text_styling import (
     generation_style_fields,
     generation_style_rows,
     phone_text_generation,
+    register_generation_footage,
 )
 from app.services.single_hero_policy import (
     _SINGLE_HERO_MAX_SUPPORTING_CLIPS,
@@ -6326,6 +6327,7 @@ def _run_phone_voiceover_montage_job(
                         if element is not None:
                             element.id = f"voiceover-intro-{index}"
                             intro_rows.append(element.model_dump(mode="json", exclude_none=True))
+                register_generation_footage(clip_metas)
                 rows = generation_style_rows(
                     [*intro_rows, *pin_rows], canvas=canvas, job_id=job_id, mood=style_set_id
                 )
