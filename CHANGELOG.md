@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.77.0] - 2026-11-22
+
+### Changed
+- test(kria): listening check for music under Talking speech (#2438) <!-- release-pr: 2438 -->
+
 ## [0.89.76.0] - 2026-11-22
 
 ### Changed
