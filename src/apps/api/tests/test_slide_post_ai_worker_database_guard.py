@@ -14,6 +14,12 @@ def test_exact_trusted_databases(name, host):
     assert validate_database_url(f"postgresql://test@{host}:5432/{name}", TRUSTED) == name
 
 
+@pytest.mark.parametrize("repository", ["emirerben/nova", "Kria-AI/kria"])
+def test_ci_databases_are_trusted_under_the_old_and_the_renamed_repository(repository):
+    environment = {**TRUSTED, "GITHUB_REPOSITORY": repository}
+    assert validate_database_url("postgresql://localhost/nova_test", environment) == "nova_test"
+
+
 def test_private_database_requires_no_ci_environment():
     assert validate_database_url(f"postgres://localhost/{PRIVATE}", {}) == PRIVATE
 
