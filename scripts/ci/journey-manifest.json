@@ -3978,6 +3978,18 @@
         "src/apps/api/app/pipeline/text_designs.py",
         "scripts/kri1585_kyoto_fixture.py"
       ]
+    },
+    {
+      "id": "kri-1578-talking-creator-song",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_creator_song_bed.py tests/kria/test_talking_creator_song.py tests/routes/test_device_render.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_recipe_shared.py",
+        "src/apps/api/app/services/user_song_projection.py",
+        "src/apps/api/app/agents/editor_ops_v2/user_song.py",
+        "src/apps/api/tests/pipeline/test_creator_song_bed.py",
+        "src/apps/api/tests/kria/test_talking_creator_song.py"
+      ]
     }
   ]
 }

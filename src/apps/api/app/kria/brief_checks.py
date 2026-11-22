@@ -8137,10 +8137,6 @@ _REASON_TR: dict[str, str] = {
     _SONG_IN_BACKGROUND: (
         "Bu taslak şarkını arka planda çalıyor; klipler sözlerine göre yerleştirilmedi."
     ),
-    _SONG_TALKING_NO_LIPSYNC: (
-        "Dudak senkronu için Lip-sync videosu gerekiyor; konuşmalı videoda şarkın sesinin "
-        "altında kısık çalar."
-    ),
     _NO_SPEED_ON_FREEZE: (
         "Donmuş kare tutan bir klibin hızını değiştiremiyorum, o yüzden normal hızda oynuyor"
     ),
@@ -8309,6 +8305,10 @@ _REASON_TR: dict[str, str] = {
     _SFX_PLAN: "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım",
     _SFX_NOT_PLACED: "Bitmiş videoda ses efekti yok",
     _MUSIC_PLAN_OWN_SONG: "Şarkını sesinin altında kısık çalarım",
+    _SONG_TALKING_NO_LIPSYNC: (
+        "Dudak senkronu için Lip-sync videosu gerekiyor; konuşmalı videoda şarkın sesinin "
+        "altında kısık çalar."
+    ),
     # KRI-1578: the first sentence is `creator_song_rule.withheld_song_notice`'s.
     _MUSIC_SEND_SONG: (
         "Müzik kütüphanesinden şarkı ekleyemiyorum. İstediğin şarkıyı gönder, sesinin altında "
