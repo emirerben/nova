@@ -492,7 +492,8 @@ def test_a_new_library_song_is_refused_while_the_library_is_closed(monkeypatch):
     with pytest.raises(HTTPException) as refused:
         _save(job, item=item, background_music={"track_id": "song-1", "gain_db": -18})
     assert refused.value.status_code == 422
-    assert refused.value.detail["code"] == "library_music_unavailable"
+    assert refused.value.detail["code"] == "unsupported_phone_edit"
+    assert "Send the song you want" in refused.value.detail["reason"]
 
 
 # --- C10: chat ---------------------------------------------------------------------------------

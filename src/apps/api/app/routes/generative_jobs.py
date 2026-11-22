@@ -8389,13 +8389,13 @@ def _require_talking_library_choice(variant: dict, bed: EditorCommitBackgroundMu
     if not talking_music.library_music_enabled():
         raise _timeline_error(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "library_music_unavailable",
+            "unsupported_phone_edit",
             reason="Send the song you want and I'll play it under your voice.",
         )
     if talking_music.talking_song(variant) is not None:
         raise _timeline_error(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "user_song_in_use",
+            "unsupported_phone_edit",
             reason="Your own song plays under this video. Remove it first.",
         )
 
