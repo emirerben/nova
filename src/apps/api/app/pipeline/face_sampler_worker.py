@@ -29,10 +29,11 @@ def resolve_face_cascade_path() -> str:
 
     Prefers the cascade vendored into the prod image at assets/cv/ — the
     wheel-bundled `cv2.data.haarcascades` directory is NOT reliable in the prod
-    image: the opencv-contrib-python wheel (the project's one OpenCV
-    distribution, see pyproject.toml and agents/DECISIONS.md) does not ship the
-    cascade XML in `cv2.data.haarcascades` at all, and every prod job would
-    silently lose face-aware caption/thumbnail placement.
+    image: when mediapipe's opencv-contrib-python wheel wins dependency
+    resolution over opencv-python-headless (pyproject.toml collision, see
+    agents/DECISIONS.md), the winning cv2 package's `cv2.data.haarcascades` dir
+    does not ship the cascade XML at all, and every prod job silently loses
+    face-aware caption/thumbnail placement.
 
     Falls back to `cv2.data.haarcascades` (wheel path) for environments where
     the vendored asset is unexpectedly missing (e.g. a stale/shallow checkout).
