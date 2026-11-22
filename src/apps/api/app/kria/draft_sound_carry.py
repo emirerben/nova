@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -76,6 +77,26 @@ def asks_no_music(brief: CreativeBrief | None) -> bool:
     from app.kria.brief_checks import wants_no_music  # noqa: PLC0415
 
     return brief is not None and any(wants_no_music(req) for req in brief.live())
+
+
+@dataclass(frozen=True)
+class MusicAsk:
+    """A live typed music ask (KRI-1562) with the kind of music named, if any."""
+
+    mood: str | None = None
+
+
+def asks_music(brief: CreativeBrief | None) -> MusicAsk | None:
+    """The live typed "with some music" ask, or None. A live "no music" always wins, so a
+    brief holding both asks for none."""
+    from app.kria.brief_checks import music_mood, wants_music  # noqa: PLC0415
+
+    if brief is None or asks_no_music(brief):
+        return None
+    asked = [req for req in brief.live() if wants_music(req)]
+    if not asked:
+        return None
+    return MusicAsk(mood=next((m for req in asked if (m := music_mood(req))), None))
 
 
 def carry_draft_audio_strategy(
@@ -151,7 +172,9 @@ def carry_draft_sound(
 
 
 __all__ = [
+    "MusicAsk",
     "asks_camera_sound",
+    "asks_music",
     "asks_no_music",
     "carry_draft_audio_strategy",
     "carry_draft_sound",

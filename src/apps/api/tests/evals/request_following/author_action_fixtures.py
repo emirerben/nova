@@ -162,6 +162,33 @@ def _sfx(variant: dict[str, Any]) -> None:
     variant["sound_effects"] = []
 
 
+# KRI-1562: the library songs the planner lists for a phone Talking edit
+# (`planner._talking_song_rows`).
+MUSIC_LIBRARY = [
+    {"id": "song-calm", "title": "Slow Harbour", "mood": "calm, warm", "genre": "acoustic"},
+    {"id": "song-bright", "title": "Morning Run", "mood": "upbeat", "genre": "pop"},
+]
+TALKING_SONG = {
+    "context": {"music_library": MUSIC_LIBRARY},
+    "caps": {"background_music": True},
+    "patches": {"talking_song_open": lambda *_: True},
+}
+
+
+def _talking_song(variant: dict[str, Any]) -> None:
+    # A phone Talking edit on the subtitled Save path (never the authored compiler).
+    variant.pop("editor_timeline_mode", None)
+    variant["resolved_archetype"] = "subtitled"
+    variant["smart_music_treatment"] = {
+        "track_id": "song-bright",
+        "src_gcs_path": "music/song-bright/audio.m4a",
+        "section_start_s": 10.0,
+        "section_end_s": 30.0,
+        "gain_db": -18.0,
+        "speech_duck_db": -12.0,
+    }
+
+
 def _talking(variant: dict[str, Any]) -> None:
     variant["resolved_archetype"] = "subtitled"
     variant["speaker_background"] = {"media_id": "bg-2", "kind": "video", "source_start_s": 0.0}
@@ -645,9 +672,10 @@ SCENARIOS: list[Scenario] = [
         "music_swap",
         "Swap the music for something calmer.",
         [{"op": "swap_music"}],
-        [{"op": "swap_music", "track_id": "00000000-0000-0000-0000-000000000002"}],
-        variant=_music,
-        note="The snapshot never lists swap candidates; expected to fail.",
+        [{"op": "swap_music", "track_id": "song-calm"}],
+        variant=_talking_song,
+        note="A phone Talking edit picks its song from the library (KRI-1562).",
+        **TALKING_SONG,
     ),
     Scenario(
         "creator_song",
@@ -805,6 +833,7 @@ def _probe(group: str, op: dict[str, Any], **kwargs: Any) -> Scenario:
 # each on the phone snapshot it needs. test_editor_capability_parity runs SCENARIOS and these: every
 # op and named field the parity table claims must survive the real parser and compiler here.
 PHONE_OP_PROBES: list[Scenario] = [
+    _probe("music_swap", {"op": "remove_music"}, variant=_talking_song, **TALKING_SONG),
     _probe("text_authoring", {"op": "add_text", "text": "Pier", "start_s": 3.0, "end_s": 5.0}),
     _probe(
         "text_authoring",

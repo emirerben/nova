@@ -2425,6 +2425,41 @@
    "app/services/sfx_capability.py",
    "Nothing in this video clearly called for a sound effect, so I added none",
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I couldn't pick a song from the music library, so the video has no music",
+   "Müzik kütüphanesinden bir şarkı seçemedim, o yüzden videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll pick a song from the music library and play it quietly under your voice",
+   "Müzik kütüphanesinden bir şarkı seçip sesinin altında kısık çalarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The finished video has no music",
+   "Bitmiş videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The music library has no song I can add yet, so the video has no music",
+   "Müzik kütüphanesinde henüz ekleyebileceğim bir şarkı yok, o yüzden videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The song I picked is no longer available, so the video has no music",
+   "Seçtiğim şarkı artık kullanılamıyor, o yüzden videoda müzik yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your iPhone app is too old to play music under your voice; update it first",
+   "iPhone uygulaman sesinin altında müzik çalmak için çok eski; önce güncelle"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "you asked for no music, so I won't add a song",
+   "müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum"
   ]
  ],
  "retired": [
