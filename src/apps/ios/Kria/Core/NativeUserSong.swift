@@ -305,9 +305,18 @@ struct NativeEditorSongBed: Equatable, Sendable {
         self.endS = endS
     }
 
+    /// A Talking edit's song is compiled as a music-role track (it ducks under the voice, KRI-1578) rather than as
+    /// the montage `song` track, so it is recognised by what it plays: a creator-song asset in the manifest.
+    private static func playsCreatorSong(_ track: TimelineTrack, in recipe: KriaMediaEngine.EditRecipe) -> Bool {
+        guard track.kind == .audio, track.role == .music, let asset = track.clips.first?.sourceAssetID,
+              let reference = recipe.assetManifest?.assets.first(where: { $0.id == asset }) else { return false }
+        if case .song = reference.source { return true }
+        return false
+    }
+
     /// Nil when the recipe has no song track, or its clip is not playable.
     init?(recipe: KriaMediaEngine.EditRecipe) {
-        guard let clip = recipe.tracks.first(where: { $0.id == Self.trackID && $0.kind == .audio })?.clips.first,
+        guard let clip = recipe.tracks.first(where: { ($0.id == Self.trackID && $0.kind == .audio) || Self.playsCreatorSong($0, in: recipe) })?.clips.first,
               clip.sourceStart.isFinite, clip.sourceStart >= 0,
               clip.sourceDuration.isFinite, clip.sourceDuration > 0,
               clip.volume.isFinite, clip.volume >= 0 else { return nil }
@@ -328,8 +337,10 @@ struct NativeEditorYourSong: Equatable, Sendable {
     static let helperCopy = String(localized: "This is the song you added. Camera audio is muted so it plays alone, until you turn up Original audio.")
     static let songEndsEarlyCopy = String(localized: "Song ends before the video does.")
     static let songStoppedCopy = String(localized: "Song stops where you set it, before the video ends.")
+    static let underVoiceHelperCopy = String(localized: "Plays quietly under your voice.")
     static let lipSyncLockCopy = String(localized: "Lip-sync keeps the song where you filmed it.")
     static let lipSyncTrimHintCopy = String(localized: "Trimming cuts your video to match.")
+    static let removedUnderVoiceHelperCopy = String(localized: "Song removed. Your voice plays on its own.")
     static let removedHelperCopy = String(localized: "Song removed. Your camera audio plays instead.")
 
     var accessibilitySummary: String {

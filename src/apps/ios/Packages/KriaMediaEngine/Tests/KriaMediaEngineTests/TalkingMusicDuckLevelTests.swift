@@ -53,10 +53,39 @@ final class TalkingMusicDuckLevelTests: XCTestCase {
         XCTAssertLessThan(abs(differenceDB), 1, "without speech windows the music must not move")
     }
 
+    /// The song a creator uploads is a `song`-kind render asset, resolved through the verified library cache and the
+    /// extension fixup the device resolver applies, then played on a `role: .music` track. It must duck exactly like
+    /// the library bed above, through the real exporter (KRI-1578).
+    @MainActor func testCreatorSongOnAMusicTrackDucksLikeTheLibraryBed() async throws {
+        let fixture = try await Fixture.make(songKind: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        for (label, gain, expected) in [("song default level", Double?.none, 0.3), ("song authored level", 0.25, 0.25)] {
+            let levels = try await fixture.measure(windows: Self.windows, duckGain: gain, name: label)
+            let duckDB = LevelTestMedia.decibels(levels.musicInWindow / levels.musicGap)
+            print("TalkingMusicDuckLevelTests \(label): music in window \(levels.musicInWindow), gap \(levels.musicGap), after \(levels.musicAfter), duck \(duckDB) dB")
+            XCTAssertGreaterThan(levels.musicGap, 0.1, "\(label): the song must be audible in the pauses")
+            XCTAssertEqual(levels.musicInWindow / levels.musicGap, expected, accuracy: 0.04, "\(label): the duck lands on the authored gain")
+            XCTAssertEqual(LevelTestMedia.decibels(levels.voiceInWindow / levels.voiceGap), 0, accuracy: 1, "\(label): the duck never lowers the voice")
+        }
+    }
+
+    @MainActor func testCreatorSongWithNoWindowsStaysFlat() async throws {
+        let fixture = try await Fixture.make(songKind: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let levels = try await fixture.measure(windows: [], duckGain: nil, name: "song control")
+        let differenceDB = LevelTestMedia.decibels(levels.musicInWindow / levels.musicGap)
+        print("TalkingMusicDuckLevelTests song control: music in window \(levels.musicInWindow), gap \(levels.musicGap), difference \(differenceDB) dB")
+        XCTAssertLessThan(abs(differenceDB), 1, "without speech windows the song must not move")
+    }
+
     private struct Fixture {
         let directory: URL, urls: [String: URL]
+        /// Nil for the plain two-file recipe; otherwise the schema-2 manifest that pins the music file as a `song`.
+        let manifest: RenderAssetManifest?
 
-        @MainActor static func make() async throws -> Fixture {
+        @MainActor static func make(songKind: Bool = false) async throws -> Fixture {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let picture = try await LevelTestMedia.blackVideo(directory, "picture", seconds: TalkingMusicDuckLevelTests.seconds)
@@ -64,12 +93,26 @@ final class TalkingMusicDuckLevelTests: XCTestCase {
             let speaker = try await LevelTestMedia.mux(picture, try LevelTestMedia.tone(directory, "speech", TalkingMusicDuckLevelTests.speechHz, amplitude: 0.1, seconds: TalkingMusicDuckLevelTests.seconds),
                                                        directory.appendingPathComponent("speaker.mov"))
             let music = try LevelTestMedia.tone(directory, "music", TalkingMusicDuckLevelTests.musicHz, amplitude: 0.28, seconds: 3)
-            return Fixture(directory: directory, urls: ["speaker": speaker, "music": music])
+            guard songKind else { return Fixture(directory: directory, urls: ["speaker": speaker, "music": music], manifest: nil) }
+            // The device path: the download is installed in the verified cache under an extensionless content address,
+            // then linked under a playable name (`AuthorizedDeviceSourceResolver.resolve(for:)`).
+            let hasher = SHA256Fingerprinter()
+            let songReference = RenderAssetReference(id: "music", fingerprint: try RenderFingerprint(hasher.fingerprint(file: music)),
+                                                     source: .song(planItemID: "item-1", generation: "3"))
+            let library = RenderLibraryCache(root: directory.appendingPathComponent("library"))
+            _ = try await library.install(downloadedFile: music, for: songReference)
+            let cached = try await library.resolve(songReference)
+            XCTAssertTrue(cached.pathExtension.isEmpty, "the cache address has no extension, so AVFoundation needs the playable link")
+            let playable = try PlayableAudioFile.prepare(source: cached, fingerprint: songReference.fingerprint, directory: directory.appendingPathComponent("playable-audio"))
+            let speakerReference = RenderAssetReference(id: "speaker", fingerprint: try RenderFingerprint(hasher.fingerprint(file: speaker)), source: .original(mediaID: "speaker"))
+            return Fixture(directory: directory, urls: ["speaker": speaker, "music": playable],
+                           manifest: RenderAssetManifest(assets: [speakerReference, songReference]))
         }
 
         @MainActor func measure(windows: [SpeechWindow], duckGain: Double?, name: String) async throws -> Levels {
-            let recipe = EditRecipe(canvas: Canvas(width: 96, height: 160),
-                assets: urls.keys.sorted().map { MediaAsset(id: $0, relativePath: $0) },
+            let recipe = EditRecipe(schemaVersion: manifest == nil ? 1 : 2, rendererVersion: manifest == nil ? "kria-ios-1" : "kria-ios-2", canvas: Canvas(width: 96, height: 160),
+                assets: try manifest == nil ? urls.keys.sorted().map { MediaAsset(id: $0, relativePath: $0) }
+                    : manifest!.assets.map { MediaAsset(id: $0.id, relativePath: $0.id, fingerprint: $0.fingerprint.assetFingerprint) },
                 tracks: [
                     TimelineTrack(id: "subtitled", kind: .video, clips: [
                         TimelineClip(id: "clip-0", sourceAssetID: "speaker", sourceStart: 0, sourceDuration: Double(TalkingMusicDuckLevelTests.seconds), timelineStart: 0)]),
@@ -77,7 +120,9 @@ final class TalkingMusicDuckLevelTests: XCTestCase {
                         TimelineClip(id: "music-0", sourceAssetID: "music", sourceStart: 0, sourceDuration: 3, timelineStart: 0),
                         TimelineClip(id: "music-1", sourceAssetID: "music", sourceStart: 0, sourceDuration: 3, timelineStart: 3)], role: .music),
                 ],
-                audio: AudioMixRecipe(originalVolume: 1, speechWindows: windows, speechDuckGain: duckGain))
+                audio: AudioMixRecipe(originalVolume: 1, speechWindows: windows, speechDuckGain: duckGain),
+                assetManifest: manifest)
+            try recipe.validate()
             let output = directory.appendingPathComponent("duck-\(name).mp4")
             _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state-\(name)")), branding: .none)
                 .export(recipe: recipe, assetURLs: urls, outputURL: output)
