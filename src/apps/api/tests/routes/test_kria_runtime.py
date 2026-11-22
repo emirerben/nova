@@ -313,6 +313,7 @@ def test_create_turn_returns_202_and_publishes_committed_turn(
         "manual_edits": None,
         "protected_region": None,
         "moment_order": None,
+        "clip_order_ops": None,
     }
     publish.assert_called_once_with(str(turn_id))
     db.rollback.assert_not_awaited()

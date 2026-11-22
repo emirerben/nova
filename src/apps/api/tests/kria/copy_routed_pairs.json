@@ -2565,6 +2565,21 @@
    "app/kria/brief_checks.py",
    "I added {count} sound effects",
    "{count} ses efekti ekledim"
+  ],
+  [
+   "app/services/clip_order_card.py",
+   "I can't change the clip order from here right now. Tell me the order in the chat.",
+   "Klip sırasını şu an buradan değiştiremiyorum. Sırayı bana sohbette yaz."
+  ],
+  [
+   "app/kria/runtime.py",
+   "You changed the clip order after I prepared this plan, so I cancelled it. Nothing was rendered. Tell me to go ahead and I'll prepare it again in your order.",
+   "Bu planı hazırladıktan sonra klip sırasını değiştirdin, o yüzden planı iptal ettim. Hiçbir video oluşturulmadı. Devam etmemi söylersen planı senin sıranla yeniden hazırlarım."
+  ],
+  [
+   "app/services/clip_order_card.py",
+   "Updated your clip order.",
+   "Klip sıranı güncelledim."
   ]
  ],
  "retired": [

@@ -2172,6 +2172,9 @@
     "I planned this without {names}: it's still being checked. Ask me to add it once it's ready.": "Ich habe das ohne {names} geplant, weil es noch geprüft wird. Sag mir, dass ich es hinzufügen soll, sobald es fertig ist.",
     "I planned this without {names}: they're still being checked. Ask me to add them once they're ready.": "Ich habe das ohne {names} geplant, weil sie noch geprüft werden. Sag mir, dass ich sie hinzufügen soll, sobald sie fertig sind.",
     "one of your Visuals": "eines deiner Visuals",
-    "some of your Visuals": "einige deiner Visuals"
+    "some of your Visuals": "einige deiner Visuals",
+    "I can't change the clip order from here right now. Tell me the order in the chat.": "Ich kann die Reihenfolge der Clips gerade nicht von hier aus ändern. Sag mir die Reihenfolge im Chat.",
+    "You changed the clip order after I prepared this plan, so I cancelled it. Nothing was rendered. Tell me to go ahead and I'll prepare it again in your order.": "Du hast die Reihenfolge der Clips geändert, nachdem ich diesen Plan vorbereitet hatte, deshalb habe ich ihn abgebrochen. Es wurde nichts gerendert. Sag mir, dass ich weitermachen soll, dann bereite ich ihn in deiner Reihenfolge neu vor.",
+    "Updated your clip order.": "Ich habe die Reihenfolge deiner Clips aktualisiert."
   }
 }

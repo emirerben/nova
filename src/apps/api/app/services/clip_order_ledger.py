@@ -34,7 +34,7 @@ LEDGER_KEY = "clip_order_entries"
 
 SERVER_DEFAULT = "server_default"
 CREATOR_TEXT = "creator_text"
-CREATOR_DRAG = "creator_drag"  # reserved: the iPhone card writes it in a later change
+CREATOR_DRAG = "creator_drag"  # the order card's drag (`clip_order_card`)
 CREATOR_EDITOR = "creator_editor"
 AI_STORY = "ai_story"
 ACTORS = (SERVER_DEFAULT, CREATOR_TEXT, CREATOR_DRAG, CREATOR_EDITOR, AI_STORY)
@@ -68,6 +68,8 @@ class LedgerEntry:
     after_ids: tuple[str, ...]
     turn_id: str | None = None
     rows: tuple[str, ...] = field(default=())
+    # A drag right after another drag is the same gesture: it takes no undo step of its own.
+    coalesce: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -76,6 +78,7 @@ class LedgerEntry:
             "after_ids": list(self.after_ids),
             "turn_id": self.turn_id,
             **({"rows": list(self.rows)} if self.rows else {}),
+            **({"coalesce": True} if self.coalesce else {}),
         }
 
     @classmethod
@@ -99,6 +102,7 @@ class LedgerEntry:
             after,
             str(turn) if turn else None,
             fingerprints,
+            coalesce=raw.get("coalesce") is True,
         )
 
 
@@ -245,7 +249,7 @@ def replay(
             source[item] = entry.actor
         if history and tuple(updated) == history[-1]:
             history.pop()
-        else:
+        elif not (entry.coalesce and history):
             history.append(tuple(order))
         order = updated
     return order, source, (history[-1] if history else None)

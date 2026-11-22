@@ -155,6 +155,21 @@ class MomentOrderAnswerIn(_StrictBody):
     answers: list[MomentPointIn] = Field(min_length=1, max_length=24)
 
 
+class ClipOrderOpsIn(_StrictBody):
+    """The creator's clip order from the order card: the whole order they see, in sequence.
+
+    Never refused for being out of date: ``proposal_id`` names the card the creator was looking
+    at, and any other id (the order moved since, a clip was added or removed) is rebased by media
+    id, not rejected. An id the server does not know, a repeated id or an empty list is ignored.
+    ``confirm`` is the card's "use this order" (the order is marked confirmed). The turn makes no
+    model call and adds no chat message, only a refreshed ``clip_order_card``.
+    """
+
+    proposal_id: str = Field(default="", max_length=64)
+    ordered_media_ids: list[str] = Field(default_factory=list, max_length=200)
+    confirm: bool = False
+
+
 class RequestOutcomeContext(_StrictBody):
     relation: Literal["original", "continuation", "retry", "revision", "recovery", "unclassified"]
     parent_turn_id: uuid.UUID | None = None
@@ -201,6 +216,10 @@ class SubmitTurnBody(_StrictBody):
     protected_region: ProtectedRegionIn | None = None
     # KRI-723: where each named moment is, in the creator's order; old clients omit it.
     moment_order: MomentOrderAnswerIn | None = None
+    # The order card's drag / "use this order" (`clip_order_card`, KRIA_CLIP_ORDER_LEDGER_ENABLED);
+    # only builds at `clip_order_card_min_client_protocol` send it. `message` is a placeholder the
+    # server never plans.
+    clip_order_ops: ClipOrderOpsIn | None = None
 
     @model_validator(mode="after")
     def _manual_edits_well_formed(self) -> SubmitTurnBody:

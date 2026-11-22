@@ -177,6 +177,10 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "clip_order_card_min_client_protocol": {
+      "source": "default",
+      "value": 54
+    },
     "clip_speech_language_check_enabled": {
       "source": "default",
       "value": true

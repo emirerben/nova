@@ -478,6 +478,11 @@ class CreationCapabilitiesOut(BaseModel):
     # turn. Only app builds at `moment_order_min_client_protocol` are asked; false = the kill
     # switch (999) is on, so no build is asked.
     moment_order_questions: bool = False
+    # The draft message may carry a numbered clip strip (`clip_order_card` on its event) and the
+    # app may reorder it with `clip_order_ops` on a turn. Only app builds at
+    # `clip_order_card_min_client_protocol` get the card; an older build is told the order as text.
+    # False = the ledger flag is off or the kill switch (999) is on.
+    clip_order_cards: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -4405,6 +4410,10 @@ async def capabilities(
         "song_range_questions": bool(song_available and settings.song_filming_range_enabled),
         "protected_region_marks": True,
         "moment_order_questions": settings.moment_order_min_client_protocol < 999,
+        "clip_order_cards": bool(
+            settings.kria_clip_order_ledger_enabled
+            and settings.clip_order_card_min_client_protocol < 999
+        ),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),

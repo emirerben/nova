@@ -1265,8 +1265,8 @@ and change when asked; anything the creator specified is kept exactly; what they
 order the clips were added; a drag or a message is the NEWEST statement, never an immutable lock; the AI
 never reorders on its own; no creator-visible string shows a media id, UUID or file name. Default `false`
 (prompts, ops, strategy dumps and receipts byte-identical when off). Apply: fly secret + restart api and
-worker. This is the server core; the card payload, a `clip_order_ops` turn field and the iPhone cards are
-later changes that build on the ledger API below.
+worker. This is the server core; the card payload and the `clip_order_ops` turn field are the next
+section; the iPhone cards build on them.
 
 **The ledger** (`app/services/clip_order_ledger.py`, pure). One `LedgerEntry {actor, before_ids,
 after_ids, turn_id, rows}` per change, whatever produced it: `server_default`, `creator_text`,
@@ -1346,3 +1346,119 @@ the turn's only ask (above). The first draft turn's `creator_text` entry seats o
 is the model's own story order (`ai_story`) is recorded only as the difference the next turn finds. The
 native render program still plays the model's `selected_media_ids` order. Guard:
 `tests/kria/test_clip_order_ledger.py` (the failure-mode list is its docstring).
+
+## The clip-order card (`KRIA_CLIP_ORDER_LEDGER_ENABLED` + client protocol 54, KRI-1590)
+
+A projection of the ledger, not state: `app/services/clip_order_card.py` (pure) builds the card, the
+draft / reply completions attach it (`tasks/kria_runtime._clip_order_card_block`), and
+`runtime._submit_clip_order_turn` takes the drag. Same flag as the ledger (no new flag), plus
+`CLIP_ORDER_CARD_MIN_CLIENT_PROTOCOL` (default 54, `CLIP_ORDER_CARD_PROTOCOL`; `999` = kill switch: text
+only for every build). Capability `clip_order_cards` on `GET /creation-threads/capabilities` (ledger flag on
+and the switch not at 999; the build still has to declare protocol >= 54).
+
+**Rollout.** The ledger flag is on in prod and no shipped build declares protocol 54, so on deploy every
+current build is a `text` build: an unstated-order draft gets the plain listing appended to its message, and
+`CLIP_ORDER_CARD_MIN_CLIENT_PROTOCOL=999` does not turn that off (only the ledger flag does).
+
+**Who gets what** (`clip_order_card.card_gate(protocol)`; the protocol is the sending build, stamped on the
+user event, so the worker needs no request): `card` (>= 54) gets the `clip_order_card` key; `text` (a
+declared older build, or any build under the kill switch) gets NO key and NO 426: the draft / reply
+`content` ends with the order as plain text ("Your clips play in this order:" and one `N. name` line per
+clip, EN/TR/DE) when the strip would have been shown; `none` (flag off, or no declared build such as the web)
+gets exactly today's event. Chat reorder works for every gate.
+
+**Wire: the card** (`payload.clip_order_card`, on every `draft_applied` event of a draft that requests a
+render when the strip is `shown`, on a reply event that changed the order, on the drag's own
+`clip_order_card` event, and on the `assistant_error` of a closed approval; an editor draft that requests no
+render carries none; the newest card in the thread is what the creator last saw):
+
+```json
+{"version": 1, "proposal_id": "9f2c41d0a7b3e655", "shown": true, "confirmed": false, "editable": true,
+ "total": 3, "rebased": true,
+ "cards": [{"media_id": "<opaque>", "position": 1, "label": "the map video", "kind": "video",
+            "group": "the map video", "source": "creator_text", "moved": false}]}
+```
+
+- `cards`: every clip the edit plays, in play order (a draft that selects a subset lists only those:
+  `selected_media_ids`), no urls (about 150 bytes each). `media_id` is the clip's id in the
+  thread's own media (the phone maps it to its local asset and thumbnail; it is never shown). `label` is
+  already safe to show: the creator's group words, else the note they typed on the upload, else a short
+  description, else `Clip N` (N = play position); two clips that read the same get ` (position)` appended;
+  never an id, UUID or file name. `group` is the creator's words for the group or null.
+- `source`: `server_default` (upload order, "Yükleme sırası"), `creator_text` (stated in chat) or
+  `creator_drag` / `creator_editor` (moved by hand), all three "Senin sıran"; `ai_story` is the AI's own
+  story order after a render. `spoken_roles` is not produced (no such ledger actor).
+- `moved`: moved since the previous card in the thread (the minimal set: moving one clip past three marks
+  that clip). The first card has none.
+- `shown`: the strip is in the chat. True only with 2+ clips and at least one position whose source is not a
+  creator actor; a draft also needs its order to be the upload order (`card_applies`: a guided edit format,
+  original or licensed audio, not the native program, no random / group-first / filming-time order, no
+  `order_by`). A clip the creator stated alone ("end with the beach clip", a listed order) counts as theirs;
+  a clip inside a described group does not (the Toroko incident shows the strip). After a drag or a confirm
+  the strip stays (sticky), so the chat does not lose it. Draft and reply events carry the card only when
+  `shown`; the drag's own event always carries it (`shown` may be false).
+- `confirmed`: the creator tapped "use this order" for exactly this order; a changed order clears it.
+- `editable`: false once a video exists, is being made, or its render was approved (the timeline is the
+  order): show the strip, hide the buttons.
+- `proposal_id`: a digest of (brief version, clips shown, order). Send back the id of the card the creator
+  was looking at. `rebased: true` only on a drag's card, when the server did not apply the list as sent.
+
+**Wire: the drag** (`POST .../turns`, optional field on `SubmitTurnBody`; only builds >= 54 send it):
+
+```json
+{"message": "Order updated", "client_event_id": "...", "expected_thread_revision": 7,
+ "clip_order_ops": {"proposal_id": "9f2c41d0a7b3e655", "ordered_media_ids": ["m3","m1","m2"], "confirm": true}}
+```
+
+Send the WHOLE order the creator sees, once, on "use this order" (`confirm: true`) or on each drop
+(`confirm: false`). `message` is a placeholder the server never plans, shows or stores: the user event is stored with
+`content: null` and the drag in its payload (`clip_order_ops`), so no transcript reader takes it for the
+creator's words; hide it in the chat. The response is `TurnAccepted` with `status: "completed"` (no worker); the
+result is the new `clip_order_card` event (`event_type: "clip_order_card"`, role assistant, `content`
+null): no chat message. It is never a 409/422 for state: a stale `proposal_id` or `expected_thread_revision`,
+a missing, extra, repeated or unknown id, or an empty list is rebased by media id (`clip_order_card.rebase_drag`
+= `apply_order` with the named clips as the known set: they take the sequence in the slots they hold, a clip
+added since keeps its place, a removed or unknown one is dropped, nothing named changes nothing). Only the
+same `client_event_id` with a different body is `409 idempotency_key_reused`, like every turn. A build or
+server that cannot take it (flag off, kill switch, older build) gets a `status_update` line and changes
+nothing.
+
+**What a drag does.** Before a video exists: one `creator_drag` ledger entry on the event (the next plan, the
+render contract, readiness and the worker all read it); a second drag right after the first (nothing else
+in the thread between) is `coalesce: true`, so the gesture is one undo step and the last full order wins.
+After a video exists, while it is being made, or once its render was approved (a set `current_job_id`, an
+approved approval, or a loadable editor timeline): nothing is recorded and the card answers with the order
+that plays (`editable: false`, `rebased: true`): a recorded drag would be overruled by the timeline on the
+next turn. A drag that lands while a turn is planning makes that turn's commit requeue (the thread-revision
+fence), so it plans again on the dragged order. It never
+queues behind a running turn or a pending approval, and `expected_thread_revision` is not checked.
+
+**An approval prepared before a drag** binds the order its draft was planned on, so the drag is carried
+INTO the draft when the creator approves (`runtime._rebind_dragged_order`, inside `decide_approval`'s own
+transaction, after the locks it already holds in canonical order: PlanItem, Session, Turn, Draft, Approval,
+Execution, Thread; a drag takes the item, job and session `FOR KEY SHARE` before the thread lock, as a Steer
+does, so the two never deadlock). "Drag, use this order, make the video" renders the dragged order; there is
+no 409 and no cancelled plan on that path. The rewrite: the approval-bound media snapshot stamps the ledger
+order, an `order` row the drag moved away from is marked `already_seated` (`clip_order_card.rebound`, the
+rule a fresh plan applies), the binding digest and draft hash are recomputed, and the saved readiness is
+replaced by a fresh assessment of the same evidence. It triggers only for a creator drag after the draft
+event (`entries_after_draft`); an AI or server entry never rewrites an approval. Why in place and not a new
+draft revision: the approval pins the draft id and revision and the client echoes them, so a new revision
+would need a second approval, a superseding event and a second set of locks; the order is in no pinned
+fingerprint (`media_identity` and the approval fingerprint never read it), so rewriting the unrendered
+head draft changes nothing the creator signed. Only the strategy digest of the readiness may move: the
+rewrite is refused unless the fresh report is ready and the brief, media, evidence and capability digests
+equal the saved ones. The refusal (the old fallback) is the only 409 `clip_order_changed`: the approval is
+closed with the refreshed card in an `assistant_error` payload, nothing rendered. It is reached only when a
+draft has no brief binding (no channel for the order), is not a strategy draft, or an entry other than a
+creator drag followed it, or the evidence moved. A message sent while the approval is pending still waits
+behind it (queued) and is planned after the approval, on the order that rendered. A drag after the render
+was approved is not recorded (above). Applies to threads whose first drag set `state.clip_order_dragged`;
+others pay no query at approval.
+
+**Reading the thread.** The card event has its own type, so it closes no open question; its user event is
+`inert` with no content. `request_digest`
+excludes `clip_order_ops` when absent (every existing digest holds), duplicate-send and the simpler-version
+answer keys list it. Guards: `tests/kria/test_clip_order_card.py` (the failure-mode list is its docstring),
+`tests/kria/test_clip_order_card_turns_postgres.py` (real submit, worker and approval; needs a scratch DB,
+`bash scripts/dev/test-db.sh`).
