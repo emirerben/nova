@@ -1408,6 +1408,10 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
                 if key in source and source[key] is not None
             }
         )
+    defaults = set(row)
+    if source is not None and op.get("style_from") is not None:
+        # She named the text to copy; an implicit copy of the title stays a default.
+        defaults -= {key for key in _COPY_STYLE_KEYS if source.get(key) is not None}
     keep_authored_breaks(row)
     if op.get("after_animation_of"):
         row["_after_animation_of"] = op["after_animation_of"]
@@ -1425,6 +1429,10 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
     patch = op.get("patch")
     if isinstance(patch, dict) and patch:
         apply_patch(row, patch)
+        defaults -= set(patch)
+    from app.pipeline.informative_text import mark_default_fields  # noqa: PLC0415
+
+    mark_default_fields(row, defaults, state.variant.get("phone_text_style"))
     if isinstance(op.get("research"), dict):
         row["source_params"] = {**(row.get("source_params") or {}), "research": op["research"]}
     state.text.append(row)

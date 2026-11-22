@@ -23,6 +23,8 @@ POLICY_KEY = "informative_text_designs"
 CREATOR_FIELDS_KEY = "creator_style_fields"
 DESIGN_FIELDS_KEY = "design_style_fields"
 DESIGN_ID_KEY = "text_design"
+# Fields a chat ``add_text`` filled from its own defaults, not from her words.
+DEFAULT_FIELDS_KEY = "default_style_fields"
 HOOK_ROLE = "hook"
 RESEARCH_ROLE = "research"
 
@@ -100,6 +102,14 @@ def _same(a: Any, b: Any) -> bool:
     return a == b
 
 
+def mark_default_fields(row: dict, fields: Iterable[str], policy: object) -> None:
+    """On a stamped job, note which of a new row's style fields are only defaults, so the Save
+    that commits it does not make them hers (KRI-1584: the Playfair default stays a default)."""
+    defaults = sorted(set(fields) & set(STYLE_FIELDS))
+    if policy_enabled(policy) and defaults:
+        row["source_params"] = {**(row.get("source_params") or {}), DEFAULT_FIELDS_KEY: defaults}
+
+
 def record_creator_edits(previous: Iterable[dict], rows: list[dict]) -> list[dict]:
     """Mark the style fields each saved row changed against the row it replaces.
 
@@ -113,7 +123,12 @@ def record_creator_edits(previous: Iterable[dict], rows: list[dict]) -> list[dic
             continue
         prior = before.get(row.get("id"))
         if prior is None:
-            changed = {field for field in STYLE_FIELDS if row.get(field) is not None}
+            defaults = set((row.get("source_params") or {}).get(DEFAULT_FIELDS_KEY) or [])
+            changed = {
+                field
+                for field in STYLE_FIELDS
+                if row.get(field) is not None and field not in defaults
+            }
         else:
             changed = {
                 field for field in STYLE_FIELDS if not _same(row.get(field), prior.get(field))

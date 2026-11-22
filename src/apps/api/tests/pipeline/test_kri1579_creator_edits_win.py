@@ -227,3 +227,100 @@ def test_design_fields_beat_preferences_and_never_her_fields():
     assert styled["font_family"] == "Inter"
     assert styled["shadow_enabled"] is True
     assert styled["color"] == "#00FF00"
+
+
+@pytest.mark.parametrize("stamped", [False, True])
+def test_a_real_guided_save_persists_her_fields_on_the_revision_and_the_variant(
+    monkeypatch, stamped
+):
+    """Through `prepare_editor_commit` (the iPhone Save and a chat draft's commit) on a guided
+    story, the same path the Kyoto job saved through."""
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+    from tests.routes.test_editor_commit import _arm, _narrated_guided_job
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    job = _narrated_guided_job()
+    variant = job.assembly_plan["variants"][0]
+    variant[PHONE_TEXT_STYLE_FIELD] = _policy(stamped=stamped)
+    revision = gj._guided_v2_revision(job, variant)
+    elements = copy.deepcopy(revision["text_elements"])
+    edited_id = elements[0]["id"]
+    elements[0].update(color="#FFF0A6", font_family="Montserrat Bold")
+    gj.prepare_editor_commit(
+        job,
+        variant["variant_id"],
+        gj.EditorCommitRequest(
+            base_generation=revision["base_generation"],
+            guided_revision_number=1,
+            text_elements=elements,
+        ),
+    )
+    saved_variant = job.assembly_plan["variants"][0]
+    for rows in (
+        saved_variant["guided_edit_revision"]["text_elements"],
+        saved_variant["text_elements"],
+    ):
+        row = next(row for row in rows if row["id"] == edited_id)
+        fields = (row.get("source_params") or {}).get(CREATOR_FIELDS_KEY)
+        if stamped:
+            assert fields == ["color", "font_family"]
+        else:
+            assert not fields
+        untouched = [r for r in rows if r["id"] != edited_id]
+        assert all(not (r.get("source_params") or {}).get(CREATOR_FIELDS_KEY) for r in untouched)
+
+
+def test_a_chat_add_text_makes_only_the_style_she_named_hers(monkeypatch):
+    """ "Add 'Hi' in red": the colour is hers; the font, size and spot it copied from the title
+    (or the Playfair default) stay automatic, so the resolver may still pick them."""
+    import app.routes.generative_jobs as gj
+    from app.config import settings
+    from app.services.kria_editor_ops import compile_editor_ops
+    from tests.routes.test_editor_commit import _arm, _narrated_guided_job
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    job = _narrated_guided_job()
+    variant = job.assembly_plan["variants"][0]
+    variant[PHONE_TEXT_STYLE_FIELD] = _policy(stamped=True)
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "add_text",
+                "text": "Hi",
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "patch": {"color": "#FF0000"},
+            }
+        ],
+    )
+    saved = gj._record_creator_text_edits(job, variant, compiled.payload.text_elements)
+    (added,) = [row for row in saved if str(row["id"]).startswith("kria-")]
+    assert added["source_params"][CREATOR_FIELDS_KEY] == ["color"]
+    assert "font_family" in added["source_params"]["default_style_fields"]
+
+
+def test_every_design_level_is_a_drawable_text_row():
+    """The registry names registry fonts and valid row values, and matches the Phase 0 targets."""
+    from app.agents._schemas.text_element import _ALLOWED_FONTS, TextElement
+    from app.pipeline.text_designs import TEXT_DESIGNS
+
+    targets = _load("expected_rows.json")["target"]["designs"]
+    for design in TEXT_DESIGNS.values():
+        for name in ("hook", "heading", "detail"):
+            level = getattr(design, name)
+            if level is None:
+                continue
+            assert level.font_family in _ALLOWED_FONTS, (design.id, name)
+            TextElement.model_validate(
+                {"id": "x", "text": "t", "start_s": 0, "end_s": 1, **level.style_values()}
+            )
+        if "hook_size_px" in targets[design.id]:
+            assert design.hook.size_px == targets[design.id]["hook_size_px"]
+    assert TEXT_DESIGNS["B1"].detail.size_px == targets["B1"]["line_size_px"]
