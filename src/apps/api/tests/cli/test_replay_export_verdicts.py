@@ -6,7 +6,10 @@ Failure modes, written before the command:
   be an upper bound there (the stored evidence cannot say the window was on the grid);
 - a window stored as off the grid is flagged anyway;
 - a report with no per-sample evidence (before v4) is counted as replayed and clean;
-- an already rejected report, or a repair's report, is skipped or counted twice;
+- a picture window that passed inside a report rejected for its text or audio is
+  skipped, though it is real evidence of what the rule does to a correct window;
+- a window that already failed is counted as a flip, or a repair's report is skipped
+  or counted twice;
 - the fetch stops early, keeps jobs that never rendered on a phone, or swallows a
   failed request and reports a clean replay of half the jobs.
 """
@@ -34,11 +37,19 @@ def _sample(displayed, following):
 ON_DISPLAYED, ON_NEXT, ON_EITHER = _sample(MATCH, MISS), _sample(MISS, MATCH), _sample(MATCH, MATCH)
 
 
-def _report(samples, *, status="checked", version="phone-simple-cut-v5", lead_next=-0.2, **more):
+def _report(
+    samples,
+    *,
+    status="checked",
+    picture="passed",
+    version="phone-simple-cut-v5",
+    lead_next=-0.2,
+    **more,
+):
     picture = {
         "kind": "picture",
         "clip_id": "c0",
-        "status": "passed" if status == "checked" else "failed",
+        "status": picture,
         "samples": len(samples),
         "neighbour_samples": sum(sample is ON_NEXT for sample in samples),
         "lead_next": lead_next,
@@ -86,9 +97,14 @@ def test_a_stored_grid_makes_the_replay_exact():
     assert (off_grid["verdict"], off_grid["grid"]) == ("holds", "off")
 
 
-def test_a_correct_window_holds_and_a_rejected_report_is_not_a_flip():
-    rows = cli.replay(_job(_report(CORRECT), _report(LATE, status="rejected")))
-    assert [row["verdict"] for row in rows] == ["holds", "already_rejected"]
+def test_a_correct_window_holds_and_a_window_that_already_failed_is_not_a_flip():
+    rows = cli.replay(_job(_report(CORRECT), _report(LATE, status="rejected", picture="failed")))
+    assert [row["verdict"] for row in rows] == ["holds", "already_failed"]
+
+
+def test_a_passed_window_inside_a_report_rejected_for_other_checks_is_replayed():
+    (row,) = cli.replay(_job(_report(LATE, status="rejected")))
+    assert (row["verdict"], row["report_status"]) == ("flips", "rejected")
 
 
 def test_a_report_without_sample_evidence_is_not_replayable():
@@ -150,7 +166,7 @@ def test_command_exits_non_zero_when_a_checked_report_flips(tmp_path, capsys):
     assert cli.main([str(tmp_path)]) == 1
     printed = capsys.readouterr().out
     assert "flips: 1" in printed and "holds: 1" in printed
-    assert "job c0 no_sample_holds_displayed_frame" in printed
+    assert "job c0 no_sample_holds_displayed_frame (report checked" in printed
 
     (tmp_path / "late.json").unlink()
     assert cli.main([str(tmp_path)]) == 0

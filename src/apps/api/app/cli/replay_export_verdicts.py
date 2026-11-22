@@ -10,14 +10,16 @@ Run before a verifier bump ships, to see which `checked` reports the new rule re
 
 The rule reads stored per-sample evidence, so no media is needed. A report from before
 v6 did not store whether a window was on the source frame grid; the rule applies only
-there, so such a flip is an upper bound (`grid unknown`). Exit 1 when a checked report
-flips.
+there, so such a flip is an upper bound (`grid unknown`). Every picture window that
+passed is replayed, also inside a report rejected for its text or audio. Exit 1 when a
+passed window flips.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -51,12 +53,13 @@ def replay(job: dict) -> list[dict]:
                 "job_id": job.get("job_id"),
                 "clip_id": check.get("clip_id"),
                 "verifier_version": report["verifier_version"],
+                "report_status": report.get("status"),
                 "grid": {True: "on", False: "off"}.get(check.get("on_source_grid"), "unknown"),
                 "reason": None,
             }
             samples = check.get("sample_evidence")
-            if report.get("status") != "checked":
-                row["verdict"] = "already_rejected"
+            if check.get("status") != "passed":
+                row["verdict"] = "already_failed"
             elif not samples or check.get("lead_next") is None:
                 row["verdict"] = "not_replayable"
             else:
@@ -110,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--since", default="2026-10-01", help="oldest job date to fetch")
     parser.add_argument("--admin", type=Path, default=REPO_ROOT / "scripts" / "admin.py")
     args = parser.parse_args(argv)
+    # The verifier module imports server settings but this command never connects to
+    # storage or a database; mirror verify_device_export's inert defaults.
+    os.environ.setdefault("STORAGE_BUCKET", "offline-export-replay")
+    os.environ.setdefault("DATABASE_URL", "postgresql://localhost/unused")
     if args.fetch:
         kept = fetch(_admin(args.admin, args.prod), since=args.since, out=args.reports)
         print(f"fetched {kept} phone-rendered jobs since {args.since}")
@@ -120,13 +127,13 @@ def main(argv: list[str] | None = None) -> int:
     ]
     counts = Counter(row["verdict"] for row in rows)
     print(f"picture checks: {len(rows)}")
-    for verdict in ("holds", "flips", "already_rejected", "not_replayable"):
+    for verdict in ("holds", "flips", "already_failed", "not_replayable"):
         print(f"{verdict}: {counts[verdict]}")
     for row in rows:
         if row["verdict"] == "flips":
             print(
                 f"  {row['job_id']} {row['clip_id']} {row['reason']} "
-                f"({row['verifier_version']}, grid {row['grid']})"
+                f"(report {row['report_status']}, {row['verifier_version']}, grid {row['grid']})"
             )
     return 1 if counts["flips"] else 0
 

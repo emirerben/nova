@@ -4350,6 +4350,18 @@ Rollout follows the v3 boundary above: v4 is forward-only. A request pinned to v
 
 Rollout follows the v3 boundary above: v5 is forward-only. A request pinned to v4 accepts a v5 report; a v5 pin never accepts a v4 report. Each picture check stores `profile_samples`, `mean_local_ssim`, `lead_previous` and `lead_next`; read them with `GET /admin/jobs/{id}/export-verification`. Guards: `tests/integration/test_actual_export_verification.py` (KRI-1042 frame profile section).
 
+## Actual-export verifier v6 late-window rule (KRI-831)
+
+`phone-simple-cut-v6` changes one thing: when a clip window counts as one frame late. Sample pass rules, text, audio and duration are the same as v5, and every window v5 rejects, v6 rejects.
+
+- **The hole.** Since v3 a window on the source frame grid failed only when every sample needed its next source frame. A 30 fps proxy of a 25 fps original shows every sixth picture twice. A sample that lands there matches the displayed frame and the next one, v5 counted it as in place, and the rule never fired. A sample on slow footage did the same. With a sharp proxy a one-frame-late export was accepted in 5 of 6 timing phases.
+- **The rule.** A sample proves timing only when it matches the displayed frame and not a different next one. A sample that matches both, or has no next frame, says nothing. A window on the grid now also fails (`reason: no_sample_holds_displayed_frame`) when some sample needed the next frame, no sample proves timing, and the next frame scores higher than the displayed one on average (`lead_next` below 0). The average keeps near-still footage passing, where noise tips single samples.
+- **Unchanged.** Off the grid a correct export legitimately needs next frames (KRI-810), so the rule still applies only on the grid. An all-next window still fails with `whole_window_neighbour_shift`.
+- **Known gap.** Footage so slow that every sample matches both frames (a slow zoom, a still) cannot show a one-frame shift. A late export of it passes, as in v5.
+- **Replay before the next bump.** The rule is a function of stored evidence (`_late_window`). `python -m app.cli.replay_export_verdicts --fetch --prod --since <date> <dir>` reads stored reports (GET only) and lists every `checked` report the current rule would reject; it exits 1 when one flips. Reports from before v6 do not say whether a window was on the grid, so a flip there is an upper bound. Calibration: [kri-831-late-window](../reviews/kri-831-late-window.md).
+
+Rollout follows the v3 boundary above: v6 is forward-only. A request pinned to v5 accepts a v6 report; a v6 pin never accepts a v5 report. Each picture check stores `on_source_grid`; read it with `GET /admin/jobs/{id}/export-verification`. Guards: `tests/integration/test_actual_export_verification.py` (late-window section), `tests/cli/test_replay_export_verdicts.py`.
+
 ## Freeze frames (KRI-828)
 
 "Freeze the frame for one second on Atakan's bite" on a phone montage renders a real hold.
