@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-15-research-22",
+  "version": "2026-11-22-research-23",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. PERSONA_PROMPT_VERSION and CONTENT_PLAN_PROMPT_VERSION are fingerprints of this file; bumping `version` still requires bumping IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -269,6 +269,30 @@
       "provenance": "corpus",
       "evidence": "In our Nov 2026 fetched wellness-founder set, one short granola-bowl post framed around returning to routines after a holiday indexed ~528x the account median at 10.2M views. Single-post observation; no causal effect or typical performance uplift is established",
       "source": "tiktok market research 2026-11-15 (wellness-founder account)"
+    },
+    {
+      "id": "iceberg-reveal-subtext-corpus-18",
+      "factor": "Show only the visible outcome and name the hidden dimension in the caption — 'the [visible part] of [the thing you're not saying]' — rather than explaining the full story",
+      "why": "Hypothesis: naming a surface moment while implying a deeper private reality may prompt viewers to project their own version onto the content. Observation is single-post and caption-derived only; no causal engagement effect is isolated",
+      "applies_to": [
+        "hook",
+        "plan"
+      ],
+      "provenance": "corpus",
+      "evidence": "In our Nov 2026 fetched lifestyle-educator set, a candid one-shot moment captioned as 'the visible part of the iceberg' (literal translation) indexed ~2.3x the account median. Modest outperformance; mentioned here as a testable framing device alongside the creator's stronger performers",
+      "source": "tiktok market research 2026-11-22 (lifestyle-educator account)"
+    },
+    {
+      "id": "lifestyle-tutorial-educator-corpus-19",
+      "factor": "Frame how-to lifestyle content as 'the [thing] done right' rather than a product recommendation — position yourself as the guide who already mastered the ritual, not the reviewer who tried it",
+      "why": "Hypothesis from two posts: a 101-style tutorial and a styling-equivalent post both outperformed the creator's baseline while keeping a teaching-not-pitching tone. The authority framing may invite saves more than the review framing; not isolated from other variables",
+      "applies_to": [
+        "plan",
+        "persona"
+      ],
+      "provenance": "corpus",
+      "evidence": "In our Nov 2026 fetched lifestyle-educator set, a 130s matcha preparation tutorial framed as 'how to actually make [ritual] right' indexed ~2.0x the account median; a styling-equivalent post indexed ~1.2x. Both outperformed their baseline; causal effects of the educator framing are not isolated",
+      "source": "tiktok market research 2026-11-22 (lifestyle-educator account)"
     }
   ]
 }
