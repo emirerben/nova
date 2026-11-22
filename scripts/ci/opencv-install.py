@@ -10,7 +10,9 @@ disk. Standard library only: it runs inside the production image.
     python scripts/ci/opencv-install.py --require opencv-contrib-python
     python scripts/ci/opencv-install.py --only opencv-contrib-python   # after a pip install
 
-`--only` is for pip, which cannot leave a requirement out: it removes every
+`--only` is for a fresh pip install (an image layer, a CI job). pip cannot leave
+a requirement out, and a later plain `pip install` in the same environment
+brings the removed distribution back, on top. It removes every
 OpenCV distribution and installs the named one again, alone, at the version
 that was installed, then checks the files against its record. It does not
 load `cv2` (some jobs that install the API have no libGL); `--require` does,

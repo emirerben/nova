@@ -45,9 +45,13 @@ dependencies = [
     # sampler, thumbnails). scenedetect requires `opencv-python`; it runs on
     # this `cv2`, and that requirement is left out:
     # - uv (CI, the lock): `[tool.uv] exclude-dependencies` below;
-    # - pip (the production image, a few workflows, `make api-install-dev`):
+    # - pip (the production image and a few workflows, each a fresh install):
     #   pip cannot leave a requirement out, so each runs
     #   `scripts/ci/opencv-install.py --only opencv-contrib-python` afterwards.
+    #   A local pip venv is not repaired: the next plain `pip install` would
+    #   bring `opencv-python` back and write it on top (no CascadeClassifier).
+    #   Check one with `python scripts/ci/opencv-install.py --require
+    #   opencv-contrib-python`.
     # Guards: scripts/ci/test_api_lock.py, and docker-build.yml on the image.
     "scenedetect>=0.6",
     "opencv-contrib-python>=4.9",

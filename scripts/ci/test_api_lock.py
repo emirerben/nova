@@ -17,8 +17,8 @@
   - a dependency that requires another OpenCV distribution by name
     (scenedetect requires `opencv-python`), unless pyproject.toml excludes it;
   - a place that installs with pip, which ignores that exclusion: the
-    production image and four workflows. Each must run
-    `scripts/ci/opencv-install.py --only` after its install;
+    production image and five workflows. Each installs once into a fresh
+    environment and must run `scripts/ci/opencv-install.py --only` afterwards;
   - the check after the locked install is dropped, so a wrong `cv2` is found
     by whichever test happens to need the missing function.
 """
@@ -36,12 +36,15 @@ OPENCV = "opencv-contrib-python"
 class ApiLockTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.packages = tomllib.loads((REPO / "src/apps/api/uv.lock").read_text())["package"]
+        cls.packages = tomllib.loads((REPO / "src/apps/api/uv.lock").read_text())[
+            "package"
+        ]
         cls.action = (REPO / ".github/actions/api-env/action.yml").read_text()
 
     def test_no_gpu_wheels_are_locked(self):
         gpu = sorted(
-            p["name"] for p in self.packages
+            p["name"]
+            for p in self.packages
             if p["name"].startswith(("nvidia-", "cuda-")) or p["name"] == "triton"
         )
         self.assertEqual(gpu, [])
@@ -49,9 +52,13 @@ class ApiLockTests(unittest.TestCase):
     def test_torch_and_torchvision_come_from_the_cpu_index_on_linux(self):
         for name in ("torch", "torchvision"):
             linux = [
-                p for p in self.packages
+                p
+                for p in self.packages
                 if p["name"] == name
-                and any("sys_platform == 'linux'" in m for m in p.get("resolution-markers", []))
+                and any(
+                    "sys_platform == 'linux'" in m
+                    for m in p.get("resolution-markers", [])
+                )
             ]
             self.assertEqual(len(linux), 1, name)
             self.assertEqual(linux[0]["source"], {"registry": CPU_INDEX}, name)
@@ -59,34 +66,49 @@ class ApiLockTests(unittest.TestCase):
     def test_the_install_step_uses_the_lock_as_written(self):
         self.assertIn("uv sync --frozen", self.action)
         # Nothing is installed on top of the lock.
-        installs = [line.strip() for line in self.action.splitlines() if "pip install" in line]
+        installs = [
+            line.strip() for line in self.action.splitlines() if "pip install" in line
+        ]
         self.assertEqual(installs, [])
 
     def test_the_lock_holds_one_opencv_distribution(self):
-        opencv = sorted(p["name"] for p in self.packages if p["name"].startswith("opencv-"))
+        opencv = sorted(
+            p["name"] for p in self.packages if p["name"].startswith("opencv-")
+        )
         self.assertEqual(opencv, [OPENCV])
 
     def test_the_project_names_that_distribution_and_excludes_the_others(self):
         project = tomllib.loads((REPO / "src/apps/api/pyproject.toml").read_text())
-        named = [d for d in project["project"]["dependencies"] if d.startswith("opencv-")]
+        named = [
+            d for d in project["project"]["dependencies"] if d.startswith("opencv-")
+        ]
         self.assertEqual(len(named), 1, named)
         self.assertTrue(named[0].startswith(OPENCV + ">="), named)
         self.assertEqual(
             sorted(project["tool"]["uv"]["exclude-dependencies"]),
-            ["opencv-contrib-python-headless", "opencv-python", "opencv-python-headless"],
+            [
+                "opencv-contrib-python-headless",
+                "opencv-python",
+                "opencv-python-headless",
+            ],
         )
 
     def test_the_locked_install_is_checked_for_one_opencv(self):
         sync = self.action.index("uv sync --frozen")
-        check = self.action.index(f"scripts/ci/opencv-install.py\" --require {OPENCV}")
+        check = self.action.index(f'scripts/ci/opencv-install.py" --require {OPENCV}')
         self.assertLess(sync, check)
 
     def test_every_pip_install_of_the_api_is_followed_by_the_opencv_repair(self):
         # pip cannot exclude a requirement, so each of these ends with two
         # distributions in cv2/ until the repair runs.
         repair = f"opencv-install.py --only {OPENCV}"
-        installs = re.compile(r"pip install (?:--no-cache-dir )?(?:-e )?(?:\.|['\"]\.\[|-r /tmp/requirements\.txt)")
-        files = [*sorted((REPO / ".github/workflows").glob("*.yml")), REPO / "Dockerfile", REPO / "Makefile"]
+        installs = re.compile(
+            r"pip install (?:--no-cache-dir )?(?:-e )?(?:\.|['\"]\.\[|-r /tmp/requirements\.txt)"
+        )
+        files = [
+            *sorted((REPO / ".github/workflows").glob("*.yml")),
+            REPO / "Dockerfile",
+        ]
         found = 0
         for path in files:
             text = path.read_text()
@@ -96,8 +118,11 @@ class ApiLockTests(unittest.TestCase):
             self.assertEqual(len(repairs), len(positions), path.name)
             for install, fix in zip(positions, repairs):
                 self.assertLess(install, fix, path.name)
-        # The pattern still finds them: the image, four workflows (one twice) and the Makefile.
-        self.assertEqual(found, 8)
+        # The pattern still finds them: the image and five workflows (one twice).
+        # Not the Makefile: a venv that lives on gets `opencv-python` back, on top,
+        # from the next plain pip install, so repairing it once would only move
+        # the problem. Local pip venvs keep their overlap, as before.
+        self.assertEqual(found, 7)
 
     def test_the_built_image_is_checked_for_one_opencv(self):
         build = (REPO / ".github/workflows/docker-build.yml").read_text()
