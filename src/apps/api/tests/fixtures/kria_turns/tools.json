@@ -1159,6 +1159,33 @@
           "title": "ChoiceSelectionIn",
           "type": "object"
         },
+        "ClipOrderOpsIn": {
+          "additionalProperties": false,
+          "description": "The creator's clip order from the order card: the whole order they see, in sequence.\n\nNever refused for being out of date: ``proposal_id`` names the card the creator was looking\nat, and any other id (the order moved since, a clip was added or removed) is rebased by media\nid, not rejected. An id the server does not know, a repeated id or an empty list is ignored.\n``confirm`` is the card's \"use this order\" (the order is marked confirmed). The turn makes no\nmodel call and adds no chat message, only a refreshed ``clip_order_card``.",
+          "properties": {
+            "confirm": {
+              "default": false,
+              "title": "Confirm",
+              "type": "boolean"
+            },
+            "ordered_media_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 200,
+              "title": "Ordered Media Ids",
+              "type": "array"
+            },
+            "proposal_id": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          },
+          "title": "ClipOrderOpsIn",
+          "type": "object"
+        },
         "ClipSelectionAnswerIn": {
           "additionalProperties": false,
           "properties": {
@@ -4912,6 +4939,17 @@
           "minLength": 1,
           "title": "Client Event Id",
           "type": "string"
+        },
+        "clip_order_ops": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClipOrderOpsIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "clip_selection": {
           "anyOf": [

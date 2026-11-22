@@ -1448,7 +1448,7 @@ enum KriaClientProtocolContract {
     /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
     /// 53 (music under speech): a Talking or Voiceover recipe may carry `audio.speech_windows` with a music-role audio track; the
     /// device ducks that track under those windows. Needs `speechDuck`.
-    static let version = 53
+    static let version = 54
     static let header = "X-Kria-Client-Protocol"
 }
 

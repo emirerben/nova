@@ -40,6 +40,7 @@ _STRUCTURED_KEYS = (
     "choice_selection",
     "song_order",
     "song_range",
+    "clip_order_ops",  # the order card's drag is a card answer, not text
     "scope",
     "protected_region",  # KRI-901: a mark answers the mark card
 )

@@ -806,9 +806,11 @@ def _complete_response_turn(
     pinned_spend: dict[str, Any] | None = None,
     conversation_language: str | None = None,
     clip_order_entries: Sequence[Mapping[str, Any]] = (),
+    client_protocol: int | None = None,
 ) -> _Completion:
     """``clip_order_entries`` are the ledger entries a plain reply turn carries (a hand reorder the
-    turn found; `clip_order_ledger`). ``conversation_language`` is the language the model that
+    turn found; `clip_order_ledger`); ``client_protocol`` is the sending build, for the order card
+    those entries earn (`clip_order_card`). ``conversation_language`` is the language the model that
     read the creator's message reported (`PlannedKriaTurn.conversation_language`); stored on the
     thread in this commit, after the lease and revision fences. None keeps the stored language."""
     plan = classify_response_turn(plan, brief_coverage, pinned_refusal)
@@ -904,13 +906,27 @@ def _complete_response_turn(
                 {**receipt, "brief_version": persisted_brief.version, "generation_id": None}
                 for receipt in requirement_receipts
             ]
+        order_card, order_listing = (
+            _clip_order_card_block(
+                db,
+                thread,
+                db.get(PlanItem, thread.active_plan_item_id)
+                if thread.active_plan_item_id is not None
+                else None,
+                clip_order_entries,
+                client_protocol=client_protocol,
+                editable=False,
+            )
+            if clip_order_entries
+            else ({}, None)
+        )
         event = _append_sync_event(
             db,
             thread,
             role="assistant",
             event_type="assistant_response",
             # KRI-815: a drafted script is also readable as prose by clients without the card.
-            content=voiceover_script_content(plan),
+            content=_with_listing(voiceover_script_content(plan), order_listing),
             payload={
                 "turn_id": str(turn.id),
                 "turn_value": plan.turn_value,
@@ -920,6 +936,7 @@ def _complete_response_turn(
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
                 **({"brief_coverage": brief_coverage} if brief_coverage is not None else {}),
                 **_clip_order_payload(clip_order_entries, turn.id),
+                **order_card,
                 **({"clip_question": plan.clip_question} if plan.clip_question else {}),
                 # KRI-374: persisted so the answer can be validated + folded later.
                 **(
@@ -4648,12 +4665,25 @@ def _complete_draft_turn(
             "summary": arguments.summary,
             "context_hash": planned.context_hash,
         }
+        order_card, order_listing = _clip_order_card_block(
+            db,
+            thread,
+            item,
+            planned.clip_order_entries,
+            client_protocol=client_protocol,
+            strategy=(
+                document.strategy if document is not None and document.kind == "strategy" else None
+            ),
+            editable=(
+                document is not None and document.kind == "strategy" and item.current_job_id is None
+            ),
+        )
         draft_event = _append_sync_event(
             db,
             thread,
             role="assistant",
             event_type="draft_applied",
-            content=reply_text,
+            content=_with_listing(reply_text, order_listing),
             payload={
                 "turn_id": str(turn.id),
                 **repair_receipt,
@@ -4666,6 +4696,7 @@ def _complete_draft_turn(
                 "draft_revision": draft.draft_revision,
                 "snapshot_hash": draft.snapshot_hash,
                 **_clip_order_payload(planned.clip_order_entries, turn.id),
+                **order_card,
                 "changes": changes,
                 "can_undo": parent_draft is not None,
                 "receipt_ids": [str(draft_execution.id)],
@@ -5113,6 +5144,85 @@ def _clip_order_payload(entries: Sequence[Mapping[str, Any]], turn_id: uuid.UUID
     from app.services.clip_order_ledger import LEDGER_KEY  # noqa: PLC0415
 
     return {LEDGER_KEY: [{**entry, "turn_id": str(turn_id)} for entry in entries]}
+
+
+def _clip_order_card_block(
+    db,  # noqa: ANN001 - SQLAlchemy sync Session
+    thread: CreationThread,
+    item: PlanItem | None,
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    client_protocol: int | None,
+    strategy: Mapping[str, Any] | None = None,
+    editable: bool = True,
+) -> tuple[dict[str, Any], str | None]:
+    """The event fields and the reply text for the order the creator will see after this turn.
+
+    ``({"clip_order_card": card}, None)`` for a build that shows the strip,
+    ``({}, listing)`` (the order as plain text, to append to the message) for an older build,
+    and ``({}, None)`` when the strip is not shown (fewer than two clips, every position stated
+    by the creator, a draft whose order is not the upload order), the flag is off, or the caller
+    declares no build. Never raises: the card describes the order, it must not break a turn.
+    """
+    from app.services import clip_order_card as card_mod  # noqa: PLC0415
+    from app.services import clip_order_ledger as ledger  # noqa: PLC0415
+
+    if item is None or card_mod.card_gate(client_protocol) == "none":
+        return {}, None
+    try:
+        rows = db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role == "assistant",
+            )
+            .order_by(CreationThreadEvent.sequence)
+        ).all()
+        events = [(role, payload) for role, payload in rows]
+        assignments = [row for row in (item.clip_assignments or []) if isinstance(row, dict)]
+        attachment = list(
+            dict.fromkeys(
+                row["media_id"]
+                for row in assignments
+                if isinstance(row.get("media_id"), str) and row["media_id"]
+            )
+        )
+        new = [
+            entry
+            for entry in (ledger.LedgerEntry.from_payload(raw) for raw in entries)
+            if entry is not None
+        ]
+        state = ledger.current_clip_order(
+            attachment_ids=attachment, entries=(*ledger.fold_clip_order(events), *new)
+        )
+        brief = load_latest_brief_sync(db, thread.id)
+        card = card_mod.build_card(
+            state,
+            assignments,
+            events=events,
+            brief_version=brief.version if brief else 0,
+            applies=card_mod.card_applies(strategy) if strategy is not None else None,
+            groups=ledger.group_words_by_clip(
+                (strategy or {}).get("resolved_clip_intents") if strategy else None
+            ),
+            stated=card_mod.stated_ids(strategy),
+            only=card_mod.played_ids(strategy),
+            editable=editable,
+        )
+    except Exception:  # noqa: BLE001 - the card must never break a turn
+        log.warning("kria_clip_order_card_failed", thread_id=str(thread.id), exc_info=True)
+        return {}, None
+    if not card["shown"]:
+        return {}, None
+    if card_mod.card_gate(client_protocol) == "card":
+        return {card_mod.CARD_KEY: card}, None
+    return {}, card_mod.listing_text(card)
+
+
+def _with_listing(content: str | None, listing: str | None) -> str | None:
+    if listing is None:
+        return content
+    return f"{content}\n\n{listing}" if content else listing
 
 
 def _append_sync_event(
@@ -6113,6 +6223,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     claimed_thread_revision=claimed_thread_revision,
                     conversation_language=planned.conversation_language,
                     clip_order_entries=planned.clip_order_entries,
+                    client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
                     plan=planned.plan,
                     brief_updates=planned.brief_updates,
                     creative_copy_resolution=planned.creative_copy_resolution,
