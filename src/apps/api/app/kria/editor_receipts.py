@@ -497,7 +497,13 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
     fielded = any(name.startswith("caption_") for name in named)
     # KRI-1563: a size ask that names no text or caption ("I'm left small in the corner") can be
     # about the speaker: the corner they sit in is their size on screen.
-    speaker_size = "size" in named and "captions" not in named and not _TEXT_NOUN.search(text)
+    # Only on an edit with no texts: there "smaller" cannot mean a text.
+    speaker_size = (
+        "size" in named
+        and "captions" not in named
+        and not _TEXT_NOUN.search(text)
+        and live_text == 0
+    )
     groups = [
         _Group(
             name,
@@ -928,13 +934,15 @@ def _title_entries(real: Sequence[DiffEntry], field_name: str) -> list[DiffEntry
         if entry.lane == "title" and field_name == "added" and entry.targets[0].after:
             out.append(entry)
         elif entry.lane == "text" and entry.field == field_name:
-            titles = tuple(t for t in entry.targets if t.kind != "label")
+            # A title row; else the one text the turn added (never a label, never one of many).
+            titles = tuple(t for t in entry.targets if t.kind == "title")
+            if not titles and len(entry.targets) == 1 and entry.targets[0].kind != "label":
+                titles = entry.targets
             if titles:
                 out.append(DiffEntry(entry.lane, entry.field, titles, entry.derived))
     return out
 
 
-@functools.lru_cache(maxsize=1)
 def _title_checker_misses() -> frozenset[str]:
     """Every way `_check_title` writes "the title is not the creator's", in each reply language."""
     from app.kria.brief_checks import (  # noqa: PLC0415
