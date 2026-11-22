@@ -1,0 +1,170 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-09-24-v36",
+  "input": {
+    "user_message": "Add sound effects where they fit",
+    "creator_context": "Creator who films talking-to-camera videos about their week.",
+    "item_context": "A single talking-to-camera clip about the week.",
+    "media_context": [
+      {
+        "media_id": "phone-a",
+        "kind": "video",
+        "creator_note": "talking-to-camera clip"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-kri1561-talking",
+      "edit_format": "subtitled",
+      "render_program": "native",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "phone-a",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "asset-f2d8e14e-1cd8-4f4d-a3a0-77f9e4916e46",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-a50ea241-3de3-4c14-bd96-eb6c56135969",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-badc2b4a-7bef-4fc5-922b-144a2f6450ca",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-f242aad8-7351-4d8c-b1d5-8db03d73ea0a",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-38f08657-f124-4f93-91a4-3cf57b29c3a0",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-ebe13fb7-c58d-42ae-a17a-d512816659b0",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-620b084a-778b-41d0-8600-2c59a8496f15",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-be70dc50-cdca-41e3-90c3-6791460ebe43",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-a5bbe972-1424-4040-b758-94e1aff44910",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-8d53ff80-6c2f-484a-bef7-d70c410842a8",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "asset-96168b0d-e5b2-4f32-bd71-e1715c975882",
+          "kind": "image",
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "sfx-pop-1",
+          "kind": "sound_effect",
+          "label": "Pop"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": false,
+          "reason_code": "native_render_required",
+          "reason": "this edit format or audio contract requires the native renderer"
+        },
+        "media_overlays": {
+          "available": true
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "sound_effects cannot render on the iPhone yet"
+        },
+        "reaction_beats": {
+          "available": true
+        },
+        "sfx_ask": {
+          "available": true
+        },
+        "transitions": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "transitions cannot render on the iPhone yet"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "unsupported_on_phone",
+          "reason": "wide_looks cannot render on the iPhone yet"
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "manifest_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "creator_request": "Add sound effects where they fit",
+    "creator_direction": "Talk to camera; keep the whole take."
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"subtitled\", \"audio_strategy\": \"original_audio\", \"render_program\": \"native\", \"target_duration_s\": 45, \"selected_media_ids\": [\"phone-a\"], \"sfx_ask\": {\"request_text\": \"Add sound effects where they fit\", \"max_placements\": 6}, \"rationale\": \"The single talking clip stays whole; the server chooses effect moments from the speech and pauses.\"}, \"summary\": \"I'll keep your take whole and place sound effects where your speech and pauses call for them.\"}}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "subtitled",
+        "audio_strategy": "original_audio",
+        "render_program": "native",
+        "target_duration_s": 45,
+        "selected_media_ids": [
+          "phone-a"
+        ],
+        "sfx_ask": {
+          "request_text": "Add sound effects where they fit",
+          "max_placements": 6
+        },
+        "rationale": "The single talking clip stays whole; the server chooses effect moments from the speech and pauses."
+      },
+      "summary": "I'll keep your take whole and place sound effects where your speech and pauses call for them."
+    }
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "sfx_ask": {
+      "edit_format": "subtitled",
+      "request_text": "Add sound effects where they fit"
+    },
+    "prompt_contains": [
+      "SOUND EFFECTS CHOSEN FOR THE EDIT"
+    ]
+  },
+  "prompt_sha": "unpinned"
+}
