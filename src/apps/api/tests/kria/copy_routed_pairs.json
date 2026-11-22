@@ -2545,6 +2545,26 @@
    "app/kria/planner.py",
    "I can move a clip, swap two clips or undo a reorder once your video is made. Until then your clips stay in the order they are in now.",
    "Bir klibi taşımayı, iki klibin yerini değiştirmeyi ya da bir sıralamayı geri almayı videon hazır olunca yapabilirim. O zamana kadar klipler şu anki sıralarında kalıyor."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll place sound effects where your speech and pauses call for them",
+   "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The finished video has no sound effects",
+   "Bitmiş videoda ses efekti yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I added 1 sound effect",
+   "1 ses efekti ekledim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I added {count} sound effects",
+   "{count} ses efekti ekledim"
   ]
  ],
  "retired": [
