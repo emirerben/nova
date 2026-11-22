@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from app.agents.model_registry import SONNET
+
 from .runners.llm_judge import (
     DEFAULT_PASS_THRESHOLD,
     JudgeError,
@@ -85,6 +87,7 @@ def test_judge_score_passes(tmp_path: Path):
 
     result = judge.score(agent_name="nova.test", agent_input={"x": 1}, agent_output={"y": 2})
 
+    assert client.messages.calls[0]["model"] == SONNET
     assert result.passed
     assert result.avg == 4.5
     assert result.threshold == 3.5

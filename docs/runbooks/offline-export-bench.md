@@ -56,3 +56,19 @@ The command saves the compiled plan, device recipe, native MP4, sampled source m
 The planner receives authored order indices. This baseline measures shot order and duration from the typed brief through native export. Free-text interpretation, editorial ratings and performance on historical creator incidents remain unmeasured.
 
 The [recorded interim score sheet](../reviews/kri-1426/archival-baseline.json) covers Nova main at `781bd6701f` with the benchmark harness added. The run downloaded all six originals and took 52 seconds with cached build products and cost USD 0 in model calls. All 24 requested samples matched. All six samples from the reversed control matched the opposite shot, and both versions lasted four seconds.
+
+## Compare independently rated edits
+
+Use an explicit list of evaluation-cleared final MP4s. The pack may contain any number of distinct exports. Prepare it once with the API Python and a new local directory.
+
+```sh
+src/apps/api/.venv/bin/python scripts/kria/calibrate_export_pack.py prepare review-pack evaluation-exports/*.mp4
+```
+
+The local inventory maps each filename to its SHA-256. Give the human reviewer and grader separate copies of their blank CSV. Each rates the same exports independently on the fifteen edit-feedback dimensions. Leave unreviewed cells empty. Put the completed `human.csv` and `grader.csv` back in the pack and run:
+
+```sh
+src/apps/api/.venv/bin/python scripts/kria/calibrate_export_pack.py compare review-pack > agreement.json
+```
+
+The command rechecks every file hash and reports the number of paired ratings per dimension, the weakest measured dimensions, and the existing overall agreement gate. It makes no model calls. A successful command means the comparison ran. Read `agreement_gate_passed` for its verdict. A pack filled with synthetic labels tests the calculation only.
