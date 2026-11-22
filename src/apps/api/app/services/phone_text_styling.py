@@ -234,10 +234,19 @@ def style_rows(
     )
 
 
+# The agent prompt's rule: script and handwritten faces only for one to three short words.
+SCRIPT_CATEGORIES = frozenset({"script", "handwriting"})
+SCRIPT_MAX_WORDS = 3
+
+
 def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str = "") -> dict:
     from app.agents._model_client import default_client
     from app.agents._runtime import RunContext
-    from app.agents.phone_typography import PhoneTypographyAgent, PhoneTypographyInput
+    from app.agents.phone_typography import (
+        LegacyPhoneTypographyAgent,
+        PhoneTypographyAgent,
+        PhoneTypographyInput,
+    )
     from app.pipeline.informative_text import CREATOR_FIELDS_KEY, authored_fields, policy_enabled
     from app.pipeline.phone_text_style import _covers, coverage_text, text_role
     from app.services.pipeline_trace import record_pipeline_event
@@ -248,15 +257,15 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
     informative = policy_enabled(policy)
     if informative:
         mood = str(policy.get("_footage_mood") or "")
-    roles, decisions = {}, {}
+    roles, decisions, short = {}, {}, {}
     preferences, requested = policy.get("preferences") or {}, policy.get("requested") or {}
     for role in sorted({text_role(row) for row in rows}):
         rule = effective_text_rule(preferences, requested, role)
-        if rule.get("font_family"):
-            decisions[role] = {"font": rule["font_family"], "source": "saved_rule"}
-            continue
         role_rows = [row for row in rows if text_role(row) == role]
         open_rows = [row for row in role_rows if "font_family" not in authored_fields(row)]
+        if rule.get("font_family") and (open_rows or not informative):
+            decisions[role] = {"font": rule["font_family"], "source": "saved_rule"}
+            continue
         if informative and not open_rows:
             mine = any(
                 "font_family" in ((row.get("source_params") or {}).get(CREATOR_FIELDS_KEY) or [])
@@ -283,13 +292,15 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
             continue
         if favorites:
             roles[role]["preferred_fonts"] = favorites
-        if hint := _earlier_font(open_rows, eligible, policy):
+        if hint := _earlier_font(open_rows, eligible):
             roles[role]["hint"] = hint
+        short[role] = all(len(text.split()) <= SCRIPT_MAX_WORDS for text in texts)
     if not roles:
         _record_font_decision(decisions, mood, informative=informative)
         return {}
     try:
-        result = PhoneTypographyAgent(default_client()).run(
+        agent = PhoneTypographyAgent if informative else LegacyPhoneTypographyAgent
+        result = agent(default_client()).run(
             PhoneTypographyInput(
                 roles=roles,
                 mood=mood[:300],
@@ -318,33 +329,58 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
         )
         if not informative:
             return {}
-        # The earlier layer's font, else her first drawable favourite; with neither, the
-        # resolver's own order (the caption face for captions) still decides.
-        fallback = {
-            role: font
-            for role, entry in roles.items()
-            if (font := entry.get("hint") or next(iter(entry.get("preferred_fonts") or []), None))
-        }
+        fallback = _fallback_fonts(roles, short)
         for role in roles:
             decisions[role] = {"font": fallback.get(role), "source": "fallback"}
         _record_font_decision(decisions, mood, informative=informative)
         return fallback
 
 
-def _earlier_font(rows: list[dict], eligible: list[str], policy: dict) -> str | None:
-    """The font an earlier layer chose for these rows, as a hint for the one decision.
+def _fallback_fonts(roles: dict, short: dict) -> dict:
+    """A stamped job's fonts when the pick fails: the earlier layer's font, else her first
+    drawable favourite, never a script or handwritten face on wording longer than a few words.
 
-    A row's own font counts unless the writer marked it a default (the chat ``add_text``
-    Playfair); otherwise the approved proposal's font. Only an eligible font is a hint.
+    Captions get none, and neither does a role with no hint and no favourite: the resolver's own
+    order (the caption face for captions) decides those.
+    """
+    from app.pipeline.font_coverage import _registry
+
+    registry = _registry().get("fonts") or {}
+
+    def readable(font: str, role: str) -> bool:
+        category = str(registry.get(font, {}).get("category") or "")
+        return short[role] or category not in SCRIPT_CATEGORIES
+
+    fallback = {}
+    for role, entry in roles.items():
+        if role == "caption" or not (entry.get("hint") or entry.get("preferred_fonts")):
+            continue
+        hint = entry.get("hint")
+        ranked = [hint] if hint and readable(hint, role) else []
+        ranked += [font for font in entry["preferred_fonts"] if readable(font, role)]
+        ranked += [font for font in entry["eligible_fonts"] if readable(font, role)]
+        if ranked:
+            fallback[role] = ranked[0]
+    return fallback
+
+
+def _earlier_font(rows: list[dict], eligible: list[str]) -> str | None:
+    """The font an earlier writer chose for these rows, as a hint for the one decision.
+
+    Only a chat ``add_text`` row records which of its fields are defaults, so only its font is a
+    known choice, and only when it is not the Playfair default. A guided row's font is a copy of
+    the proposal's, which under a phone policy is a provisional face (``_fit_typography``), and
+    the proposal itself is no hint for the same reason.
     """
     from app.pipeline.informative_text import DEFAULT_FIELDS_KEY
 
     for row in rows:
-        defaults = (row.get("source_params") or {}).get(DEFAULT_FIELDS_KEY) or []
-        if "font_family" not in defaults and row.get("font_family") in eligible:
+        source = row.get("source_params") or {}
+        if DEFAULT_FIELDS_KEY not in source or "font_family" in source[DEFAULT_FIELDS_KEY]:
+            continue
+        if row.get("font_family") in eligible:
             return row["font_family"]
-    proposal = policy.get("_proposal_font")
-    return proposal if proposal in eligible else None
+    return None
 
 
 def _font_traits(roles: dict) -> dict:
@@ -429,9 +465,7 @@ def _scoped_generation(function, job_id, snapshot, *args, **kwargs):
         from app.pipeline.informative_text import policy_enabled
 
         if policy_enabled(policy):
-            proposal = (snapshot.get("guided_edit") or {}).get("approved_proposal") or {}
             policy["_footage_mood"] = footage_mood(snapshot)
-            policy["_proposal_font"] = proposal.get("font_family")
     return function(job_id, snapshot, *args, **kwargs)
 
 

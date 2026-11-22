@@ -1,6 +1,7 @@
 """One bounded font selection per phone generation; layout stays deterministic."""
 
 import json
+from dataclasses import replace
 from typing import ClassVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -31,7 +32,8 @@ class PhoneTypographyInput(BaseModel):
 
 class PhoneTypographyOutput(BaseModel):
     fonts: dict[str, str] = Field(max_length=8)
-    reasons: dict[str, str] = Field(default_factory=dict, max_length=8)
+    # Filled in `parse` from whatever the model sent, so a malformed reason never costs the pick.
+    reasons: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
 
 
 _LEGACY_INSTRUCTIONS = (
@@ -90,7 +92,9 @@ class PhoneTypographyAgent(Agent[PhoneTypographyInput, PhoneTypographyOutput]):
 
     def parse(self, raw_text: str, input: PhoneTypographyInput) -> PhoneTypographyOutput:
         try:
-            output = PhoneTypographyOutput.model_validate(json.loads(raw_text))
+            data = json.loads(raw_text)
+            reasons = data.pop("reasons", None) if isinstance(data, dict) else None
+            output = PhoneTypographyOutput.model_validate(data)
         except (json.JSONDecodeError, ValidationError, TypeError) as exc:
             raise SchemaError("Font selection returned invalid typed output") from exc
         if set(output.fonts) != set(input.roles) or any(
@@ -98,10 +102,16 @@ class PhoneTypographyAgent(Agent[PhoneTypographyInput, PhoneTypographyOutput]):
             for role, font in output.fonts.items()
         ):
             raise SchemaError("Font selection must cover each role using its eligible palette")
-        # A long or stray reason never costs the pick: it is trimmed, not rejected.
-        output.reasons = {
-            role: " ".join(str(reason).split())[:REASON_MAX_CHARS]
-            for role, reason in output.reasons.items()
-            if role in input.roles
-        }
+        if isinstance(reasons, dict):
+            output.reasons = {
+                role: " ".join(reason.split())[:REASON_MAX_CHARS]
+                for role, reason in reasons.items()
+                if role in input.roles and isinstance(reason, str) and reason.strip()
+            }
         return output
+
+
+class LegacyPhoneTypographyAgent(PhoneTypographyAgent):
+    """Unstamped jobs send main's prompt, so their runs log main's prompt version."""
+
+    spec: ClassVar[AgentSpec] = replace(PhoneTypographyAgent.spec, prompt_version="2026-10-13-v2")
