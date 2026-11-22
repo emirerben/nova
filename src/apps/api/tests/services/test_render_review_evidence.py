@@ -3,6 +3,11 @@
 Failure matrix: unowned path/missing proof => no read; replaced generation or
 wrong bytes/size => unavailable; corrupt media/deadline/frame budget => unavailable;
 valid export => actual pinned-byte receipt and bounded timestamped JPEG bytes.
+
+One planned frame, three ways to lose it: the video ended before that time (FFmpeg says
+so itself) => that frame is left out; the decoder could not start, was killed, or failed
+for any other reason => no review at all, never a review of fewer frames than planned;
+a picture written with no timestamp => no review, its time cannot be stated.
 """
 
 import hashlib
@@ -148,6 +153,98 @@ def test_no_decodable_frame_at_all_is_unavailable(video_shorter_than_audio):
     )
     assert result.status == "unavailable"
     assert result.reason == "frame_timestamp_missing"
+
+
+def _starve_frames(monkeypatch, frames):
+    """The real decoder under a process limit it cannot start a thread within."""
+    real = evidence._run
+    roomy = evidence._LIMITED_DECODER
+    starved = roomy.replace("max(128, user_tasks() + 64)", "1")
+    assert starved != roomy
+
+    def run(arguments, deadline):
+        name = arguments[-1].rsplit("/", 1)[-1]
+        monkeypatch.setattr(evidence, "_LIMITED_DECODER", starved if name in frames else roomy)
+        return real(arguments, deadline)
+
+    monkeypatch.setattr(evidence, "_run", run)
+
+
+@pytest.mark.parametrize(
+    "starved", [{"frame-0.jpg"}, {"frame-1.jpg"}, {"frame-0.jpg", "frame-1.jpg"}]
+)
+def test_a_decoder_that_cannot_start_refuses_the_review_not_just_the_frame(
+    local_video, monkeypatch, starved
+):
+    assert evidence._resource_limits_supported(), "Requires non-root Linux hard-limit qualification"
+    basis, _, _ = local_video
+    _starve_frames(monkeypatch, starved)
+    result = evidence.obtain_render_review_evidence(
+        basis, limits=evidence.EvidenceLimits(frame_count=2)
+    )
+    assert (result.status, result.reason, result.bundle) == (
+        "unavailable",
+        "frame_decode_failed",
+        None,
+    )
+
+
+def _fail_second_frame(monkeypatch, outcome):
+    real = evidence._run
+
+    def run(arguments, deadline):
+        if arguments[-1].endswith("frame-1.jpg"):
+            return outcome(arguments)
+        return real(arguments, deadline)
+
+    monkeypatch.setattr(evidence, "_run", run)
+
+
+@pytest.mark.parametrize(
+    ("status", "stderr"),
+    [
+        (-9, b""),
+        (1, b"Conversion failed!"),
+        (234, b"Error opening output file: Invalid argument"),
+        (245, b"Could not open encoder before EOF"),
+    ],
+    ids=["killed", "other-failure", "invalid-argument-elsewhere", "marker-with-another-status"],
+)
+def test_only_the_decoders_own_end_of_video_report_leaves_a_frame_out(
+    local_video, monkeypatch, status, stderr
+):
+    basis, _, _ = local_video
+
+    def fail(arguments):
+        raise subprocess.CalledProcessError(status, arguments, output=b"", stderr=stderr)
+
+    _fail_second_frame(monkeypatch, fail)
+    result = evidence.obtain_render_review_evidence(
+        basis, limits=evidence.EvidenceLimits(frame_count=2)
+    )
+    assert (result.status, result.reason, result.bundle) == (
+        "unavailable",
+        "frame_decode_failed",
+        None,
+    )
+
+
+def test_a_picture_without_a_timestamp_refuses_the_review(local_video, monkeypatch):
+    basis, _, _ = local_video
+
+    def untimed(arguments):
+        Image.new("RGB", (16, 16)).save(arguments[-1], "JPEG")
+        return subprocess.CompletedProcess(arguments, 0, b"", b"frame=    1")
+
+    _fail_second_frame(monkeypatch, untimed)
+    result = evidence.obtain_render_review_evidence(
+        basis, limits=evidence.EvidenceLimits(frame_count=2)
+    )
+    assert (result.status, result.reason, result.bundle) == (
+        "unavailable",
+        "frame_timestamp_missing",
+        None,
+    )
 
 
 @pytest.mark.parametrize(
