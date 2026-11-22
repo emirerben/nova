@@ -1432,7 +1432,9 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
         defaults -= set(patch)
     from app.pipeline.informative_text import mark_default_fields  # noqa: PLC0415
 
-    mark_default_fields(row, defaults, state.variant.get("phone_text_style"))
+    mark_default_fields(
+        row, defaults, (getattr(state, "variant", None) or {}).get("phone_text_style")
+    )
     if isinstance(op.get("research"), dict):
         row["source_params"] = {**(row.get("source_params") or {}), "research": op["research"]}
     state.text.append(row)
