@@ -66,6 +66,9 @@ from tests.services.test_creator_user_song import _song as song_item
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled, _words
 from tests.tasks.test_phone_talking_music_worker import TREATMENT, WORDS, _pin
 
+# Production settings first (`tests/prod_flags.snapshot.json`); each case opens what it tests.
+pytestmark = pytest.mark.usefixtures("prod_profile")
+
 VERIFIED = ["audioMix", "musicBed", "speechDuck"]
 ITEM_ID = str(uuid.uuid4())
 SPOKEN = [(0.5, 1.6), (4.0, 4.6)]
@@ -245,6 +248,23 @@ def test_a_library_song_from_before_keeps_playing_without_an_upload(monkeypatch)
     assert variant["smart_music_treatment"]["track_id"] == TREATMENT["track_id"]
 
 
+def test_the_talking_speech_fingerprint_moves_with_audio_mode():
+    """The premise for keeping a Talking item at `original`: its speech fingerprint (what the
+    creator's cleanup consent is bound to) changes if `audio_mode` does."""
+    from app.services.active_narration_source import resolve_active_narration_source
+    from tests.services.test_active_narration_source import media, request
+
+    take = (media("take.mp4", coverage=0.99),)
+    original, song = (
+        resolve_active_narration_source(
+            request(edit_format="subtitled", audio_mode=mode, clips=take)
+        ).source
+        for mode in ("original", "song")
+    )
+    assert original is not None and song is not None
+    assert original.source_policy_fingerprint != song.source_policy_fingerprint
+
+
 def test_a_talking_items_policy_stays_original_so_its_speech_fingerprint_holds():
     from app.services.speech_cleanup_decision import resolve_next_audio_mode
 
@@ -335,6 +355,19 @@ def test_an_app_build_below_protocol_53_gets_no_song_and_is_told_why(monkeypatch
     )
     assert _song_clips(_recipe(job)) == []
     assert variant["talking_music"]["reason"] == "app_too_old"
+
+
+def test_an_unstamped_or_old_build_without_an_ask_still_records_why_her_song_is_missing(
+    monkeypatch,
+):
+    job, variant, storage = _render(monkeypatch, item=_item(), protocol=None)
+    assert _song_clips(_recipe(job)) == []
+    assert variant["talking_music"] == {
+        "status": "not_played",
+        "reason": "app_too_old",
+        "source": "creator_song",
+    }
+    assert storage.hashed == []
 
 
 def test_flags_off_an_upload_changes_nothing(monkeypatch):
@@ -524,6 +557,59 @@ def test_chat_changes_and_removes_her_song_on_a_talking_edit(monkeypatch, uttera
         language=language,
     )
     assert _song_clips(_recipe(job)) == []
+
+
+@pytest.mark.parametrize(("utterance", "language"), [("no music", "en"), ("müziksiz olsun", "tr")])
+def test_chat_no_music_over_her_song_takes_her_song_off(monkeypatch, utterance, language):
+    item = _item()
+    job, _variant, _storage = _render(monkeypatch, item=item)
+    _snapshot, output, _prompts = _chat_turn(
+        job,
+        item,
+        utterance,
+        [{"op": "remove_music"}],
+        context={"music_library_closed": True},
+        language=language,
+    )
+    assert [op["op"] for op in output.ops] == ["remove_music"]
+    assert _song_clips(_recipe(job)) == []
+    assert job.assembly_plan["variants"][0][talking_music.TALKING_SONG_FIELD] == {"removed": True}
+
+
+@pytest.mark.parametrize(
+    ("utterance", "language"), [("here's my song, add it", "en"), ("şarkımı ekle", "tr")]
+)
+def test_chat_puts_a_song_she_sent_after_the_render_under_her_voice(
+    monkeypatch, utterance, language
+):
+    job, _variant, storage = _render(monkeypatch, item=None)
+    item = _item(generation=11)
+    snapshot, output, [prompt] = _chat_turn(
+        job,
+        item,
+        utterance,
+        [{"op": "set_user_song"}],
+        context={"music_library_closed": True, "uploaded_song": {"duration_s": 120.0}},
+        language=language,
+    )
+    assert snapshot["user_song"]["on_edit"] is False
+    assert "not on this edit yet" in prompt
+    assert [op["op"] for op in output.ops] == ["set_user_song"]
+    clips = _song_clips(_recipe(job))
+    assert clips and {c.volume for c in clips} == {TALKING_LEVEL}
+    assert storage.hashed == [(item.song_gcs_path, "11")]
+
+
+def test_a_talking_save_returns_a_prep_a_chat_turn_can_store(monkeypatch):
+    """The chat Save stores its prep in a JSON column: the item read never rides in it."""
+    import json
+
+    item = _item()
+    job, _variant, _storage = _render(monkeypatch, item=item)
+    prep = _save(job, item=item, user_song={"volume": 0.5})
+    assert "uploaded_song" not in prep
+    json.dumps(prep, default=str)
+    assert item.song_gcs_path not in json.dumps(prep, default=str)
 
 
 @pytest.mark.parametrize(

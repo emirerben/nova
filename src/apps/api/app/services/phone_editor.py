@@ -630,6 +630,8 @@ def _compile_editor_commit(
     variant_id: str,
     prep: dict,
     sfx_catalog_paths: Mapping[str, str] | None,
+    *,
+    uploaded_song: Any | None = None,
 ) -> None:
     """Recompile the staged variant onto the device and pin it (raises on a refusal)."""
     previous = device_status(job, variant_id).request
@@ -670,6 +672,7 @@ def _compile_editor_commit(
             prep=prep,
             previous=previous,
             sfx_catalog_paths=sfx_catalog_paths or {},
+            uploaded_song=uploaded_song,
         )
     elif is_phone_narrated_editor_variant(variant):
         _compile_narrated_editor_commit(
@@ -829,8 +832,12 @@ def prepare_phone_editor_commit(
     sfx_catalog_paths: Mapping[str, str] | None = None,
     creator_brief_binding: dict | None = None,
     learning_sections: set[str] | None = None,
+    uploaded_song: Any | None = None,
 ) -> dict:
-    """``sfx_catalog_paths`` maps a sound-effect catalog id to its
+    """``uploaded_song`` (KRI-1578, a `talking_music.UploadedSongRead`) is what the caller read
+    off the plan item for a Talking song; kept out of the returned prep, which a chat Save stores.
+
+    ``sfx_catalog_paths`` maps a sound-effect catalog id to its
     `SoundEffect.audio_gcs_path` for the phone Talking effects a Save carries
     over without a known storage path (the caller's async catalog read,
     `generative_jobs._phone_subtitled_sfx_paths`; Save itself never queries)."""
@@ -1092,7 +1099,9 @@ def prepare_phone_editor_commit(
         relaxed: list[dict[str, str]] = []
         while True:
             try:
-                _compile_editor_commit(job, staged, variant_id, prep, sfx_catalog_paths)
+                _compile_editor_commit(
+                    job, staged, variant_id, prep, sfx_catalog_paths, uploaded_song=uploaded_song
+                )
                 break
             except (TextPlacementError, AudioChoiceError) as exc:
                 # KRI-736: a MANUAL editor Save is the creator's own choice, so it wins over
@@ -1583,6 +1592,7 @@ def _compile_subtitled_editor_commit(
     prep: dict,
     previous: Any,
     sfx_catalog_paths: Mapping[str, str],
+    uploaded_song: Any | None = None,
 ) -> None:
     """The `resolved_archetype == "subtitled"` counterpart of the guided-story
     branch above: recompile `compile_phone_subtitled_plan` from the committed
@@ -1761,7 +1771,7 @@ def _compile_subtitled_editor_commit(
         and variant_plays_song(variant)
         and _bound_brief_asks_no_music(assembly, prep.get("generation"), variant_id)
     )
-    uploaded = _save_uploaded_song(prep.get("uploaded_song"), variant, previous.recipe)
+    uploaded = _save_uploaded_song(uploaded_song, variant, previous.recipe)
     bed_choice = (
         talking_bed_choice(variant, uploaded, no_music=drop_song, adopt=False)
         if talking_music

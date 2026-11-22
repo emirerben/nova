@@ -5554,15 +5554,25 @@ def _talking_music_bed(
         return _TalkingMusic(song_record=song_record)
     ask = asks_music(brief)
 
-    def missing(reason: str) -> _TalkingMusic:
+    def missing(reason: str, *, own_song: bool = False) -> _TalkingMusic:
+        # Her own song left out is recorded even unasked: she uploaded it for this edit.
         receipt = {"status": talking_music.NOT_PLAYED, "reason": reason}
-        return _TalkingMusic(receipt=receipt if ask is not None else None, song_record=song_record)
+        if own_song:
+            receipt["source"] = talking_music.SOURCE_CREATOR_SONG
+        return _TalkingMusic(
+            receipt=receipt if ask is not None or own_song else None, song_record=song_record
+        )
 
     uploaded = _job_uploaded_song(job_id)
     choice = talking_music.talking_bed_choice(stored, uploaded, no_music=False, adopt=True)
     if choice.song is not None:
         if not speech_duck_planned_for(client_protocol):
-            return missing(talking_music.APP_TOO_OLD)
+            record_pipeline_event(
+                "phone",
+                "talking_music_dropped",
+                {"source": "creator_song", "reason": talking_music.APP_TOO_OLD},
+            )
+            return missing(talking_music.APP_TOO_OLD, own_song=True)
         try:
             bed = _creator_song_bed(choice.song, uploaded)
         except (UnsupportedPhonePlan, ValueError, FileNotFoundError) as exc:
@@ -5571,7 +5581,7 @@ def _talking_music_bed(
                 "talking_music_dropped",
                 {"source": "creator_song", "reason": str(exc)[:200]},
             )
-            return missing(talking_music.SONG_UNAVAILABLE)
+            return missing(talking_music.SONG_UNAVAILABLE, own_song=True)
         receipt = {"status": talking_music.PLAYED, "source": talking_music.SOURCE_CREATOR_SONG}
         return _TalkingMusic(
             bed=bed,

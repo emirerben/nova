@@ -2519,6 +2519,13 @@ def _format_snapshot(snapshot: dict) -> str:
         lines.append("\nYOUR SONG (the creator's own song; change it with set_user_song):")
         if song.get("removed"):
             lines.append("removed in this draft (the camera's own sound plays)")
+        elif song.get("on_edit") is False:
+            # KRI-1578: uploaded, not under this Talking edit yet.
+            lines.append(
+                f"uploaded, not on this edit yet (length="
+                f"{_fmt_round3(_first_number(song, ('duration_s',)))}s): "
+                '{"op":"set_user_song"} puts it on quietly under the voice'
+            )
         else:
             least = _fmt_num(_first_number(song, ("min_window_s",)))
             window = (
@@ -6361,12 +6368,22 @@ def _coerce_payload(
     if name == "remove_music":
         music = snapshot.get("music") if isinstance(snapshot, dict) else None
         current_track_id = music.get("current_track_id") if isinstance(music, dict) else None
+        own_song = snapshot.get("user_song") if isinstance(snapshot, dict) else None
+        # KRI-1578: on a phone Talking edit "no music" also takes her own song off.
+        own_song_on = (
+            "music_library" in (snapshot.get("allowed_op_families") or [])
+            and isinstance(own_song, dict)
+            and own_song.get("on_edit") is not False
+            and not own_song.get("removed")
+        )
         if (
             not isinstance(music, dict)
             or music.get("removable") is False
             or music.get("removed") is True
-            or not isinstance(current_track_id, str)
-            or not current_track_id.strip()
+            or (
+                not (isinstance(current_track_id, str) and current_track_id.strip())
+                and not own_song_on
+            )
         ):
             state.invalid_value()
             return None

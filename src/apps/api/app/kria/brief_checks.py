@@ -3365,6 +3365,9 @@ def _rendered_music(variant: Mapping[str, Any]) -> bool:
     "reference_only"`, `song_reference`) is not in the file, so it is never music here."""
     if variant.get("smart_music_treatment") or variant.get("background_music_treatment"):
         return True
+    own_song = variant.get("talking_song")
+    if isinstance(own_song, Mapping) and own_song.get("removed") is not True:
+        return True  # KRI-1578: her own song under a phone Talking edit
     return bool(variant.get("music_track_id")) and variant.get("music_playback_mode") != (
         "reference_only"
     )

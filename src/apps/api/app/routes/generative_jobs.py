@@ -11790,6 +11790,7 @@ def prepare_editor_commit(
             sfx_catalog_paths=phone_sfx_catalog_paths,
             creator_brief_binding=creator_brief_binding,
             learning_sections=payload.model_fields_set,
+            uploaded_song=uploaded_song,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
 
@@ -14259,7 +14260,6 @@ def _prepare_editor_commit(
         "drawings_override": validated_drawings,
         "speaker_background_touched": speaker_background_touched,
         "speaker_background_override": validated_speaker_background,
-        "uploaded_song": uploaded_song,
         "pending_overlay_camera_rebuild": pending_overlay_camera_rebuild,
         "orientation_override": validated_orientation,
         "landscape_fit_override": validated_landscape_fit,

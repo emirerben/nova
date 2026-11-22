@@ -1082,7 +1082,7 @@ def talking_song_open(job: Any, variant: dict[str, Any]) -> bool:
 def _talking_song_snapshot(variant: dict[str, Any], clip_context: dict[str, Any]) -> dict:
     """The MUSIC block of a phone Talking edit: its song (the stored treatment, never
     ``music_track_id``) and the library songs chat may pick, none while "no music" holds."""
-    from app.services.talking_music import CANDIDATE_LIMIT  # noqa: PLC0415
+    from app.services.talking_music import CANDIDATE_LIMIT, talking_song  # noqa: PLC0415
 
     treatment = variant.get("smart_music_treatment")
     current = treatment.get("track_id") if isinstance(treatment, dict) else None
@@ -1095,7 +1095,8 @@ def _talking_song_snapshot(variant: dict[str, Any], clip_context: dict[str, Any]
     )
     return {
         "swappable": bool(candidates),
-        "removable": current is not None,
+        # KRI-1578: "no music" also takes her own song off (`_op_remove_music`).
+        "removable": current is not None or talking_song(variant) is not None,
         "current_track_id": current,
         "current_track_title": next(
             (row.get("title") for row in candidates if row.get("id") == current), None
@@ -2118,6 +2119,17 @@ def build_editor_snapshot(
         song = user_song_snapshot(job, variant, caps)
         if song is not None:
             snapshot["user_song"] = song
+    addable = (clip_context or {}).get("uploaded_song")
+    if (
+        isinstance(addable, dict)
+        and "music_library" in snapshot["allowed_op_families"]
+        and "user_song" not in snapshot
+    ):
+        from app.agents.editor_ops_v2.user_song import addable_song_snapshot  # noqa: PLC0415
+
+        # KRI-1578: her upload, not on this Talking edit yet; set_user_song puts it on.
+        snapshot["allowed_op_families"] = sorted({*snapshot["allowed_op_families"], "user_song"})
+        snapshot["user_song"] = addable_song_snapshot(addable)
     if "overlay" in families or "visual_media" in families:
         from app.agents.editor_ops_v2.layer_order import layer_order_snapshot  # noqa: PLC0415
 
@@ -3601,6 +3613,16 @@ def _talking_song_variant(variant: dict[str, Any]) -> bool:
 
 def _op_remove_music(state: _DraftState, op: dict[str, Any]) -> None:
     if _talking_song_variant(state.variant):
+        from app.services.talking_music import talking_song  # noqa: PLC0415
+
+        if talking_song(state.variant) is not None:
+            # KRI-1578: "no music" over her own song takes that song off, never just a library
+            # bed that is not playing.
+            state.user_song = {"removed": True}
+            state.changed.add("user_song")
+            state.summary = "Removed your song"
+            if not isinstance(state.variant.get("smart_music_treatment"), dict):
+                return
         state.background_track_id = None
         state.song_changed = True
     else:
