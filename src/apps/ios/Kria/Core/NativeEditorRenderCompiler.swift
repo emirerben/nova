@@ -1774,7 +1774,7 @@ enum NativeEditorRenderError: Error, Equatable {
     }
 
     /// KRI-1581: a row's `scrim` (`top_frac`, `opacity`, `color`) as the layer's gradient. Mirrors the cloud
-    /// `portable_text_layout._stamp_scrim` and `text_overlay.scrim_stops`: transparent at the top, the peak
+    /// `portable_text_layout._stamp_design_paint` and `text_overlay.scrim_stops`: transparent at the top, the peak
     /// opacity at `scrimRampFraction` of the span, flat to the canvas bottom.
     static let scrimRampFraction = 0.6
     private func textScrim(_ value: JSONValue?, canvas: KriaMediaEngine.Canvas) throws -> TextScrim? {
