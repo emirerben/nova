@@ -1103,6 +1103,22 @@
         }
       }
     },
+    "%@, position %lld of %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@, Position %2$lld von %3$lld"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@, %3$lld içinde %2$lld. sıra"
+          }
+        }
+      }
+    },
     "%@, selected" : {
       "localizations" : {
         "de" : {
@@ -2355,6 +2371,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld dakika"
+          }
+        }
+      }
+    },
+    "%lld more clips" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld weitere Clips"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld klip daha"
           }
         }
       }
@@ -4451,6 +4483,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Yapay zekâ kontrolleri yanılabilir. Seçmeden önce çekimlere göz at."
+          }
+        }
+      }
+    },
+    "AI order" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "KI-Reihenfolge"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "AI sırası"
           }
         }
       }
@@ -9050,6 +9098,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Yazı tiplerini, konumunu, rengini veya efektlerini değiştir. “Tüm yazılar’dan” ifadesi, Tüm yazılar seçimini izlediği anlamına gelir."
+          }
+        }
+      }
+    },
+    "Change order" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reihenfolge ändern"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sırayı değiştir"
           }
         }
       }
@@ -19694,6 +19758,22 @@
         }
       }
     },
+    "Kria couldn’t save this order. Try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kria konnte diese Reihenfolge nicht speichern. Versuche es erneut."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kria bu sırayı kaydedemedi. Tekrar dene."
+          }
+        }
+      }
+    },
     "Kria couldn’t send that. Check your connection and try again." : {
       "localizations" : {
         "de" : {
@@ -23098,6 +23178,22 @@
         }
       }
     },
+    "Moved" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verschoben"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Taşındı"
+          }
+        }
+      }
+    },
     "Music" : {
       "comment" : "Tab title in an editor panel",
       "extractionState" : "manual",
@@ -25454,6 +25550,22 @@
         }
       }
     },
+    "Order confirmed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reihenfolge bestätigt"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sıra onaylandı"
+          }
+        }
+      }
+    },
     "Order confirmed: %@" : {
       "localizations" : {
         "de" : {
@@ -25482,6 +25594,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sıra sorusu kapatıldı"
+          }
+        }
+      }
+    },
+    "Order · %lld clips" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reihenfolge · %lld Clips"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sıra · %lld klip"
           }
         }
       }
@@ -30266,6 +30394,22 @@
         }
       }
     },
+    "Remove empty ending" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leeres Ende entfernen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Boş son kısmı kaldır"
+          }
+        }
+      }
+    },
     "Remove footage" : {
       "localizations" : {
         "de" : {
@@ -30486,22 +30630,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sesi kaldır"
-          }
-        }
-      }
-    },
-    "Remove empty ending" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Leeres Ende entfernen"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Boş son kısmı kaldır"
           }
         }
       }
@@ -34157,6 +34285,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Şarkı bilgilerini gösterir"
+          }
+        }
+      }
+    },
+    "Shows this clip larger" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zeigt diesen Clip größer"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu klibi daha büyük gösterir"
           }
         }
       }
@@ -39202,6 +39346,22 @@
         }
       }
     },
+    "The order that plays" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die abgespielte Reihenfolge"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oynayan sıra"
+          }
+        }
+      }
+    },
     "The original AI result is not available yet. Kria will keep checking without starting another AI call." : {
       "localizations" : {
         "de" : {
@@ -40228,6 +40388,22 @@
         }
       }
     },
+    "This clip isn’t on this iPhone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Clip ist nicht auf diesem iPhone"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klip bu iPhone’da yok"
+          }
+        }
+      }
+    },
     "This clip isn’t on this iPhone, so it can’t be marked here." : {
       "localizations" : {
         "de" : {
@@ -40256,6 +40432,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu klip bu iPhone’da değil. Başka bir klip seç."
+          }
+        }
+      }
+    },
+    "This clip won’t fit here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Clip passt hier nicht hin."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu klip buraya sığmıyor."
           }
         }
       }
@@ -41296,22 +41488,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu nesne, render yeteneği kullanılabilir olana kadar salt okunur."
-          }
-        }
-      }
-    },
-    "This clip won’t fit here." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieser Clip passt hier nicht hin."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bu klip buraya sığmıyor."
           }
         }
       }
@@ -44311,6 +44487,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Şuradan yükle"
+          }
+        }
+      }
+    },
+    "Upload order" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Upload-Reihenfolge"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yükleme sırası"
           }
         }
       }
@@ -48395,6 +48587,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bir sonraki kurgun burada olacak."
+          }
+        }
+      }
+    },
+    "Your order" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Reihenfolge"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Senin sıran"
           }
         }
       }

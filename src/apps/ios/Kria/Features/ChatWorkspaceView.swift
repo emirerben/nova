@@ -536,6 +536,8 @@ private struct CreationWorkspaceView: View {
     @State private var finishedEditSuggestionRefresh = 0
     /// Values derived from the transcript, kept between redraws (see `ChatDerivedMemo`).
     @State private var derived = ChatDerivedMemo()
+    /// KRI-1591: the clip-order strip's optimistic order, its one-at-a-time send and its sheet.
+    @StateObject private var clipOrder = ClipOrderCoordinator()
     @State private var hasHistoryBaseline = false
     /// False only while the transcript on screen came from the on-disk cache and the server has not answered yet:
     /// the question cards stay read-only, because a cached "active" question may already be answered elsewhere.
@@ -914,6 +916,55 @@ private struct CreationWorkspaceView: View {
         derived.clipQuestionKey = key
         derived.clipQuestionID = found
         return found
+    }
+
+    /// KRI-1591: the newest clip-order card and the message rows it sits under, folded over the events.
+    private var clipOrderThread: ClipOrderThread {
+        let key = ChatFingerprint.events(events)
+        if derived.clipOrderKey == key { return derived.clipOrder }
+        let folded = ClipOrderThread.fold(events)
+        derived.clipOrderKey = key
+        derived.clipOrder = folded
+        return folded
+    }
+
+    /// The strip sits under the newest message that carries a card and shows the newest card; older carriers
+    /// collapse to one line. Interactive only while the transcript is fresh, the server has not turned cards off,
+    /// and the card says a video does not exist yet.
+    private func clipOrderMode(for message: ChatTranscriptMessage) -> ClipOrderCardMode? {
+        let thread = clipOrderThread
+        guard message.role == .assistant, let card = thread.newest else { return nil }
+        if message.id == thread.anchorMessageID { return currentClipOrderMode(card) }
+        return thread.earlierMessageIDs.contains(message.id) ? .superseded : nil
+    }
+
+    private func currentClipOrderMode(_ card: ClipOrderCard) -> ClipOrderCardMode {
+        let interactive = transcriptIsFresh && capabilities?.clipOrderCards != false && card.editable
+        return .current(card: card, coordinator: clipOrder, interactive: interactive) { order, moved in
+            confirmClipOrder(order: order, moved: moved, card: card)
+        }
+    }
+
+    /// While the approval card is up, the draft message that introduced it is not drawn (the card stands for it), so
+    /// the strip it carries sits directly above that card instead.
+    private var clipOrderStageMode: ClipOrderCardMode? {
+        let thread = clipOrderThread
+        guard let card = thread.newest, let anchor = thread.anchorMessageID,
+              suppressedTimelineMessages.contains(anchor) else { return nil }
+        return currentClipOrderMode(card)
+    }
+
+    /// One `clip_order_ops` turn with the whole order. It is not a chat send: no bubble, no thinking row, no draft
+    /// receipt, and it never waits behind a running turn (the server fences a turn that planned on an older order).
+    private func confirmClipOrder(order: [String], moved: Set<String>, card: ClipOrderCard) {
+        let api = model.api, threadID = project.id
+        clipOrder.confirm(order: order, moved: moved, card: card, transport: .init(
+            revision: { threadRevision },
+            submit: { try await api.submitTurn(threadID: threadID, request: $0) },
+            accepted: { accepted in
+                threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
+                _ = try? await refreshDelta()
+            }))
     }
 
     /// KRI-443: the live plan feed, reduced from the thread's `plan_block` events.
@@ -1458,6 +1509,7 @@ private struct CreationWorkspaceView: View {
                        songRangeMode: songRangeMode(for: message),
                        objectMarkMode: objectMarkMode(for: message),
                        momentOrderMode: momentOrderMode(for: message),
+                       clipOrderMode: clipOrderMode(for: message),
                        replyOptionsMode: replyOptionsMode(for: message),
                        voiceoverScriptMode: voiceoverScriptMode(for: message),
                        answerOwn: { startAnsweringOwn(message) },
@@ -1475,6 +1527,10 @@ private struct CreationWorkspaceView: View {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
             }
         case .stage:
+            if let clipOrderStageMode {
+                ClipOrderStripCard(mode: clipOrderStageMode, media: CreationAttachedMedia.parse(threadState), projectID: project.id)
+                    .id("clip-order-stage-strip")
+            }
             stageContent.id(entry.id)
         case .pendingUpload(let recordID):
             KriaMediaRow(name: uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
@@ -2244,6 +2300,22 @@ private struct CreationWorkspaceView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .presentationBackground(KriaColor.paper)
+        }
+        .sheet(item: $clipOrder.sheet) { seed in
+            ClipOrderSheet(
+                seed: seed, media: CreationAttachedMedia.parse(threadState), projectID: project.id,
+                confirm: { order, moved in
+                    clipOrder.sheet = nil
+                    confirmClipOrder(order: order, moved: moved, card: seed.card)
+                },
+                close: { clipOrder.sheet = nil }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(KriaColor.paper)
+        }
+        .onChange(of: clipOrderThread.newest?.eventID) { _, id in
+            if let id { clipOrder.serverCardChanged(to: id) }
         }
         .fullScreenCover(isPresented: $showsResult) {
             // Chat <-> Editor is a switch, not a page rising from the bottom: the
@@ -3872,6 +3944,8 @@ final class ChatDerivedMemo {
     var feed: PlanBlockFeedState?
     var clipQuestionKey: Int?
     var clipQuestionID: String?
+    var clipOrderKey: Int?
+    var clipOrder: ClipOrderThread = .empty
 }
 
 /// Cheap identity of a transcript: events are append-only, so id and revision say whether any of them changed.
@@ -4035,6 +4109,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
             "agent_assistant_review", "agent_assistant_error", "agent_assistant_render_failed",
             "agent_assistant_execution", "assistant_execution"
         ]
+        // KRI-1591: a clip-order drag is stored as a user event; it is a gesture, never a chat bubble.
+        if event.isClipOrderDrag { return nil }
         if event.eventType == "action_select_format", let format = CreationFormat(event: event) {
             return Self(id: event.id, role: .user, content: format.choiceSentence)
         }

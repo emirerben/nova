@@ -277,6 +277,17 @@ final class CreationChatFixture: @unchecked Sendable {
     /// KRIA_CHAT_MOMENT_ORDER (KRI-723): the open moments question, and whether the first answer was refused / staled.
     private var momentQuestionID: String?
     private var momentRefused = false
+    /// KRIA_CHAT_CLIP_ORDER (KRI-1591): the order the server holds, the order its last card showed, whether the creator
+    /// confirmed it, the bodies it has seen per client event id (a reused id with another body is a 409, like the
+    /// server), and the turn counter the echo mode prints.
+    private var clipOrderIDs: [String] = []
+    private var clipOrderShown: [String] = []
+    private var clipOrderConfirmed = false
+    private var clipOrderTurns = 0
+    private var clipOrderSeen: [String: String] = [:]
+    private var clipOrderLostOnce = false
+    private var clipOrderLostKey: String?
+    private var clipOrderLostDigest: String?
     /// Live plan & review (`KRIA_CHAT_PLAN_REVIEW=1`): the contract-v2 server model (`GET /plan`, scoped turns, undo).
     private let review = ReviewPlanFixture()
     private var reviewEnabled: Bool { ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_REVIEW"] == "1" }
@@ -537,6 +548,9 @@ final class CreationChatFixture: @unchecked Sendable {
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_MOMENT_ORDER"], mode != "off" {
                 capabilities["moment_order_questions"] = true
             }
+            // KRIA_CHAT_CLIP_ORDER (KRI-1591): the first turn is answered with a draft whose message carries the clip-order
+            // card. "caps-off" = the server has the cards switched off (the strip is read-only).
+            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_ORDER"] { capabilities["clip_order_cards"] = mode != "caps-off" }
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
@@ -1082,6 +1096,54 @@ final class CreationChatFixture: @unchecked Sendable {
             }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
+            // KRI-1591: a clip-order drag, answered like the server: no model call, no chat message, never a 409/422 for
+            // state (a stale or odd list is rebased), a reused client event id with another body is the only 409.
+            if parts.last == "turns", let ops = body["clip_order_ops"] as? [String: Any],
+               let clipOrderMode = ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_ORDER"] {
+                let digest = (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                if let seen = clipOrderSeen[turnID] {
+                    if seen == digest { return response(["turn_id": turnID, "thread_revision": revision, "status": "completed"]) }
+                    return response(["problem": ["code": "idempotency_key_reused", "message": "That request id was used with a different body."]], status: 409)
+                }
+                // "lost": the first confirm never gets an answer (the network dropped it); its retry must be the same body.
+                if clipOrderMode == "lost", !clipOrderLostOnce {
+                    clipOrderLostOnce = true; clipOrderLostKey = turnID; clipOrderLostDigest = digest
+                    return nil
+                }
+                if turnID == clipOrderLostKey, digest != clipOrderLostDigest {
+                    return response(["problem": ["code": "idempotency_key_reused", "message": "That request id was used with a different body."]], status: 409)
+                }
+                clipOrderSeen[turnID] = digest
+                clipOrderTurns += 1
+                let asked = (ops["ordered_media_ids"] as? [String] ?? [])
+                let known = Set(clipOrderIDs)
+                var applied = ClipOrderFixture.rebase(asked: asked, current: clipOrderIDs)
+                var rebased = ops["proposal_id"] as? String != ClipOrderFixture.proposal(clipOrderShown) || Set(asked) != known
+                if clipOrderMode == "rebase", clipOrderTurns == 1 { applied = clipOrderIDs; rebased = true }
+                let editable = clipOrderMode != "locked"
+                if editable { clipOrderIDs = applied }
+                clipOrderConfirmed = editable && (ops["confirm"] as? Bool ?? false) && applied == clipOrderIDs
+                let card = ClipOrderFixture.card(ids: clipOrderIDs, previous: clipOrderShown, mode: clipOrderMode, confirmed: clipOrderConfirmed,
+                                                 editable: editable, rebased: rebased)
+                clipOrderShown = clipOrderIDs
+                revision += 1
+                events.append(["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": "user", "event_type": "user_message",
+                               "content": NSNull(), "payload": ["clip_order_ops": ops, "turn_id": turnID], "client_event_id": turnID,
+                               "created_at": "2026-09-10T10:00:00Z"])
+                if clipOrderMode == "error" {
+                    append("assistant_error", text: "You changed the clip order after I prepared this plan, so I cancelled it. Nothing was rendered.",
+                           payload: ["code": "clip_order_changed", "turn_id": turnID, "clip_order_card": card])
+                } else {
+                    revision += 1
+                    events.append(["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": "assistant", "event_type": "clip_order_card",
+                                   "content": NSNull(), "payload": ["clip_order_card": card, "turn_id": turnID], "created_at": "2026-09-10T10:00:00Z"])
+                }
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_ORDER_ECHO"] == "1" {
+                    append("status_update", text: "Got it. order[turn=\(clipOrderTurns) confirm=\(ops["confirm"] as? Bool ?? false) retry=\(turnID == clipOrderLostKey) ids=\(asked.joined(separator: "+"))]")
+                }
+                thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                return response(["turn_id": turnID, "thread_revision": revision, "status": "completed"])
+            }
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SEND_FAILURE"], mode != "lost-response", !sendRefused,
                mode != "offline-structured" || body["song_range"] != nil {
                 sendRefused = true
@@ -1269,6 +1331,17 @@ final class CreationChatFixture: @unchecked Sendable {
                 editorTurnIDs[id] = turnID
                 editorTurnTicks[id] = 0
                 if thoughtsEnabled { thoughtRequestIDs[id] = turnID }
+            } else if runtime == 2, let clipOrderMode = ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_ORDER"] {
+                // KRI-1591: the draft says how the clips are ordered and carries the strip; approval follows.
+                let ids = ClipOrderFixture.ids(mode: clipOrderMode, media: state["media"] as? [[String: Any]] ?? [])
+                clipOrderIDs = ids; clipOrderShown = ids; clipOrderConfirmed = false; clipOrderTurns = 0
+                if clipOrderMode == "two" {
+                    append("draft_applied", text: "Here is a first draft in your upload order.",
+                           payload: ["turn_id": turnID, "draft_id": id, "clip_order_card": ClipOrderFixture.card(ids: ids.reversed(), previous: [], mode: clipOrderMode, confirmed: false, editable: true, rebased: false)])
+                }
+                append("draft_applied", text: "I put your clips in the order you uploaded them.",
+                       payload: ["turn_id": turnID, "draft_id": id, "clip_order_card": ClipOrderFixture.card(ids: ids, previous: [], mode: clipOrderMode, confirmed: false, editable: clipOrderMode != "locked", rebased: false)])
+                append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_MOMENT_ORDER"] != nil {
                 if let answer = body["moment_order"] as? [String: Any] {
                     // Echo exactly what the server received, in the creator's order (the wire shape the UI test pins).
@@ -2358,6 +2431,72 @@ enum VoiceoverScriptUITestFixture {
 /// KRI-723: the moments question the fixture server asks, shaped like `named_moments._question`. One 8 s take
 /// (`fixture-clip`, which has a generated local original): the tray is not in the clip record, the wave matches two
 /// analysed moments equally, the bite is grounded at 5.0-6.5 s.
+/// KRI-1591: the server's clip-order card, shaped like `clip_order_card.build_card` (labels are safe words, never ids).
+enum ClipOrderFixture {
+    static let labels = ["the map video", "the beach", "the sunset", "the dinner"]
+
+    static func ids(mode: String, media: [[String: Any]]) -> [String] {
+        let count = mode == "many19" ? 19 : mode == "many40" ? 40 : 0
+        if count > 0 { return (1...count).map { "clip-\($0)" } }
+        _ = media
+        return ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"]
+    }
+
+    static func label(_ id: String, _ position: Int) -> String {
+        if id.hasPrefix("clip-") { return "scene \(id.dropFirst(5))" }
+        let n = id == "fixture-clip" ? 1 : Int(id.split(separator: "-").last ?? "") ?? position
+        return labels[(n - 1) % labels.count]
+    }
+
+    /// FNV-1a of the order, 16 hex digits: the same order always has the same proposal id.
+    static func proposal(_ ids: [String]) -> String {
+        let hash = ids.joined(separator: "|").utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+        return String(format: "%016llx", hash)
+    }
+
+    /// The server's rebase: the named clips take the sequence in the slots they hold; the rest keep their place.
+    static func rebase(asked: [String], current: [String]) -> [String] {
+        var seen = Set<String>()
+        var named = asked.filter { current.contains($0) && seen.insert($0).inserted }
+        guard !named.isEmpty else { return current }
+        let slots = Set(named)
+        return current.map { slots.contains($0) ? named.removeFirst() : $0 }
+    }
+
+    /// Clips not on the longest common run of the previous and the new order: the minimal set that moved.
+    static func moved(previous: [String], ids: [String]) -> Set<String> {
+        guard !previous.isEmpty else { return [] }
+        var table = Array(repeating: Array(repeating: 0, count: ids.count + 1), count: previous.count + 1)
+        for i in previous.indices { for j in ids.indices {
+            table[i + 1][j + 1] = previous[i] == ids[j] ? table[i][j] + 1 : max(table[i][j + 1], table[i + 1][j])
+        } }
+        var kept = Set<String>(); var i = previous.count, j = ids.count
+        while i > 0, j > 0 {
+            if previous[i - 1] == ids[j - 1] { kept.insert(ids[j - 1]); i -= 1; j -= 1 }
+            else if table[i - 1][j] >= table[i][j - 1] { i -= 1 } else { j -= 1 }
+        }
+        return Set(ids).subtracting(kept)
+    }
+
+    static func card(ids: [String], previous: [String], mode: String, confirmed: Bool, editable: Bool, rebased: Bool) -> [String: Any] {
+        let movedIDs = moved(previous: previous, ids: ids)
+        let creator = !previous.isEmpty && ids != previous
+        let cards = ids.enumerated().map { index, id -> [String: Any] in
+            var card: [String: Any] = ["media_id": id, "position": index + 1, "label": label(id, index + 1), "kind": "video",
+                                       "source": movedIDs.contains(id) ? "creator_drag" : (creator ? "creator_drag" : "server_default"),
+                                       "moved": movedIDs.contains(id)]
+            if mode == "hidden" || mode == "unknown" { card["group"] = NSNull() } else { card["group"] = label(id, index + 1) }
+            if mode == "unknown" { card["source"] = index == 1 ? "future_source" : card["source"]; card["future_field"] = ["x": 1]; card.removeValue(forKey: "group") }
+            return card
+        }
+        var out: [String: Any] = ["version": 1, "proposal_id": proposal(ids), "shown": mode != "hidden", "confirmed": confirmed, "editable": editable,
+                                  "total": ids.count, "cards": cards]
+        if rebased { out["rebased"] = true }
+        if mode == "unknown" { out.removeValue(forKey: "total"); out["future_card_key"] = true }
+        return out
+    }
+}
+
 enum MomentOrderFixture {
     static let keys = ["m-tray", "m-wave", "m-bite"]
     static let duration = 8.0

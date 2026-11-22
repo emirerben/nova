@@ -208,6 +208,8 @@ struct ChatMessageRow: View {
     var objectMarkMode: ObjectMarkCardMode? = nil
     /// KRI-723: how to present `message.momentOrderQuestion`. nil (old server, not a question) = text only.
     var momentOrderMode: MomentOrderCardMode? = nil
+    /// KRI-1591: the clip-order strip under this message (it reads `songOrderMedia` for thumbnails). nil = nothing.
+    var clipOrderMode: ClipOrderCardMode? = nil
     /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
     /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
     var replyOptionsMode: ReplyOptionsMode? = nil
@@ -278,6 +280,9 @@ struct ChatMessageRow: View {
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
                     .accessibilityLabel(String(localized: "Kria: \(shownContent)"))
+                if let clipOrderMode {
+                    ClipOrderStripCard(mode: clipOrderMode, media: songOrderMedia, projectID: projectID)
+                }
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
