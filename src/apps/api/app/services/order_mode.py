@@ -211,6 +211,14 @@ def brief_orders_by_filming_time(brief: Any) -> bool:
     return False
 
 
+def unstated_order_default_on() -> bool:
+    """``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED``: what the creator did not say about the order
+    inside a group they described is the order they added the clips, never a question."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.kria_unstated_order_default_enabled)
+
+
 def confirm_unordered_groups(resolved_intents: Sequence[Any], brief: Any) -> list[Any]:
     """Under a random / any-order or filming-order ask, a described group's inner order is
     that ask.
@@ -232,12 +240,20 @@ def confirm_unordered_groups(resolved_intents: Sequence[Any], brief: Any) -> lis
     marked too. Where a group sits is unchanged, and a group the creator ordered
     (``ordered_members`` true/false) is never touched. Reads the brief's structured key and
     the intents' fields only, never the creator's words.
+
+    Toroko (prod threads 666b996f, de471354): with ``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`` the
+    same marker is written for a described order that names no basis at all ("the map video
+    first, then the train entry, then ..."): the order inside each group was not asked, so it
+    is the order the clips were added (the render contract pins it, see
+    ``creator_render_contract``). Groups the creator ordered, basis intents and one-clip groups
+    are untouched exactly as above.
     """
     intents = list(resolved_intents)
     filmed = brief_orders_by_filming_time(brief)
-    if not filmed and brief_order_mode(brief) is None:
+    defaulted = unstated_order_default_on()
+    if not defaulted and not filmed and brief_order_mode(brief) is None:
         return intents
-    positions = (None, "first", "last") if filmed else (None,)
+    positions = (None, "first", "last") if filmed or defaulted else (None,)
     out = []
     for intent in intents:
         members = {getattr(a, "media_id", None) for a in getattr(intent, "assignments", None) or ()}
