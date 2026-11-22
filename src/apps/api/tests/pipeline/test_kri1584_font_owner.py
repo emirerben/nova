@@ -153,7 +153,7 @@ def test_kyoto_b1_design_font_bypasses_the_agent(monkeypatch):
     assert prompts == []
     assert {row["font_family"] for row in styled} == {"Inter Medium"}
     (decision,) = [data for event, data in events if event == "font_decision"]
-    assert decision["roles"]["research"] == {"font": "Inter Medium", "source": "design"}
+    assert decision["roles"]["research"] == {"fonts": ["Inter Medium"], "source": "design"}
 
 
 def test_a_creator_font_on_every_row_is_hers_not_the_agents(monkeypatch):
@@ -198,3 +198,21 @@ def test_the_proposal_font_reaches_the_one_choice_as_a_hint(monkeypatch):
         proposal_font="Unbounded",
     )
     assert _payload(prompts[0])["roles"]["research"]["hint"] == "Unbounded"
+
+
+def test_a_failed_pick_with_no_favourite_or_hint_leaves_the_resolver_order(monkeypatch):
+    def no_favourites(*, stamped, proposal_font=None, _real=_snapshot):
+        snapshot = _real(stamped=stamped, proposal_font=proposal_font)
+        prefs = snapshot[styling.PHONE_TEXT_STYLE_FIELD]["preferences"]
+        for rule in prefs.values():
+            rule.pop("favorite_fonts", None)
+        return snapshot
+
+    monkeypatch.setattr(f"{__name__}._snapshot", no_favourites)
+    _styled, prompts, events = _generate(
+        monkeypatch, _rows(), stamped=True, answer={"fonts": {"research": "Fraunces"}}
+    )
+
+    assert len(prompts) == 1
+    (decision,) = [data for event, data in events if event == "font_decision"]
+    assert decision["roles"]["research"] == {"font": None, "source": "fallback"}

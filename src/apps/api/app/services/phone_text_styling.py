@@ -263,7 +263,7 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
                 for row in role_rows
             )
             decisions[role] = {
-                "font": role_rows[0].get("font_family"),
+                "fonts": sorted({str(row.get("font_family")) for row in role_rows}),
                 "source": "creator" if mine else "design",
             }
             continue
@@ -318,11 +318,12 @@ def select_fonts(rows: list[dict], policy: dict, *, mood: str = "", job_id: str 
         )
         if not informative:
             return {}
-        # Still one decision: the first eligible font, her favourites first.
+        # The earlier layer's font, else her first drawable favourite; with neither, the
+        # resolver's own order (the caption face for captions) still decides.
         fallback = {
-            role: entry["eligible_fonts"][0]
+            role: font
             for role, entry in roles.items()
-            if entry["eligible_fonts"]
+            if (font := entry.get("hint") or next(iter(entry.get("preferred_fonts") or []), None))
         }
         for role in roles:
             decisions[role] = {"font": fallback.get(role), "source": "fallback"}

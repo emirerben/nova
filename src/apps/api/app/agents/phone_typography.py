@@ -25,7 +25,7 @@ class PhoneTypographyInput(BaseModel):
     mood: str = Field(default="", max_length=300)
     # Omitted when empty, so a job without KRI-1585 sends main's prompt byte for byte.
     fonts: dict[str, FontTraits] = Field(
-        default_factory=dict, max_length=64, exclude_if=lambda value: not value
+        default_factory=dict, max_length=256, exclude_if=lambda value: not value
     )
 
 
