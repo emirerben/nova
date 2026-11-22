@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.91.0] - 2026-11-22
+
+### Changed
+- feat(ios): the draft shows the decided clip order as a strip you can reorder in a sheet, with a larger preview of each clip (KRI-1591) (#2476) <!-- release-pr: 2476 -->
+
 ## [0.89.90.0] - 2026-11-22
 
 ### Changed
