@@ -32,7 +32,7 @@ re-run the workflow. Do not manually patch release files in a feature PR.
 The workflow authenticates as a dedicated GitHub App, never as a contributor.
 Create an app named `nova-release-metadata` with **Contents: Read and write**
 repository permission, no webhooks, and install it
-only on `emirerben/nova`. Add the app to a `main` branch ruleset bypass list;
+only on `Kria-AI/kria`. Add the app to a `main` branch ruleset bypass list;
 keep the existing pull-request approval, CODEOWNERS, and required-check rules
 in force for every other actor.
 

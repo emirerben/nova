@@ -3221,6 +3221,9 @@ def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
         "alignment": "center",
         "position": "middle",
     }
+    from app.pipeline.informative_text import mark_default_fields  # noqa: PLC0415
+
+    mark_default_fields(row, row, (getattr(state, "variant", None) or {}).get("phone_text_style"))
     keep_authored_breaks(row)
     state.text.append(row)
     state.explicit_text_ids.add(str(state.text[-1]["id"]))

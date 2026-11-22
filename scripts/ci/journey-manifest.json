@@ -3986,6 +3986,24 @@
         "src/apps/api/tests/routes/test_phone_talking_music_save.py",
         "src/apps/api/tests/kria/test_talking_music_requests.py"
       ]
+    },
+    {
+      "id": "kri-1585-informative-text",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1585_kyoto/plan.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows_after_editor_save.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/research.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/media_manifest.json",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/expected_rows.json",
+        "src/apps/api/tests/pipeline/test_kri1585_kyoto_fixture.py",
+        "src/apps/api/tests/pipeline/test_kri1579_creator_edits_win.py",
+        "src/apps/api/app/pipeline/informative_text.py",
+        "src/apps/api/app/pipeline/text_designs.py",
+        "scripts/kri1585_kyoto_fixture.py"
+      ]
     }
   ]
 }

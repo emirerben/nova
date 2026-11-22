@@ -1,0 +1,72 @@
+{
+ "_source": "KRI-1585 Phase 0. 'baseline' is what production shipped for job 3930c822 (text_rows.json), the flag-off output every PR must keep byte-identical. 'target' is what INFORMATIVE_TEXT_DESIGNS_ENABLED must produce for this edit, from the approved teardown (round 1) and the KRI-1585 plan. Sizes are px on the 1080x1920 canvas, measured from the teardown stills (docs/reviews/kri-1585/decisions.md).",
+ "baseline": {
+  "row_ids": ["creation-f286f919bed8-0", "creation-f286f919bed8-1", "creation-f286f919bed8-2"],
+  "role": "generative_intro",
+  "text_role": "title",
+  "resolved_title_position": "top",
+  "creator_all_text_position": "bottom_left",
+  "texts": [
+   "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır.",
+   "Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım.",
+   "Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar."
+  ],
+  "windows_s": [[0.0, 9.52], [18.067, 24.887], [40.767, 50.254]],
+  "colors": ["#000000", "#000000", "#FFFFFF"],
+  "size_px": [62, 60, 72],
+  "y_frac": [0.20854, 0.18354, 0.5974],
+  "font_family": "Schibsted Grotesk",
+  "proposal_font_family": "Alte Haas Grotesk",
+  "selected_fonts": {"title": "Schibsted Grotesk"},
+  "shadow_enabled": false,
+  "creator_style_fields": [],
+  "cited_fact_ids": [["fact-6"], ["fact-11"], ["fact-8"]],
+  "clips_with_text": 3,
+  "clips_total": 7
+ },
+ "research": {
+  "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+  "all_fact_ids": ["fact-0", "fact-1", "fact-2", "fact-3", "fact-4", "fact-5", "fact-6", "fact-7", "fact-8", "fact-9", "fact-10", "fact-11", "fact-12", "fact-13", "fact-14", "fact-15"],
+  "facts_given_to_writer": ["fact-1", "fact-6", "fact-8", "fact-11", "fact-12", "fact-15"],
+  "label_grounding": [
+   {"row": "creation-f286f919bed8-0", "label": "Torokko Saga İstasyonu", "in_cited_fact": true},
+   {"row": "creation-f286f919bed8-1", "label": "Kyoto Demiryolu", "in_cited_fact": false, "only_in": ["fact-1"], "note": "The cited fact-11 says only 'Tren'. The label passed because the check searches every fact; fact-1 was given to the writer but not cited by this row."},
+   {"row": "creation-f286f919bed8-2", "label": "Hozukyo Geçidi", "in_cited_fact": false, "only_in": ["fact-6"], "note": "The cited fact-8 never names the gorge; fact-6 is row 0's fact."}
+  ],
+  "dropped_number": {"row": "creation-f286f919bed8-0", "fact": "fact-6", "kept": "7.3", "dropped": "25 dakika"},
+  "train_name_not_in_any_fact": "Sagano Romantik Treni"
+ },
+ "request": {
+  "language": "tr",
+  "asks_for_subtitles": true,
+  "quote": "Bu Kyoto'daki Toroko treni tren hakkında bilgilendirici alt yazı istiyorum",
+  "default_design": "B1"
+ },
+ "target": {
+  "hook": {
+   "first_row": true,
+   "role": "hook",
+   "starts_at_s": 0.0,
+   "teardown_window_s": [0.0, 3.4],
+   "color": "#FFFFFF",
+   "teardown_text": "Kyoto'nun en güzel 25 dakikası",
+   "facts_start_after_s": 4.0
+  },
+  "fact_rows": {
+   "role": "research",
+   "identified_by": "source_params.research",
+   "no_label_colon": true,
+   "cited_fact_holds_every_label_and_number": true,
+   "one_fill_per_level": {"hook": "#FFFFFF", "heading": "#FFE7A0", "detail": "#FFFFFF"},
+   "never_black_on_mixed_footage": true
+  },
+  "designs": {
+   "A1": {"mode": "title_details", "hook_font": "Literata", "hook_size_px": 91, "heading": "tracked caps, #FFE7A0, about 32 px by cap height; font not fitted (looks like Inter)", "detail_font": "Literata", "detail_size_px": 53, "align": "left", "anchor": "bottom_left", "bare_clips": "teardown: 'Mode A (title + details) leaves clips 3 and 4 without text'; index base not verified"},
+   "A2": {"mode": "title_details", "hook_font": "Schibsted Grotesk", "hook_size_px": 98, "heading_font": "Schibsted Grotesk", "heading_size_px": 64, "detail_font": "Inter", "detail_weight": "regular", "detail_size_px": 36, "scrim": "bottom gradient", "align": "left", "anchor": "bottom_left", "bare_clips": "teardown: 'Mode A (title + details) leaves clips 3 and 4 without text'; index base not verified"},
+   "A3": {"mode": "title_details", "hook_font": "Instrument Serif", "hook_size_px": 130, "heading_font": "Instrument Serif", "heading_size_px": 82, "detail_font": "Inter", "detail_size_px": 37, "align": "center", "bare_clips": "teardown: 'Mode A (title + details) leaves clips 3 and 4 without text'; index base not verified"},
+   "B1": {"mode": "running_guide", "hook": "same as A3 in the teardown (b1_still0 is byte-identical to a3_still0)", "line_font": "Inter", "line_weight": "unresolved (Medium fits 51 by width, Bold 49-50; height at half scale cannot separate them)", "line_size_px": 50, "line_size_range_px": [49, 51], "line_color": "#FFFFFF", "shadow": "soft", "align": "center", "one_line_per_clip": true, "covers_every_clip": true, "headings": false}
+  },
+  "hook_widest_line_px": [830, 850],
+  "measurement_tolerance_px": 2
+ }
+}

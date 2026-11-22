@@ -461,6 +461,10 @@
       "source": "default",
       "value": true
     },
+    "informative_text_designs_enabled": {
+      "source": "default",
+      "value": false
+    },
     "ios_device_only_mode": {
       "source": "decisions-md:2026-11-02",
       "value": true

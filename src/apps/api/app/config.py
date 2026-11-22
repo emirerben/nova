@@ -3176,6 +3176,10 @@ class Settings(BaseSettings):
     creator_memory_enabled: bool = False
     # KRI-648: stamped only at dispatch; legacy generations are never restyled.
     phone_text_styling_enabled: bool = False
+    # KRI-1585: informative text designs (hook/research roles, creator > design > prefs style
+    # provenance, the A1/A2/A3/B1 registry). Stamped on the job's phone text policy when it is
+    # created (`pipeline.informative_text.POLICY_KEY`); a job stamped off is byte-identical.
+    informative_text_designs_enabled: bool = False
     # Qendresa case 3 (2026-11-06): a place or colour word in the request styles the text it is
     # written next to, not a role named elsewhere ("Small white text in the middle, no captions"
     # styled the captions and her line stayed at the top), and a pinned brief whose typed

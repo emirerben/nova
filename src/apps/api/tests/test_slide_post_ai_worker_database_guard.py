@@ -5,7 +5,7 @@ import pytest
 from tests.slide_post_ai_worker_database_guard import validate_database_url
 
 PRIVATE = "nova_auto_convergence_ai_20261106_test"
-TRUSTED = {"CI": "true", "GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "emirerben/nova"}
+TRUSTED = {"CI": "true", "GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "Kria-AI/kria"}
 
 
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
@@ -14,18 +14,20 @@ def test_exact_trusted_databases(name, host):
     assert validate_database_url(f"postgresql://test@{host}:5432/{name}", TRUSTED) == name
 
 
-@pytest.mark.parametrize("repository", ["emirerben/nova", "Kria-AI/kria"])
-def test_ci_databases_are_trusted_under_the_old_and_the_renamed_repository(repository):
-    environment = {**TRUSTED, "GITHUB_REPOSITORY": repository}
-    assert validate_database_url("postgresql://localhost/nova_test", environment) == "nova_test"
-
-
 def test_private_database_requires_no_ci_environment():
     assert validate_database_url(f"postgres://localhost/{PRIVATE}", {}) == PRIVATE
 
 
 @pytest.mark.parametrize(
-    "changed", [{}, {"CI": "1"}, {"GITHUB_ACTIONS": "false"}, {"GITHUB_REPOSITORY": "other/nova"}]
+    "changed",
+    [
+        {},
+        {"CI": "1"},
+        {"GITHUB_ACTIONS": "false"},
+        {"GITHUB_REPOSITORY": "other/nova"},
+        # The repository's name until 2026-11-22; anyone can now create a repository there.
+        {"GITHUB_REPOSITORY": "emirerben/nova"},
+    ],
 )
 @pytest.mark.parametrize("name", ["nova_test", "nova_journey_test"])
 def test_ci_names_require_all_exact_trusted_signals(name, changed):

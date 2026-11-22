@@ -677,7 +677,7 @@ To see what the alert would write for any finished run, without changing
 anything:
 
 ```sh
-GITHUB_REPOSITORY=emirerben/nova python3 scripts/ci/nightly-alert.py --dry-run --run-id <run id>
+GITHUB_REPOSITORY=Kria-AI/kria python3 scripts/ci/nightly-alert.py --dry-run --run-id <run id>
 ```
 
 The guard is `scripts/ci/test_nightly_alert.py`: it lists the ways the alert can
