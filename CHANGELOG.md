@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.82.0] - 2026-11-22
+
+### Changed
+- test(ios): the second un-choose test forces the overlap it asserts (KRI-1534) (#2463) <!-- release-pr: 2463 -->
+
 ## [0.89.81.0] - 2026-11-22
 
 ### Changed
