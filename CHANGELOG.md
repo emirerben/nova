@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.81.0] - 2026-11-22
+
+### Changed
+- ci(ios): a full regression holds at most three Macs (KRI-1534) (#2462) <!-- release-pr: 2462 -->
+
 ## [0.89.80.0] - 2026-11-22
 
 ### Changed
