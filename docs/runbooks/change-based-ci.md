@@ -252,9 +252,10 @@ dispatches TestFlight.
 
 A full iOS regression runs at most three of its six legs at a time
 (`max-parallel: 3` in `ios.yml`), so it never holds more than three of the
-account's five hosted Macs. Uncapped, the nightly of 2026-11-21 held all five
-for 65 minutes and two PRs waited 43 and 53 minutes for their iPhone job
-(results after 86 and 88 minutes). The price is a second round: legs 1 to 3
+account's five hosted Macs. Uncapped, the nightly of 2026-11-21 took four Macs
+and then all five; with main's own lane no Mac was free for 65 minutes, and two
+PRs waited 43 and 53 minutes for their iPhone job (results after 86 and 88
+minutes). The price is a second round: legs 1 to 3
 start together, legs 4 and 5 and the Linux contracts leg start as slots free
 up. First capped run (45007886433, manual): never more than three Mac legs at
 once, Mac legs 58 to 74 minutes each. Size the cap from Macs left for PRs, not

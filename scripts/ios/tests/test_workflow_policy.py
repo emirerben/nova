@@ -150,9 +150,9 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
                 self.assertIn(first, condition.split("\n", 2)[1])
 
     def test_full_regression_never_holds_more_than_three_macs(self):
-        """The plan gives five hosted Macs at once. On 2026-11-21 the five nightly
-        legs took all of them for 65 minutes and two PRs waited 43 and 53 minutes
-        for an iPhone job.
+        """The plan gives five hosted Macs at once. On 2026-11-21 the nightly legs
+        and main's own lane kept all of them busy for 65 minutes and two PRs
+        waited 43 and 53 minutes for an iPhone job.
 
         Ways the cap can fail: it is missing; it is above three; it is an
         expression nobody can check offline; it sits on another job; or it is met
