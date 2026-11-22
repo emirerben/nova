@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.75.0] - 2026-11-22
+
+### Changed
+- feat(kria): ask for, swap and remove music on a Talking edit (#2435) <!-- release-pr: 2435 -->
+
 ## [0.89.74.0] - 2026-11-21
 
 ### Changed
