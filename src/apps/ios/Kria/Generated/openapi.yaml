@@ -10356,6 +10356,12 @@
             "default": null,
             "nullable": true
           },
+          "srgb_blend": {
+            "default": null,
+            "nullable": true,
+            "title": "Srgb Blend",
+            "type": "boolean"
+          },
           "staggered": {
             "$ref": "#/components/schemas/StaggeredContent",
             "default": null,
