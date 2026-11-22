@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.76.0] - 2026-11-22
+
+### Changed
+- fix(export-verifier): reject a one-frame-late export when samples match either frame (KRI-831) (#2457) <!-- release-pr: 2457 -->
+
 ## [0.89.75.0] - 2026-11-22
 
 ### Changed
