@@ -809,7 +809,9 @@ Both API-URL build-setting queries use the same cached DerivedData directory as
 compilation. Previously these queries resolved packages through Xcode's default,
 uncached directory before the actual cached build began.
 
-The main push gate seeds the shared cache. `ios.yml` saves the compiled build as
+The main push gate seeds the shared cache (on pushes that start a Mac, and the
+nightly's first leg; a push that changed no iPhone input leaves the previous
+seed, built from the same inputs, in place). `ios.yml` saves the compiled build as
 soon as unit tests pass, before UI execution, so this seed is available earlier.
 PR runs in `ci.yml` only restore it and never save their own: the repo cache is
 capped at 10 GB and was full, and each PR push saved ~0.9 GB that only later
@@ -1151,7 +1153,11 @@ line.
 #### Release and regression cadence (KRI-605)
 
 Main pushes allocate one Mac for build, unit tests, named unit-journey assertions,
-and the smoke UI tripwire. Only a successful main push dispatches TestFlight.
+and the smoke UI tripwire, when an iPhone or TestFlight release input changed
+since the last green push run (KRI-1547; otherwise only the Linux contract leg
+runs). Only a successful main push dispatches TestFlight.
+[Change-based CI](change-based-ci.md#when-a-push-to-main-gets-a-mac-kri-1547)
+has the rule and its rollback.
 Running release lanes are never cancelled by a newer merge; the latest pending
 commit follows. A release no longer retains three Macs for a full regression.
 

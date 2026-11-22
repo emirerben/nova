@@ -6,8 +6,13 @@ ordinary YAML/YAML-ish formatting changes while guarding the security
 boundaries of the release path.
 """
 
+import os
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 
 
@@ -19,6 +24,7 @@ ARCHIVE = ROOT / "scripts/ios/archive-testflight.sh"
 FASTFILE = ROOT / "fastlane/Fastfile"
 APPFILE = ROOT / "fastlane/Appfile"
 WORKFLOW = ROOT / ".github/workflows/testflight.yml"
+RELEASE_INPUTS = ROOT / "scripts/ios/release_inputs.py"
 
 
 def _section(text: str, heading: str, next_heading: str | None = None) -> str:
@@ -149,6 +155,117 @@ class FastlaneTests(unittest.TestCase):
         # lane; keep the assertion coupled to the same release script.
         self.assertRegex(ARCHIVE.read_text(), r"(?i)app[-_ ]store")
         self.assertTrue(APPFILE.is_file(), "missing fastlane/Appfile")
+
+
+class ReleaseInputTests(unittest.TestCase):
+    """TestFlight's eligibility list lives in scripts/ios/release_inputs.py,
+    read by this workflow and by the iOS main-push selector (KRI-1547).
+
+    Ways it can go wrong: the move changes what TestFlight releases; the
+    workflow's shell drops or splits a path, or treats an empty list as
+    "nothing changed"; a failure to read the list is taken as "no release
+    input changed" instead of stopping the release.
+    """
+
+    # What testflight.yml listed inline before KRI-1547. Change it only on
+    # purpose: it decides which main commits become a TestFlight build.
+    BEFORE = (
+        "src/apps/ios",
+        "scripts/ios",
+        ".github/workflows/ios.yml",
+        ".github/workflows/testflight.yml",
+        ".claude/worktrees",
+        "src/apps/api/app/config.py",
+        "src/apps/api/app/services/mobile_auth.py",
+    )
+
+    def setUp(self):
+        self.text = WORKFLOW.read_text()
+
+    def test_the_list_is_the_one_testflight_always_used(self):
+        result = subprocess.run(
+            [sys.executable, str(RELEASE_INPUTS)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(tuple(result.stdout.splitlines()), self.BEFORE)
+
+    def eligibility_block(self):
+        match = re.search(
+            r'(?ms)^( +git show "\$GITHUB_SHA:scripts/ios/release_inputs\.py".*?^ +echo "eligible=true".*?\n +fi\n)',
+            self.text,
+        )
+        self.assertIsNotNone(match, "missing release-input eligibility block")
+        return textwrap.dedent(match.group(1))
+
+    def run_block(self, changed, release_inputs=None):
+        """Run the workflow's own eligibility lines on a scratch repository."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            temp = Path(tmp) / "runner-temp"
+            temp.mkdir()
+            helper = repo / "scripts/ios/release_inputs.py"
+            helper.parent.mkdir(parents=True)
+            helper.write_text(release_inputs or RELEASE_INPUTS.read_text())
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-C", str(repo), *args],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+
+            git("init", "-q")
+            git("config", "user.email", "ci@example.invalid")
+            git("config", "user.name", "CI tests")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            target = repo / changed
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("changed")
+            git("add", "-A")
+            git("commit", "-qm", "change")
+            head = git("rev-parse", "HEAD")
+            output = Path(tmp) / "github-output"
+            output.touch()
+            result = subprocess.run(
+                ["bash", "-c", "set -euo pipefail\n" + self.eligibility_block()],
+                cwd=repo,
+                env={
+                    **os.environ,
+                    "GITHUB_SHA": head,
+                    "HEAD_SHA": head,
+                    "base": base,
+                    "RUNNER_TEMP": str(temp),
+                    "GITHUB_OUTPUT": str(output),
+                },
+                capture_output=True,
+                text=True,
+            )
+            return result, output.read_text()
+
+    def test_the_workflow_reads_the_shared_list_and_decides_from_it(self):
+        for changed, eligible in (
+            ("src/apps/api/app/config.py", "true"),
+            ("src/apps/ios/Kria/App.swift", "true"),
+            ("src/apps/api/app/services/mobile_auth.py", "true"),
+            ("src/apps/api/app/pipeline/render.py", "false"),
+            ("src/apps/ios-tools/x.sh", "false"),
+        ):
+            with self.subTest(changed=changed):
+                result, output = self.run_block(changed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, f"eligible={eligible}\n")
+
+    def test_an_unreadable_or_empty_list_stops_the_release_step(self):
+        for broken in ("raise SystemExit(3)\n", "pass\n"):
+            with self.subTest(broken=broken):
+                result, output = self.run_block("src/apps/ios/Kria/App.swift", broken)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("eligible=", output)
 
 
 class WorkflowTests(unittest.TestCase):

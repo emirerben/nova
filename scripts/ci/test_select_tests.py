@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -339,9 +340,15 @@ class ClassificationTests(unittest.TestCase):
         for path in IOS_NAMED_NOT_READ:
             self.assertIn(path, named, f"stale IOS_NAMED_NOT_READ entry: {path}")
 
-    def test_non_pr_always_full(self):
-        for event in ("push", "workflow_dispatch", None, "merge_group"):
+    def test_non_pr_suites_stay_full_and_only_the_main_push_mac_narrows(self):
+        """Push, nightly and manual runs still select every suite: Linux push
+        CI stays full. KRI-1547 narrows one thing on a push to `main`, the iOS
+        workflow's Mac lane, through `main_push_native` (MainPushMacTests);
+        the PR rule's own helper still answers "changed" for every non-PR run.
+        """
+        for event in ("push", "workflow_dispatch", "schedule", None, "merge_group"):
             self.assertEqual(ci.selection(event, "", "")[0], ALL)
+            self.assertTrue(ci.native_inputs_changed(event, "", ""))
 
     def test_diff_error_falls_back_to_full(self):
         with patch.object(
@@ -947,7 +954,9 @@ class AutomaticUpdateMappingTests(unittest.TestCase):
                 )
 
 
-class GitDiffTests(unittest.TestCase):
+class GitRepoCase(unittest.TestCase):
+    """A throwaway git repository as the working directory."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -993,6 +1002,22 @@ class GitDiffTests(unittest.TestCase):
         self.git("commit", "-qm", "test")
         return self.git("rev-parse", "HEAD")
 
+    def with_real_manifest(self, edit=None):
+        """Commit the repo's own manifest as the base, then one edit of it."""
+        manifest = json.loads((SCRIPT.with_name("journey-manifest.json")).read_text())
+        path = "scripts/ci/journey-manifest.json"
+        self.write(path, json.dumps(manifest, indent=2))
+        self.base = self.commit()
+        if edit:
+            edit(manifest)
+            self.write(path, json.dumps(manifest, indent=2))
+        return manifest
+
+    def row(self, manifest, journey_id):
+        return next(r for r in manifest["journeys"] if r["id"] == journey_id)
+
+
+class GitDiffTests(GitRepoCase):
     def selected(self):
         return ci.selection("pull_request", self.base, self.commit())[0]
 
@@ -1843,20 +1868,6 @@ class GitDiffTests(unittest.TestCase):
         self.assertIn("ios_native=true", lines)
         self.assertIn("native_validation=true", lines)
 
-    def with_real_manifest(self, edit=None):
-        """Commit the repo's own manifest as the base, then one edit of it."""
-        manifest = json.loads((SCRIPT.with_name("journey-manifest.json")).read_text())
-        path = "scripts/ci/journey-manifest.json"
-        self.write(path, json.dumps(manifest, indent=2))
-        self.base = self.commit()
-        if edit:
-            edit(manifest)
-            self.write(path, json.dumps(manifest, indent=2))
-        return manifest
-
-    def row(self, manifest, journey_id):
-        return next(r for r in manifest["journeys"] if r["id"] == journey_id)
-
     def test_a_linux_journey_row_edit_runs_that_journey_the_api_suite_and_no_mac(self):
         self.with_real_manifest(
             lambda m: self.row(m, "kri-577-reliability-gates")["paths"].append(
@@ -2010,6 +2021,452 @@ class GitDiffTests(unittest.TestCase):
         self.assertIn("ios: run", summary.read_text())
         self.assertIn("Export/OCR unit proofs: skipped", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())
+
+
+
+# Stands in for `gh api` in MainPushMacTests: serves recorded run history per
+# workflow file, logs every call, and fails like the real CLI on "error".
+FAKE_GH = """#!PYTHON
+import json, os, re, sys
+
+with open(os.environ["FAKE_GH_LOG"], "a") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+endpoint = next(arg for arg in sys.argv[1:] if "/actions/workflows/" in arg)
+workflow = re.fullmatch(
+    r"repos/[^/]+/[^/]+/actions/workflows/([^/]+)/runs", endpoint
+).group(1)
+with open(os.environ["FAKE_GH_HISTORY"]) as history:
+    answer = json.load(history).get(workflow, [])
+if answer == "error":
+    sys.exit("gh: HTTP 502 (fake API failure)")
+if isinstance(answer, str):
+    print(answer)
+else:
+    print(json.dumps({"total_count": len(answer), "workflow_runs": answer}))
+"""
+
+
+class MainPushMacTests(GitRepoCase):
+    """A push to `main` starts the iOS Mac lane, and with it the TestFlight
+    dispatch, only when an iPhone or release input changed since the last
+    green `ios.yml` push run (KRI-1547).
+
+    The ways this can go wrong, written before the code:
+    1. Comparing with the previous commit strands a change whose own run was
+       cancelled or failed: the next API-only push sees nothing, and the
+       change never gets a Mac on `main` or a TestFlight release.
+    2. A listed run that is not a completed, green push to `main` of
+       `ios.yml` (cancelled, failed, running, manual, nightly, another branch
+       or workflow) is taken as the baseline.
+    3. A baseline that is not an ancestor of the pushed commit (rewritten
+       history, a commit this checkout does not have) is diffed anyway.
+    4. The run history cannot be read (no `gh`, an API error, unexpected
+       JSON, no repository or commit) and the lane is skipped, not run.
+    5. A path only TestFlight treats as a release input (API config, mobile
+       identity, the TestFlight workflow) skips the lane, so nothing
+       dispatches the release.
+    6. A path the selector cannot classify, CI policy, a fixture Swift tests
+       open, or a native journey-row edit skips the lane.
+    7. The last TestFlight run failed, and nothing dispatches it again until
+       the next iPhone change (before, every push to `main` did).
+    8. `CI_MAC_SELECTION=full` no longer restores the lane.
+    9. The narrowing leaks into what must not change: `ci.yml` (Linux push
+       CI, which never asks for it), nightly and manual runs, or the suites a
+       push selects.
+    10. The workflow skips the Mac on anything but an explicit `false`, or
+        dispatches TestFlight from a leg that is not the Mac lane.
+    11. TestFlight's eligibility list and the selector's copy drift apart.
+    """
+
+    REPO = "example/repo"
+
+    def setUp(self):
+        super().setUp()
+        side = tempfile.TemporaryDirectory()
+        self.addCleanup(side.cleanup)
+        self.side = Path(side.name)
+        gh = self.side / "gh"
+        gh.write_text(FAKE_GH.replace("PYTHON", sys.executable))
+        gh.chmod(0o755)
+        self.run_id = 1000
+
+    def next_id(self):
+        self.run_id += 1
+        return self.run_id
+
+    def ios_run(self, sha, conclusion="success", **fields):
+        return {
+            "id": self.next_id(),
+            "head_sha": sha,
+            "event": "push",
+            "head_branch": "main",
+            "status": "completed",
+            "conclusion": conclusion,
+            "path": ".github/workflows/ios.yml",
+            **fields,
+        }
+
+    def release_run(self, conclusion="success", **fields):
+        return {
+            "id": self.next_id(),
+            "head_sha": self.base,
+            "event": "workflow_dispatch",
+            "head_branch": "main",
+            "status": "completed",
+            "conclusion": conclusion,
+            "path": ".github/workflows/testflight.yml",
+            **fields,
+        }
+
+    def environment(self, ios, testflight, env):
+        """Recorded runs (newest first, as the API lists them) behind the fake
+        `gh`, and the environment ios.yml's selector step sees on a push."""
+        history, log = self.side / "history.json", self.side / "gh.log"
+        history.write_text(
+            json.dumps(
+                {
+                    "ios.yml": ios if isinstance(ios, str) else list(ios),
+                    "testflight.yml": (
+                        testflight if isinstance(testflight, str) else list(testflight)
+                    ),
+                }
+            )
+        )
+        log.write_text("")
+        environ = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"CI_MAC_SELECTION", "CI_PUSH_NATIVE_SELECTION", "GH_TOKEN"}
+        }
+        environ.update(
+            PATH=f"{self.side}{os.pathsep}{os.environ['PATH']}",
+            GITHUB_REPOSITORY=self.REPO,
+            FAKE_GH_LOG=str(log),
+            FAKE_GH_HISTORY=str(history),
+        )
+        for key, value in env.items():
+            if value is None:
+                environ.pop(key, None)
+            else:
+                environ[key] = value
+        return environ, log
+
+    def decide(self, head, ios=(), testflight=(), **env):
+        """`main_push_native` in-process: (start the Mac?, summary note)."""
+        environ, _ = self.environment(ios, testflight, env)
+        with patch.dict(os.environ, environ, clear=True):
+            return ci.main_push_native(head)
+
+    def select(self, head, ios=(), testflight=(), event="push", opt_in=True, **env):
+        """Run the selector CLI as ios.yml does. Returns outputs, summary and
+        the `gh` calls it made."""
+        output, summary = self.side / "output", self.side / "summary"
+        for stale in (output, summary):
+            stale.unlink(missing_ok=True)
+        environ, log = self.environment(
+            ios,
+            testflight,
+            {
+                "CI_EVENT": event,
+                "CI_BASE": "",
+                "CI_HEAD": "",
+                "CI_SHA": head,
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_STEP_SUMMARY": str(summary),
+                **({"CI_PUSH_NATIVE_SELECTION": "true"} if opt_in else {}),
+                **env,
+            },
+        )
+        subprocess.run(
+            [sys.executable, str(SCRIPT.resolve())],
+            check=True,
+            env=environ,
+            capture_output=True,
+        )
+        outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        return outputs, summary.read_text(), log.read_text().splitlines()
+
+    def change(self, path, value=None):
+        self.write(path, value or f"changed {self.next_id()}")
+        return self.commit()
+
+    def head(self):
+        return self.git("rev-parse", "HEAD")
+
+    def test_a_cancelled_iphone_push_then_an_api_only_push_still_runs_the_mac(self):
+        """The issue's scratch sequence, on recorded run history."""
+        for ended in ("cancelled", "failure"):
+            with self.subTest(ended=ended):
+                green = self.head()
+                iphone = self.change("src/apps/ios/Kria/App.swift")
+                api = self.change("src/apps/api/app/pipeline/render.py")
+                # Negative control: against the previous commit nothing the
+                # Mac reads changed, so a previous-commit rule would skip it.
+                self.assertFalse(
+                    ci.inputs_changed_between(iphone, api, ci.main_push_input)
+                )
+                outputs, summary, _ = self.select(
+                    api, ios=[self.ios_run(iphone, ended), self.ios_run(green)]
+                )
+                self.assertEqual(outputs["ios_native"], "true")
+                self.assertIn(f"changed since {green[:9]}", summary)
+                # Once that Mac lane is green, the next API-only push skips it.
+                after = self.change("src/apps/api/app/pipeline/render.py")
+                start, _ = self.decide(
+                    after,
+                    ios=[
+                        self.ios_run(api),
+                        self.ios_run(iphone, ended),
+                        self.ios_run(green),
+                    ],
+                )
+                self.assertFalse(start)
+
+    def test_an_api_only_push_after_a_green_run_starts_no_mac(self):
+        green = self.base
+        api = self.change("src/apps/api/app/pipeline/render.py")
+        outputs, summary, calls = self.select(api, ios=[self.ios_run(green)])
+        self.assertEqual(outputs["ios_native"], "false")
+        # Linux push CI stays full: every suite is still selected, so the
+        # Linux contracts leg of ios.yml and all of ci.yml still run.
+        self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+        self.assertEqual(outputs["native_validation"], "false")
+        self.assertIn(f"iPhone inputs: unchanged since {green[:9]}", summary)
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            self.assertIn(f"repos/{self.REPO}/actions/workflows/", call)
+        # A green run that skipped its Mac is a baseline too: nothing the Mac
+        # reads changed since the run before it that did have one.
+        api2 = self.change("src/apps/api/app/pipeline/render.py")
+        self.assertFalse(
+            self.decide(api2, ios=[self.ios_run(api), self.ios_run(green)])[0]
+        )
+        iphone = self.change("src/apps/ios/Kria/App.swift")
+        start, _ = self.decide(
+            iphone, ios=[self.ios_run(api2), self.ios_run(api), self.ios_run(green)]
+        )
+        self.assertTrue(start)
+
+    def test_only_a_completed_green_main_push_run_of_ios_yml_is_a_baseline(self):
+        green = self.base
+        iphone = self.change("src/apps/ios/Kria/App.swift")
+        api = self.change("src/apps/api/app/pipeline/render.py")
+        lookalikes = [
+            self.ios_run(iphone, "cancelled"),
+            self.ios_run(iphone, "failure"),
+            self.ios_run(iphone, None, status="in_progress"),
+            self.ios_run(iphone, event="workflow_dispatch"),
+            self.ios_run(iphone, event="schedule"),
+            self.ios_run(iphone, head_branch="feature"),
+            self.ios_run(iphone, path=".github/workflows/ci.yml"),
+            self.ios_run(iphone, head_sha=None),
+        ]
+        start, note = self.decide(api, ios=lookalikes + [self.ios_run(green)])
+        self.assertTrue(start)
+        self.assertIn(f"changed since {green[:9]}", note)
+        start, note = self.decide(api, ios=lookalikes)
+        self.assertTrue(start)
+        self.assertIn("no green iOS push run", note)
+
+    def test_a_baseline_that_is_not_an_ancestor_is_never_diffed(self):
+        self.git("checkout", "-q", "-b", "side")
+        side = self.change("docs/side.md")
+        self.git("checkout", "-q", "-")
+        api = self.change("src/apps/api/app/pipeline/render.py")
+        strangers = [self.ios_run(side), self.ios_run("f" * 40)]
+        start, note = self.decide(api, ios=strangers)
+        self.assertTrue(start)
+        self.assertIn("no green iOS push run", note)
+        self.assertFalse(
+            self.decide(api, ios=strangers + [self.ios_run(self.base)])[0]
+        )
+
+    def test_unreadable_history_or_identity_runs_the_mac(self):
+        api = self.change("src/apps/api/app/pipeline/render.py")
+        green = [self.ios_run(self.base)]
+        # The same green history decides "no Mac" when it can be read.
+        self.assertFalse(self.decide(api, ios=green)[0])
+        no_gh = self.side / "no-gh"
+        no_gh.mkdir()
+        (no_gh / "git").symlink_to(shutil.which("git"))
+        broken = {
+            "iOS run API error": (api, {"ios": "error"}),
+            "TestFlight run API error": (api, {"ios": green, "testflight": "error"}),
+            "not JSON": (api, {"ios": "<html>rate limited</html>"}),
+            "runs not a list": (api, {"ios": '{"workflow_runs": {"id": 1}}'}),
+            "no runs key": (api, {"ios": "{}"}),
+            "no gh": (api, {"ios": green, "PATH": str(no_gh)}),
+            "no repository": (api, {"ios": green, "GITHUB_REPOSITORY": None}),
+            "no commit": ("", {"ios": green}),
+            "short commit": (api[:9], {"ios": green}),
+        }
+        for name, (head, case) in broken.items():
+            with self.subTest(name):
+                start, note = self.decide(head, **case)
+                self.assertTrue(start)
+                self.assertIn("the Mac runs", note)
+        # Through the CLI too: an absent CI_SHA is the empty commit above.
+        outputs, summary, _ = self.select(api, ios=green, CI_SHA=None)
+        self.assertEqual(outputs["ios_native"], "true")
+        self.assertIn("the Mac runs", summary)
+
+    def test_release_inputs_start_the_lane_so_testflight_is_dispatched(self):
+        for spec in ci.release_inputs.TESTFLIGHT_RELEASE_INPUTS:
+            with self.subTest(spec=spec):
+                green = self.head()
+                path = spec if Path(spec).suffix else f"{spec}/changed.txt"
+                head = self.change(path)
+                self.assertTrue(self.decide(head, ios=[self.ios_run(green)])[0])
+        # An API contract path that is not a release input keeps its Linux
+        # contract job (`ios` is still selected) and starts no Mac, as on a PR.
+        route = "src/apps/api/app/routes/brand_new.py"
+        self.assertEqual(ci.affected(route), {"api", "ios"})
+        green = self.head()
+        self.assertFalse(
+            self.decide(self.change(route), ios=[self.ios_run(green)])[0]
+        )
+
+    def test_unknown_policy_and_swift_read_paths_run_the_mac_docs_do_not(self):
+        cases = {
+            "brand-new-dir/tool.py": True,
+            ".github/workflows/ci.yml": True,
+            "scripts/ci/select-tests.py": True,
+            "src/apps/api/tests/fixtures/split_full_screen.json": True,
+            "src/apps/web/public/fonts/New.ttf": True,
+            "docs/runbooks/change-based-ci.md": False,
+            "src/apps/api/app/pipeline/render.py": False,
+        }
+        for path, expected in cases.items():
+            with self.subTest(path=path):
+                green = self.head()
+                start, _ = self.decide(self.change(path), ios=[self.ios_run(green)])
+                self.assertEqual(start, expected)
+        green = self.head()
+        bumped = self.change(
+            "package.json", json.dumps({"version": "2", "scripts": {"test": "test"}})
+        )
+        self.assertFalse(self.decide(bumped, ios=[self.ios_run(green)])[0])
+
+    def test_journey_rows_decide_like_on_a_pull_request(self):
+        self.with_real_manifest(
+            lambda m: self.row(m, "kri-577-reliability-gates")["paths"].append(
+                "src/apps/api/app/services/brand_new.py"
+            )
+        )
+        self.assertFalse(self.decide(self.commit(), ios=[self.ios_run(self.base)])[0])
+        self.with_real_manifest(
+            lambda m: self.row(m, "kri-524-creation")["paths"].append(
+                "src/apps/ios/Kria/BrandNew.swift"
+            )
+        )
+        self.assertTrue(self.decide(self.commit(), ios=[self.ios_run(self.base)])[0])
+
+    def test_a_failed_testflight_run_restarts_the_lane_to_dispatch_it_again(self):
+        api = self.change("src/apps/api/app/pipeline/render.py")
+        green = [self.ios_run(self.base)]
+        cases = (
+            ([self.release_run("failure")], True),
+            ([self.release_run("cancelled")], True),
+            ([self.release_run("success"), self.release_run("failure")], False),
+            # Still running: it covers a newer tested commit than the failure.
+            (
+                [self.release_run(None, status="in_progress"), self.release_run("failure")],
+                False,
+            ),
+            ([self.release_run("failure", head_branch="feature")], False),
+            ([], False),
+        )
+        for runs, expected in cases:
+            with self.subTest(runs=[(r["status"], r["conclusion"]) for r in runs]):
+                start, note = self.decide(api, ios=green, testflight=runs)
+                self.assertEqual(start, expected)
+                if expected:
+                    self.assertIn("TestFlight", note)
+
+    def test_the_rollback_variable_restores_the_lane_without_reading_history(self):
+        api = self.change("src/apps/api/app/pipeline/render.py")
+        outputs, summary, calls = self.select(
+            api, ios=[self.ios_run(self.base)], CI_MAC_SELECTION="full"
+        )
+        self.assertEqual(outputs["ios_native"], "true")
+        self.assertIn("CI_MAC_SELECTION=full", summary)
+        self.assertEqual(calls, [])
+
+    def test_linux_push_ci_nightly_and_manual_runs_are_unchanged(self):
+        api = self.change("src/apps/api/app/pipeline/render.py")
+        green = [self.ios_run(self.base)]
+        # ci.yml never asks for the rule: same outputs as before, no API call.
+        outputs, summary, calls = self.select(api, ios=green, opt_in=False)
+        self.assertEqual(outputs["ios_native"], "true")
+        self.assertEqual(outputs["native_validation"], "false")
+        self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+        self.assertIn("iPhone inputs: changed\n", summary)
+        self.assertEqual(calls, [])
+        for event in ("schedule", "workflow_dispatch"):
+            with self.subTest(event=event):
+                outputs, _, calls = self.select(api, ios=green, event=event)
+                self.assertEqual(outputs["ios_native"], "true")
+                self.assertEqual(calls, [])
+
+    def test_only_the_ios_workflow_asks_for_it_and_its_mac_lane_obeys(self):
+        ios = (WORKFLOWS / "ios.yml").read_text()
+        changes = workflow_jobs(ios)["changes"]
+        self.assertIn("      push_native_selection: true", changes)
+        # The selector reads run history, so the job may read Actions.
+        self.assertRegex(
+            changes, r"    permissions:\n      actions: read\n      contents: read\n"
+        )
+        ci_call = workflow_jobs((WORKFLOWS / "ci.yml").read_text())["changes"]
+        self.assertNotIn("push_native_selection", ci_call)
+        reusable = (WORKFLOWS / "ci-changes.yml").read_text()
+        declared = reusable.split("    inputs:\n", 1)[1].split("    outputs:\n", 1)[0]
+        self.assertRegex(
+            declared, r"      push_native_selection:\n(        .*\n)*        default: false\n"
+        )
+        step = reusable.split("      - name: Select affected suites", 1)[1]
+        self.assertIn(
+            "CI_PUSH_NATIVE_SELECTION: ${{ inputs.push_native_selection }}", step
+        )
+        self.assertIn("CI_SHA: ${{ github.sha }}", step)
+        # The token reaches the selector only for the caller that asked.
+        self.assertIn(
+            "GH_TOKEN: ${{ inputs.push_native_selection && github.token || '' }}",
+            step,
+        )
+        # Only an explicit `false` drops the Mac: a missing or garbled output
+        # keeps the old matrix, Mac leg included.
+        matrix = re.search(r"^      matrix: \$\{\{ fromJSON\((.*)\) \}\}$", ios, re.M)
+        self.assertIsNotNone(matrix)
+        self.assertTrue(
+            matrix.group(1).startswith(
+                "needs.changes.outputs.ios_native == 'false' && "
+                """'{"include":[{"lane":"contracts","runner":"ubuntu-latest"}]}' || """
+            ),
+            matrix.group(1)[:160],
+        )
+        self.assertEqual(matrix.group(1).count("ios_native"), 1)
+        # TestFlight is dispatched from the Mac lane only: no Mac, no dispatch.
+        dispatch = ios.split(
+            "- name: Release to TestFlight after build, unit and smoke tests", 1
+        )[1].split("- name:", 1)[0]
+        self.assertIn("matrix.lane == 'native'", dispatch)
+        self.assertEqual(ios.count("gh workflow run testflight.yml"), 1)
+
+    def test_testflight_and_the_selector_read_one_release_list(self):
+        testflight = (WORKFLOWS / "testflight.yml").read_text()
+        self.assertIn(
+            'git show "$GITHUB_SHA:scripts/ios/release_inputs.py"', testflight
+        )
+        self.assertIn('git diff --quiet "$base" "$HEAD_SHA" -- "${release_inputs[@]}"', testflight)
+        # No second copy of the list in the workflow.
+        self.assertNotIn("src/apps/api/app/services/mobile_auth.py", testflight)
+        self.assertNotIn(".claude/worktrees", testflight)
+        for spec in ci.release_inputs.TESTFLIGHT_RELEASE_INPUTS:
+            with self.subTest(spec=spec):
+                self.assertTrue(ci.main_push_input(spec))
+                self.assertTrue(ci.main_push_input(f"{spec}/inner/file"))
+        # A pathspec covers its directory, not a sibling sharing the prefix.
+        self.assertFalse(ci.release_inputs.release_input("src/apps/ios-tools/x"))
 
 
 if __name__ == "__main__":

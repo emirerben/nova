@@ -2,6 +2,8 @@ name: iOS
 
 # Main uses one build/unit/smoke release lane. Full regression is nightly/manual.
 # PR coverage shares one build with selected native journeys in CI.
+# A push to main starts the Mac (and so the TestFlight dispatch) only when an
+# iPhone or release input changed since the last green push run (KRI-1547).
 on:
   schedule:
     # Nightly, for the UK night. GitHub starts this repo's scheduled runs 7 to 9
@@ -31,6 +33,13 @@ concurrency:
 jobs:
   changes:
     uses: ./.github/workflows/ci-changes.yml
+    # On a push the selector compares the commit with the last green push run
+    # of this workflow (KRI-1547), so it reads Actions run history.
+    permissions:
+      actions: read
+      contents: read
+    with:
+      push_native_selection: true
 
   ios-tests:
     needs: changes
@@ -47,6 +56,12 @@ jobs:
     # Each regression leg builds from the warm cache; shard 1 runs unit tests
     # and saves the cache. Main's one-leg smoke lane owns TestFlight dispatch.
     #
+    # On a push to main the Mac leg starts only when the selector says an
+    # iPhone or TestFlight release input changed since the last green push
+    # run (`ios_native`, KRI-1547); otherwise only the Linux contracts leg
+    # runs. Only an explicit 'false' drops the Mac. Nightly and manual runs
+    # always report 'true'. Rollback: repository variable CI_MAC_SELECTION=full.
+    #
     # max-parallel: the plan gives five hosted Macs at once. Uncapped, the
     # regression legs (four, then five) and main's own lane kept all of them
     # busy for 65 minutes (2026-11-21) and two PRs waited 43 and 53 minutes for
@@ -58,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 3
-      matrix: ${{ fromJSON(needs.changes.outputs.ios_ui_shards == '5' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/5"},{"lane":"native","runner":"macos-15","shard":"2/5"},{"lane":"native","runner":"macos-15","shard":"3/5"},{"lane":"native","runner":"macos-15","shard":"4/5"},{"lane":"native","runner":"macos-15","shard":"5/5"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '4' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/4"},{"lane":"native","runner":"macos-15","shard":"2/4"},{"lane":"native","runner":"macos-15","shard":"3/4"},{"lane":"native","runner":"macos-15","shard":"4/4"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
+      matrix: ${{ fromJSON(needs.changes.outputs.ios_native == 'false' && '{"include":[{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '5' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/5"},{"lane":"native","runner":"macos-15","shard":"2/5"},{"lane":"native","runner":"macos-15","shard":"3/5"},{"lane":"native","runner":"macos-15","shard":"4/5"},{"lane":"native","runner":"macos-15","shard":"5/5"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '4' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/4"},{"lane":"native","runner":"macos-15","shard":"2/4"},{"lane":"native","runner":"macos-15","shard":"3/4"},{"lane":"native","runner":"macos-15","shard":"4/4"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '3' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/3"},{"lane":"native","runner":"macos-15","shard":"2/3"},{"lane":"native","runner":"macos-15","shard":"3/3"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || needs.changes.outputs.ios_ui_shards == '2' && '{"include":[{"lane":"native","runner":"macos-15","shard":"1/2"},{"lane":"native","runner":"macos-15","shard":"2/2"},{"lane":"contracts","runner":"ubuntu-latest"}]}' || '{"include":[{"lane":"native","runner":"macos-15"},{"lane":"contracts","runner":"ubuntu-latest"}]}') }}
     runs-on: ${{ matrix.runner }}
     # Green native runs on main took 31-54 minutes (median 42) in September
     # 2026 as one serial job. See KRI-168 in docs/runbooks/ios-development.md.

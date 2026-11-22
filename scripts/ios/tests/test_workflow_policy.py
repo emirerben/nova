@@ -68,17 +68,39 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
         self.assertIn("!cancelled()", native_job)
         self.assertNotIn("always()", native_job)
 
-    def matrices(self):
-        """{leg count: legs} from the matrix fromJSON expression, keyed on the
-        selector's ios_ui_shards output; the final fallback literal is count 1."""
-        import json
-        import re
+    NO_MAC = "needs.changes.outputs.ios_native == 'false' && '"
 
-        line = next(
+    def matrix_line(self):
+        return next(
             line
             for line in self.workflow.splitlines()
             if "matrix: ${{ fromJSON(" in line
         )
+
+    def no_mac_matrix(self):
+        """The legs of a push to main that changed no iPhone or release input
+        (KRI-1547): the expression's first case, an explicit `false` only."""
+        import json
+
+        expression = self.matrix_line().split("fromJSON(", 1)[1]
+        self.assertTrue(expression.startswith(self.NO_MAC), expression[:80])
+        literal = expression[len(self.NO_MAC) :].split("' || ", 1)[0]
+        return json.loads(literal)["include"]
+
+    def matrices(self):
+        """{leg count: legs} from the matrix fromJSON expression, keyed on the
+        selector's ios_ui_shards output; the final fallback literal is count 1.
+        The leading no-Mac case (`no_mac_matrix`) is not a shard count."""
+        import json
+        import re
+
+        line = self.matrix_line()
+        line = line.replace(
+            self.NO_MAC + json.dumps({"include": self.no_mac_matrix()}, separators=(",", ":")) + "' || ",
+            "",
+            1,
+        )
+        self.assertNotIn("ios_native", line)
         counts = re.findall(
             r"needs\.changes\.outputs\.ios_ui_shards == '(\d)' &&", line
         )
@@ -101,6 +123,11 @@ class IOSWorkflowPolicyTests(unittest.TestCase):
             self.assertTrue(all(leg["runner"] == "macos-15" for leg in natives))
             # strategy.job-index names the shard artifacts: natives come first.
             self.assertEqual(legs[: len(natives)], natives)
+        # A push to main that changed no iPhone or release input keeps the
+        # Linux contracts leg and starts no Mac, so it dispatches no TestFlight.
+        self.assertEqual(
+            self.no_mac_matrix(), [{"lane": "contracts", "runner": "ubuntu-latest"}]
+        )
         self.assertIn("runs-on: ${{ matrix.runner }}", self.workflow)
         self.assertIn("needs: [changes, ios-tests]", self.workflow)
         self.assertIn("gate ios ios-tests", self.workflow)
