@@ -1204,3 +1204,56 @@ Not closed server-side (known residuals):
   reports what it cannot place as unresolved.
 - A phone export record stuck in `awaiting_device` or `syncing` keeps answering 409
   `render_in_progress` until the stale-record reaper (24 h) settles it.
+
+## Unstated clip order never blocks (`KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`)
+
+Prod threads 666b996f and de471354 (Toroko, 19 clips): "the map video first, the train entry parts
+second, the videos of friends inside the train next, then the scenery" is an order over groups of
+clips and says nothing about the order INSIDE a group. The draft was held (`approval_requirements_not_ready`,
+conflict `simplification_requires_choice`) on "you didn't say what order the clips in ... should play in",
+with a "simpler version" card that dropped the whole ordering. The rule: what the creator says is kept
+exactly; what they did not say (the order inside a described group, clips nobody mentioned) is the order
+they ADDED the clips, said on the card, and never a hold. Default `false` (byte-identical when off).
+Apply: fly secret + restart api and worker (the planner, the render contract and the worker's group
+outcome all read it).
+
+One flag, read in four places that must agree (KRI-503: planner, contract pin and receipt seat the same order):
+
+- `order_mode.confirm_unordered_groups` stamps `ordered_members=False` ("no internal sequence requested")
+  on every resolved multi-clip order group left unset (positions none, `first`, `last`), exactly as the
+  random / filming branches do. Groups the creator ordered, basis intents (`order_by`) and one-clip groups
+  are untouched.
+- `clip_order_sequence.unconfirmed_order_groups` is empty while the flag is on. It is the one read that the
+  brief receipt, readiness, the saved-draft approval re-check (`runtime`), the reopened-receipt rewrite and
+  the worker's `member_order_unknown` outcome share, so a draft stored with the marker unset reads as
+  defaulted without being rewritten (`ordered_members` is in the strategy digest; never re-stamp a store).
+- `creator_render_contract._unstated_order_defaults_to_attachment` pins the full order
+  (`order_basis = "attachment_order"`, `order_ids` = the clips in the order they were added, with the
+  described groups seated on it by the KRI-503 block) wherever a described sequence names no basis, so
+  "start with the map video" with the rest unmentioned is pinned too (it is held today on "I can't confirm
+  this draft does it yet"). Only for the unified phone montage shape: a montage-family format, phone proxy
+  clip rows, no voiceover or song, no Visuals in the edit (a Visual is spread, not seated by upload order),
+  not the `native` render program, no random / "any order" / "group first" and no confirmed hand reorder.
+  The pin turns the spoken-welcome reorder off at draft time (`speech_decides_order`) and in the worker
+  (`speech_order_approved`), so a welcome clip stays where the order puts it.
+- `approval_readiness._planned_order_basis` credits that pin (and `brief_checks._check_order` returns `met`
+  with "where you didn't say, the clips play in the order you added them") only on the phone unified montage
+  route. A creator who asked for the upload order has the answer path, which this does not change.
+  `with_defaulted_order_receipts` copies that reason onto the draft turn's own receipt for the ask (a strategy
+  draft records no ordering basis, so it read "I can't confirm the order this draft uses"), only for a ready
+  report.
+
+Not covered: an edit that shows Visuals photos, a non-phone writer or the native program keep today's
+behaviour for the pin (the groups are no longer asked about, so readiness holds them on "I can't confirm this
+draft does it yet" instead). The disclosure rides the requirement receipt, not the reply prose (the reply keeps the model's summary
+when every judged ask is met, like the "group first" clause). After render the receipt says `met` with no
+reason. A later change plans story order with the model, keeps a ledger and offers drag cards; this one is
+the deterministic default only. Guard: `tests/kria/test_unstated_order_default.py` (the failure-mode list
+is its docstring; it runs the real planner hook, readiness and `preflight_montage_plan`).
+
+Open decision (owner): with the flag on, an unset marker is "no internal sequence requested", and the marker is
+the only thing that tells a creator's listed order ("in this order: the door, the butcher, ...", KRI-941) from
+a group (wording is never parsed, KRI-667). A legacy row stored with the marker unset plays in upload order and
+its post-render receipt reads `met`. New turns are protected only as far as the model writes
+`ordered_members: true` for a listed order. Flag-off pins: `test_a_saved_list_without_ordering_certainty_cannot_claim_checked_order`,
+`test_reconfirming_a_saved_list_recovers_the_order_receipt`.

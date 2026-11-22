@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.79.0] - 2026-11-22
+
+### Changed
+- feat(kria): an unstated clip order defaults to the order the clips were added instead of blocking the draft (flag off) (#2458) <!-- release-pr: 2458 -->
+
+## [0.89.78.0] - 2026-11-22
+
+### Changed
+- test(evals): compare independent reviews of local export packs (KRI-1427) (#2413) <!-- release-pr: 2413 -->
+
+## [0.89.77.0] - 2026-11-22
+
+### Changed
+- test(kria): listening check for music under Talking speech (#2438) <!-- release-pr: 2438 -->
+
+## [0.89.76.0] - 2026-11-22
+
+### Changed
+- fix(export-verifier): reject a one-frame-late export when samples match either frame (KRI-831) (#2457) <!-- release-pr: 2457 -->
+
 ## [0.89.75.0] - 2026-11-22
 
 ### Changed

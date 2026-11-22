@@ -129,7 +129,7 @@ from app.services.length_policy import (
     length_owner,
     natural_length_owner,
 )
-from app.services.order_mode import order_mode, seeded_permutation
+from app.services.order_mode import order_mode, seeded_permutation, unstated_order_default_on
 from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
@@ -4491,6 +4491,10 @@ _ORDER_RULE_NOT_APPLIED = (
     "I can't verify this ordering rule, and the clips are not in an order I can show matches it."
 )
 _ORDER_VERIFIED_ELSEWHERE = frozenset({"song_time", "confirmed", "editor", "attachment_order"})
+# Toroko: what the creator did not say about the order inside a described group is the order
+# they added the clips (`KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`); said on the card, a lowercase
+# clause like the "group first" one below it.
+_UNSTATED_ORDER_DEFAULTED = "where you didn't say, the clips play in the order you added them"
 _PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
 
 
@@ -4681,6 +4685,18 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     reversed_reason = _route_reversed_reason(req, facts)
     if reversed_reason is not None:
         return _receipt(req, "partial", reversed_reason)
+    if (
+        basis == "attachment_order"
+        and key not in _CAPTURE_ORDER_KEYS
+        and key != "attachment"  # a stated basis: `choice_questions.ATTACHMENT_ORDER_KEY`
+        and not facts.sequence_statuses
+        and unstated_order_default_on()
+    ):
+        # A draft that pins the upload order under a described sequence (the render contract's
+        # default for what the creator left unsaid; the phone verifier refuses any other order).
+        if facts.sequence_unlocated:
+            return _receipt(req, "partial", _unlocated_moments_reason(facts))
+        return _receipt(req, "met", _UNSTATED_ORDER_DEFAULTED)
     if basis == _CREATOR_LIST_BASIS and key not in _CAPTURE_ORDER_KEYS:
         # KRI-1112: the creator listed every clip the edit shows, one at a time, and the render
         # contract pins that list (`creator_render_contract._creator_listed_order`).
@@ -12138,6 +12154,7 @@ _ANIMATION_UNAVAILABLE = (
     "animated text isn't available on this phone build yet, so the text will appear "
     "without animation"
 )
+_REASON_TR[_UNSTATED_ORDER_DEFAULTED] = "söylemediğin yerlerde klipler eklediğin sırayla oynar"
 _REASON_TR[_ANIMATION_PLANNED] = (
     "yazı belirirken animasyonlu girecek; bitmiş videoda kontrol edeceğim"
 )

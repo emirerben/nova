@@ -3250,6 +3250,12 @@ class Settings(BaseSettings):
     # after a failed render goes to the copilot, and a missing text sequence is composed rather
     # than asked about. false = the previous routing, replies and ops, byte-identical.
     kria_compose_unmet_with_ops_enabled: bool = False
+    # Unstated clip order never blocks (PR 1): what the creator did not say about the order
+    # INSIDE a group they described defaults to the order the clips were added, disclosed on the
+    # card, instead of holding the draft behind "tell me the order". Honoured exactly: anything
+    # they did say. false = the previous hold, byte-identical. Apply: fly secret + restart
+    # api and worker.
+    kria_unstated_order_default_enabled: bool = False
     # KRI-1358 (de1): approval readiness reads the same "the phone Voiceover compiler renders
     # this" fact the draft turn reads, so one clip's own sound under the voice is judged on the
     # phone draft instead of refused as "only works in a voiceover edit made on your iPhone".

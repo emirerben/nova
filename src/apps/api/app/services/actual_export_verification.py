@@ -31,13 +31,14 @@ from app.kria.recipes import MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
-VERIFIER_VERSION = "phone-simple-cut-v5"
+VERIFIER_VERSION = "phone-simple-cut-v6"
 # Oldest first; append every future bump so a pin accepts itself or any later verifier.
 VERIFIER_ORDER = (
     "phone-simple-cut-v1",
     "phone-simple-cut-v2",
     "phone-simple-cut-v3",
     "phone-simple-cut-v4",
+    "phone-simple-cut-v5",
     VERIFIER_VERSION,
 )
 HISTORICAL_VERIFIER_VERSIONS = frozenset(VERIFIER_ORDER)
@@ -499,6 +500,37 @@ def _exact_picture(error: float, score: float) -> bool:
     return error <= PICTURE_EXACT_MAX_ERROR or (
         error <= PICTURE_MAX_ERROR and score >= PICTURE_MIN_SSIM
     )
+
+
+def _late_window(
+    sample_evidence: Iterable[Mapping], neighbour_samples: int, lead_next: float
+) -> str | None:
+    """Why a window on the source grid shows the next frame throughout, else None.
+
+    Reads only what the report stores, so a stored report replays without its media.
+
+    A sample tells the two frames apart when it matches the displayed frame and not a
+    different next one. One such sample proves the timing. A sample that matches both
+    (a held frame of a 25 fps original in a 30 fps proxy, or slow footage) or has no
+    next frame says nothing. v3 (KRI-831) failed a window only when every sample
+    needed its next frame, so one held sample let a late export through. v6 also fails
+    a window where some sample needed the next frame, none holds the displayed one,
+    and the next frame scores higher on average (`lead_next` below 0; noise on
+    near-still footage tips single samples, not the average).
+    """
+    samples = list(sample_evidence)
+    if not neighbour_samples:
+        return None
+    if neighbour_samples == len(samples):
+        return "whole_window_neighbour_shift"
+    holds_displayed = any(
+        "ssim_next" in sample
+        and "next" not in sample.get("repeats", ())
+        and _exact_picture(sample["error_displayed"], sample["ssim_displayed"])
+        and not _exact_picture(sample["error_next"], sample["ssim_next"])
+        for sample in samples
+    )
+    return "no_sample_holds_displayed_frame" if lead_next < 0 and not holds_displayed else None
 
 
 def _watermark_bounds(width: float, height: float) -> tuple[float, float, float, float]:
@@ -1093,8 +1125,8 @@ def verify_actual_export(
                 worst = max(differences)
                 similarity = min(similarities)
                 # Neighbours absorb proxy resampling. Only when both the start
-                # and observed sample instants are on source frames can an
-                # all-neighbour window establish a systematic shift (KRI-831).
+                # and observed sample instants are on source frames can the
+                # window establish a systematic shift (KRI-831, `_late_window`).
                 starts_on_source_frame = clock is not None and any(
                     abs(t - clip.source_start) <= 1e-6 for t in clock
                 )
@@ -1102,12 +1134,14 @@ def verify_actual_export(
                     abs(shown - clip.timeline_start + clip.source_start - bracket[0]) <= 1e-6
                     for shown, bracket in zip(actual_pts, brackets, strict=True)
                 )
-                whole_window_shifted = (
-                    starts_on_source_frame
-                    and samples_on_source_frames
-                    and neighbour_samples == count
+                on_source_grid = starts_on_source_frame and samples_on_source_frames
+                lead_next = round(leads["next"], 6)
+                late = (
+                    _late_window(sample_evidence, neighbour_samples, lead_next)
+                    if on_source_grid
+                    else None
                 )
-                picture_matches = all(passes) and not whole_window_shifted
+                picture_matches = all(passes) and late is None
                 if evidence is not None:
                     sample = similarities.index(similarity)
                     evidence.append(
@@ -1124,18 +1158,15 @@ def verify_actual_export(
                         "status": "passed" if picture_matches else "failed",
                         "samples": count,
                         "picture_clock": picture_clock,
+                        "on_source_grid": on_source_grid,
                         "neighbour_samples": neighbour_samples,
                         "profile_samples": profile_samples,
-                        **(
-                            {"reason": "whole_window_neighbour_shift"}
-                            if whole_window_shifted
-                            else {}
-                        ),
+                        **({"reason": late} if late else {}),
                         "max_mean_pixel_error": round(worst, 6),
                         "min_local_ssim": round(similarity, 6),
                         "mean_local_ssim": round(mean_similarity, 6),
                         "lead_previous": round(leads["previous"], 6),
-                        "lead_next": round(leads["next"], 6),
+                        "lead_next": lead_next,
                         "sample_evidence": sample_evidence,
                     }
                 )
