@@ -168,7 +168,10 @@ Each entry in `variants` has the device record's `phase`, `reason_code`, pinned
   From v5 all three feed the frame profile: the check adds `profile_samples` (samples
   that passed on the profile, not the exact bar), `mean_local_ssim` (displayed frames)
   and `lead_previous` / `lead_next` (mean displayed-minus-neighbour SSIM), and a sample
-  lists in `repeats` a neighbour that repeats the displayed source picture. An `audio`
+  lists in `repeats` a neighbour that repeats the displayed source picture. From v6 the
+  check stores `on_source_grid` (the one-frame-late rule applies only there) and a late
+  window's `reason` is `whole_window_neighbour_shift` or
+  `no_sample_holds_displayed_frame`. An `audio`
   check carries `correlation`, `gain` and `lag_samples`, or `rms` for a silent reference.
   A `text` check carries `at_s` and `expected_visible`; from v4 also `proof` (`copy`,
   `presence`, `absent`, `other_layer`) or `reason` (for example `copy_not_read`,
