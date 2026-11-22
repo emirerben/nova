@@ -308,6 +308,22 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   keeps the full prose for the web chat and apps without the keys; the two must not drift,
   so `reply_from_editor_receipts` is the only writer of that prose. The stored `reason` of an
   ask that names no dimension is the bare change list ("I changed:" is added to the prose only).
+- **Ask ledger (KRI-1563, `KRIA_ASK_LEDGER_ENABLED`, default true).** An editor turn's receipts
+  and reply come from `app/kria/ask_ledger.py`: every requirement of the turn ends `done`
+  (with the change that proves it), `declined` (with a reason) or `needs_choice` (the turn's
+  question), and every change in the diff is named on the line of the ask that caused it or in
+  "Also changed" (no "first two" cut; the part of a change beyond what an ask named is listed
+  too). `AskLedger.gaps` checks both against the reply actually written and logs
+  `kria_ask_ledger_gap` (lane names and ids only). Proof is per field: a caption ask that names
+  a field ("in the middle", a font, a colour) is proved by that field only, and a place is
+  checked against where the captions end up (0.82 is not "middle"). A title the turn added
+  proves "add a title" whatever wrote its words (whether model words may be applied without
+  approval is KRI-1560's rule); a removed title proves "no title" (KRI-1355); "only my voice"
+  is the music off (KRI-1472). The diff reads the background behind a Talking speaker (pictures,
+  fill, corner, full-screen windows), colour moments and a Talking song. A copilot turn with no
+  ops answers each part (`no_op_ledger`; receipts ride the `assistant_response` event), and on a
+  failed-render correction a part the copilot could not do no longer throws away the in-place
+  ops for the others. Replay: `make kria-replay FIXTURE=kri1563_ask_ledger`.
 - **Length answers (KRI-737/738).** A longer clip keeps its old window and starts earlier
   in its source when the footage after its start runs out (`editor_ops_v2/timeline.py:
   _fit_window`; an explicit `in_s` is never moved). The copilot's "how short/long?" question

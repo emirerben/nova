@@ -30,9 +30,16 @@ from typing import Any
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
 from app.config import settings
 from app.kria.brief import BriefRequirement
-from app.kria.brief_checks import MAX_REPLY_CHARS, TextStyleRow, is_judged, outcome_lead
+from app.kria.brief_checks import (
+    MAX_REPLY_CHARS,
+    NO_MUSIC_INTENT,
+    TextStyleRow,
+    is_judged,
+    outcome_lead,
+)
+from app.kria.caption_look_ask import caption_look_ask, caption_spot_holds
 from app.kria.contracts import RequirementReceipt
-from app.kria.reply_language import say
+from app.kria.reply_language import reply_language_for, say
 from app.kria.style_asks import (
     colour_cue_families,
     derive_style_ask,
@@ -42,6 +49,7 @@ from app.kria.style_asks import (
     words,
 )
 from app.kria.text_trim import trim_at_word
+from app.kria.voice_only_ask import asks_voice_only
 from app.services.kria_editor_ops_diff import (
     DiffEntry,
     DiffTarget,
@@ -74,6 +82,17 @@ _CUE_LANES: dict[str, Alts] = {
     "camera": _alts(("camera_effects", [])),
     "transition": _alts(("transition", [])),
     "captions": _alts(("captions", []), ("caption_meta", [])),
+    # KRI-1563: a caption ask that names a field is proved by that field only, never by any
+    # caption change ("in the middle and a nicer style" read "Done" on a font change alone).
+    "caption_position": _alts(("caption_meta", ["y_frac", "appearance"])),
+    "caption_font": _alts(("caption_meta", ["font"])),
+    "caption_colour": _alts(("caption_meta", ["color", "highlight_color"])),
+    "caption_size": _alts(("caption_meta", ["size_px", "appearance"])),
+    "caption_animation": _alts(("caption_meta", ["animation_phases", "style"])),
+    "caption_shadow": _alts(("caption_meta", ["shadow_enabled"])),
+    "caption_outline": _alts(("caption_meta", ["stroke_width"])),
+    # No op sets the captions' letter case, so no other field may stand in for it.
+    "caption_case": _alts(("caption_meta", ["text_case"])),
     "look": _alts(("timeline", ["look_preset"])),
     "speed": _alts(("timeline", ["playback_rate"])),
     "reorder": _alts(("timeline", ["order"])),
@@ -89,6 +108,11 @@ _KIND_LANES: dict[str, Alts] = {
         ("caption_meta", []),
         ("camera_effects", []),
         ("timeline", ["look_preset", "playback_rate"]),
+        # KRI-1563: "add pictures" names no field the brief types; what changed behind the
+        # speaker (or the cards over them) is shown under it, never left out of the reply.
+        ("speaker_background", []),
+        ("media_overlays", []),
+        ("color_moments", []),
     ),
     "text": _alts(("text", ["wording", "added", "removed"]), ("title", [])),
     "timing": _alts(
@@ -97,7 +121,12 @@ _KIND_LANES: dict[str, Alts] = {
         ("captions", []),
     ),
     "order": _alts(("timeline", ["order"])),
-    "select": _alts(("timeline", ["removed", "added"]), ("visual_media", [])),
+    "select": _alts(
+        ("timeline", ["removed", "added"]),
+        ("visual_media", []),
+        ("speaker_background", []),
+        ("media_overlays", []),
+    ),
     "audio": _alts(("audio", []), ("sfx", []), ("speech_cut", [])),
 }
 
@@ -116,7 +145,7 @@ _REGEX_CUES: dict[str, re.Pattern[str]] = {
     "sfx": re.compile(r"\b(sound effects?|sfx|whoosh\w*|efekt\w*)\b"),
     "camera": re.compile(r"\b(zoom\w*|shake|camera effects?|kamera\w*)\b"),
     "transition": re.compile(r"\b(transitions?|crossfade\w*|dissolve|gecis\w*)\b"),
-    "captions": re.compile(r"\b(captions?|subtitles?|altyazi\w*)\b"),
+    "captions": re.compile(r"\b(captions?|subtitles?|altyazi\w*|untertitel\w*)\b"),
     "look": re.compile(r"\b(filters?|grade|grading|presets?|filtre\w*)\b"),
     "length": re.compile(r"\b(shorten\w*|trim\w*|duration|kisalt\w*|uzat\w*|longer|shorter)\b"),
     "timing": re.compile(
@@ -259,6 +288,18 @@ _ORDINALS = {
     "dorduncu": 4,
     "son": -1,
 }
+_SPEAKER_SIZE: Alts = _alts(("speaker_background", ["speaker_frame"]))
+# KRI-1563: a caption field named inside a caption ask, and the cue that proves it.
+_CAPTION_FIELD_CUES = {
+    "position": "caption_position",
+    "font": "caption_font",
+    "colour": "caption_colour",
+    "size": "caption_size",
+    "animation": "caption_animation",
+    "shadow": "caption_shadow",
+    "outline": "caption_outline",
+    "case": "caption_case",
+}
 _VALUE_FIELDS = frozenset({"font_family", "color", "entrance", "alignment", "text_case"})
 # Fields where "not in the diff" means "not done" (a row that did not change did not get
 # smaller), so "make all of them smaller" must cover every text.
@@ -271,6 +312,9 @@ class _Group:
 
     label: str
     alts: Alts
+    # KRI-1563: a caption look group beside typed caption fields only collects the other
+    # caption changes for that ask's line; finding none is no miss.
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -293,6 +337,9 @@ class AskShape:
     clip_scope: str = ""
     ordinal: int | None = None
     quantified_named_scope: bool = False
+    # KRI-1563: the caption look the brief writer typed (never read from the words, KRI-667).
+    caption_position: str | None = None  # the typed `caption_position` (KRI-1177 vocabulary)
+    caption_color: str | None = None  # the typed `caption_color` (hex)
 
 
 def _fact_cues(req: BriefRequirement) -> set[str]:
@@ -319,7 +366,23 @@ def _fact_cues(req: BriefRequirement) -> set[str]:
     ):
         if facts.get(key) not in (None, ""):
             names.add(name)
+    if facts.get("audio_intent") == NO_MUSIC_INTENT or asks_voice_only(req):
+        names.add("music")  # the typed "no music" / "only my voice" (KRI-1164, KRI-1472)
     return names
+
+
+def _caption_fact_cues(req: BriefRequirement) -> set[str]:
+    """KRI-1563: the caption fields the brief writer typed on this ask (`caption_look_ask`)."""
+    look = caption_look_ask(req)
+    if look is None:
+        return set()
+    typed = {
+        "caption_position": look.position,
+        "caption_size": look.size,
+        "caption_colour": look.color,
+        "caption_case": look.case,
+    }
+    return {name for name, value in typed.items() if value}
 
 
 def _named_cues(req: BriefRequirement, text: str) -> set[str]:
@@ -360,10 +423,15 @@ def _named_cues(req: BriefRequirement, text: str) -> set[str]:
     if not names and clip_only and (_REMOVE.search(text) or _ADD.search(text)):
         names.add("clips")  # "remove the second clip": nothing else is named
     if "captions" in names and not re.search(
-        r"\b(title|titles|labels?|baslik\w*|etiket\w*)\b", text
+        r"\b(title|titles|titel|labels?|baslik\w*|etiket\w*)\b", text
     ):
-        # "make the captions bigger": the caption lane answers size / colour / font itself.
-        names -= {"size", "colour", "font", "case", "animation", "shadow", "outline", "position"}
+        # KRI-1563: a field named inside a caption ask is proved by that caption field only, never
+        # by any caption change ("in the middle and a nicer style" read "Done" on a font change).
+        # The place is the typed `caption_position` alone: "put captions on" names none.
+        fields = {_CAPTION_FIELD_CUES[name] for name in names & _CAPTION_FIELD_CUES.keys()}
+        names -= _CAPTION_FIELD_CUES.keys()
+        names |= fields - {"caption_position"}
+    names |= _caption_fact_cues(req)
     return names
 
 
@@ -426,7 +494,21 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
         )
     text = words(req.description)
     named = _named_cues(req, text)
-    groups = [_Group(name, _CUE_LANES[name]) for name in _CUE_LANES if name in named]
+    fielded = any(name.startswith("caption_") for name in named)
+    # KRI-1563: a size ask that names no text or caption ("I'm left small in the corner") can be
+    # about the speaker: the corner they sit in is their size on screen.
+    speaker_size = "size" in named and "captions" not in named and not _TEXT_NOUN.search(text)
+    groups = [
+        _Group(
+            name,
+            _CUE_LANES[name] + _SPEAKER_SIZE
+            if name == "size" and speaker_size
+            else _CUE_LANES[name],
+            optional=name == "captions" and fielded,
+        )
+        for name in _CUE_LANES
+        if name in named
+    ]
     cued = bool(groups)
     if not groups:
         lanes = _KIND_LANES.get(req.kind, ())
@@ -445,13 +527,21 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
     )
     clip_only = bool(_forms().clip_noun.search(text)) and not _TEXT_NOUN.search(text)
     scope_clip = req.scope.split(":", 1)[1].casefold() if req.scope.startswith("clip:") else ""
+    look = caption_look_ask(req)
+    size_dir = _size_direction(text) if "size" in named else None
+    if look is not None and look.size and "caption_size" in named:
+        size_dir = 1 if look.size == "large" else -1
+    if (req.facts.get("audio_intent") == NO_MUSIC_INTENT or asks_voice_only(req)) and not add:
+        remove = True  # the typed "no music" / "only my voice" asks for the music to be gone
     return AskShape(
+        caption_position=look.position if look is not None else None,
+        caption_color=look.color if look is not None else None,
         groups=tuple(groups),
         cued=cued,
         target_group=group,
         target_row_ids=row_ids,
         wanted=_wanted(req),
-        size_dir=_size_direction(text) if "size" in named else None,
+        size_dir=size_dir,
         level_dir=(
             _single_direction(_LOUDER, _QUIETER, text) if named & {"music", "volume"} else None
         ),
@@ -566,6 +656,54 @@ def _text_violation(entry: DiffEntry, t: DiffTarget, shape: AskShape) -> str | N
     return None
 
 
+def _appearance_layers(value: Any) -> list[Mapping[str, Any]]:
+    """A caption `appearance` as the layers that place lines: the whole track, then each line's
+    own override (a one-line move lives only there)."""
+    if not isinstance(value, Mapping):
+        return []
+    overrides = value.get("line_overrides")
+    return [
+        value,
+        *(own for own in (overrides.values() if isinstance(overrides, Mapping) else ()) if own),
+    ]
+
+
+def _caption_ys(value: Any) -> list[float]:
+    if isinstance(value, Mapping):
+        found = (_num(layer.get("position_y_frac")) for layer in _appearance_layers(value))
+        return [y for y in found if y is not None]
+    y = _num(value)
+    return [] if y is None else [y]
+
+
+def _caption_violation(entry: DiffEntry, t: DiffTarget, shape: AskShape) -> str | None:
+    """KRI-1563: a caption field change against what the ask named (the place, the value)."""
+    name, after = entry.field, t.after
+    if name in ("y_frac", "appearance"):
+        for y in _caption_ys(after):
+            # The band the phone writer itself holds the asked row to (KRI-1476: "middle"
+            # reaches down to the free band under a face).
+            if shape.caption_position and not caption_spot_holds(shape.caption_position, y):
+                return "destination"
+    if name == "size_px" and shape.size_dir and not _sign_ok(t.before, after, shape.size_dir):
+        return "direction"
+    if (
+        name == "color"
+        and shape.caption_color
+        and str(after or "").upper() != shape.caption_color.upper()
+    ):
+        return "value"
+    wanted = {"font": "font_family", "color": "color"}.get(name)
+    if wanted and wanted in shape.wanted:
+        held = after if isinstance(after, str) else None
+        if value_matches(wanted, shape.wanted[wanted], held) is not True:
+            return "value"
+    if name == "enabled" and isinstance(after, bool):
+        if (shape.polarity == "add" and not after) or (shape.polarity == "remove" and after):
+            return "polarity"
+    return None
+
+
 def _violation(entry: DiffEntry, t: DiffTarget, shape: AskShape) -> str | None:
     """Why this changed target does NOT deliver what was asked, else None."""
     lane, name, after, pol = entry.lane, entry.field, t.after, shape.polarity
@@ -599,6 +737,11 @@ def _violation(entry: DiffEntry, t: DiffTarget, shape: AskShape) -> str | None:
             return "polarity"
     elif lane in ("sfx", "camera_effects", "captions"):
         if (pol == "add" and name == "removed") or (pol == "remove" and name == "added"):
+            return "polarity"
+    elif lane == "caption_meta":
+        return _caption_violation(entry, t, shape)
+    elif lane == "speaker_background":
+        if name == "removed" and pol == "add":
             return "polarity"
     elif lane == "visual_media":
         if pol == "add":
@@ -657,6 +800,8 @@ class _Verdict:
     off_target: list[DiffEntry] = field(default_factory=list)
     wrong: list[DiffEntry] = field(default_factory=list)
     short: list[DiffEntry] = field(default_factory=list)
+    # The diff entry each narrowed entry was cut from (KRI-1563 counts the targets left over).
+    origin: dict[int, DiffEntry] = field(default_factory=dict)
 
     def missed(self) -> bool:
         return not self.matched or bool(self.wrong or self.short)
@@ -670,18 +815,40 @@ def _uncertain_scope_changes(shape: AskShape, verdicts: Sequence[_Verdict]) -> l
     return list(entries.values())
 
 
+# KRI-1563: one caption `appearance` entry can carry a size, a place or both; each proves
+# only the asks about what it carries.
+_APPEARANCE_KEYS = {
+    "caption_position": frozenset({"position_x_frac", "position_y_frac"}),
+    "caption_size": frozenset({"size_px"}),
+}
+
+
 def _fits(group: _Group, entry: DiffEntry) -> bool:
-    return any(
+    if not any(
         entry.lane == lane and (not fields or entry.field in fields) for lane, fields in group.alts
-    )
+    ):
+        return False
+    keys = _APPEARANCE_KEYS.get(group.label)
+    if keys is not None and entry.lane == "caption_meta" and entry.field == "appearance":
+        after = entry.targets[0].after if entry.targets else None
+        return any(keys & layer.keys() for layer in _appearance_layers(after))
+    return True
 
 
 def _match_group(group: _Group, shape: AskShape, entries: Iterable[DiffEntry]) -> _Verdict:
     verdict = _Verdict()
+    # KRI-1563: "in the middle and a nicer style" is two groups on the caption lane. A change
+    # a named field's group judges (the place) is that group's alone, so the look group neither
+    # repeats its verdict nor is sunk by it.
+    fielded = [g for g in shape.groups if g.label.startswith("caption_")]
     for entry in entries:
         if not _fits(group, entry):
             continue
+        if group.label == "captions" and any(_fits(g, entry) for g in fielded):
+            continue
         narrowed, why = _judge(entry, shape)
+        if narrowed is not None:
+            verdict.origin[id(narrowed)] = entry
         if narrowed is None:
             verdict.off_target.append(entry)
         elif why == "matched":
@@ -712,8 +879,24 @@ def _unmet_reason(req: BriefRequirement, unmet: Sequence[Mapping[str, str]]) -> 
     return None
 
 
-def _phrases(entries: Iterable[DiffEntry], live_text_count: int, limit: int = 3) -> list[str]:
+def _phrases(
+    entries: Iterable[DiffEntry], live_text_count: int, limit: int | None = 3
+) -> list[str]:
     return describe_diff(entries, live_text_count=live_text_count, limit=limit)
+
+
+@dataclass(frozen=True)
+class EditorBinding:
+    """What an editor turn's receipts say and which changes each one names (KRI-1563).
+
+    ``named`` holds, per requirement, the diff entries (narrowed to the asked targets) whose
+    phrases its receipt line carries. ``unbound`` is every deliberate change no line names: a
+    whole entry, or the targets an entry changed beyond what any ask named.
+    """
+
+    receipts: list[RequirementReceipt]
+    named: dict[str, list[DiffEntry]]
+    unbound: list[DiffEntry]
 
 
 def bind_editor_receipts(
@@ -729,24 +912,163 @@ def bind_editor_receipts(
     Returns the receipts (in requirement order) and the deliberate diff entries no
     requirement claimed, for an "Also changed" line.
     """
+    bound = bind_editor_turn(reqs, receipts, diff, rows, unmet=unmet)
+    return bound.receipts, bound.unbound
+
+
+def _is_title_ask(req: BriefRequirement) -> bool:
+    if req.kind != "text" or req.literal:
+        return False
+    return req.scope == "title"
+
+
+def _title_entries(real: Sequence[DiffEntry], field_name: str) -> list[DiffEntry]:
+    out: list[DiffEntry] = []
+    for entry in real:
+        if entry.lane == "title" and field_name == "added" and entry.targets[0].after:
+            out.append(entry)
+        elif entry.lane == "text" and entry.field == field_name:
+            titles = tuple(t for t in entry.targets if t.kind != "label")
+            if titles:
+                out.append(DiffEntry(entry.lane, entry.field, titles, entry.derived))
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def _title_checker_misses() -> frozenset[str]:
+    """Every way `_check_title` writes "the title is not the creator's", in each reply language."""
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CANT_CHECK_TITLE,
+        NO_TITLE_REASON,
+        default_title_reason,
+        reason_in_every_language,
+    )
+    from app.kria.reply_language import CATALOG_REPLY_LANGUAGES  # noqa: PLC0415
+
+    default = set()
+    for language in ("en", "tr", *CATALOG_REPLY_LANGUAGES):
+        with reply_language_for(language):
+            default.add(default_title_reason())
+    return frozenset(
+        {
+            *reason_in_every_language(NO_TITLE_REASON),
+            *reason_in_every_language(_CANT_CHECK_TITLE),
+            *default,
+        }
+    )
+
+
+def _title_by_diff(
+    req: BriefRequirement, base: RequirementReceipt, real: Sequence[DiffEntry], live: int
+) -> tuple[RequirementReceipt, list[DiffEntry]] | None:
+    """KRI-1563 / KRI-1355: a title ask the title checker left open, settled by the diff.
+
+    A title this turn added proves "add a title" whatever wrote its words (the checker counts
+    only the creator's own words, so a title Kria wrote read "I didn't add a title"). A "no
+    title" ask is met when the turn removed the title, or the draft has none. Whether
+    model-written words may be applied without approval is a separate rule (KRI-1560).
+    """
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _NO_TITLE_AS_ASKED,
+        NO_TITLE_REASON,
+        _loc,
+        reason_in_every_language,
+        title_off,
+    )
+
+    if base.status == "met" or not _is_title_ask(req):
+        return None
+    if base.reason not in _title_checker_misses():
+        return None  # another check decided it; the diff does not overrule it
+    update = {"status": "met", "verification": "checked", "stage": "applied"}
+    if title_off(req):
+        removed = _title_entries(real, "removed")
+        if removed:
+            phrase = "; ".join(_phrases(removed, live, None))
+            return base.model_copy(update=update).with_reason(phrase), removed
+        if base.reason in reason_in_every_language(NO_TITLE_REASON):
+            return base.model_copy(update=update).with_reason(_loc(_NO_TITLE_AS_ASKED)), []
+        return None
+    added = _title_entries(real, "added")
+    if not added:
+        return None
+    return base.model_copy(update=update).with_reason("; ".join(_phrases(added, live, None))), added
+
+
+def _covered_by(
+    entries: Iterable[DiffEntry], origins: Mapping[int, DiffEntry]
+) -> set[tuple[int, int]]:
+    """(diff entry, target index) pairs the given (maybe narrowed) entries name."""
+    covered: set[tuple[int, int]] = set()
+    for entry in entries:
+        source = origins.get(id(entry), entry)
+        for target in entry.targets:
+            if target in source.targets:
+                covered.add((id(source), source.targets.index(target)))
+    return covered
+
+
+def _leftovers(real: Sequence[DiffEntry], covered: set[tuple[int, int]]) -> list[DiffEntry]:
+    """Each change, or the part of it, that no receipt line names."""
+    out: list[DiffEntry] = []
+    for entry in real:
+        rest = tuple(t for i, t in enumerate(entry.targets) if (id(entry), i) not in covered)
+        if len(rest) == len(entry.targets):
+            out.append(entry)
+        elif rest:
+            out.append(DiffEntry(entry.lane, entry.field, rest, entry.derived))
+    return out
+
+
+def bind_editor_turn(
+    reqs: Sequence[BriefRequirement],
+    receipts: Sequence[RequirementReceipt],
+    diff: EditorDiff,
+    rows: Sequence[TextStyleRow],
+    *,
+    unmet: Sequence[Mapping[str, str]] = (),
+    complete: bool = False,
+) -> EditorBinding:
+    """Bind each requirement to what the turn changed (see ``bind_editor_receipts``).
+
+    ``complete`` is the ask ledger (KRI-1563, ``KRIA_ASK_LEDGER_ENABLED``): every change a line
+    proves is named in it (no "first two" cut), and ``unbound`` is computed from what the lines
+    name, so a change an ask claimed but its line never mentions is still listed. False is the
+    receipts as they were, byte for byte.
+    """
+    limit_two = None if complete else 2
     by_id = {r.requirement_id: r for r in receipts}
     live = diff.live_text_count
     real = diff.real()
     claimed: set[int] = set()
     shapes = {req.id: ask_shape(req, rows, live) for req in reqs}
     verdicts_by_req: dict[str, list[_Verdict]] = {}
+    # KRI-1563: a title the turn added (or removed, for "no title") settles a title ask the
+    # checker left open, and its change is that ask's alone.
+    titled: dict[str, tuple[RequirementReceipt, list[DiffEntry]]] = {}
+    for req in reqs:
+        base = by_id.get(req.id)
+        found = _title_by_diff(req, base, real, live) if base is not None else None
+        if found is not None:
+            titled[req.id] = found
+            claimed.update(id(_title_source(entry, real)) for entry in found[1])
     # Requirements whose words name a dimension claim their entries first. One with no
     # recognisable dimension only reports what is left, and shares it with its peers.
     uncued_sources: list[DiffEntry] = []
     for cued_pass in (True, False):
-        pool = real if cued_pass else [e for e in real if id(e) not in claimed]
+        pool = [e for e in real if id(e) not in claimed] if not cued_pass or titled else real
         for req in reqs:
             shape = shapes[req.id]
             if shape.cued is not cued_pass:
                 continue
             verdicts = [_match_group(g, shape, pool) for g in shape.groups]
             verdicts_by_req[req.id] = verdicts
+            if req.id in titled:
+                continue
             sources = [e for v in verdicts for e in v.sources]
+            if complete:
+                # A change judged wrong for this ask is still this ask's: its line names it.
+                sources.extend(v.origin[id(e)] for v in verdicts for e in v.wrong)
             if _unmet_reason(req, unmet) is None:
                 sources.extend(_uncertain_scope_changes(shape, verdicts))
             if cued_pass:
@@ -755,34 +1077,72 @@ def bind_editor_receipts(
                 uncued_sources.extend(sources)
     claimed.update(id(e) for e in uncued_sources)
     out: list[RequirementReceipt] = []
+    named: dict[str, list[DiffEntry]] = {}
+    origins: dict[int, DiffEntry] = {}
+    for verdicts in verdicts_by_req.values():
+        for verdict in verdicts:
+            origins.update(verdict.origin)
+    for entry in (e for found in titled.values() for e in found[1]):
+        origins[id(entry)] = _title_source(entry, real)
     for req in reqs:
         base = by_id.get(req.id)
         if base is None:
             base = RequirementReceipt(
                 requirement_id=req.id, status="partial", verification="unchecked"
             )
-        if isinstance(req.facts.get("sequence_timing"), dict) and is_judged(req, base):
-            out.append(base)
+        if req.id in titled:
+            receipt, proof = titled[req.id]
+            out.append(receipt)
+            named[req.id] = proof
             continue
         shape, verdicts = shapes[req.id], verdicts_by_req[req.id]
         matched = [e for v in verdicts for e in v.matched]
+        if isinstance(req.facts.get("sequence_timing"), dict) and is_judged(req, base):
+            out.append(base)
+            named[req.id] = matched if base.status == "met" else []
+            continue
         declined = _unmet_reason(req, unmet)
         if is_judged(req, base) and base.verification == "checked":
             # A value check decided it. Say what changed alongside a hit, keep a miss.
             if base.status == "met" and matched:
-                phrase = "; ".join(_phrases(matched, live, 2))
+                phrase = "; ".join(_phrases(matched, live, limit_two))
                 base = base.with_reason(phrase)
+                named[req.id] = matched
+            else:
+                named[req.id] = []
             out.append(base)
             continue
-        out.append(_bind_by_diff(base, shape, verdicts, matched, declined, live))
-    unbound = [e for e in real if id(e) not in claimed]
-    return out, unbound
+        receipt, proof = _bind_by_diff(
+            base, shape, verdicts, matched, declined, live, complete=complete
+        )
+        out.append(receipt)
+        named[req.id] = proof
+    if not complete:
+        return EditorBinding(out, named, [e for e in real if id(e) not in claimed])
+    covered = _covered_by((e for proof in named.values() for e in proof), origins)
+    return EditorBinding(out, named, _leftovers(real, covered))
 
 
-def _miss_notes(verdict: _Verdict, live: int) -> list[str]:
+def _title_source(entry: DiffEntry, real: Sequence[DiffEntry]) -> DiffEntry:
+    """The diff entry a title entry was cut from (``_title_entries`` narrows text entries)."""
+    for source in real:
+        if (
+            source.lane == entry.lane
+            and source.field == entry.field
+            and all(t in source.targets for t in entry.targets)
+        ):
+            return source
+    return entry
+
+
+def _miss_notes(
+    verdict: _Verdict, live: int, limit: int | None = 1
+) -> tuple[list[str], list[DiffEntry]]:
     notes: list[str] = []
+    named: list[DiffEntry] = []
     for entry in verdict.wrong:
         phrase = "; ".join(_phrases([entry], live, 1))
+        named.append(entry)
         notes.append(
             say(
                 en="{phrase}, but that isn't what you asked for",
@@ -793,6 +1153,7 @@ def _miss_notes(verdict: _Verdict, live: int) -> list[str]:
     for entry in verdict.short:
         total = max(live, len(entry.targets))
         phrase = "; ".join(_phrases([entry], live, 1))
+        named.append(entry)
         notes.append(
             say(
                 en="Only {len_entry_targets} of {total} texts changed: {phrase}",
@@ -803,7 +1164,9 @@ def _miss_notes(verdict: _Verdict, live: int) -> list[str]:
             )
         )
     if not (verdict.wrong or verdict.short) and verdict.off_target:
-        phrase = "; ".join(_phrases(verdict.off_target, 0, 1))
+        phrase = "; ".join(_phrases(verdict.off_target, 0, limit))
+        if limit is None:
+            named.extend(verdict.off_target)
         notes.append(
             say(
                 en="It changed other things, not the one you named: {phrase}",
@@ -811,7 +1174,7 @@ def _miss_notes(verdict: _Verdict, live: int) -> list[str]:
                 phrase=phrase,
             )
         )
-    return notes
+    return notes, named
 
 
 def _bind_by_diff(
@@ -821,7 +1184,16 @@ def _bind_by_diff(
     matched: list[DiffEntry],
     declined: str | None,
     live: int,
-) -> RequirementReceipt:
+    *,
+    complete: bool = False,
+) -> tuple[RequirementReceipt, list[DiffEntry]]:
+    """The receipt of a requirement the diff decides, and the entries its line names.
+
+    ``complete`` (the ask ledger) names every change a line proves instead of the first two or
+    three, and an ask with no named dimension that the copilot partly declined still names
+    what changed for it.
+    """
+    one, two, three = (None, None, None) if complete else (1, 2, 3)
     nothing = say(en="Nothing changed for this", tr="Bunun için bir şey değişmedi")
     uncertain_changes = _uncertain_scope_changes(shape, verdicts)
     if uncertain_changes and declined is None:
@@ -831,45 +1203,63 @@ def _bind_by_diff(
                 "verification": "unchecked",
                 "stage": "applied",
             }
-        ).with_reason("; ".join(_phrases(uncertain_changes, live, 3)))
+        ).with_reason("; ".join(_phrases(uncertain_changes, live, three))), uncertain_changes
     if not shape.cued:
         # No word or fact named a dimension: say what the turn changed, never "Done".
         if matched and declined is None:
             # Just the change list: the chat shows it under a lead line, and the prose reply
             # puts "I changed:" back (``_changed_lead``).
-            changed = "; ".join(_phrases(matched, live, 3))
+            changed = "; ".join(_phrases(matched, live, three))
             return base.model_copy(
                 update={
                     "status": "partial",
                     "verification": "unchecked",
                     "stage": "applied",
                 }
-            ).with_reason(changed)
+            ).with_reason(changed), matched
+        if matched and complete:
+            # KRI-1563: "relevant pictures and not small in the corner" put her back full screen
+            # and declined the pictures: say both, never "Couldn't" over a change it made.
+            changed = "; ".join(_phrases(matched, live, three))
+            return base.model_copy(
+                update={"status": "partial", "verification": "checked", "stage": "applied"}
+            ).with_reason(f"{changed}; {declined}"), matched
         return base.model_copy(
             update={
                 "status": "not_possible",
                 "verification": "checked",
                 "stage": "applied",
             }
-        ).with_reason(declined or nothing)
+        ).with_reason(declined or nothing), []
     update: dict[str, object] = {"verification": "checked", "stage": "applied"}
-    if verdicts and not any(v.missed() for v in verdicts) and declined is None:
-        phrase = "; ".join(_phrases(matched, live, 2))
-        return base.model_copy(update={**update, "status": "met"}).with_reason(phrase or None)
+    # An optional group (a caption look beside typed caption fields) adds its changes to the
+    # line but is never a miss (KRI-1563).
+    required = [v for g, v in zip(shape.groups, verdicts, strict=False) if not g.optional]
+    if required and not any(v.missed() for v in required) and declined is None:
+        phrase = "; ".join(_phrases(matched, live, two))
+        return base.model_copy(update={**update, "status": "met"}).with_reason(
+            phrase or None
+        ), matched
     done = [v for v in verdicts if v.matched and not (v.wrong or v.short)]
     notes: list[str] = []
+    named: list[DiffEntry] = []
     if done:
-        notes.append("; ".join(_phrases([e for v in done for e in v.matched], live, 2)))
-    for verdict in verdicts:
+        done_entries = [e for v in done for e in v.matched]
+        notes.append("; ".join(_phrases(done_entries, live, two)))
+        named.extend(done_entries)
+    for verdict in required:
         if verdict.missed():
-            notes.extend(_miss_notes(verdict, live))
+            more, seen = _miss_notes(verdict, live, one)
+            notes.extend(more)
+            named.extend(seen)
     if declined:
         notes.append(declined)
     if not notes:
         notes.append(nothing)
-    partial = bool(done) or any(v.wrong or v.short for v in verdicts)
+    notes = list(dict.fromkeys(notes))  # two fields saying one move are one note
+    partial = bool(done) or any(v.wrong or v.short for v in required)
     status = "partial" if partial else "not_possible"
-    return base.model_copy(update={**update, "status": status}).with_reason("; ".join(notes))
+    return base.model_copy(update={**update, "status": status}).with_reason("; ".join(notes)), named
 
 
 # ------------------------------------------------------------------------------ reply
@@ -961,3 +1351,7 @@ def reply_from_diff(
     if notes:
         parts.append(notes.strip())
     return "\n".join(parts)[:MAX_REPLY_CHARS]
+
+
+# KRI-1563: the ask ledger matches a no-op turn's parts to the copilot's unmet list the same way.
+unmet_reason = _unmet_reason

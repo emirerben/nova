@@ -2176,6 +2176,25 @@
     "some of your Visuals": "einige deiner Visuals",
     "I can't change the clip order from here right now. Tell me the order in the chat.": "Ich kann die Reihenfolge der Clips gerade nicht von hier aus ändern. Sag mir die Reihenfolge im Chat.",
     "You changed the clip order after I prepared this plan, so I cancelled it. Nothing was rendered. Tell me to go ahead and I'll prepare it again in your order.": "Du hast die Reihenfolge der Clips geändert, nachdem ich diesen Plan vorbereitet hatte, deshalb habe ich ihn abgebrochen. Es wurde nichts gerendert. Sag mir, dass ich weitermachen soll, dann bereite ich ihn in deiner Reihenfolge neu vor.",
-    "Updated your clip order.": "Ich habe die Reihenfolge deiner Clips aktualisiert."
+    "Updated your clip order.": "Ich habe die Reihenfolge deiner Clips aktualisiert.",
+    "Changed how the pictures behind you are framed": "Den Ausschnitt der Bilder hinter dir geändert",
+    "Changed the background behind you": "Den Hintergrund hinter dir geändert",
+    "Changed the colour moments": "Die Farbmomente geändert",
+    "Changed the pictures behind you": "Die Bilder hinter dir geändert",
+    "Changed when you're shown full screen": "Geändert, wann du im Vollbild zu sehen bist",
+    "Changed where you sit on screen": "Deinen Platz im Bild geändert",
+    "Couldn't: {ask}": "Nicht geschafft: {ask}",
+    "Couldn't: {ask} ({reason})": "Nicht geschafft: {ask} ({reason})",
+    "Made you small in the bottom-left corner": "Dich klein in die untere linke Ecke gesetzt",
+    "Made you small in the bottom-right corner": "Dich klein in die untere rechte Ecke gesetzt",
+    "Made you small in the top-left corner": "Dich klein in die obere linke Ecke gesetzt",
+    "Made you small in the top-right corner": "Dich klein in die obere rechte Ecke gesetzt",
+    "Put a new picture behind you": "Ein neues Bild hinter dich gesetzt",
+    "Put a plain colour behind you": "Eine einfarbige Fläche hinter dich gesetzt",
+    "Put you back full screen": "Dich wieder ins Vollbild gesetzt",
+    "Put {what} behind you": "{what} hinter dich gesetzt",
+    "Removed the background behind you": "Den Hintergrund hinter dir entfernt",
+    "Removed the changing pictures behind you": "Die wechselnden Bilder hinter dir entfernt",
+    "Your call: {ask}": "Deine Entscheidung: {ask}"
   }
 }

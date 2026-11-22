@@ -3251,6 +3251,12 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-1563: the ask ledger of a chat edit. Every part of the ask ends done, declined or
+    # waiting on a choice; the reply names every change (no "first two" cut), a turn that
+    # changed nothing still answers each part, and on a failed-render correction a part the
+    # copilot could not do no longer throws away the ops for the others. false = the previous
+    # receipts and replies. Apply: fly secret + restart api and worker.
+    kria_ask_ledger_enabled: bool = True
     # 29 Ekim lane E (KRI-1039): an ask the editor ops can express is composed with them
     # instead of refused, asked about or re-planned: a word-by-word title is one
     # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up

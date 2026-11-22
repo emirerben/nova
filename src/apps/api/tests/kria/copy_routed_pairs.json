@@ -2585,6 +2585,101 @@
    "app/agents/edit_copilot.py",
    "you asked for no sound effects, so I won't add any",
    "ses efekti istemediğini söylemiştin, o yüzden eklemiyorum"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed how the pictures behind you are framed",
+   "Arkandaki görsellerin kadrajı değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the background behind you",
+   "Arkandaki arka plan değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the colour moments",
+   "Renk anları değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the pictures behind you",
+   "Arkandaki görseller değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed when you're shown full screen",
+   "Tam ekran göründüğün anlar değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed where you sit on screen",
+   "Ekrandaki yerin değişti"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Couldn't: {ask}",
+   "Yapamadım: {ask}"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Couldn't: {ask} ({reason})",
+   "Yapamadım: {ask} ({reason})"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-left corner",
+   "Sol alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-right corner",
+   "Sağ alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-left corner",
+   "Sol üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-right corner",
+   "Sağ üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put a new picture behind you",
+   "Arkana yeni bir görsel kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put a plain colour behind you",
+   "Arkana düz bir renk kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put you back full screen",
+   "Tekrar tam ekrandasın"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put {what} behind you",
+   "Arkana {what} kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the background behind you",
+   "Arkandaki arka plan kaldırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the changing pictures behind you",
+   "Arkandaki değişen görseller kaldırıldı"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Your call: {ask}",
+   "Karar senin: {ask}"
   ]
  ],
  "retired": [

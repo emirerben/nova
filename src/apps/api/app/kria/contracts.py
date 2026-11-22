@@ -103,6 +103,12 @@ class KriaTurnPlan(_KriaModel):
     voiceover_script: dict[str, Any] | None = Field(
         default=None, exclude_if=lambda value: not value
     )
+    # KRI-1563: the ask ledger's receipts of a chat edit that changed nothing (one per part of
+    # the ask: declined, or waiting on the turn's question). Server-only, never in the model's
+    # schema; same omit-when-unset rule.
+    requirement_receipts: SkipJsonSchema[list[dict[str, Any]] | None] = Field(
+        default=None, exclude_if=lambda value: not value
+    )
 
     @field_validator("intents")
     @classmethod
