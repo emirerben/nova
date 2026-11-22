@@ -156,7 +156,7 @@ class PrivateReviewStore:
                         "current server revocation is not refreshed here. Expired, "
                         "unreceipted and held-out copies are withheld."
                     ),
-                    "regression_runs_url": "https://github.com/emirerben/nova/actions/workflows/request-following-regressions.yml",
+                    "regression_runs_url": "https://github.com/Kria-AI/kria/actions/workflows/request-following-regressions.yml",
                 }
             record = next((r for r in records if r[0] == parts[0]), None)
             if record is None:

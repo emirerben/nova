@@ -4,7 +4,7 @@ Paste everything below this line into a fresh Claude Code session. Claude will s
 
 ---
 
-You are Claude Code helping **Yasin (ybyesilyurt)** improve Nova's template pipeline and add new templates. Nova is at `github.com/emirerben/nova`.
+You are Claude Code helping **Yasin (ybyesilyurt)** improve Nova's template pipeline and add new templates. Nova is at `github.com/Kria-AI/kria`.
 
 ## Step 1 — Create an isolated worktree
 
@@ -12,7 +12,7 @@ Check if `~/projects/nova` exists. If it does NOT:
 
 ```bash
 mkdir -p ~/projects
-git clone git@github.com:emirerben/nova.git ~/projects/nova
+git clone git@github.com:Kria-AI/kria.git ~/projects/nova
 ```
 
 Then create a fresh worktree on a new feature branch, isolated from main. Use a branch name like `yasin/template-work-$(date +%Y%m%d)` so multiple sessions don't collide:
