@@ -27,10 +27,16 @@ and Skia against ``base.mp4``, the phone against its own ``cases/none/phone.mp4`
 and frame timing cancel out). The scrim is the luminance ratio against the base in the band
 y 0.80-0.86, under the text and above the footage's letterbox. It asserts, at 1080x1920:
 
-* each text box's left, right and bottom edge within 8 px of the mock-up's, the top within
-  8 px (16 px on A1, whose mock-up capitalises "i" as a dotted İ in every word);
-* the band's ratio within 0.06 of the mock-up's (0.40 under an A2 pair, 1.00 elsewhere);
+* each text box's left and bottom edge within 8 px of the mock-up's, the top within 8 px
+  (16 px on A1, whose mock-up capitalises "i" as a dotted İ in every word), the right edge
+  within 8 px for Skia and 20 px for the phone;
+* under a scrim the band's ratio within 0.06 of the mock-up's (0.40), elsewhere of 1.00;
 * the same for the Skia burn, so the phone and the cloud agree with each other too.
+
+The phone's right-edge allowance: the device shapes these runs itself, and in Literata,
+Instrument Serif and Inter Bold its lines run up to about 2% wider than Skia's from the same
+left edge. ``cases/control`` is A1's hook without this change's keys (the standard shadow);
+score reports its width against the same Skia hook, showing the gap is the device's own.
 
 It writes ``montage.png`` (one row per still: mock-up | iPhone export | Skia) and
 ``result.json``. Limits: the footage is the 320x568 analysis proxy scaled up (the mock-ups' own
@@ -61,6 +67,7 @@ TEST_ENV = {
     "ALLOWED_ORIGINS": '["http://localhost:3000"]',
 }
 BOX_SLACK_PX = 8
+PHONE_RIGHT_SLACK_PX = 20
 SCRIM_SLACK = 0.06
 
 
@@ -278,6 +285,35 @@ def prepare(out: Path) -> int:
             "capabilities": sorted(recipe.required_capabilities),
             "fonts": sorted({Path(p).name for k, p in paths.items() if k != "base"}),
         }
+    # Control: A1's hook with the KRI-1581 keys taken out (standard shadow), to show the phone's
+    # line widths are the device's own shaping, not something this change draws.
+    hook = {
+        key: value
+        for key, value in json.loads((out / "cases" / "A1" / "rows.json").read_text())[0].items()
+        if key not in ("shadow_blur", "shadow_offset_y", "scrim")
+    }
+    (overlay,) = build_overlays_from_text_elements(
+        [TextElement.model_validate(hook)], video_duration_s=60, independent_box_alignment=True
+    )
+    layer, font = compile_text_overlay(overlay, layer_id="text-0", canvas=PORTRAIT)
+    font_asset = MediaAsset(
+        id=font.id,
+        relative_path=font.id,
+        fingerprint=AssetFingerprint(
+            hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
+        ),
+    )
+    control = out / "cases" / "control"
+    control.mkdir(parents=True, exist_ok=True)
+    (control / "recipe.json").write_text(
+        json.dumps(
+            make_recipe([layer], {font.id: font}, {font.id: font_asset}).model_dump(mode="json"),
+            indent=1,
+        )
+    )
+    (control / "assets.json").write_text(
+        json.dumps({"base": str(base), font.id: str(fonts_dir / font.catalog_id)}, indent=1)
+    )
     (out / "prepare.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps(summary, indent=1))
     return 0
@@ -353,16 +389,19 @@ def score(out: Path) -> int:
                 "mock_bottom_ratio": round(mock_ratio, 3),
                 "under_scrim": any(s <= t < e for s, e in scrim_windows),
             }
+            target = mock_ratio if entry["under_scrim"] else 1.0
             for name, image, under in (("phone", phone, phone_base), ("skia", skia, base)):
                 box = _text_box(image, under)
                 ratio = _bottom_ratio(image, under)
                 deltas = [b - m for b, m in zip(box, mock_box, strict=True)] if box else None
                 top = 16 if design == "A1" else BOX_SLACK_PX
+                right = PHONE_RIGHT_SLACK_PX if name == "phone" else BOX_SLACK_PX
                 passed = (
                     deltas is not None
-                    and all(abs(d) <= BOX_SLACK_PX for d in (deltas[0], deltas[2], deltas[3]))
+                    and all(abs(d) <= BOX_SLACK_PX for d in (deltas[0], deltas[3]))
                     and abs(deltas[1]) <= top
-                    and abs(ratio - mock_ratio) <= SCRIM_SLACK
+                    and abs(deltas[2]) <= right
+                    and abs(ratio - target) <= SCRIM_SLACK
                 )
                 entry[name] = {
                     "box": box,
@@ -383,6 +422,22 @@ def score(out: Path) -> int:
                     fill="black",
                 )
             tiles.append(tile.resize((810, 498)))
+    t = _still_times("A1")[0]
+    control = Image.open(
+        _frame(out / "cases" / "control" / "phone.mp4", t, out / "cases" / "control" / "still0.png")
+    ).convert("RGB")
+    none = Image.open(out / "cases" / "none" / "A1_still0.png").convert("RGB")
+    designed = results["A1"][0]["phone"]["box"]
+    control_box = _text_box(control, none)
+    results["control"] = {
+        "what": "A1 hook without shadow_blur, shadow_offset_y or scrim, exported on the phone",
+        "box": control_box,
+        "designed_box": designed,
+        "skia_box": results["A1"][0]["skia"]["box"],
+        "same_width_as_designed": bool(
+            control_box and designed and abs(control_box[2] - designed[2]) <= 2
+        ),
+    }
     montage = Image.new("RGB", (810 * 2, 498 * ((len(tiles) + 1) // 2)), "white")
     for index, tile in enumerate(tiles):
         montage.paste(tile, ((index % 2) * 810, (index // 2) * 498))
