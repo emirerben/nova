@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.84.0] - 2026-11-22
+
+### Changed
+- feat(kria): the clip order is one live history the AI always sees and can edit; chat reorder composes with other edits (flag off) (#2461) <!-- release-pr: 2461 -->
+
 ## [0.89.83.0] - 2026-11-22
 
 ### Changed
