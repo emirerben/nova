@@ -2620,6 +2620,11 @@
    "app/services/researched_text.py",
    "No sourced line for {count} of the clips.",
    "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll place sound effects on the cuts where your clips change",
+   "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım"
   ]
  ],
  "retired": [
