@@ -65,6 +65,10 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server may ask "show me your moments" (`moment_order_question` payloads) and accepts the answer as
     /// `moment_order` on a turn (KRI-723). Nil/false (older server, or the 999 kill switch) = the text only, no card.
     var momentOrderQuestions: Bool? = nil
+    /// Server sends `clip_order_card` payloads (the decided clip order as a strip) and accepts `clip_order_ops` on a
+    /// turn (KRI-1591). Cards come from the thread's own events; this only says whether a confirm will be taken.
+    /// Nil (older server) = unknown, treated as available; an explicit false (kill switch) = a read-only strip.
+    var clipOrderCards: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
@@ -154,6 +158,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case songRangeQuestions = "song_range_questions"
         case protectedRegionMarks = "protected_region_marks"
         case momentOrderQuestions = "moment_order_questions"
+        case clipOrderCards = "clip_order_cards"
         case choiceQuestions = "choice_questions"
         case voiceoverScriptCards = "voiceover_script_cards"
         case wrongFactFeedback = "wrong_fact_feedback", ideaExampleFeedback = "idea_example_feedback"
@@ -203,6 +208,7 @@ extension CreationCapabilities {
         songRangeQuestions = try container.decodeIfPresent(Bool.self, forKey: .songRangeQuestions)
         protectedRegionMarks = try container.decodeIfPresent(Bool.self, forKey: .protectedRegionMarks)
         momentOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .momentOrderQuestions)
+        clipOrderCards = try? container.decodeIfPresent(Bool.self, forKey: .clipOrderCards)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
         wrongFactFeedback = try container.decodeIfPresent(Bool.self, forKey: .wrongFactFeedback)
@@ -623,7 +629,8 @@ extension CreationThread {
             "assistant_render_failed", "agent_assistant_render_failed", "assistant_error", "agent_assistant_error",
             "draft_applied", "user_message",
         ]
-        return !events.contains { $0.sequence > approved.sequence && settlingTypes.contains($0.eventType) }
+        // A clip-order drag is a gesture, not the creator speaking: it does not mean the render has been dispatched.
+        return !events.contains { $0.sequence > approved.sequence && settlingTypes.contains($0.eventType) && !$0.isClipOrderDrag }
     }
 
     /// True while a newly proposed plan hasn't been confirmed or declined yet,

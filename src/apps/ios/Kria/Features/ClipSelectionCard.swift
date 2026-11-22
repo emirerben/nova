@@ -575,6 +575,8 @@ struct ClipPreviewPage: View {
     let projectID: UUID?
     let isCurrent: Bool
     var name: String? = nil
+    /// What the poster says when the original is not on this iPhone; nil = the clip picker's longer sentence.
+    var missingNote: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var player: LoopingPlayer?
     @State private var muted = true
@@ -618,7 +620,7 @@ struct ClipPreviewPage: View {
             } else if hasLocalVideo == false {
                 VStack {
                     Spacer()
-                    Text("This clip isn't stored on this iPhone, so only its poster can be shown.")
+                    Text(missingNote ?? String(localized: "This clip isn't stored on this iPhone, so only its poster can be shown."))
                         .font(KriaFont.body(12)).foregroundStyle(Color.white).multilineTextAlignment(.center)
                         .padding(8).background(KriaColor.ink.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
                         .padding(10)
@@ -656,7 +658,7 @@ struct ClipPreviewPage: View {
         #if DEBUG
         // `KRIA_CHAT_CLIP_QUESTION=1`: the first fixture clip has a local original (a generated clip), the others
         // do not, so a UI test sees both the playing and the poster-only page.
-        if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "1", mediaID == "fixture-clip" {
+        if ["KRIA_CHAT_CLIP_QUESTION", "KRIA_CHAT_CLIP_ORDER"].contains(where: { ProcessInfo.processInfo.environment[$0] == "1" }), mediaID == "fixture-clip" {
             return SongTimelineFixture.clipURL(mediaID: mediaID, force: true)
         }
         #endif
