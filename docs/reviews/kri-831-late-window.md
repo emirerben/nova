@@ -66,9 +66,15 @@ each judged by the v5 rule and the v6 rule.
 windows v6 rejects: -0.29 to -0.0085. The lead condition lost no catch that the sample
 rule alone made.
 
-The late-window, soft-proxy and frame-profile tests (37 per repeat) were then repeated on
-CI: 258 of 258 repeats passed in run 44956879640, which ended at the 50-minute job limit I
-had set too low. Under v5 the same test failed 2 of 480.
+Why the 68 one-frame-late windows still pass: in every one, no sample needed its next
+frame (each sample also matches the displayed frame). None passes because a sample was
+taken as proof of timing, which is the route the original failure would need to survive.
+
+The late-window, soft-proxy and frame-profile tests (37 per repeat) were also repeated on
+CI: 258 of 258 repeats passed in run 44956879640, which ended at the 50-minute job limit
+set for it. That shows no new failure. It does not prove the old one is gone, since a
+1-in-240 failure stays hidden in a set this size about one time in three; the table and
+the paragraph above do.
 
 ## Stored real reports
 
@@ -82,9 +88,11 @@ had set too low. Under v5 the same test failed 2 of 480.
 | Already failed | 9 |
 | No per-sample evidence (v3) | 6 |
 
-34 of the 36 passing windows have a sample beside a repeated frame. One had samples on
-the next frame (5 of 14) with `lead_next` +0.006. No passing window had a negative
-`lead_next`. These v5 reports do not store whether a window
+34 of the 36 passing windows have a sample beside a repeated frame, so real footage has
+the held frames the hole needs. None of them is known to be a late export. One window had
+samples on the next frame (5 of 14) with `lead_next` +0.006; six of its other samples
+match only the displayed frame, so v6 passes it on both conditions. No passing window had
+a negative `lead_next`. These v5 reports do not store whether a window
 was on the grid, so the replay applied the rule to all of them, which can only overstate
 flips.
 
@@ -120,8 +128,8 @@ Still open, with no test because the check cannot see it: the cases under Limits
 - Footage where consecutive frames both clear the exact bar in every sample (a still, light
   grain, a slow drift, part of a slow zoom) cannot show a one-frame shift. 68 of 144
   one-frame-late windows still pass, all of this kind.
-- The real sample is small: 36 passing windows from production. 34 of them hold a
-  repeated frame, so the hole was open on real footage, not only in the test.
+- The real sample is small: 36 passing windows from production, because few phone
+  exports are checked at all (9 reports in 84 jobs).
 - Other shifts on slow zoom and drift still pass where they passed in v5 (191 of 432).
 - An export one frame early is not covered by this rule. It fails the exact bar unless the
   footage is this slow.
