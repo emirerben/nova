@@ -135,6 +135,11 @@
       "file": "tests/tasks/test_kri808_clip_speech_language.py",
       "reason": "the kill switch replays prod's own first pass",
       "why": "Parametrised case that is covered by the kill-switch test."
+    },
+    {
+      "file": "tests/pipeline/test_kri1585_kyoto_fixture.py",
+      "reason": "needs footage frames: python scripts/kri1585_kyoto_fixture.py cache",
+      "why": "Creator footage never enters git or CI; the frames come from a gitignored local cache fetched from production (KRI-1585 Phase 0)."
     }
   ]
 }

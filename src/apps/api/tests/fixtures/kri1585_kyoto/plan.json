@@ -1,0 +1,887 @@
+{
+ "_source": "KRI-1585 Phase 0: prod job 3930c822-2d44-4251-bcf6-d45ef865c5ef (Kyoto Torokko, guided_story, rendered on iPhone), frozen read-only by scripts/kri1585_kyoto_fixture.py freeze. Owner/thread ids replaced, bucket paths and signed URLs kept out, clip transcripts and people notes dropped; recorded digests do not recompute.",
+ "job": {
+  "id": "3930c822-2d44-4251-bcf6-d45ef865c5ef",
+  "content_plan_item_id": "28c65c59-55d5-48fb-96ec-03416a766529",
+  "status": "variants_ready",
+  "job_type": "generative",
+  "mode": "content_plan",
+  "created_at": "2026-11-22T10:17:37.606484Z",
+  "finished_at": "2026-11-22T10:22:23.576585Z"
+ },
+ "runtime_version": 2,
+ "language": "tr",
+ "creator_messages": [
+  {
+   "created_at": "2026-11-22T07:59:23.791701+00:00",
+   "content": "Bir dakikayı geçmeyecek şekilde. Haritayı gösterdiğim video ilk video olacak. Trene giriş kısımları ikinci video. Tren içerisinde arkadaşlarımı gösterdiğim videolar ve sonrasında manzaralar olacak. Bu Kyoto'daki Toroko treni tren hakkında bilgilendirici alt yazı istiyorum videoların seslerini de kapat",
+   "client_protocol": 53
+  },
+  {
+   "created_at": "2026-11-22T10:14:19.371282+00:00",
+   "content": "Bunlar olmadan hazırla",
+   "client_protocol": 53
+  }
+ ],
+ "creator_route": {
+  "route": "unified_montage",
+  "platform": "phone",
+  "contract_digest": "cc9ce9e137a6ab27fe5b994a152bfb10708ce1b00bc8e62cf42f777c220c643a"
+ },
+ "approved_proposal": {
+  "goal": "",
+  "pace": "balanced",
+  "media": [
+   {
+    "kind": "video",
+    "lane": "clip",
+    "aspect": 0.5633802816901409,
+    "media_id": "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+    "duration_s": 34.86666666666667,
+    "generation": "1795334280085847",
+    "analysis": {
+     "width": 320,
+     "height": 568,
+     "aspect": 0.5634,
+     "subject": "map of a train route with photos",
+     "exposure": {
+      "frames": 24,
+      "version": 1,
+      "mean_luma": 95.6,
+      "near_black_share": 0.0
+     },
+     "duration_s": 34.866667
+    }
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "aspect": 0.5633802816901409,
+    "media_id": "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+    "duration_s": 8.8,
+    "generation": "1795334292897149",
+    "analysis": {
+     "width": 320,
+     "height": 568,
+     "aspect": 0.5634,
+     "subject": "red and yellow train",
+     "exposure": {
+      "frames": 10,
+      "version": 1,
+      "mean_luma": 114.7,
+      "near_black_share": 0.0
+     },
+     "duration_s": 8.8
+    }
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "aspect": 0.5633802816901409,
+    "media_id": "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+    "duration_s": 9.666666666666666,
+    "generation": "1795334295385323",
+    "analysis": {
+     "width": 320,
+     "height": 568,
+     "aspect": 0.5634,
+     "subject": "people on a train",
+     "exposure": {
+      "frames": 10,
+      "version": 1,
+      "mean_luma": 89.7,
+      "near_black_share": 0.0
+     },
+     "duration_s": 9.666667
+    }
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "aspect": 0.5633802816901409,
+    "media_id": "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+    "duration_s": 8.833333333333334,
+    "generation": "1795334304874116",
+    "analysis": {
+     "width": 320,
+     "height": 568,
+     "aspect": 0.5634,
+     "subject": "river and forested landscape from train window",
+     "exposure": {
+      "frames": 10,
+      "version": 1,
+      "mean_luma": 109.8,
+      "near_black_share": 0.0
+     },
+     "duration_s": 8.833333
+    }
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "aspect": 0.5633802816901409,
+    "media_id": "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+    "duration_s": 35.93333333333333,
+    "generation": "1795334307462522",
+    "analysis": {
+     "width": 320,
+     "height": 568,
+     "aspect": 0.5634,
+     "subject": "people on a train viewing scenery",
+     "exposure": {
+      "frames": 24,
+      "version": 1,
+      "mean_luma": 92.9,
+      "near_black_share": 0.0
+     },
+     "duration_s": 35.933333
+    }
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "aspect": 0.5633802816901409,
+    "media_id": "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+    "duration_s": 21.633333333333333,
+    "generation": "1795334319639607",
+    "analysis": {
+     "width": 320,
+     "height": 568,
+     "aspect": 0.5634,
+     "subject": "scenic landscape from a train",
+     "exposure": {
+      "frames": 23,
+      "version": 1,
+      "mean_luma": 115.6,
+      "near_black_share": 0.0
+     },
+     "duration_s": 21.633333
+    }
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "aspect": 0.5633802816901409,
+    "media_id": "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4",
+    "duration_s": 22.2,
+    "generation": "1795334322805037",
+    "analysis": {
+     "width": 320,
+     "height": 568,
+     "aspect": 0.5634,
+     "subject": "autumn mountain river landscape",
+     "exposure": {
+      "frames": 23,
+      "version": 1,
+      "mean_luma": 106.1,
+      "near_black_share": 0.0
+     },
+     "duration_s": 22.2
+    }
+   }
+  ],
+  "title": "Montage",
+  "direction": "text_explainer",
+  "fast_cuts": null,
+  "duration_s": 60.001000000000005,
+  "font_family": "Alte Haas Grotesk",
+  "media_scope": "all",
+  "story_beats": [
+   {
+    "topic": "Nehir ve sonbahar ağaçlarının tren penceresinden görünümüyle yolculuğun atmosfer",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-1",
+    "thought": "",
+    "media_ids": [
+     "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+     "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+    ],
+    "duration_s": 18.062,
+    "thought_source": "ai_draft"
+   },
+   {
+    "topic": "Harita ve perondaki tren görüntüleriyle yolculuğa bağlam ver; doğrulanacak tanıt",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-2",
+    "thought": "",
+    "media_ids": [
+     "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+     "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+    ],
+    "duration_s": 13.362,
+    "thought_source": "ai_draft"
+   },
+   {
+    "topic": "Trene biniş ve içerideki arkadaş görüntüleriyle deneyimin insan tarafını göster.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-3",
+    "thought": "",
+    "media_ids": [
+     "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+     "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4"
+    ],
+    "duration_s": 18.695,
+    "thought_source": "ai_draft"
+   },
+   {
+    "topic": "Nehir vadisi ve renkli ağaçların daha uzun tutulan görüntüleri üzerinde araştırı",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-4",
+    "thought": "",
+    "media_ids": [
+     "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+    ],
+    "duration_s": 9.882000000000001,
+    "thought_source": "ai_draft"
+   }
+  ],
+  "montage_audio": null,
+  "text_composition": {
+   "version": 1,
+   "operations": [
+    {
+     "op": "add_text",
+     "text": "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır.",
+     "end_s": 9.52,
+     "start_s": 0.0,
+     "research": {
+      "end_s": 9.52,
+      "facts": [
+       {
+        "id": "fact-6",
+        "text": "**Güzergah ve Seyir Bilgileri:**\n*   Tren, Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na kadar Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik (bazı kaynaklarda 8.8 km olarak da belirtilir) bir güzergahta yaklaşık 25 dakikalık bir yolculuk sunmaktadır",
+        "sources": [
+         {
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+          "title": "japan.travel"
+         }
+        ]
+       }
+      ],
+      "sources": [
+       {
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+        "title": "japan.travel"
+       }
+      ],
+      "start_s": 0.0,
+      "version": 1,
+      "media_ids": [
+       "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+       "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4"
+      ],
+      "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+      "original_text": "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır.",
+      "timeline_binding": [
+       {
+        "in_s": 24.059,
+        "clip_index": 0,
+        "duration_s": 9.52,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.006,
+        "clip_index": 1,
+        "duration_s": 8.787,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.26,
+        "clip_index": 2,
+        "duration_s": 6.82,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.0,
+        "clip_index": 3,
+        "duration_s": 6.787,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 13.24,
+        "clip_index": 4,
+        "duration_s": 9.453,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 10.352,
+        "clip_index": 5,
+        "duration_s": 9.487,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 4.059,
+        "clip_index": 6,
+        "duration_s": 9.867,
+        "transition_after": null,
+        "transition_duration_s": null
+       }
+      ],
+      "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+     }
+    },
+    {
+     "op": "add_text",
+     "text": "Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım.",
+     "end_s": 24.887,
+     "start_s": 18.067,
+     "research": {
+      "end_s": 24.887,
+      "facts": [
+       {
+        "id": "fact-11",
+        "text": "**Tren ve Vagonlar:**\n*   Tren, eski tarz ahşap banklarla donatılmış retro bir tasarıma sahiptir",
+        "sources": [
+         {
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+          "title": "japan.travel"
+         }
+        ]
+       }
+      ],
+      "sources": [
+       {
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+        "title": "japan.travel"
+       }
+      ],
+      "start_s": 18.067,
+      "version": 1,
+      "media_ids": [
+       "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+       "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+       "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4"
+      ],
+      "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+      "original_text": "Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım.",
+      "timeline_binding": [
+       {
+        "in_s": 24.059,
+        "clip_index": 0,
+        "duration_s": 9.52,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.006,
+        "clip_index": 1,
+        "duration_s": 8.787,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.26,
+        "clip_index": 2,
+        "duration_s": 6.82,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.0,
+        "clip_index": 3,
+        "duration_s": 6.787,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 13.24,
+        "clip_index": 4,
+        "duration_s": 9.453,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 10.352,
+        "clip_index": 5,
+        "duration_s": 9.487,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 4.059,
+        "clip_index": 6,
+        "duration_s": 9.867,
+        "transition_after": null,
+        "transition_duration_s": null
+       }
+      ],
+      "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+     }
+    },
+    {
+     "op": "add_text",
+     "text": "Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar.",
+     "end_s": 50.254,
+     "start_s": 40.767,
+     "research": {
+      "end_s": 50.254,
+      "facts": [
+       {
+        "id": "fact-8",
+        "text": "*   Tren, mevsimlere göre değişen manzaralar sunar; ilkbaharda kiraz çiçekleri, yazın yeşil doğa ve sonbaharda sonbahar yaprakları görülebilir",
+        "sources": [
+         {
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+          "title": "japan.travel"
+         }
+        ]
+       }
+      ],
+      "sources": [
+       {
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOu9l94FAGILQefOmYypFjnMrC1b2ZvagE8sJnoGbxxJ9CNFprcllU6dbC9lEhPBNDIW32KeCqhACnvmgxkiygCni9-BTrMbEsV0ifO7ENxjzTJug8kkBXrMktRDBI",
+        "title": "japan.travel"
+       }
+      ],
+      "start_s": 40.767,
+      "version": 1,
+      "media_ids": [
+       "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+       "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+       "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+      ],
+      "retrieved_at": "2026-11-22T10:15:05.232275+00:00",
+      "original_text": "Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar.",
+      "timeline_binding": [
+       {
+        "in_s": 24.059,
+        "clip_index": 0,
+        "duration_s": 9.52,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.006,
+        "clip_index": 1,
+        "duration_s": 8.787,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.26,
+        "clip_index": 2,
+        "duration_s": 6.82,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 0.0,
+        "clip_index": 3,
+        "duration_s": 6.787,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 13.24,
+        "clip_index": 4,
+        "duration_s": 9.453,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 10.352,
+        "clip_index": 5,
+        "duration_s": 9.487,
+        "transition_after": null,
+        "transition_duration_s": null
+       },
+       {
+        "in_s": 4.059,
+        "clip_index": 6,
+        "duration_s": 9.867,
+        "transition_after": null,
+        "transition_duration_s": null
+       }
+      ],
+      "search_entry_html": "<style>\n.container {\n  align-items: center;\n  border-radius: 8px;\n  display: flex;\n  font-family: Google Sans, Roboto, sans-serif;\n  font-size: 14px;\n  line-height: 20px;\n  padding: 8px 12px;\n}\n.chip {\n  display: inline-block;\n  border: solid 1px;\n  border-radius: 16px;\n  min-width: 14px;\n  padding: 5px 16px;\n  text-align: center;\n  user-select: none;\n  margin: 0 8px;\n  -webkit-tap-highlight-color: transparent;\n}\n.carousel {\n  overflow: auto;\n  scrollbar-width: none;\n  white-space: nowrap;\n  margin-right: -12px;\n}\n.headline {\n  display: flex;\n  margin-right: 4px;\n}\n.gradient-container {\n  position: relative;\n}\n.gradient {\n  position: absolute;\n  transform: translate(3px, -9px);\n  height: 36px;\n  width: 9px;\n}\n@media (prefers-color-scheme: light) {\n  .container {\n    background-color: #fafafa;\n    box-shadow: 0 0 0 1px #0000000f;\n  }\n  .headline-label {\n    color: #1f1f1f;\n  }\n  .chip {\n    background-color: #ffffff;\n    border-color: #d2d2d2;\n    color: #5e5e5e;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #f2f2f2;\n  }\n  .chip:focus {\n    background-color: #f2f2f2;\n  }\n  .chip:active {\n    background-color: #d8d8d8;\n    border-color: #b6b6b6;\n  }\n  .logo-dark {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);\n  }\n}\n@media (prefers-color-scheme: dark) {\n  .container {\n    background-color: #1f1f1f;\n    box-shadow: 0 0 0 1px #ffffff26;\n  }\n  .headline-label {\n    color: #fff;\n  }\n  .chip {\n    background-color: #2c2c2c;\n    border-color: #3c4043;\n    color: #fff;\n    text-decoration: none;\n  }\n  .chip:hover {\n    background-color: #353536;\n  }\n  .chip:focus {\n    background-color: #353536;\n  }\n  .chip:active {\n    background-color: #464849;\n    border-color: #53575b;\n  }\n  .logo-light {\n    display: none;\n  }\n  .gradient {\n    background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);\n  }\n}\n</style>\n<div class=\"container\">\n  <div class=\"headline\">\n    <svg class=\"logo-light\" width=\"18\" height=\"18\" viewBox=\"9 9 35 35\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z\" fill=\"#4285F4\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z\" fill=\"#34A853\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z\" fill=\"#FBBC05\"/>\n      <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z\" fill=\"#EA4335\"/>\n    </svg>\n    <svg class=\"logo-dark\" width=\"18\" height=\"18\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">\n      <circle cx=\"24\" cy=\"23\" fill=\"#FFF\" r=\"22\"/>\n      <path d=\"M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z\" fill=\"#4285F4\"/>\n      <path d=\"M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z\" fill=\"#34A853\"/>\n      <path d=\"M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z\" fill=\"#FBBC05\"/>\n      <path d=\"M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z\" fill=\"#EA4335\"/>\n    </svg>\n    <div class=\"gradient-container\"><div class=\"gradient\"></div></div>\n  </div>\n  <div class=\"carousel\">\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQERbG7Ex3c9fPV4foHjbwcXTMWY8vlY_68AQh8MRhw7a1zQsnRLg5jI9iodJ6A_ZU7X1iYj5BREHjyx4LyRnE6BCc6Fq1tiWGg4yylk46P8PreCEw2uQZwVyOFp_8fUD_oO18Z3VzfPJA9flwyLZ04rN81bFDIWOUdWnh2DbeB1zQCcLjbDY8Kkcgw3YRsnC1brhlJdiUGP6A3hNEkAPds=\">Sagano Scenic Railway history</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF6oE2Ji4FfZeNI6zb1PhM4cx7kHVVFyEJnh3unHgv58suHasq5_ijpbHv6xRawhqecOJ_fQubrtv7Wmc33rS-R19GkvCl5uvHamkAlQYLBZMeqIviD3txb8WHejmQ2iwjG0myeitSNCY89F6VMCgF_CF1JoE5hUUoi7oOwMkMgrqMRDjpzhCU29mlZyuXh9FSYSngaCqk__-wgxG-5QTD1YzhqUp7FOsCskC_7Z_SeAOOdx9VaijEs0Hwt4L7Z_OCTBh1ZsuEGoMAq7OIZEJ5W3z6VG3K5RXo8H-K_P3bPXIG5PsogmjOo6Hn-s2CZcaI=\">嵯峨野観光鉄道 公式サイト</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdaevTDhdS7pXzsdXCKda0QsIR3N1GiQah2ghKmJuFqN2pbKRYkIn080ukvAl8Vbmq6h2Gpir2Ymfj9p6rdeHtZa0S9hw04GjQmKugiw58-K--UOzyjH1hkLnJLzijAnRi5P68ouWY_YQIgGmImQGQkb1Ji8ygWpVZxja_Rjv2NVoqP-1_ZOWmIGkjr5xsUrGDZ4c5iySl3duTUTZxV2BYYO8c8BOO9JM=\">Sagano Romantic Train official website</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFp83jjXhh2USLVpnB3C7QaVjk-wUFZHXbO3hXttd7F9F2YiEdXo2DPyvULGIJ8-DiDu91vuLfUStMzvG0g0r5Q5cTpPWkxn6Jj2K2KMapn1AYtTUGZNgbn-ST1E243qzFatG4L-9Db0tEFuHihHWnaZJNMwvmWPYodPT3i28e-X3CtkIrSPKoynqKRgZnw0wa-NWgoZJ-wu9XhF-8kft-3JF1tdqrVBpFmi6YXBI9O9LCFArNb_FVCtV_1pg5tiFVspec9DSmno8T-dIdR5zc3g7gwAO4=\">嵯峨野観光鉄道 歴史</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGPSIFgI3-8X12254KyK6qgx-6hOJsn2rPDZNSnFX5NMp3FBE_hIQKYsJ-Av8OmOGA1KQhVgADtXsIx3VvTA69IW0hwnI1VqhvCGFGy7YCuDOhR7ojf-PuK9LlO2ayu-MAttRn1wtowSRoiobDPSe1-QSIl_eqHdI1twfkogavWScTbWzBXXesgDZci3CJaWx5rsr3wZj3qkynbpXIhelrccTpRU7cU4oMlwVRy17ErYZRuj8qykoDc1P_QRiFufsj1FueExpKeF2tS1BcXIGBQyjBURqf0aIz3fTubYb818JzxcUNWZtgXH86JwM12_RK1DWRkuNuWriw=\">嵯峨野観光鉄道 コレクション</a>\n    <a class=\"chip\" href=\"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEfMnN_rWBFM5VTxw12tXVreRvaqThP6dNGSC2eASuwON5s9eomudbkcYaTR1tXObToipPCNz-THYcGKr49fqOG3JagIqCrPYDMJAcdoYUu83WQFrMAFwX8n0cBqhfr69wjZqZzZ9IaVDMYXvigmPvylc5PXHbWOlfOZHzd_Ik9OnDkGP9Kwt47eJRbI0bUXLiJ2dGnw_bZtuM-uI1xu7uUHn0=\">Sagano Scenic Railway collection</a>\n  </div>\n</div>\n"
+     }
+    }
+   ],
+   "base_digest": "f286f919bed89739ecf067c62afe9068241b758335095d2e41a4f3a8aa133805",
+   "copy_constraints": {
+    "creation-f286f919bed8-0": "Torokko Saga İstasyonu: 7.3 kilometrelik bir güzergah sunmaktadır.",
+    "creation-f286f919bed8-1": "Kyoto Demiryolu: Ahşap banklarla donatılmış retro tasarım.",
+    "creation-f286f919bed8-2": "Hozukyo Geçidi: Sonbahar yapraklarıyla renkli manzaralar sunar."
+   }
+  },
+  "mixed_media_timing": null,
+  "output_orientation": "portrait",
+  "selected_media_ids": [
+   "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+   "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+   "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+   "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+   "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+   "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+   "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "montage_text_bindings": [],
+  "output_orientation_reason": "Set automatically: no output format was picked."
+ },
+ "variant": {
+  "ok": true,
+  "rank": 1,
+  "text_mode": "agent_text",
+  "duration_s": 61.601000000000006,
+  "intro_mode": "linear",
+  "variant_id": "guided_story",
+  "orientation": "portrait",
+  "brand_tail_s": 1.6,
+  "intro_layout": "linear",
+  "media_digest": "1f12cfc9d02e0f894ac6a3b12b6213e1f8368d9e0e4da050dfcffe69600c8da2",
+  "style_set_id": "guided_story_v2",
+  "landscape_fit": "fit",
+  "render_status": "ready",
+  "music_track_id": null,
+  "song_reference": null,
+  "story_timeline": [
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Nehir ve sonbahar ağaçlarının tren penceresinden görünümüyle yolculuğun atmosfer",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-1",
+    "gcs_path": "users/<owner>/creation-threads/<thread>/analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+    "media_id": "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+    "required": true,
+    "moment_id": "story-beat-1:1",
+    "beat_align": false,
+    "duration_s": 9.52,
+    "generation": "1795334280085847",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 9.52,
+    "source_end_s": 33.579,
+    "playback_rate": null,
+    "output_start_s": 0.0,
+    "source_start_s": 24.059,
+    "look_adjustments": null,
+    "transition_after": null,
+    "source_audio_muted": true,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Nehir ve sonbahar ağaçlarının tren penceresinden görünümüyle yolculuğun atmosfer",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-1",
+    "gcs_path": "users/<owner>/creation-threads/<thread>/analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+    "media_id": "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+    "required": true,
+    "moment_id": "story-beat-1:2",
+    "beat_align": false,
+    "duration_s": 8.787,
+    "generation": "1795334292897149",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 18.187,
+    "source_end_s": 8.794,
+    "playback_rate": null,
+    "output_start_s": 9.4,
+    "source_start_s": 0.006,
+    "look_adjustments": null,
+    "transition_after": null,
+    "source_audio_muted": true,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Harita ve perondaki tren görüntüleriyle yolculuğa bağlam ver; doğrulanacak tanıt",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-2",
+    "gcs_path": "users/<owner>/creation-threads/<thread>/analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+    "media_id": "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+    "required": true,
+    "moment_id": "story-beat-2:1",
+    "beat_align": false,
+    "duration_s": 6.82,
+    "generation": "1795334295385323",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 24.887,
+    "source_end_s": 7.08,
+    "playback_rate": null,
+    "output_start_s": 18.067,
+    "source_start_s": 0.26,
+    "look_adjustments": null,
+    "transition_after": null,
+    "source_audio_muted": true,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Harita ve perondaki tren görüntüleriyle yolculuğa bağlam ver; doğrulanacak tanıt",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-2",
+    "gcs_path": "users/<owner>/creation-threads/<thread>/analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+    "media_id": "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+    "required": true,
+    "moment_id": "story-beat-2:2",
+    "beat_align": false,
+    "duration_s": 6.787,
+    "generation": "1795334304874116",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 31.554,
+    "source_end_s": 6.787,
+    "playback_rate": null,
+    "output_start_s": 24.767,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "source_audio_muted": true,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Trene biniş ve içerideki arkadaş görüntüleriyle deneyimin insan tarafını göster.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-3",
+    "gcs_path": "users/<owner>/creation-threads/<thread>/analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+    "media_id": "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+    "required": true,
+    "moment_id": "story-beat-3:1",
+    "beat_align": false,
+    "duration_s": 9.453,
+    "generation": "1795334307462522",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 40.887,
+    "source_end_s": 22.693,
+    "playback_rate": null,
+    "output_start_s": 31.434,
+    "source_start_s": 13.24,
+    "look_adjustments": null,
+    "transition_after": null,
+    "source_audio_muted": true,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Trene biniş ve içerideki arkadaş görüntüleriyle deneyimin insan tarafını göster.",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-3",
+    "gcs_path": "users/<owner>/creation-threads/<thread>/analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+    "media_id": "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+    "required": true,
+    "moment_id": "story-beat-3:2",
+    "beat_align": false,
+    "duration_s": 9.487,
+    "generation": "1795334319639607",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 50.254,
+    "source_end_s": 19.839,
+    "playback_rate": null,
+    "output_start_s": 40.767,
+    "source_start_s": 10.352,
+    "look_adjustments": null,
+    "transition_after": null,
+    "source_audio_muted": true,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "Nehir vadisi ve renkli ağaçların daha uzun tutulan görüntüleri üzerinde araştırı",
+    "layout": "fullscreen",
+    "beat_id": "story-beat-4",
+    "gcs_path": "users/<owner>/creation-threads/<thread>/analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4",
+    "media_id": "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4",
+    "required": true,
+    "moment_id": "story-beat-4:1",
+    "beat_align": false,
+    "duration_s": 9.867,
+    "generation": "1795334322805037",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 60.001,
+    "source_end_s": 13.926,
+    "playback_rate": null,
+    "output_start_s": 50.134,
+    "source_start_s": 4.059,
+    "look_adjustments": null,
+    "transition_after": null,
+    "source_audio_muted": true,
+    "transition_duration_s": null
+   }
+  ],
+  "edit_duration_s": 60.001000000000005,
+  "phone_text_style": {
+   "version": 1,
+   "requested": {},
+   "preferences": {
+    "lyric": {
+     "position": "bottom"
+    },
+    "title": {
+     "position": "top",
+     "favorite_fonts": [
+      "Big Curls",
+      "Unbounded",
+      "Waiting for the Sunrise",
+      "Schibsted Grotesk",
+      "Montserrat",
+      "Literata",
+      "Geist"
+     ]
+    },
+    "pinned": {
+     "position": "bottom_left"
+    },
+    "caption": {
+     "position": "bottom",
+     "favorite_fonts": [
+      "Montserrat Bold",
+      "Inter",
+      "Poppins Bold",
+      "TikTok Sans Bold"
+     ]
+    },
+    "all_text": {
+     "position": "bottom_left",
+     "stroke_width": 0.0,
+     "automatic_font": true,
+     "excluded_fonts": [
+      "Fraunces"
+     ],
+     "favorite_fonts": [
+      "Big Curls",
+      "Inter",
+      "Montserrat"
+     ],
+     "shadow_enabled": false
+    }
+   },
+   "selected_fonts": {
+    "title": "Schibsted Grotesk"
+   },
+   "selection_calls": 1,
+   "selection_roles": [
+    "title"
+   ]
+  },
+  "proposal_version": 1,
+  "clip_sound_toggles": {
+   "rows": [
+    {
+     "line": null,
+     "state": "off",
+     "status": "met",
+     "line_end_s": null,
+     "mismatch_s": 0.0,
+     "on_windows": [],
+     "off_windows": [
+      [
+       0.0,
+       60.0
+      ]
+     ],
+     "reason_code": null,
+     "line_start_s": null,
+     "line_media_id": null,
+     "requirement_id": "r4"
+    }
+   ],
+   "version": 1,
+   "windows": false
+  },
+  "render_destination": "device",
+  "render_finished_at": "2026-11-22T10:22:23.576525+00:00",
+  "resolved_archetype": "guided_story",
+  "music_playback_mode": "reference_only",
+  "render_generation_id": "fd2dbdb2-c33f-4eb7-9169-030ff3100822",
+  "source_audio_preserved": false,
+  "context_label_text_elements": []
+ },
+ "unified_montage": {
+  "story": {
+   "beats": 4,
+   "direction": "text_explainer"
+  },
+  "clip_ids": [
+   "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+   "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+   "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+   "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+   "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+   "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+   "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4"
+  ],
+  "final_source_cuts": [
+   {
+    "media_id": "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4",
+    "source_end_s": 34.24,
+    "source_start_s": 24.059
+   },
+   {
+    "media_id": "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4",
+    "source_end_s": 8.8,
+    "source_start_s": 0.919
+   },
+   {
+    "media_id": "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4",
+    "source_end_s": 6.941,
+    "source_start_s": 0.26
+   },
+   {
+    "media_id": "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4",
+    "source_end_s": 6.681,
+    "source_start_s": 0.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4",
+    "source_end_s": 35.933,
+    "source_start_s": 28.119
+   },
+   {
+    "media_id": "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4",
+    "source_end_s": 21.633,
+    "source_start_s": 10.752
+   },
+   {
+    "media_id": "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4",
+    "source_end_s": 13.941,
+    "source_start_s": 4.059
+   }
+  ],
+  "clip_durations_s": {
+   "analysis-proxy-ios-216DA8C5-E1FE-458F-97BA-950E9A7939F7.mp4": 9.667,
+   "analysis-proxy-ios-401F0884-AADC-4025-882A-68BF78554AB7.mp4": 34.867,
+   "analysis-proxy-ios-76A0317D-A2E6-4037-8A8B-624B6C530746.mp4": 21.633,
+   "analysis-proxy-ios-84D2C3ED-B2F0-40BE-A886-DFC1B8E929F4.mp4": 8.8,
+   "analysis-proxy-ios-8D02983F-E0E9-4351-8BC8-C5632AF6D4D1.mp4": 35.933,
+   "analysis-proxy-ios-8FB5F214-283C-45A7-BB39-7D0DF1F98E7A.mp4": 22.2,
+   "analysis-proxy-ios-F6B5D88E-BB00-403B-9654-69180312612C.mp4": 8.833
+  },
+  "wants_per_clip_text": false,
+  "labels": [],
+  "duration_s": 60.001000000000005
+ }
+}
