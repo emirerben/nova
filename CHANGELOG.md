@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.94.0] - 2026-11-22
+
+### Changed
+- feat(kria): play the creator's own uploaded song under a Talking edit (#2467) <!-- release-pr: 2467 -->
+
 ## [0.89.93.0] - 2026-11-22
 
 ### Changed
