@@ -49,9 +49,11 @@ jobs:
     #
     # max-parallel: the plan gives five hosted Macs at once. Uncapped, the five
     # regression legs held all of them for 65 minutes (2026-11-21) and two PRs
-    # waited 43 and 53 minutes for an iPhone job. Three at a time leaves two; the
-    # other legs queue, so a full regression takes two rounds, not one. Main's
-    # lane has two legs and is not affected.
+    # waited 43 and 53 minutes for an iPhone job. Three legs at a time leaves two
+    # Macs; the other legs queue, so a full regression takes two rounds (about
+    # 2.5 hours), not one. The limit counts every leg, so the Linux contracts leg
+    # (last in the matrix) starts in the second round. Main's lane has two legs
+    # and is not affected.
     strategy:
       fail-fast: false
       max-parallel: 3

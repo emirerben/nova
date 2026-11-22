@@ -250,12 +250,23 @@ pass. Full iOS regression runs nightly or on manual dispatch; full native
 journeys run nightly or on manual CI dispatch. Neither regression path
 dispatches TestFlight.
 
+A full iOS regression runs at most three of its six legs at a time
+(`max-parallel: 3` in `ios.yml`), so it never holds more than three of the
+account's five hosted Macs. Uncapped, the nightly of 2026-11-21 held all five
+for 65 minutes and two PRs waited 43 and 53 minutes for their iPhone job
+(results after 86 and 88 minutes). The price is a second round: legs 1 to 3
+start together, legs 4 and 5 and the Linux contracts leg start as slots free
+up. First capped run (45007886433, manual): never more than three Mac legs at
+once, Mac legs 58 to 74 minutes each. Size the cap from Macs left for PRs, not
+from nightly duration; `test_full_regression_never_holds_more_than_three_macs`
+fails if it is removed or raised past three.
+
 The nightlies are meant to run in the UK night. GitHub starts this repo's
 scheduled runs hours after the time in the workflow, and the delay moves: about
 5 hours in mid-October 2026, 7 to 9 hours in mid-November. The schedules are
 therefore written early (KRI-1552): `ci.yml` at 17:23 UTC and `ios.yml` at
 18:23 UTC, which today start at about 00:00 to 02:00 and 01:30 to 03:00 UTC. The
-iOS nightly then runs for about two hours. To see when they really start:
+iOS nightly then runs for about two and a half hours. To see when they really start:
 
 ```sh
 gh api "repos/{owner}/{repo}/actions/workflows/ios.yml/runs?event=schedule&per_page=7" \
