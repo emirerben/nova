@@ -86,6 +86,9 @@ jobs:
         if: matrix.lane == 'contracts'
         working-directory: src/apps/api
         run: pip install -e .
+      - name: Leave one OpenCV distribution
+        if: matrix.lane == 'contracts'
+        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
       - name: Verify mobile OpenAPI and shared contracts
         if: matrix.lane == 'contracts'
         working-directory: src/apps/api

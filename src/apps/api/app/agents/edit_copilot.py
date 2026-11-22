@@ -158,7 +158,7 @@ log = structlog.get_logger()
 # every other prompt is byte-identical.
 # v132 (KRI-1558): arrange_sections / set_section_layout / remove_background_window /
 # retime_background_window and the SECTIONS + LAYOUT WINDOWS lines (prompts/edit_copilot_ops/
-# speaker_sections.txt), printed only where the sections gate is open (a protocol 54 build with
+# speaker_sections.txt), printed only where the sections gate is open (a protocol 55 build with
 # speakerSections verified), so every other prompt is byte-identical.
 EDIT_COPILOT_PROMPT_VERSION = "2026-11-22-v132"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55

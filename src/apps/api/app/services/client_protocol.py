@@ -102,11 +102,13 @@ DUAL_CAPTIONS_PROTOCOL = 52
 # full-level music over the creator's voice, so it is told to update instead.
 SPEECH_DUCK_PROTOCOL = 53
 
+CLIP_ORDER_CARD_PROTOCOL = 54
+
 # KRI-1558: the first build that plays the speaker take split where her layout changes (nothing
 # removed between the pieces) as one shot: no declick at the join, the cut-out carries on (the
 # `speakerSections` capability). An older build would click and could flash the uncut frame there,
 # so it keeps one layout for the whole video and is told to update for a recipe that has more.
-SPEAKER_SECTIONS_PROTOCOL = 54
+SPEAKER_SECTIONS_PROTOCOL = 55
 
 
 def caption_style_scope_supported() -> bool:

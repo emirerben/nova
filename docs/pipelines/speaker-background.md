@@ -359,7 +359,7 @@ on the phone like the full-screen opening: `layout_windows`. Failure modes (serv
 Gates: `speaker_sections_supported()` / `speaker_sections_client_supported()` / `speaker_sections_unavailable_reason()`
 (request-aware; a worker has no build, so only the server checks apply) and `speaker_sections_planned_for(protocol)` /
 `speaker_sections_planned_reason(protocol)` (`disabled`, `unavailable`, `app_too_old`): `SPEAKER_SECTIONS_ENABLED` AND the
-windows gate AND `speakerSections` verified AND build >= `speaker_sections_min_client_protocol` (= `SPEAKER_SECTIONS_PROTOCOL`, 54).
+windows gate AND `speakerSections` verified AND build >= `speaker_sections_min_client_protocol` (= `SPEAKER_SECTIONS_PROTOCOL`, 55).
 Rollout: verify `speakerSections` on a device (switches in preview and export, no click or uncut flash at a switch), add it to
 `PHONE_RENDER_VERIFIED_FEATURES`, then the flag (api + worker, restart). Rollback: the flag off + restart.
 Not done here: caption contrast still judges a layout edit against both the picture and her take for every segment
@@ -386,7 +386,7 @@ some parts". Tests: `tests/kria/test_kri1558_section_layouts.py` (Alanur's turns
 **Editor** (iPhone, only with `editor_capabilities.speaker_sections`): the document keeps `layout_windows` through every
 background edit and timeline cut (`NativeSplitTimelineRebase`); the speaker panel shows "This part / Whole video" inside a
 section, and the corner presets, drag and pinch act on the part under the playhead. A take cut into two or more speaker
-pieces can be framed piece by piece (the engine plays a split with nothing removed as one shot, protocol 54). Tests:
+pieces can be framed piece by piece (the engine plays a split with nothing removed as one shot, protocol 55). Tests:
 `SpeakerLayoutWindowsEditorTests`, `SpeakerBackgroundLivePreviewTests`, `SpeakerSectionsUITests`; engine:
 `SpeakerLayoutWindowsTests`, `SpeakerSectionSplitSeamTests`.
 

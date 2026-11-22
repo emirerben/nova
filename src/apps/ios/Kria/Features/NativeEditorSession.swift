@@ -7548,7 +7548,7 @@ enum EditorOpenIntent { case warm, open }
     // MARK: Speaker layout per section (KRI-1558)
 
     /// The section controls exist only while the server advertises `speaker_sections` (gate open, this build speaks
-    /// protocol 54) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
+    /// protocol 55) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
     /// and the speaker controls act on the whole-video frame exactly as before.
     var canEditSpeakerSections: Bool {
         canEditSpeakerBackgroundWindows && document.capabilities["speaker_sections"]?.editable == true
@@ -7565,7 +7565,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     /// Ticket step 5: with the section controls open and the timeline editable, a take cut into two or more speaker
-    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 54).
+    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 55).
     private var scopesSpeakerPieces: Bool {
         guard canEditSpeakerSections, canEditTimeline else { return false }
         return document.clips.filter { !$0.removed && $0.splitSectionID == nil && isFramableSpeakerPiece($0) }.count >= 2

@@ -928,6 +928,7 @@ _ANSWER_PAYLOAD_KEYS = (
     "moment_order",
     "song_order",
     "song_range",
+    "clip_order_ops",
 )
 
 
