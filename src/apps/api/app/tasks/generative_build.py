@@ -5768,6 +5768,20 @@ def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dic
         return []
 
 
+def _no_sound_effects_asked(snapshot: Any) -> bool:
+    """KRI-1561: does the approved brief hold a live "no sound effects"? It outranks a plan that
+    carries `sfx_ask` (a stale or approved plan, or a model that set it anyway): the creator's
+    "no effects" holds until they withdraw it, and the receipt says so."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.draft_sound_carry import asks_no_sound_effects  # noqa: PLC0415
+
+    try:
+        brief = BriefBinding.model_validate((snapshot or {}).get("creator_brief_binding")).resolve()
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return asks_no_sound_effects(brief)
+
+
 def _phone_choose_sound_effects(
     job_id: str,
     *,
@@ -5777,6 +5791,7 @@ def _phone_choose_sound_effects(
     duration_s: float,
     taken_at_s: list[float],
     lane_drops: list[dict],
+    snapshot: Any = None,
 ) -> tuple[list[Any], dict | None]:
     """KRI-1561: resolved lane rows for the creator's general sound-effect ask, and the receipt.
 
@@ -5797,6 +5812,10 @@ def _phone_choose_sound_effects(
     ask = read_sfx_ask(strategy)
     if ask is None:
         return [], None
+    if _no_sound_effects_asked(snapshot):
+        from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+        limit = SfxLimit.creator_said_no
 
     def catalog() -> list[dict]:
         with _sync_session() as db:
@@ -6389,11 +6408,16 @@ def _run_phone_voiceover_montage_job(
         )
         from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
         from app.services.sfx_capability import voiceover_sfx_limit  # noqa: PLC0415
+        from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
-        sfx_limit = voiceover_sfx_limit()
+        # KRI-1561: a live "no sound effects" outranks the ask, and costs no transcription.
+        sfx_limit = (
+            SfxLimit.creator_said_no if _no_sound_effects_asked(snapshot) else voiceover_sfx_limit()
+        )
         chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
             job_id,
             strategy=raw_creator_strategy,
+            snapshot=snapshot,
             limit=sfx_limit,
             words=(
                 _phone_montage_voice_words(job_id, decision.extras.get("voiceover_gcs_path"))
@@ -12912,6 +12936,7 @@ def _run_phone_subtitled_job(
                     chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
                         job_id,
                         strategy=talking_strategy,
+                        snapshot=snapshot,
                         limit=SfxLimit.multi_speaker
                         if talking_lanes_skipped
                         else subtitled_sfx_limit(),
@@ -19049,6 +19074,7 @@ def _run_phone_narrated_job(
                 chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
                     job_id,
                     strategy=strategy,
+                    snapshot=snapshot,
                     limit=voiceover_sfx_limit(),
                     words=[
                         {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
