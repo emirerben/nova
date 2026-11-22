@@ -1342,8 +1342,8 @@ class Settings(BaseSettings):
     # FALSE (dark). Off = no events, no job metadata, capability false, byte-identical.
     # Kill switch = false + restart (api + worker). Contract: docs/pipelines/live-plan-blocks.md.
     live_plan_review_enabled: bool = False
-    # Longest song accepted (seconds); a song-owned montage is capped at 120 s.
-    user_song_max_duration_s: float = Field(default=600.0, gt=0)
+    # The longest song accepted is `source_length_policy` ``creator_song`` (KRI-1554);
+    # a song-owned montage is capped at 120 s.
     # How long a planner turn waits for song analysis / take alignment before it
     # answers "still checking your clips".
     song_alignment_turn_deadline_s: float = Field(default=45.0, ge=0)

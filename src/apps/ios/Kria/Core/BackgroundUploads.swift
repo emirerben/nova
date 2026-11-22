@@ -486,6 +486,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
         do {
             try UploadCoordinator().validate(source: source, purpose: purpose, consentGiven: consentGiven)
+            // KRI-1554: a recording longer than this format takes is refused here, naming the limit,
+            // before it is copied, proxied or uploaded.
+            try await CreationUploadError.checkLength(of: fileURL, role: role, limit: limit)
             // A thumbnail from the moment the asset is chosen, not after it has uploaded and attached.
             // (Clips are done just below from the staged copy; visuals aren't staged, so from the file.)
             if role == .visual { startEarlyPreview(of: fileURL, recordID: recordID) }
@@ -2146,12 +2149,45 @@ enum CreationUploadError: LocalizedError {
     static var busyMessage: String { String(localized: "Kria’s servers were busy, so this didn’t upload. Tap Retry to send it.") }
 
     case unsupportedType, tooLarge, proxyContractUnavailable
+    /// KRI-1554: longer than the chosen format takes for this role (the server's `max_duration_s`).
+    case tooLong(limitSeconds: Double, role: CreationMediaRole)
     var errorDescription: String? {
         switch self {
         case .unsupportedType: String(localized: "This file type is not supported here. Choose a different file.")
         case .proxyContractUnavailable: String(localized: "On-device creation is not available yet. Your original stays on this device.")
         case .tooLarge: String(localized: "This file exceeds the upload limit. Choose a smaller file.")
+        case .tooLong(let limitSeconds, let role):
+            Self.tooLongMessage(limit: Self.lengthText(limitSeconds), role: role)
         }
+    }
+
+    private static func tooLongMessage(limit: String, role: CreationMediaRole) -> String {
+        switch role {
+        case .voiceover: String(localized: "This voiceover is too long. Kria can use up to \(limit). Trim it and add it again.")
+        case .song: String(localized: "This song is too long. Kria can use up to \(limit). Trim it and add it again.")
+        case .clip, .visual: String(localized: "This video is too long. This kind of video can use up to \(limit). Trim it and add it again.")
+        }
+    }
+
+    /// "5 minutes", "1 minute, 30 seconds", in the phone's language.
+    static func lengthText(_ seconds: Double) -> String {
+        Duration.seconds(Int(seconds.rounded())).formatted(.units(allowed: [.minutes, .seconds], width: .wide))
+    }
+
+    /// The picked file's length, or nil for a photo, a file with no readable duration, or no limit.
+    /// Read from the file's metadata before it is copied, proxied or uploaded.
+    static func pickedDurationSeconds(_ url: URL) async -> Double? {
+        guard let duration = try? await AVURLAsset(url: url).load(.duration), duration.isNumeric else { return nil }
+        let seconds = duration.seconds
+        return seconds.isFinite && seconds > 0 ? seconds : nil
+    }
+
+    /// Throws `.tooLong` when `url` is longer than `limit` allows for `role` (KRI-1554).
+    static func checkLength(of url: URL, role: CreationMediaRole, limit: CreationMediaLimit?) async throws {
+        let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType ?? UTType(filenameExtension: url.pathExtension)
+        guard let maximum = limit?.durationLimit(isImage: type?.conforms(to: .image) == true),
+              let seconds = await pickedDurationSeconds(url), seconds > maximum else { return }
+        throw tooLong(limitSeconds: maximum, role: role)
     }
 }
 

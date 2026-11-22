@@ -66,6 +66,7 @@ from app.pipeline.silence_cut import (
     plan_summary,
     removal_cut_points,
 )
+from app.services.active_narration_source import talking_head_window_cap_s
 from app.services.clip_speech import speech_coverage
 from app.services.clip_understanding import understanding_payload
 from app.services.pipeline_trace import record_pipeline_event
@@ -99,13 +100,6 @@ _MIN_WINDOW_S = 0.5  # drop sub-0.5s windows (perceived as a flicker, not a cut)
 _OUTPUT_LUFS = -14.0
 _OUTPUT_SAMPLE_RATE = 48000  # loudnorm upsamples to 192k; without this AAC picks
 #                              96k → wrong-pitch playback on some browsers.
-
-# Spine silence-cut pre-cap bounds (plans/010 14A / outside voice #9): detection
-# + cutting operate on at most min(max(2×target, MIN), MAX) seconds of spine.
-# MAX mirrors subtitled's 300s clip budget and keeps the 16 kHz mono analysis
-# WAV (~9.6 MB at 300s) safely under whisper-1's 25 MB upload limit.
-_SPINE_CUT_CAP_MIN_S = 120.0
-_SPINE_CUT_CAP_MAX_S = 300.0
 
 
 class TalkingHeadAssemblyError(Exception):
@@ -196,14 +190,14 @@ def select_spine(
 def spine_cut_cap_s(target_duration_s: float | None) -> float:
     """Spine silence-cut working-window cap (plans/010 14A / outside voice #9).
 
-    ``min(max(target × 2, 120s), 300s)``. No target (None/0 → full spine today)
-    falls back to the 300s maximum — subtitled's clip budget precedent. The cap
-    bounds DETECTION + CUTTING only; when the cut stage does not apply, the
-    spine renders full-length exactly as today (fail-open).
+    The speech-cleanup analysis window for a talking-head spine
+    (`active_narration_source.talking_head_window_cap_s`): ``min(max(target × 2, 120s),
+    analysis window)``, the whole analysis window with no target. At 300 s the 16 kHz mono
+    analysis WAV (~9.6 MB) stays well under whisper-1's 25 MB upload limit. The cap bounds
+    DETECTION + CUTTING only; when the cut stage does not apply, the spine renders
+    full-length exactly as today (fail-open).
     """
-    if not target_duration_s or float(target_duration_s) <= 0:
-        return _SPINE_CUT_CAP_MAX_S
-    return min(max(float(target_duration_s) * 2.0, _SPINE_CUT_CAP_MIN_S), _SPINE_CUT_CAP_MAX_S)
+    return talking_head_window_cap_s(target_duration_s)
 
 
 def _extract_capped_audio(src_path: str, cap_s: float, wav_path: str) -> None:

@@ -32,6 +32,7 @@ from app.services.guided_speech_cleanup import (
     reusable_cleaned_narration,
     source_identity,
 )
+from app.services.source_length_policy import speech_analysis_window_s
 from app.services.speech_cleanup import SpeechCleanupFailure
 
 FIXTURE_PATH = (
@@ -90,7 +91,14 @@ def analysis_row(item: SimpleNamespace, fixture: dict, **overrides) -> SimpleNam
     )
     from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
-    source = resolve_item_narration(item, detector_policy=current_detector_policy()).source
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    source = resolution.source
+    if source is None and resolution.reason == "source_too_long":
+        # A row saved before KRI-1554 analysed only the first window of a longer recording.
+        legacy = SimpleNamespace(
+            **{**vars(item), "voiceover_duration_s": speech_analysis_window_s()}
+        )
+        source = resolve_item_narration(legacy, detector_policy=current_detector_policy()).source
     assert source is not None
     analysis = copy.deepcopy(fixture["snapshot"]["analysis"])
     # The payload binds to the fingerprint of the source it analyzed.
@@ -473,7 +481,8 @@ def test_consent_snapshot_fails_closed_and_never_retries(
     elif case == "fingerprint_drift":
         row.source_policy_fingerprint = "d" * 64
     else:
-        # A 400 s recording is analyzed only in its first 300 s window.
+        # A 400 s recording, with a row from before KRI-1554 that analysed its first 300 s: no
+        # analysis can cover it all, and Clean names the limit.
         item = guided_voiceover_item(fixture, voiceover_duration_s=400.0)
         row = analysis_row(item, fixture)
 

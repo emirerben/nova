@@ -56,6 +56,7 @@ from app.services.slide_post_generation_receipts import (
     lookup_receipt,
     record_publication,
 )
+from app.services.source_length_policy import exceeds, max_duration_s
 from app.services.tiktok_style_observations import effective_persona_style
 from app.worker import celery_app
 
@@ -767,6 +768,18 @@ class DispatchResult:
 # a Job ever exists. Keep the two in sync if either wording changes.
 # The live `subtitled_clip_count_unsupported` sentence while multi-clip Talking is on; a
 # template so the chat copy (`kria_runtime._phone_gate_refusal_copy`) keys it once.
+# KRI-1554: the Talking clip limit comes from `source_length_policy`; a template so the Turkish and
+# German lines (keyed by this English text) follow the number.
+TALKING_CLIP_TOO_LONG_MESSAGE = (
+    "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip "
+    "(under {limit_minutes:g} minutes) and try again. No fallback edit was rendered."
+)
+
+
+def talking_clip_limit_minutes() -> float:
+    return max_duration_s("talking_clip") / 60
+
+
 TALKING_MULTI_CLIP_COUNT_MESSAGE = (
     "Talking-to-camera videos render on your iPhone with up to {max_clips} clips. Remove the "
     "extra clips and try again. No fallback edit was rendered."
@@ -787,6 +800,12 @@ class _PhoneGateMessages(dict[str, tuple[str, str]]):
     _KEY = "subtitled_clip_count_unsupported"
 
     def _live(self, key: object, stored: tuple[str, str]) -> tuple[str, str]:
+        if key == "subtitled_clip_too_long":
+            # KRI-1554: the limit as the policy states it now, not as it was at import.
+            return (
+                stored[0],
+                TALKING_CLIP_TOO_LONG_MESSAGE.format(limit_minutes=talking_clip_limit_minutes()),
+            )
         if key != self._KEY:
             return stored
         from app.services.phone_rollout import (  # noqa: PLC0415
@@ -882,8 +901,7 @@ _PHONE_GATE_MESSAGES_STORED: dict[str, tuple[str, str]] = {
     # render; refuse at dispatch instead of minting a Job that fails post-approval.
     "subtitled_clip_too_long": (
         "phone_format_unavailable",
-        "This clip is too long for talking-to-camera on your iPhone. Use a shorter "
-        "clip (under 5 minutes) and try again. No fallback edit was rendered.",
+        TALKING_CLIP_TOO_LONG_MESSAGE.format(limit_minutes=talking_clip_limit_minutes()),
     ),
     # KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
     # clips has no phone compiler (`talking_head` isn't phone-supported).
@@ -2467,10 +2485,6 @@ def _dispatch_item_render(
                     raise ValueError("phone rendering does not yet support voiceover edits")
             phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
             if phone_subtitled_eligible and phone_sources:
-                from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
-                    _MAX_CLIP_DURATION_S as _SUBTITLED_MAX_CLIP_S,
-                )
-
                 # KRI-719: a multi-clip declared Talking item checks EVERY
                 # source (any over-cap clip dooms the render); anything else
                 # keeps the first-source-only check byte-identical.
@@ -2482,7 +2496,7 @@ def _dispatch_item_render(
                 for _source in _checked_sources:
                     _original = getattr(_source, "original", None)
                     _duration = getattr(_original, "duration_s", None)
-                    if isinstance(_duration, int | float) and _duration > _SUBTITLED_MAX_CLIP_S:
+                    if isinstance(_duration, int | float) and exceeds(_duration, "talking_clip"):
                         # Deterministic compiler reject otherwise: fail closed
                         # before minting a Job that can never render.
                         phone_gate = "subtitled_clip_too_long"

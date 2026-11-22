@@ -39,6 +39,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.schemas.edit_proposal import NarrationNamedCuts, NarrationSpeechCleanup, NarrationTrack
+from app.services.source_length_policy import limit_phrase, speech_analysis_window_s
 
 SPEECH_CLEANUP_CHANGED = "speech_cleanup_changed"
 SPEECH_CLEANUP_UNAVAILABLE = "speech_cleanup_unavailable"
@@ -49,8 +50,15 @@ CHANGED_MESSAGE = "The detected pauses changed. Refresh the direction to choose 
 DISABLED_MESSAGE = (
     "Clean up speech isn't available right now. Keep the original speech to create this video."
 )
-WINDOW_MESSAGE = "Clean up speech works on voiceovers up to 5 minutes."
 IO_MESSAGE = "Kria couldn't prepare the cleaned speech. Try again."
+
+
+def window_message() -> str:
+    """Why a voiceover longer than the analysis window cannot be cleaned (KRI-1554)."""
+
+    return f"Clean up speech works on voiceovers up to {limit_phrase(speech_analysis_window_s())}."
+
+
 # The analysis window must cover the whole recording; the renderer plays all
 # of it, so a capped window would ship uncut audio after its end.
 WINDOW_TOLERANCE_S = 2e-3
@@ -307,7 +315,13 @@ def load_clean_consent_snapshot(db, item: Any, analysis_id: str) -> dict[str, An
         or row.source_kind != "voiceover"
     ):
         raise _changed()
-    source = resolve_item_narration(item, detector_policy=current_detector_policy()).source
+    resolution = resolve_item_narration(item, detector_policy=current_detector_policy())
+    if resolution.reason == "source_too_long":
+        # KRI-1554: longer than the analysis window, so no analysis can cover all of it.
+        raise GuidedSpeechCleanupError(
+            SPEECH_CLEANUP_UNAVAILABLE, window_message(), retryable=False
+        )
+    source = resolution.source
     if source is None or not _source_snapshot_matches(row, source):
         raise _changed()
     duration_s = float(getattr(item, "voiceover_duration_s", 0) or 0)
@@ -316,7 +330,9 @@ def load_clean_consent_snapshot(db, item: Any, analysis_id: str) -> dict[str, An
         or row.window_end_s is None
         or abs(float(row.window_end_s) - duration_s) > WINDOW_TOLERANCE_S
     ):
-        raise GuidedSpeechCleanupError(SPEECH_CLEANUP_UNAVAILABLE, WINDOW_MESSAGE, retryable=False)
+        raise GuidedSpeechCleanupError(
+            SPEECH_CLEANUP_UNAVAILABLE, window_message(), retryable=False
+        )
     try:
         return analysis_snapshot(row)
     except ValueError as exc:

@@ -690,7 +690,10 @@ struct CreationFormatCapability: Codable, Equatable, Sendable {
     let id: String
     let editFormat: String
     let maxClips: Int
-    enum CodingKeys: String, CodingKey { case id; case editFormat = "edit_format"; case maxClips = "max_clips" }
+    /// KRI-1554: the longest source each media role takes in this format, in seconds, keyed by
+    /// `CreationMediaRole.durationLimitKey`. Nil from a server that predates it.
+    var maxDurationS: [String: Double]? = nil
+    enum CodingKeys: String, CodingKey { case id; case editFormat = "edit_format"; case maxClips = "max_clips"; case maxDurationS = "max_duration_s" }
 }
 
 struct CreationThread: Codable, Identifiable, Sendable {

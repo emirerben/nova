@@ -230,6 +230,7 @@ from app.services.phone_speaker_background import (
 )
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
+from app.services.source_length_policy import max_duration_s
 from app.services.suggestions.commit_readiness import (
     MARK_NEEDED,
     REQUIREMENTS_NOT_READY,
@@ -8035,6 +8036,11 @@ _VOICEOVER_UNAVAILABLE_TR = (
     "iPhone'da oluşturuluyor. Bu düzenlemeyi seslendirme olmadan iste. Yedek bir düzenleme "
     "oluşturulmadı."
 )
+# KRI-1554: a template; `{limit_minutes:g}` is the Talking clip limit from `source_length_policy`.
+_TALKING_CLIP_TOO_LONG_TR = (
+    "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan "
+    "kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+)
 _PHONE_GATE_MESSAGES_TR = {
     "device_render_unsupported": (
         "Bu proje tamamen bu iPhone'da oluşturulamıyor. Mevcut videon değişmedi."
@@ -8059,9 +8065,10 @@ _PHONE_GATE_MESSAGES_TR = {
         "klipleri kaldır (ya da bir klip ekle) ve tekrar dene. Yedek bir düzenleme "
         "oluşturulmadı."
     ),
-    "subtitled_clip_too_long": (
-        "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir "
-        "klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+    # Formatted like `PHONE_GATE_MESSAGES` reads it; `_phone_gate_refusal_copy` fills the template
+    # itself so the reply follows the policy's current limit.
+    "subtitled_clip_too_long": _TALKING_CLIP_TOO_LONG_TR.format(
+        limit_minutes=max_duration_s("talking_clip") / 60
     ),
     "self_narration_multi_clip": (
         "Birden fazla klip üzerinde anlatım iPhone'da henüz yok. Bir seslendirme kaydet ya da "
@@ -8077,7 +8084,9 @@ _PHONE_GATE_MESSAGES_TR = {
 def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import (  # noqa: PLC0415
         PHONE_GATE_MESSAGES,
+        TALKING_CLIP_TOO_LONG_MESSAGE,
         TALKING_MULTI_CLIP_COUNT_MESSAGE,
+        talking_clip_limit_minutes,
     )
 
     multi_clip = False
@@ -8098,6 +8107,12 @@ def _phone_gate_refusal_copy(reason: str) -> str:
                 "oluşturulmadı."
             ),
             max_clips=TALKING_MULTI_CLIP_MAX_CLIPS,
+        )
+    elif reason == "subtitled_clip_too_long":
+        message = say(
+            en=TALKING_CLIP_TOO_LONG_MESSAGE,
+            tr=_TALKING_CLIP_TOO_LONG_TR,
+            limit_minutes=talking_clip_limit_minutes(),
         )
     elif reason in PHONE_GATE_MESSAGES and reason in _PHONE_GATE_MESSAGES_TR:
         message = say(en=PHONE_GATE_MESSAGES[reason][1], tr=_PHONE_GATE_MESSAGES_TR[reason])

@@ -1364,7 +1364,7 @@
     "There’s no edit running right now. Your latest project state is saved.": "Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi.",
     "These words need at least {exc_minimum_duration_s:g}s of reading time. May I use a longer video, or would you like to shorten the text? Nothing was changed.": "Bu yazılar en az {exc_minimum_duration_s:g} saniye okuma süresi gerektiriyor. Daha uzun bir video kullanayım mı, yoksa metni kısaltmak ister misin? Hiçbir şey değişmedi.",
     "This approval expired. Ask Kria to prepare it again.": "Bu onayın süresi doldu. Kria'dan yeniden hazırlamasını iste.",
-    "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under 5 minutes) and try again. No fallback edit was rendered.": "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı.",
+    "This clip is too long for talking-to-camera on your iPhone. Use a shorter clip (under {limit_minutes:g} minutes) and try again. No fallback edit was rendered.": "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. {limit_minutes:g} dakikadan kısa bir klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı.",
     "This day vlog edit cuts your footage down; a Talking edit keeps the whole take.": "Bu düzenleme (günlük vlog) çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur.",
     "This draft doesn't end on that video": "Bu taslak o videoyla bitmiyor",
     "This draft doesn't end on the photo you asked for": "Bu taslak istediğin fotoğrafla bitmiyor",
