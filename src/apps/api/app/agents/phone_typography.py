@@ -102,7 +102,8 @@ class PhoneTypographyAgent(Agent[PhoneTypographyInput, PhoneTypographyOutput]):
             for role, font in output.fonts.items()
         ):
             raise SchemaError("Font selection must cover each role using its eligible palette")
-        if isinstance(reasons, dict):
+        # Only the stamped prompt asks for reasons; an unstamped output keeps main's shape.
+        if input.fonts and isinstance(reasons, dict):
             output.reasons = {
                 role: " ".join(reason.split())[:REASON_MAX_CHARS]
                 for role, reason in reasons.items()

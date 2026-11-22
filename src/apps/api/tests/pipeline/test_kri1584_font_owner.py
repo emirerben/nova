@@ -324,6 +324,25 @@ def test_a_failed_pick_never_puts_a_script_on_long_lines(monkeypatch):
     assert {row["font_family"] for row in styled} == {"Inter"}
 
 
+def test_a_failed_pick_with_only_script_favourites_takes_a_readable_curated_font(monkeypatch):
+    from app.schemas.phone_text_style import CURATED_PHONE_FONTS
+
+    def script_only(*, stamped, proposal_font=None, _real=_snapshot):
+        snapshot = _real(stamped=stamped, proposal_font=proposal_font)
+        prefs = snapshot[styling.PHONE_TEXT_STYLE_FIELD]["preferences"]
+        prefs["all_text"]["favorite_fonts"] = ["Big Curls"]
+        return snapshot
+
+    monkeypatch.setattr(f"{__name__}._snapshot", script_only)
+    styled, _prompts, events = _generate(
+        monkeypatch, _english_rows(), stamped=True, answer={"fonts": {"research": "Fraunces"}}
+    )
+
+    (decision,) = [data for event, data in events if event == "font_decision"]
+    assert decision["roles"]["research"] == {"font": CURATED_PHONE_FONTS[0], "source": "fallback"}
+    assert {row["font_family"] for row in styled} == {CURATED_PHONE_FONTS[0]}
+
+
 @pytest.mark.parametrize(
     "reasons",
     [{"research": None}, ["x"], {f"r{index}": "x" for index in range(9)}, {"research": 5}],
@@ -344,20 +363,23 @@ def test_a_malformed_reason_never_costs_the_pick(monkeypatch, reasons):
 def test_unstamped_runs_log_the_prompt_version_they_send(monkeypatch):
     from app.agents import _runtime
 
-    logged: list[str] = []
+    logged: list[tuple[str, dict]] = []
     monkeypatch.setattr(
         _runtime.Agent,
-        "_log_outcome",
-        lambda self, *args, **kwargs: logged.append(self.spec.prompt_version),
+        "project_output_for_observability",
+        lambda self, output_dict: logged.append((self.spec.prompt_version, output_dict)),
     )
-    for stamped in (False, True):
+    for stamped, role in ((False, "title"), (True, "research")):
         _generate(
             monkeypatch,
             _rows(),
             stamped=stamped,
-            answer={"fonts": {"research": "Inter"}},
+            answer={"fonts": {role: "Montserrat"}, "reasons": {role: "Reads at length."}},
         )
-    assert logged == ["2026-10-13-v2", "2026-11-22-v3"]
+    assert [version for version, _output in logged] == ["2026-10-13-v2", "2026-11-22-v3"]
+    # The unstamped run's recorded output keeps main's shape; only the stamped one has reasons.
+    assert logged[0][1] == {"fonts": {"title": "Montserrat"}}
+    assert logged[1][1]["reasons"] == {"research": "Reads at length."}
 
 
 def test_a_design_font_is_traced_as_the_design_over_a_saved_rule(monkeypatch):
