@@ -595,6 +595,34 @@ def test_main_creator_eval(
         assert all(update["kind"] == "style" and update["scope"] == "global" for update in updates)
         assert not (action["strategy"].get("clip_intents") or [])
 
+    sfx_ask_meta = fixture.meta.get("sfx_ask")
+    if sfx_ask_meta:
+        # KRI-1561: a GENERAL sound-effect ask on an edit that advertises `sfx_ask` comes back as
+        # `sfx_ask` carrying the creator's own words, never a named effect (`licensed_sfx`), never
+        # a reaction beat, and the edit format stays the one the manifest named.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["edit_format"] == sfx_ask_meta["edit_format"]
+        ask = strategy.get("sfx_ask")
+        assert ask is not None, "expected the general ask to set sfx_ask"
+        assert ask["request_text"] == sfx_ask_meta["request_text"]
+        assert 1 <= ask.get("max_placements", 6) <= 6
+        assert strategy.get("licensed_sfx") is None
+        assert not strategy.get("reaction_beats")
+
+    named_cue_meta = fixture.meta.get("sfx_named_cue")
+    if named_cue_meta:
+        # KRI-1561: a sound tied to a spoken moment stays a reaction beat even where `sfx_ask` is
+        # advertised (the general ask never swallows a named cue).
+        assert result.output is not None
+        strategy = result.output["action"]["strategy"]
+        assert strategy.get("sfx_ask") is None
+        triggers = {str(b.get("trigger")).casefold() for b in strategy.get("reaction_beats") or []}
+        assert named_cue_meta["trigger"].casefold() in triggers
+        assert strategy.get("licensed_sfx") is None
+
     if fixture.meta.get("reaction_beats"):
         # KRI-178: a phone-Talking request naming specific photo/sticker and
         # sound moments must come back with a non-empty `reaction_beats` list

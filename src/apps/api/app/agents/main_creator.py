@@ -65,6 +65,7 @@ from app.schemas.edit_proposal import (
 from app.schemas.text_style_intent import normalize_label_position, normalize_title_animation
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
+    CAPABILITY_SFX_ASK,
     CAPABILITY_TIMED_CARDS,
     TalkingCutawayAvailability,
     ending_clip_candidates,
@@ -718,6 +719,28 @@ def speaker_full_opening_taught(manifest: ResolvedCreatorManifest) -> bool:
     return bool(
         capability is not None and capability.available and speaker_background_open(manifest)
     )
+
+
+# KRI-1561: a general "add sound effects where they fit" ask on a phone Talking, Voiceover or
+# montage-with-voiceover edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest
+# advertises `sfx_ask` (the writer's own gate, `sfx_capability`); "" otherwise, so every other
+# prompt stays byte-identical.
+_SFX_ASK_PROMPT_SECTION = """
+SOUND EFFECTS CHOSEN FOR THE EDIT (iPhone)
+When the creator asks for sound effects in general and names neither an effect nor a moment --
+"add sound effects where they fit", "put some sound effects in", "make it feel alive with sound
+design", "uygun yerlere ses efekti ekle", "biraz ses efekti koy" -- set `sfx_ask`:
+{"request_text": "the creator's own words for the ask, copied, in their language",
+"max_placements": 1-6, default 6, lower only when they ask for fewer ("just a couple")}. The
+server then chooses the moments from what is said and the pauses; never invent a time, an effect
+or a moment, and add no `licensed_sfx` and no reaction beat for this ask. A sound the creator ties
+to a spoken moment ("a whoosh when I say Mason Greenwood") is still a reaction beat, and a named
+catalogue effect on a montage is still `licensed_sfx`; set `sfx_ask` only for the general ask.
+A request to have no sound effects, or to remove them, never sets `sfx_ask`. Say in `summary`
+that the effects are placed where the speech and pauses call for them. This section overrides any
+earlier line that says a bare "add sound effects" adds nothing, or only sounds tied to the moments
+the creator named: for the general ask, set `sfx_ask` and say that instead.
+""".strip("\n")
 
 
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
@@ -1615,6 +1638,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _TIMED_CARDS_PROMPT_SECTION
                     if _timed_cards_available(input.capability_manifest)
+                    else ""
+                )
+                # KRI-1561: a general sound-effect ask; "" unless the manifest advertises it.
+                + (
+                    "\n" + _SFX_ASK_PROMPT_SECTION
+                    if _sfx_ask_available(input.capability_manifest)
                     else ""
                 )
                 # Qendresa item 21: middle line + TikTok look; "" unless the flag is on.
@@ -2529,6 +2558,15 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
     """
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    return bool(capability is not None and capability.available)
+
+
+def _sfx_ask_available(manifest: ResolvedCreatorManifest) -> bool:
+    """Whether the SOUND EFFECTS CHOSEN FOR THE EDIT guidance is shown: a read of the manifest's
+    own `sfx_ask` capability (`creator_capabilities.resolve_creator_manifest` owns the gate;
+    `repair_creator_sfx_ask` never trusts the model alone)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SFX_ASK)
     return bool(capability is not None and capability.available)
 
 

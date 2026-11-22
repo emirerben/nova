@@ -2467,6 +2467,11 @@
    "söylemediğin yerlerde klipler eklediğin sırayla oynar"
   ],
   [
+   "app/kria/strategy_policy.py",
+   "Sound effects chosen for your edit aren't available for it yet; left them out.",
+   "Senin için seçilen ses efektleri bu düzenleme için henüz yok; koymadım."
+  ],
+  [
    "app/agents/editor_ops_v2/background.py",
    "I can't change where you are part by part on this edit yet.",
    "Bu düzenlemede yerini bölüm bölüm henüz değiştiremiyorum."
