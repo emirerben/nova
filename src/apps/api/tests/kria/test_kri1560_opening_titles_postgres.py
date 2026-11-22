@@ -491,3 +491,68 @@ async def test_the_kill_switch_asks_the_older_question_without_a_model_call(monk
     agents.copilot.assert_not_called()
     assert _no_draft(case.thread_id)
     assert _question(case.thread_id)[1]["kind"] == "creative_copy_authorship"
+
+
+@pytest.mark.asyncio
+async def test_with_the_brief_off_an_editor_written_title_becomes_the_question(monkeypatch):
+    """Review finding: with the brief off, the chat goes straight to the editor model. A title
+    it wrote itself on a draft with no title is never applied; she gets the titles question."""
+    case = _seed()
+    agents = _agents(monkeypatch, case, MODEL_ANSWER)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", False)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", False)
+    seen: list[str] = []
+
+    async def copilot(body, **_kwargs):  # noqa: ANN001, ANN202
+        seen.append(body.message)
+        return SimpleNamespace(
+            ops=[{"op": "set_title", "title": "Renk Kavgası"}],
+            outcome="proposed",
+            reply="Done.",
+            intent="edit",
+            rejection_reasons=[],
+            unmet_requests=[],
+            reply_notes=None,
+        )
+
+    monkeypatch.setattr(planner, "run_copilot_turn", copilot)
+
+    _accepted, result = await _run(case, TITLES["tr"]["message"])
+
+    assert result["status"] == "completed", result
+    assert seen, "the brief-off path reaches the editor model"
+    assert _no_draft(case.thread_id), "its own title never reaches the video"
+    question = _question(case.thread_id)[1]
+    assert question["kind"] == "creative_copy_candidates"
+    assert "Renk Kavgası" not in json.dumps(question, ensure_ascii=False)
+    assert agents.prompts, "the titles came from her words"
+
+
+def test_you_choose_on_the_titles_question_takes_the_recommended_title() -> None:
+    """Review finding: a typed "sen seç" was a delegated answer the fold ignored, so the same
+    titles question came back. The card shows every title's words; it takes the recommended."""
+    question = {
+        "version": 1,
+        "question_id": "q",
+        "conflict": "creative_copy",
+        "kind": "creative_copy_candidates",
+        "creative_target": "opening_title",
+        "dependency_digest": "d",
+        "candidates": [
+            {
+                "key": "title_1",
+                "text": GOOD_ONE,
+                "digest": opening_titles.candidate_digest(GOOD_ONE),
+            }
+        ],
+        "options": [
+            {"key": "title_1", "label": GOOD_ONE, "recommended": True},
+            {"key": "cancel", "label": "Başlık olmasın", "recommended": False},
+        ],
+    }
+    delegated = {"question_id": "q", "option_key": "title_1", "delegated": True}
+    state = fold_creative_copy(
+        [("assistant", {"choice_question": question}), ("user", {"choice_selection": delegated})],
+        dependency_digest="d",
+    )["opening_title"]
+    assert (state.status, state.approved) == ("approved", GOOD_ONE)

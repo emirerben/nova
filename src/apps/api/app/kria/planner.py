@@ -252,6 +252,7 @@ from app.services.creative_copy_decisions import (
     latest_open_creative_question,
     localize_question,
     media_digest,
+    normalize_copy,
     positional_labels_grounded,
     question_message,
     wording_question,
@@ -3117,6 +3118,10 @@ async def _plan_editor_revision(
                     }
                 }
             )
+    if response.ops and _writes_unasked_title(response.ops, user_message, target):
+        # KRI-1560: the editor model wrote an opening title of its own on a draft that has
+        # none (prod thread 1b8974a0, "Renk Kavgası"); she picks from her own words instead.
+        return await _title_question_plan(db, item=item, request=user_message)
     if response.ops:
         plan = adapt_editor_action(
             reply=_phone_editor_reply(response.reply),
@@ -5874,26 +5879,22 @@ async def _title_options_plan(
     )
 
 
-def _authorship_turn(digest: str, manifest: Any) -> PlannedKriaTurn:
+def _authorship_plan(digest: str) -> KriaTurnPlan:
     """The older "do you have an idea, or should I write one?" question for the opening title."""
     question = authorship_question(target="opening_title", dependency_digest=digest)
     if (button_language := chat_button_language()) is not None:
         localize_question(question, button_language)
-    return PlannedKriaTurn(
-        plan=KriaTurnPlan(
-            mode="respond",
-            turn_value="question",
-            response=question_message(
-                question,
-                say(
-                    en="Do you have an idea, or would you like me to write one?",
-                    tr="Aklında bir fikir var mı, yoksa ben mi yazayım?",
-                ),
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        response=question_message(
+            question,
+            say(
+                en="Do you have an idea, or would you like me to write one?",
+                tr="Aklında bir fikir var mı, yoksa ben mi yazayım?",
             ),
-            choice_question=question,
         ),
-        manifest_hash=manifest.manifest_hash,
-        context_hash=manifest.context_hash,
+        choice_question=question,
     )
 
 
@@ -5935,7 +5936,9 @@ async def _open_title_question(
     item = await db.get(PlanItem, item_id) if item_id is not None else None
     if item is None:
         return None
-    return await _title_options_plan(talk=item_talk_sentences(item), digest=digest, request=request)
+    talk = item_talk_sentences(item)
+    await db.rollback()  # no connection pinned across the model call
+    return await _title_options_plan(talk=talk, digest=digest, request=request)
 
 
 async def _chat_title_turn(
@@ -5963,7 +5966,11 @@ async def _chat_title_turn(
             plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
         )
         if plan is not None
-        else _authorship_turn(digest, manifest)
+        else PlannedKriaTurn(
+            plan=_authorship_plan(digest),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
     )
     if not more_asks:
         return turn
@@ -5990,6 +5997,43 @@ def _draft_has_title(target: Any) -> bool:
     if not isinstance(snapshot, Mapping):
         return False
     return title_bar(SimpleNamespace(snapshot=snapshot)) is not None
+
+
+def _writes_unasked_title(ops: Sequence[Any], user_message: str, target: Any) -> bool:
+    """An editor op puts opening words she did not type on a draft with no title."""
+    if _draft_has_title(target):
+        return False
+    said = normalize_copy(user_message).casefold()
+    for op in ops:
+        if not isinstance(op, Mapping):
+            continue
+        kind = op.get("op")
+        words = op.get("title") if kind == "set_title" else op.get("text")
+        start = op.get("start_s", 0) or 0
+        opening = kind == "set_title" or (
+            kind == "add_text" and isinstance(start, int | float) and start <= 0.5
+        )
+        text = normalize_copy(words or "") if isinstance(words, str) else ""
+        if opening and text and text.casefold() not in said:
+            return True
+    return False
+
+
+async def _title_question_plan(db: AsyncSession, *, item: Any, request: str) -> KriaTurnPlan:
+    """The titles question for ``item`` (or the older authorship question), as a plan."""
+    from sqlalchemy import inspect as sa_inspect  # noqa: PLC0415
+
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+    # The editor call may have ended the transaction; read the item fresh.
+    item = await _refetch_item(db, sa_inspect(item).identity[0])
+    digest = media_digest(snapshot_media(item))
+    talk = item_talk_sentences(item)
+    await db.rollback()  # no connection pinned across the model call
+    plan = await _title_options_plan(talk=talk, digest=digest, request=request)
+    if plan is not None:
+        return plan
+    return _authorship_plan(digest)
 
 
 def _asks_title_without_words(requirements: Iterable[Any]) -> bool:

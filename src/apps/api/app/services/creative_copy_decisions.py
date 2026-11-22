@@ -487,8 +487,10 @@ def fold_creative_copy(
             # A stale answer is retained as a blocking state, never converted into
             # consent for replacement footage.
             continue
-        if selection.get("delegated"):
-            # Generic choice delegation is intentionally never wording consent.
+        if selection.get("delegated") and question.get("kind") != KIND_CANDIDATES:
+            # Generic choice delegation is intentionally never wording consent. A titles
+            # question (KRI-1560) shows every title's words on the card, so "you choose" takes
+            # the recommended one, exactly as the app's "Let Kria decide" tap does.
             continue
         target = question["creative_target"]
         if latest_question_id.get(target) != str(selection.get("question_id")):
