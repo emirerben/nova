@@ -396,6 +396,21 @@ async def test_live_creator_plan_releases_transaction_and_offloads_sync_agent(
     assert offloaded is True
 
 
+def _scripted_execute(results):  # noqa: ANN001, ANN202
+    """A fake ``db.execute`` that serves ``results`` in order, except for the ledger's own
+    two-column ``(role, payload)`` read (KRIA_CLIP_ORDER_LEDGER_ENABLED), which has no scripted
+    answer: the planner reads the thread's clip-order entries there and a fresh thread has none."""
+    queue = list(results)
+
+    async def execute(statement, *_args, **_kwargs):  # noqa: ANN001, ANN202
+        columns = getattr(statement, "selected_columns", None)
+        if columns is not None and [c.name for c in columns] == ["role", "payload"]:
+            return SimpleNamespace(all=lambda: [])
+        return queue.pop(0)
+
+    return execute
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("flag_enabled", "outcome", "expected_turn"),
@@ -477,12 +492,14 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
     db = SimpleNamespace(
         get=AsyncMock(side_effect=get),
         execute=AsyncMock(
-            side_effect=[
-                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: history[:1])),
-                SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: history)),
-            ]
-            if flag_enabled
-            else [SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: history))]
+            side_effect=_scripted_execute(
+                [
+                    SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: history[:1])),
+                    SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: history)),
+                ]
+                if flag_enabled
+                else [SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: history))]
+            )
         ),
         rollback=AsyncMock(),
         commit=AsyncMock(),

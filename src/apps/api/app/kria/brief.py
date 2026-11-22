@@ -1187,6 +1187,23 @@ def is_select_all_requirement(req: BriefRequirement | BriefUpdate) -> bool:
     return marked and all(k in {"all", "scope"} for k in facts)
 
 
+# The `key` values the editor serves as a move (`reorder_clips_by custom`) beyond the key-less
+# "put X first" the router already served. The brief vocabulary's other keys (`capture_time`,
+# `random`, `any_order`, an upload-order `attachment`, a route) keep their own routing.
+_LEDGER_MOVE_KEYS = frozenset({"custom", "move", "swap", "undo", "reverse"})
+
+
+def _ledger_order_editable(req: BriefRequirement | BriefUpdate) -> bool:
+    """KRIA_CLIP_ORDER_LEDGER_ENABLED: on a rendered edit a move, a swap, "put X first" or an
+    "undo my reorder" is `reorder_clips_by` composed with the rest of the message, never a re-plan
+    of all of it. No wording decides (KRI-1392): only the key the requirement names."""
+    from app.services.clip_order_ledger import clip_order_ledger_on  # noqa: PLC0415
+
+    if not clip_order_ledger_on():
+        return False
+    return str(req.facts.get("key") or "").casefold() in _LEDGER_MOVE_KEYS
+
+
 def _structural_reqs_editable(
     reqs: list[BriefRequirement | BriefUpdate], message: str | None
 ) -> bool:
@@ -1194,6 +1211,8 @@ def _structural_reqs_editable(
     text = message or ""
     for req in reqs:
         if req.kind == "order":
+            if _ledger_order_editable(req):
+                continue
             # A shuffle is one seeded `reorder_clips_by`; "any order" changes nothing.
             if not req.facts.get("key") or _asks_move(text) or order_mode(req) is not None:
                 continue

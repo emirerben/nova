@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Literal
@@ -1457,6 +1457,23 @@ def _creator_selected_clip_paths(
     return [path_by_id[media_id] for media_id in selected if media_id in path_by_id]
 
 
+def _ledger_ordered_paths(
+    item: PlanItem, clip_paths: list[str], order_ids: Sequence[str]
+) -> list[str]:
+    """``clip_paths`` in the order the creator has the clips now (``order_ids``: media ids from
+    the approved snapshot's ledger order, `clip_order_ledger.snapshot_order`), so the worker, the
+    phone preflight and the render contract all start from the SAME order and seat the creator's
+    rows on top of it. A path the order does not list keeps its place after the listed ones."""
+    from app.services.clip_order_ledger import ordered_by_ids  # noqa: PLC0415
+
+    media_by_path = {
+        str(row.get("gcs_path")): str(row.get("media_id"))
+        for row in (item.clip_assignments or [])
+        if isinstance(row, dict) and row.get("gcs_path") and row.get("media_id")
+    }
+    return ordered_by_ids(clip_paths, order_ids, key=lambda path: media_by_path.get(path, ""))
+
+
 def _collapse_duplicate_uploads(
     item: PlanItem,
     clip_paths: list[str],
@@ -1537,6 +1554,8 @@ def order_paths_by_resolved_intents(
         if not isinstance(intent, dict) or intent.get("op") != "order":
             continue
         if intent.get("order_by") or intent.get("status", "resolved") != "resolved":
+            continue
+        if intent.get("already_seated"):
             continue
         position = intent.get("position")
         if position not in (None, "first", "last"):
@@ -2176,6 +2195,13 @@ def _dispatch_item_render(
             from app.kria.duplicate_uploads import collapse_strategy  # noqa: PLC0415
 
             intent_strategy = collapse_strategy(creator_strategy, duplicate_aliases)
+    from app.services.clip_order_ledger import snapshot_order  # noqa: PLC0415
+
+    ledger_order = snapshot_order((creator_brief_binding or {}).get("media_snapshot"))
+    if ledger_order:
+        # KRIA_CLIP_ORDER_LEDGER_ENABLED: the approved draft was planned on the order the creator
+        # has the clips in now; the preflight (`phone_montage_preflight`) starts from the same one.
+        clip_paths = _ledger_ordered_paths(item, clip_paths, ledger_order)
     intent_order_placed = 0
     if not creator_clip_order:
         # An explicit preserved-order revision fence wins; otherwise the resolved

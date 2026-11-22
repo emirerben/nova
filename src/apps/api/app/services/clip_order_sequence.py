@@ -109,7 +109,7 @@ def stated_anchors(brief: object) -> dict[str, str]:
     return out
 
 
-def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
+def sequence_rows(resolved_intents: object, *, seated: bool = False) -> list[SequenceRow]:
     """The creator's stated sequence: (position, name, member ids, status), listed order.
 
     Only ``order`` intents with a ``first`` / ``last`` position, or no position and no
@@ -121,6 +121,11 @@ def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
         if not isinstance(intent, Mapping) or intent.get("op") != "order":
             continue
         if intent.get("order_by") or intent.get("placeholder"):
+            continue
+        if intent.get("already_seated") and not seated:
+            # An earlier turn seated this row and the creator did not restate it: it seats
+            # nothing now (`clip_order_ledger`). ``seated=True`` still reads it, for the callers
+            # that only ask whether the creator's ask was PLACED (it was, by that earlier turn).
             continue
         position = intent.get("position")
         if position not in (None, "first", "last"):

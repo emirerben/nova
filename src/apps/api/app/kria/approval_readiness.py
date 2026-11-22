@@ -44,6 +44,7 @@ from app.kria.route_disclosure import ask_declines, draft_route
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
 from app.services.choice_questions import SIMPLER_VERSION_REASON
+from app.services.clip_order_ledger import snapshot_order
 from app.services.clip_order_sequence import stated_anchors
 from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
@@ -439,10 +440,13 @@ def with_defaulted_order_receipts(
     from app.kria.brief_checks import (  # noqa: PLC0415
         _CANT_CONFIRM_ORDER,
         _UNSTATED_ORDER_DEFAULTED,
+        _UNSTATED_ORDER_KEPT,
         reason_in_every_language,
     )
 
-    said = set(reason_in_every_language(_UNSTATED_ORDER_DEFAULTED))
+    said = set(reason_in_every_language(_UNSTATED_ORDER_DEFAULTED)) | set(
+        reason_in_every_language(_UNSTATED_ORDER_KEPT)
+    )
     neutral = set(reason_in_every_language(_CANT_CONFIRM_ORDER))
     proved = {
         str(row["requirement_id"]): row["reason"]
@@ -888,6 +892,7 @@ def assess_readiness(
             ),
             research=dict(prepared_research) if prepared_research is not None else None,
             user_song_attached=bool(media.get("song_path")),
+            order_confirmed=bool(snapshot_order(media)),
             # KRI-1024: a literal no phone font draws is never executable on the phone.
             phone_text=defers_text_to_phone(
                 creator_id=creator_id, clip_paths=media.get("clip_paths") or ()

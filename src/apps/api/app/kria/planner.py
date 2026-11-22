@@ -200,6 +200,7 @@ from app.schemas.user_song import (
     SONG_ORDER_ANSWER_KEY,
     SONG_RANGE_ANSWER_KEY,
 )
+from app.services import clip_order_ledger
 from app.services.anchor_exclusions import withdraw_excluded_anchors
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
@@ -274,6 +275,7 @@ from app.services.kria_editor_ops import (
     EditorStateStaleError,
     background_state,
     build_editor_snapshot,
+    client_state_payload,
     clip_facts_by_media_id,
     clip_seen_by_media_id,
     clip_visible_text_by_media_id,
@@ -1142,6 +1144,10 @@ class PlannedKriaTurn:
     # the stored action ran as built, and the digest of the editor state it compiles against,
     # which the draft commit re-checks inside the row lock. None for every other turn.
     suggestion_pin: dict | None = field(default=None, compare=False, repr=False)
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: the clip-order changes this turn made, as ledger entry
+    # payloads (`clip_order_ledger.LedgerEntry.to_payload`) with no `turn_id` yet; the completion
+    # transaction stamps it and writes them on the turn's assistant event. Empty with the flag off.
+    clip_order_entries: tuple[dict[str, Any], ...] = ()
     # The language the model that read the creator's message says they write in (Main Creator
     # or brief extractor `conversation_language`); None when no model ran or it could not tell.
     # The worker rebinds the turn's copy to it and stores it with the completed turn.
@@ -1299,7 +1305,31 @@ def brief_order_fields(
 
         if brief_view(brief).random_order_seed is not None:
             ordering_choice = "random"
-    return confirm_unordered_groups(resolved_intents, brief), ordering_choice
+    intents = confirm_unordered_groups(resolved_intents, brief)
+    turn = clip_order_ledger.turn_clip_order.get()
+    if turn is not None and clip_order_ledger.clip_order_ledger_on():
+        # The mark is server-owned: whatever arrives on an intent is cleared before the server
+        # decides which rows an earlier turn really seated.
+        intents = [
+            intent.model_copy(update={"already_seated": False})
+            if getattr(intent, "already_seated", False)
+            else intent
+            for intent in intents
+        ]
+        # KRIA_CLIP_ORDER_LEDGER_ENABLED: an order row an earlier turn already seated seats
+        # nothing now unless this turn states an order of its own (a requirement still unsaved
+        # at planning time has no `source_turn_id`). No brief = nothing to compare: all seat.
+        fresh = brief is None or any(
+            req.kind == "order" and req.source_turn_id is None for req in brief.live()
+        )
+        intents = clip_order_ledger.mark_seated_rows(
+            intents,
+            applied=clip_order_ledger.applied_row_fingerprints(turn.state.entries),
+            fresh_order_ask=fresh,
+            base_ids=turn.state.order,
+            known_ids=clip_order_ledger.applied_known_ids(turn.state.entries),
+        )
+    return intents, ordering_choice
 
 
 def _pins_without_caption_repeats(
@@ -2277,6 +2307,16 @@ async def _copilot_clip_context(
     savepoint so a database error cannot poison the outer read transaction.
     """
     context: dict = {}
+    turn_order = clip_order_ledger.turn_clip_order.get()
+    if turn_order is not None and clip_order_ledger.clip_order_ledger_on():
+        # KRIA_CLIP_ORDER_LEDGER_ENABLED: the creator's order before their last reorder (undo),
+        # and the current order by name (what "what order are my clips in?" is answered from).
+        if turn_order.state.previous:
+            context["previous_media_order"] = list(turn_order.state.previous)
+        if turn_order.state.entries:
+            context["order_listing"] = clip_order_ledger.order_listing(
+                turn_order.state.order, turn_order.labels
+            )
     try:
         if settings.clip_facts_for(job.user_id):
             facts = clip_facts_by_media_id(job, variant, list(item.clip_assignments or []))
@@ -3420,6 +3460,24 @@ async def _load_creator_inputs(
         }
         for target, state in decision_states.items()
     ]
+    # KRIA_CLIP_ORDER_LEDGER_ENABLED: the model sees the clips in the order the creator has them
+    # now, and one line saying which clip is which. Nothing changes until the ledger has an entry.
+    order_view = clip_order_ledger.prompt_view(
+        clip_order_ledger.turn_clip_order.get(), media_context, item_summary
+    )
+    if order_view is not None:
+        media_context, item_summary = order_view
+        manifest_for_model = manifest.model_copy(
+            update={
+                "media": clip_order_ledger.ordered_by_ids(
+                    list(manifest.media),
+                    clip_order_ledger.turn_clip_order.get().state.order,
+                    key=lambda ref: str(ref.media_id),
+                )
+            }
+        )
+    else:
+        manifest_for_model = manifest
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_context=creator_summary,
@@ -3433,7 +3491,7 @@ async def _load_creator_inputs(
             for row in rows
             if row.content
         ],
-        capability_manifest=manifest,
+        capability_manifest=manifest_for_model,
         creative_copy_state=compact_copy_state,
         # KRI-520: bound per Kria turn by the task; None leaves the prompt unchanged.
         reply_language=current_reply_language(),
@@ -6476,6 +6534,250 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
     )
 
 
+async def _turn_clip_order(
+    db: AsyncSession, *, thread_id: uuid.UUID, item: PlanItem, editor_state: Any
+) -> clip_order_ledger.TurnClipOrder | None:
+    """The creator's clip order as this turn starts: the ledger over the order the clips were
+    added, and after a render the editor timeline (which already holds every drag and manual
+    edit). Never raises: a turn that cannot read the order plans without it."""
+    try:
+        assignments = [
+            row
+            for row in (item.clip_assignments or [])
+            if isinstance(row, dict) and isinstance(row.get("media_id"), str) and row["media_id"]
+        ]
+        attachment = tuple(dict.fromkeys(row["media_id"] for row in assignments))
+        rows = (
+            await db.execute(
+                select(CreationThreadEvent.role, CreationThreadEvent.payload)
+                .where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.role == "assistant",
+                )
+                .order_by(CreationThreadEvent.sequence)
+            )
+        ).all()
+        entries = clip_order_ledger.fold_clip_order((role, payload) for role, payload in rows)
+        rendered: list[str] | None = None
+        manual = False
+        miss_token = _editor_target_miss.set(None)
+        try:
+            target = await _load_editor_target(
+                db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+            )
+        except Exception:  # noqa: BLE001 - a missing editor target is "no render yet"
+            target = None
+        finally:
+            # This look is not the planner's own: whatever it recorded must not leak into the
+            # turn's later reads of why its editor target was unavailable.
+            _editor_target_miss.reset(miss_token)
+        if target is not None:
+            shown = clip_order_ledger.first_appearance(
+                slot.get("media_id")
+                for slot in target.snapshot.get("slots") or []
+                if isinstance(slot, dict) and not slot.get("removed")
+            )
+            rendered = [media_id for media_id in shown if media_id in set(attachment)]
+            # A timeline the creator changed by hand (unsaved lanes the app sent, or a saved
+            # user timeline) is theirs; otherwise it is the order the plan itself laid out.
+            manual = bool(
+                (
+                    editor_state is not None
+                    and client_state_payload(editor_state).get("timeline_slots")
+                )
+                or (target.variant or {}).get("user_timeline")
+            )
+        replayed = clip_order_ledger.current_clip_order(attachment_ids=attachment, entries=entries)
+        observed = (
+            clip_order_ledger.observed_entry(
+                replayed,
+                rendered,
+                None,
+                actor=clip_order_ledger.CREATOR_EDITOR if manual else clip_order_ledger.AI_STORY,
+            )
+            if rendered
+            else None
+        )
+        state = clip_order_ledger.current_clip_order(
+            attachment_ids=attachment,
+            entries=(*entries, *([observed] if observed else [])),
+            rendered_ids=rendered,
+        )
+        return clip_order_ledger.TurnClipOrder(
+            state=state,
+            attachment_ids=attachment,
+            rendered=bool(rendered),
+            labels=clip_order_ledger.labels_for(state.order, assignments),
+            observed=observed,
+        )
+    except Exception:  # noqa: BLE001 - the ledger must never break a turn
+        log.warning("kria_clip_order_state_failed", thread_id=str(thread_id), exc_info=True)
+        return None
+
+
+_REORDER_OPS = frozenset({"reorder_clip", "reorder_clips_by"})
+
+
+def _without_unasked_reorders(planned: PlannedKriaTurn) -> PlannedKriaTurn:
+    """The AI never reorders the clips on its own (KRIA_CLIP_ORDER_LEDGER_ENABLED).
+
+    A chat edit turn whose requirements are known (the brief was read) and state no order or
+    selection loses any reorder op the copilot added anyway, while every sibling op is kept: a
+    title edit that also shuffled the clips is a title edit. A turn whose brief is still deferred
+    (the in-place fast path) carries no reorder op to begin with."""
+    plan = planned.plan
+    if (
+        plan.mode != "act"
+        or not plan.intents
+        or plan.intents[0].tool_name != "draft.apply_editor_ops"
+        or planned.brief_route != "editor_ops"
+        or planned.defer_brief
+        # a tapped suggestion card is the creator's own tap; a degraded turn's brief update is
+        # the server's stand-in for a request it could not read, not "no order asked"
+        or planned.suggestion_pin is not None
+        or "degraded_from" in (planned.brief_coverage or {})
+        or any(update.kind in {"order", "select"} for update in planned.brief_updates)
+    ):
+        return planned
+    arguments = plan.intents[0].arguments
+    ops = [op for op in arguments.get("operations") or [] if isinstance(op, dict)]
+    kept = [op for op in ops if op.get("op") not in _REORDER_OPS]
+    if len(kept) == len(ops):
+        return planned
+    note = say(
+        en="I left your clip order as it was.",
+        tr="Klip sıranı olduğu gibi bıraktım.",
+    )
+    log.info("kria_unasked_reorder_stripped", stripped=len(ops) - len(kept), kept=len(kept))
+    if not kept:
+        return replace(
+            planned,
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=note,
+                diagnostics=plan.diagnostics,
+            ),
+        )
+    notes = " ".join(part for part in (str(arguments.get("notes") or "").strip(), note) if part)
+    rebuilt = adapt_editor_action(
+        reply=str(arguments.get("summary") or ""),
+        ops=kept,
+        request_render=len(plan.intents) == 2,
+        unmet_requests=arguments.get("unmet_requests") or (),
+        notes=notes,
+    )
+    if rebuilt.mode != "act":
+        return replace(planned, plan=rebuilt)
+    return replace(
+        planned,
+        plan=rebuilt.model_copy(update={"diagnostics": plan.diagnostics}),
+    )
+
+
+def _declined_pre_render_move(planned: PlannedKriaTurn) -> PlannedKriaTurn:
+    """Before a render there is no timeline to move a clip on (KRIA_CLIP_ORDER_LEDGER_ENABLED).
+
+    A turn whose ONLY new requirements are order moves the editor serves after a render (a move
+    relative to another clip, a swap, an undo: the structured keys in `brief._LEDGER_MOVE_KEYS`)
+    is answered with one plain line instead of a draft that silently ignores it. "First / last /
+    then" asks are clip-intent rows and keep being served; a message that also asks for anything
+    else keeps its draft (the move part is not discarded silently only when it is alone)."""
+    from app.kria.brief import _LEDGER_MOVE_KEYS  # noqa: PLC0415
+
+    updates = planned.brief_updates
+    if (
+        planned.plan.mode != "act"
+        or not updates
+        or any(
+            update.kind != "order"
+            or str(update.facts.get("key") or "").casefold() not in _LEDGER_MOVE_KEYS
+            for update in updates
+        )
+    ):
+        return planned
+    return replace(
+        planned,
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    "I can move a clip, swap two clips or undo a reorder once your video is made. "
+                    "Until then your clips stay in the order they are in now."
+                ),
+                tr=(
+                    "Bir klibi taşımayı, iki klibin yerini değiştirmeyi ya da bir sıralamayı geri "
+                    "almayı videon hazır olunca yapabilirim. O zamana kadar klipler şu anki "
+                    "sıralarında kalıyor."
+                ),
+            ),
+            diagnostics=refusal_diagnostics("clip_move_before_render"),
+        ),
+        brief_updates=(),
+        brief_route=None,
+        brief_coverage=None,
+    )
+
+
+def _scrubbed_reply(
+    planned: PlannedKriaTurn, turn: clip_order_ledger.TurnClipOrder
+) -> PlannedKriaTurn:
+    """Every creator-visible line of a clip-order turn names clips by their name, never a media
+    id, UUID or file name (`clip_order_ledger.scrub_ids`): the last fence on model-written text."""
+    plan = planned.plan
+    if plan.mode == "respond" and plan.response:
+        text = clip_order_ledger.scrub_ids(plan.response, turn.labels)
+        return (
+            planned
+            if text == plan.response
+            else replace(planned, plan=plan.model_copy(update={"response": text}))
+        )
+    if (
+        plan.mode == "act"
+        and plan.intents
+        and plan.intents[0].tool_name == "draft.apply_editor_ops"
+    ):
+        arguments = dict(plan.intents[0].arguments)
+        summary = str(arguments.get("summary") or "")
+        text = clip_order_ledger.scrub_ids(summary, turn.labels)
+        if text != summary:
+            arguments["summary"] = text
+            intents = [
+                plan.intents[0].model_copy(update={"arguments": arguments}),
+                *plan.intents[1:],
+            ]
+            return replace(planned, plan=plan.model_copy(update={"intents": intents}))
+    return planned
+
+
+def _with_clip_order_entries(
+    planned: PlannedKriaTurn, turn: clip_order_ledger.TurnClipOrder
+) -> PlannedKriaTurn:
+    """The ledger entries this turn made: the creator's hand edit it found, and the order rows a
+    draft strategy seats (on the order the turn started from, which the media snapshot carries)."""
+    entries: list[clip_order_ledger.LedgerEntry] = []
+    if turn.observed is not None:
+        entries.append(turn.observed)
+    plan = planned.plan
+    if plan.mode == "act" and plan.intents and plan.intents[0].tool_name == "draft.apply_strategy":
+        strategy = plan.intents[0].arguments.get("strategy")
+        seated = clip_order_ledger.seated_entry(
+            turn.state.order,
+            (strategy or {}).get("resolved_clip_intents") if isinstance(strategy, dict) else None,
+            actor=clip_order_ledger.CREATOR_TEXT,
+            turn_id=None,
+        )
+        applied = clip_order_ledger.applied_row_fingerprints(turn.state.entries)
+        if seated is not None and (
+            seated.after_ids != seated.before_ids or not set(seated.rows) <= applied
+        ):
+            entries.append(seated)
+    if not entries:
+        return planned
+    return replace(planned, clip_order_entries=tuple(e.to_payload() for e in entries))
+
+
 async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     """Fence planning against source replacement while providers are running."""
     from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
@@ -6486,7 +6788,26 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     client_protocol = kwargs.pop("client_protocol", None)
     item = await db.get(PlanItem, kwargs["item_id"])
     before = snapshot_media(item) if item is not None else {}
-    planned = await _plan_live_turn(db, **kwargs)
+    turn_order = (
+        await _turn_clip_order(
+            db,
+            thread_id=kwargs["thread_id"],
+            item=item,
+            editor_state=kwargs.get("editor_state"),
+        )
+        if item is not None and clip_order_ledger.clip_order_ledger_on()
+        else None
+    )
+    token = clip_order_ledger.turn_clip_order.set(turn_order)
+    try:
+        planned = await _plan_live_turn(db, **kwargs)
+    finally:
+        clip_order_ledger.turn_clip_order.reset(token)
+    if turn_order is not None:
+        if not turn_order.rendered:
+            planned = _declined_pre_render_move(planned)
+        planned = _scrubbed_reply(_without_unasked_reorders(planned), turn_order)
+        planned = _with_clip_order_entries(planned, turn_order)
     if planned.plan.mode != "act":
         return planned
     current = await db.get(PlanItem, kwargs["item_id"], populate_existing=True)
@@ -6516,6 +6837,8 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
                 ),
             ),
         )
+    if turn_order is not None:
+        after = clip_order_ledger.with_clip_order_ids(after, turn_order.state)
     planned = replace(planned, media_snapshot=after, client_protocol=client_protocol)
     return await _gate_unresolved_choices(
         db,
