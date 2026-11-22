@@ -7,6 +7,7 @@ import XCTest
 /// measure them against the cloud's mix of the same edit (KRI-139) and measure a
 /// creator-song export by tone and colour: the song plays once, from its window,
 /// with the cuts in order and the opening text in its window (KRI-470 PR-G).
+/// `scripts/dev/kri1562-listening-check.sh` renders its Talking music cases with it too (KRI-1562).
 /// Opt-in: skipped unless `KRIA_AUDIO_PARITY_DIR` names a prepared directory.
 final class AudioParityFixtureTests: XCTestCase {
     @MainActor func testRendersEveryPreparedCase() async throws {

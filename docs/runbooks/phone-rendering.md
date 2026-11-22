@@ -748,6 +748,12 @@ three extra lanes on top of the unchanged speaker clip + captions:
   `test_ios_level_test_pins_the_server_duck_gain`. Device check: enable the
   flag on the local API, render a Talking edit whose SFX lands on a word and
   one in a pause, and listen on the iPhone dev build.
+  Music under speech (KRI-1562): `TalkingMusicDuckLevelTests.swift` proves the
+  engine duck on tones. `scripts/dev/kri1562-listening-check.sh [--takes DIR]`
+  runs real talking takes (or `--synthetic` stand-ins) through the real compiler
+  and the native exporter, and measures the duck, the recovery in pauses and the
+  words whisper.cpp hears with and without the song. Results and the
+  voice-separation decision: `docs/reviews/kri-1562/voice-separation.md`.
 - **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
