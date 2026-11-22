@@ -693,6 +693,10 @@
       "source": "default",
       "value": true
     },
+    "kria_unstated_order_default_enabled": {
+      "source": "default",
+      "value": false
+    },
     "kria_voiceover_script_enabled": {
       "source": "default",
       "value": true

@@ -2462,6 +2462,11 @@
    "müzik istemediğini söylemiştin, o yüzden şarkı eklemiyorum"
   ],
   [
+   "app/kria/brief_checks.py",
+   "where you didn't say, the clips play in the order you added them",
+   "söylemediğin yerlerde klipler eklediğin sırayla oynar"
+  ],
+  [
    "app/agents/editor_ops_v2/background.py",
    "I can't change where you are part by part on this edit yet.",
    "Bu düzenlemede yerini bölüm bölüm henüz değiştiremiyorum."

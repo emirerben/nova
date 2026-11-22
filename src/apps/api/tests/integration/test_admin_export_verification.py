@@ -72,6 +72,9 @@ def _report(job_id, attempt_id, ssim, *, status="rejected", version="phone-simpl
     report["checks"][1].update(
         profile_samples=0, mean_local_ssim=0.871, lead_previous=-0.054, lead_next=0.017
     )
+    # Stored from v6 (KRI-831); a URL-shaped value must not survive the bool field.
+    report["checks"][1]["on_source_grid"] = True
+    report["checks"][2]["on_source_grid"] = SIGNED
     report["checks"][1]["sample_evidence"] = [
         {
             "ssim_previous": 0.938,
@@ -256,8 +259,10 @@ async def test_admin_reads_failed_export_scores_without_urls_or_creator_text(see
     assert picture["reason"] == "whole_window_neighbour_shift"
     assert (picture["profile_samples"], picture["mean_local_ssim"]) == (0, 0.871)
     assert (picture["lead_previous"], picture["lead_next"]) == (-0.054, 0.017)
+    assert picture["on_source_grid"] is True
     audio = next(c for c in report["checks"] if c["kind"] == "audio")
     assert audio["correlation"] == 0.991 and audio["reason"] is None, "URL-shaped reason dropped"
+    assert audio["on_source_grid"] is None
     evidence = next(c for c in report["checks"] if c["kind"] == "evidence")
     assert (evidence["status"], evidence["reason"]) == ("missing", "TimeoutError")
     assert report["thresholds"]["picture_min_local_ssim"] == 0.95
