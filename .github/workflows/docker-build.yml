@@ -23,6 +23,12 @@ name: Docker Build Check
 # layer cache via GHA cache backend makes warm runs ~30-60s. The build
 # context (.dockerignore-filtered repo root) is identical to what Fly's
 # builder sees, so any COPY/.dockerignore mismatch surfaces here.
+#
+# Layer cache (KRI-1551): only pushes to main write it; pull requests read
+# main's copy and write nothing. A pull request's cache is visible to that
+# pull request alone, so each one stored its own full copy of the layers
+# (mode=max, 1.37 GB): on 2026-11-23 five pull requests held 116 entries and
+# 6.9 GB of the repository's 10 GB Actions cache, so other caches were evicted.
 
 on:
   pull_request:
@@ -33,11 +39,21 @@ on:
       - "scripts/ci/opencv-install.py"
       - "src/apps/api/**"
       - "src/packages/motion-runtime/**"
+  # Keeps the cache that pull requests read current. Same paths.
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "scripts/ci/opencv-install.py"
+      - "src/apps/api/**"
+      - "src/packages/motion-runtime/**"
 
-# Cancel superseded runs on the same PR.
+# Cancel superseded runs on the same PR. On main a newer push waits instead,
+# so the run that writes the cache is never cut off halfway.
 concurrency:
   group: docker-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   docker-build:
@@ -59,7 +75,8 @@ jobs:
           load: true
           tags: nova-build-test:ci
           cache-from: type=gha,scope=docker-build-check
-          cache-to: type=gha,scope=docker-build-check,mode=max
+          # Written on main only (see the top of this file); empty means none.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,scope=docker-build-check,mode=max' || '' }}
 
       # One OpenCV in the image. The OpenCV distributions all unpack into one
       # cv2/ directory; scenedetect requires opencv-python and mediapipe
