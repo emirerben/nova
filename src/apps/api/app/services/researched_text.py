@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents._model_client import GeminiClient, default_client
@@ -40,9 +41,35 @@ _RESEARCH_PROMPT_SOURCES = ("app/services/researched_text.py",)
 # The layers prompt opens with the creator's reply-language line.
 _RESEARCH_LAYERS_PROMPT_SOURCES = (*_RESEARCH_PROMPT_SOURCES, "app/kria/reply_language.py")
 
+log = structlog.get_logger()
+
 
 class ResearchUnavailable(ValueError):
     """No safe researched revision can be offered; retain the current draft."""
+
+
+_CLIP_TIMING_MISSING = (
+    "I couldn't tell where clip {number} plays in your video, because its length wasn't "
+    "saved. Your video is unchanged. I can still add titles without researched facts."
+)
+_CLIP_TIMING_MISSING_TR = (
+    "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü uzunluğu kaydedilmemiş. "
+    "Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
+)
+
+
+class ClipTimingMissing(ResearchUnavailable):
+    """A clip has neither a saved output window nor a length (KRI-1595).
+
+    Its place on the video's clock is unknown, so no explanation can be bound to it. ``reply``
+    is the whole chat answer in the turn's language; ``str()`` stays English for logs and for
+    the callers that wrap it."""
+
+    def __init__(self, number: int) -> None:
+        from app.kria.reply_language import say  # noqa: PLC0415
+
+        super().__init__(f"Clip {number} has no saved length, so its place in the video is unknown")
+        self.reply = say(en=_CLIP_TIMING_MISSING, tr=_CLIP_TIMING_MISSING_TR, number=number)
 
 
 class NoUsableSources(ResearchUnavailable):
@@ -553,15 +580,126 @@ class ResearchReviewAgent(Agent[ResearchReviewInput, ResearchReviewOutput]):
             raise SchemaError("Research review was not well formed") from exc
 
 
-def _window(slot: dict) -> tuple[float, float]:
+def _seconds(value: Any) -> float | None:
+    """A finite number of seconds, else None (absent, null, a flag, text, NaN or infinite)."""
+    if value is None or isinstance(value, bool):
+        return None
     try:
-        start = float(slot.get("output_start_s", slot.get("start_s", 0)))
-        end = float(slot.get("output_end_s", start + float(slot.get("duration_s", 0))))
-    except (TypeError, ValueError) as exc:
-        raise ResearchUnavailable("A clip has no usable output window") from exc
-    if not all(map(math.isfinite, (start, end))) or end <= start:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _stated_window(slot: dict) -> tuple[float, float] | None:
+    """The output window the slot itself states: a start, and an end or a length."""
+    start = _seconds(slot.get("output_start_s"))
+    if start is None:
+        start = _seconds(slot.get("start_s"))
+    if start is None:
+        return None
+    end = _seconds(slot.get("output_end_s"))
+    if end is None and (length := _seconds(slot.get("duration_s"))) is not None:
+        end = start + length
+    return (start, end) if end is not None and end > start else None
+
+
+# The fields a slot's output window is read or derived from (KRI-1595 refusal log).
+_TIMING_KEYS = (
+    "output_start_s",
+    "output_end_s",
+    "start_s",
+    "duration_s",
+    "duration_beats",
+    "in_s",
+    "source_duration_s",
+    "transition_after",
+    "transition_duration_s",
+)
+
+
+def _log_untimed(event: str, slots: list[dict], **fields: Any) -> None:
+    """Redacted shape of the slots on a timing refusal: key names and value types, no values.
+
+    The chat snapshot is not stored (the run input is redacted), so this is what tells the
+    next occurrence apart from the one fixed here."""
+    log.warning(
+        event,
+        slot_count=len(slots),
+        slots=[
+            {
+                "keys": sorted(str(key) for key in slot)[:60],
+                "timing": {key: type(slot[key]).__name__ for key in _TIMING_KEYS if key in slot},
+                "removed": bool(slot.get("removed")),
+            }
+            for slot in slots[:40]
+            if isinstance(slot, dict)
+        ],
+        **fields,
+    )
+
+
+def _window(slot: dict) -> tuple[float, float]:
+    window = _stated_window(slot)
+    if window is None:
+        _log_untimed("research.clip_window_unusable", [slot])
         raise ResearchUnavailable("A clip has no usable output window")
-    return start, end
+    return window
+
+
+def _timed_slots(slots: list[dict]) -> list[dict]:
+    """The slots with each live clip's output window, derived where the slot does not state one.
+
+    A timeline the phone editor saved (KRI-1595) keeps each clip's in-point, length and
+    transition but no output start or end, and the editor snapshot copies those as null, so
+    every research ask on an edited draft was refused. The window is the compiler's output
+    clock instead (``authored_text_fit._segments``): lengths laid end to end, less each
+    crossfade's overlap, picking up from any window a slot does state. A snapshot whose clips
+    all state a window comes back as it is. A live clip with neither a window nor a length has
+    no place on the clock: ``ClipTimingMissing`` names it rather than guessing.
+    """
+    live = [slot for slot in slots if not slot.get("removed")]
+    stated = [_stated_window(slot) for slot in live]
+    if all(stated):
+        return slots
+    from app.services.authored_text_fit import _segments  # noqa: PLC0415
+
+    rows = []
+    for number, (slot, window) in enumerate(zip(live, stated, strict=True), 1):
+        length = window[1] - window[0] if window else _seconds(slot.get("duration_s"))
+        if length is None or length <= 0:
+            _log_untimed("research.clip_timing_missing", slots, clip_number=number)
+            raise ClipTimingMissing(number)
+        transition = slot.get("transition_after")
+        rows.append(
+            {
+                "duration_s": length,
+                "transition_after": transition if isinstance(transition, str) else "cut",
+                "transition_duration_s": _seconds(slot.get("transition_duration_s")),
+                **({"_speech_output_start_s": window[0]} if window else {}),
+            }
+        )
+    clock = iter(_segments(rows))
+    timed = []
+    for slot in slots:
+        if slot.get("removed"):
+            timed.append(slot)
+            continue
+        segment = next(clock)
+        timed.append(
+            slot
+            if _stated_window(slot)
+            else {
+                **slot,
+                "output_start_s": round(segment["output_start_s"], 6),
+                "output_end_s": round(segment["output_end_s"], 6),
+            }
+        )
+    return timed
+
+
+def _snapshot_slots(snapshot: dict) -> list[dict]:
+    return _timed_slots(list(snapshot.get("slots") or []))
 
 
 # Spoken edits: an explanation sits in a pause, this far from either spoken word.
@@ -676,7 +814,7 @@ def _grouped_windows(slots: list[dict], opener_end: float) -> list[tuple[float, 
 
 
 def research_windows(snapshot: dict) -> list[dict]:
-    slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
+    slots = [slot for slot in _snapshot_slots(snapshot) if not slot.get("removed")]
     if not slots:
         raise ResearchUnavailable("There is no footage to explain")
     if snapshot.get("spoken_edit") and not _speech_lines(snapshot):
@@ -766,7 +904,8 @@ def _place_research_text(
     (KRI-881), so both apply one set of rules: never over spoken words, never over the
     protected opening or other protected text, readable, and never overlapping.
     """
-    slots = snapshot.get("slots") or []
+    # The live clips: the opening is the first one still in the video, as in research_windows.
+    slots = [slot for slot in _snapshot_slots(snapshot) if not slot.get("removed")]
     if any(start < line["end_s"] and end > line["start_s"] for line in _speech_lines(snapshot)):
         raise ResearchUnavailable(
             "The explanation would cover the spoken words; the edit is unchanged"
@@ -873,7 +1012,7 @@ _NUMBER = re.compile(r"\d+")
 def _pictured(slots: list[dict], start: float, end: float) -> list[dict]:
     return [
         slot
-        for slot in slots
+        for slot in _timed_slots(slots)
         if not slot.get("removed") and _window(slot)[0] < end and _window(slot)[1] > start
     ]
 
@@ -891,7 +1030,7 @@ def validate_research_layers(
     if not layers:
         raise ResearchUnavailable("No researched text was written")
     facts = {fact.id: fact for fact in evidence.facts}
-    slots = snapshot.get("slots") or []
+    slots = _snapshot_slots(snapshot)
     total = float(snapshot.get("total_duration_s") or 0)
     for index, layer in enumerate(layers):
         label = f"Text layer {index + 1}"
@@ -1047,7 +1186,7 @@ def pinned_layer_operations(prepared: PreparedResearch, snapshot: dict) -> list[
     """
     if prepared.status != "ready" or not prepared.layers:
         raise ResearchUnavailable("The approved research has no sourced text to show")
-    slots = snapshot.get("slots") or []
+    slots = _snapshot_slots(snapshot)
     total = float(snapshot.get("total_duration_s") or 0)
     for number, layer in enumerate(prepared.layers, 1):
         label = f"The approved sourced text {number} (“{layer.text}”)"
@@ -1074,7 +1213,7 @@ def _bound_slots(snapshot: dict) -> list[dict]:
         "seen",
         "visible_text",
     )
-    return [{key: row[key] for key in keys if key in row} for row in snapshot.get("slots") or []]
+    return [{key: row[key] for key in keys if key in row} for row in _snapshot_slots(snapshot)]
 
 
 def write_research_layers(
@@ -1139,7 +1278,7 @@ def research_operations(
     request: str,
     look: dict | None = None,
 ) -> list[dict]:
-    slots = snapshot.get("slots") or []
+    slots = [slot for slot in _snapshot_slots(snapshot) if not slot.get("removed")]
     facts = {fact.id: fact for fact in evidence.facts}
     available_windows = {row["id"]: row for row in research_windows(snapshot)}
     windows = []
@@ -1336,7 +1475,7 @@ def pinned_research_operations(prepared: PreparedResearch, snapshot: dict) -> li
     """
     if prepared.status != "ready" or not prepared.texts:
         raise ResearchUnavailable("The approved research has no sourced explanation to show")
-    slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
+    slots = [slot for slot in _snapshot_slots(snapshot) if not slot.get("removed")]
     windows: list[tuple[float, float]] = []
     additions = []
     remove_indexes: set[int] = set()

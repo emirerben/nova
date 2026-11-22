@@ -2585,6 +2585,11 @@
    "app/agents/edit_copilot.py",
    "you asked for no sound effects, so I won't add any",
    "ses efekti istemediğini söylemiştin, o yüzden eklemiyorum"
+  ],
+  [
+   "app/services/researched_text.py",
+   "I couldn't tell where clip {number} plays in your video, because its length wasn't saved. Your video is unchanged. I can still add titles without researched facts.",
+   "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü uzunluğu kaydedilmemiş. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
   ]
  ],
  "retired": [

@@ -569,6 +569,7 @@
     "I couldn't tell exactly where \"{quote}\" is said in that clip": "Ich konnte nicht genau erkennen, wo in diesem Clip \"{quote}\" gesagt wird",
     "I couldn't tell if these are \"{work_intent_attribute}\"": "Ich konnte nicht erkennen, ob diese \"{work_intent_attribute}\" sind",
     "I couldn't tell the {work_intent_attribute}": "Ich konnte {work_intent_attribute} nicht erkennen",
+    "I couldn't tell where clip {number} plays in your video, because its length wasn't saved. Your video is unchanged. I can still add titles without researched facts.": "Ich konnte nicht erkennen, wo Clip {number} in deinem Video läuft, weil seine Länge nicht gespeichert wurde. Dein Video ist unverändert. Titel ohne recherchierte Fakten kann ich trotzdem hinzufügen.",
     "I couldn't tell which clip \"{literal}\" goes on, so I can't confirm that text.": "Ich konnte nicht erkennen, auf welchen Clip \"{literal}\" gehört, deshalb kann ich diesen Text nicht bestätigen.",
     "I couldn't tell which clip \"{words}\" means, so I can't confirm the order.": "Ich konnte nicht erkennen, welchen Clip du mit \"{words}\" meinst, deshalb kann ich die Reihenfolge nicht bestätigen.",
     "I couldn't tell which clip is on screen when you say {v1}": "Ich konnte nicht erkennen, welcher Clip im Bild ist, wenn du {v1} sagst",
