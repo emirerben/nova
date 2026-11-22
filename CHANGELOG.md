@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.80.0] - 2026-11-22
+
+### Changed
+- feat(kria): the planner sets sfx_ask for a general sound-effect ask on voice-based phone edits (KRI-1561) (#2459) <!-- release-pr: 2459 -->
+
 ## [0.89.79.0] - 2026-11-22
 
 ### Changed

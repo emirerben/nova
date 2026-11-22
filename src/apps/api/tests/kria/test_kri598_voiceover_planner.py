@@ -263,9 +263,15 @@ def test_runtime_v2_voiceover_manifest_closes_only_the_guided_contract(
     monkeypatch.setattr(capabilities.settings, "phone_subtitled_fullscreen_overlays_enabled", False)
     historical_v1 = _manifest(runs_guided_voiceover=True)
     historical_v2 = _manifest(runs_guided_voiceover=False)
+    # KRI-1561: `sfx_ask` postdates the recording (a declared addition, like the fullscreen lane
+    # below); everything the recording holds is unchanged.
     assert {
-        name: cap.model_dump(mode="json") for name, cap in historical_v1.capabilities.items()
+        name: cap.model_dump(mode="json")
+        for name, cap in historical_v1.capabilities.items()
+        if name != capabilities.CAPABILITY_SFX_ASK
     } == CASE["recorded_capabilities"]
+    assert historical_v1.capabilities[capabilities.CAPABILITY_SFX_ASK].available is True
+    assert historical_v2.capabilities[capabilities.CAPABILITY_SFX_ASK].available is True
 
     # With the existing fullscreen flag on, N2 adds only its declared
     # capability. The old guided-contract behavior and every other capability

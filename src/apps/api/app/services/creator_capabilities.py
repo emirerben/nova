@@ -127,6 +127,15 @@ CAPABILITY_MEDIA_OVERLAY_FULLSCREEN = "media_overlays:fullscreen"
 # Present in `capabilities` ONLY while the flag is on, so a flag-off manifest's dict and its
 # `context_hash` / `manifest_hash` stay byte-identical. Never the generic `media_overlays`
 # key: that still gates the cloud `overlays` treatment the phone compiler rejects.
+# KRI-1561: a general "add sound effects where they fit" ask. Advertised (and the planner taught
+# `sfx_ask`) only where a phone writer can choose and place the effects: Talking, Voiceover and
+# montage-with-a-recorded-voiceover, while `sfx_capability`'s gate for the writer is open. Absent
+# otherwise, so every manifest and hash with the gate closed is byte-identical. Turkish and
+# German twins of the notice: `app.kria.strategy_policy._KNOWN_TR` and `copy/de.json`.
+CAPABILITY_SFX_ASK = "sfx_ask"
+SFX_ASK_UNAVAILABLE_NOTICE = (
+    "Sound effects chosen for your edit aren't available for it yet; left them out."
+)
 CAPABILITY_TIMED_CARDS = "timed_cards"
 TIMED_CARDS_UNAVAILABLE_NOTICE = (
     "Small cards at an exact time aren't available for this edit yet; left them out."
@@ -349,6 +358,38 @@ def _as_catalog_refs(
         value if isinstance(value, CreatorCatalogRef) else CreatorCatalogRef.model_validate(value)
         for value in values
     ]
+
+
+def _sfx_ask_open(
+    capabilities: dict[str, CapabilityAvailability],
+    *,
+    phone_source_media_ids: object,
+    normalized_format: str,
+    has_voiceover: bool,
+    is_phone_subtitled: bool,
+    is_phone_voiceover: bool,
+) -> bool:
+    """Can the phone writer for this edit choose and place effects for a general ask (KRI-1561)?
+
+    Each writer's own gate (`sfx_capability.*_sfx_limit`, the answer its worker reads) decides:
+    Talking, Voiceover (`narrated*` with its voiceover) and a guided-format montage with a
+    recorded voiceover. A montage without a voiceover has no writer for it yet.
+    """
+    from app.services.sfx_capability import (  # noqa: PLC0415
+        subtitled_sfx_limit,
+        voiceover_sfx_limit,
+    )
+
+    phone_audio = capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if phone_source_media_ids is None or phone_audio is None or not phone_audio.available:
+        return False
+    if is_phone_subtitled and not has_voiceover:
+        return subtitled_sfx_limit() is None
+    if is_phone_voiceover:
+        return voiceover_sfx_limit() is None
+    if has_voiceover and normalized_format in GUIDED_EDIT_FORMATS:
+        return voiceover_sfx_limit() is None
+    return False
 
 
 def resolve_creator_manifest(
@@ -1001,6 +1042,15 @@ def resolve_creator_manifest(
             )
         else:
             capabilities[CAPABILITY_TIMED_CARDS] = _available()
+    if _sfx_ask_open(
+        capabilities,
+        phone_source_media_ids=phone_source_media_ids,
+        normalized_format=normalized_format,
+        has_voiceover=has_voiceover,
+        is_phone_subtitled=is_phone_subtitled,
+        is_phone_voiceover=is_phone_voiceover,
+    ):
+        capabilities[CAPABILITY_SFX_ASK] = _available()
     from app.services.phone_rollout import split_screen_planned_for
 
     if (
@@ -1548,6 +1598,24 @@ def talking_footage_cutaways(
         sound=phone_talking_cutaway_sound_supported(),
     )
     return found if found.mention or found.sound else None
+
+
+def _repair_creator_sfx_ask(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """Repair (never reject) `sfx_ask` against the live manifest (KRI-1561).
+
+    The `sfx_ask` capability absent -> the ask is dropped with one plain notice, so a model that
+    sets it where no writer can place it (or a stale plan after a gate closed) is told, not
+    silently ignored. The schema already bounds the text and `max_placements`.
+    """
+
+    if strategy.sfx_ask is None:
+        return strategy, []
+    capability = manifest.capabilities.get(CAPABILITY_SFX_ASK)
+    if capability is None or not capability.available:
+        return strategy.model_copy(update={"sfx_ask": None}), [SFX_ASK_UNAVAILABLE_NOTICE]
+    return strategy, []
 
 
 def _repair_creator_timed_cards(
@@ -2122,6 +2190,8 @@ def _dropped_treatment_notices(strategy: Any, manifest: Any) -> list[str]:
     }
     beats = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
     beats_available = beats is not None and beats.available
+    ask = manifest.capabilities.get(CAPABILITY_SFX_ASK)
+    sfx_ask_available = ask is not None and ask.available
     out: list[str] = []
     for treatment in dict.fromkeys(strategy.optional_treatments or []):
         capability = manifest.capabilities.get(
@@ -2129,7 +2199,7 @@ def _dropped_treatment_notices(strategy: Any, manifest: Any) -> list[str]:
         )
         if capability.available or treatment not in DROPPED_TREATMENT_NOTICES:
             continue
-        if treatment == "sfx" and beats_available:
+        if treatment == "sfx" and (beats_available or sfx_ask_available):
             continue
         out.append(DROPPED_TREATMENT_NOTICES[treatment])
     return out
@@ -2194,6 +2264,8 @@ def compile_strategy_to_plan(
     # and the receipts judge exactly what the worker will ground.
     strategy, timed_notices = _repair_creator_timed_cards(manifest, strategy)
     shape_notices = [*shape_notices, *timed_notices]
+    strategy, sfx_ask_notices = _repair_creator_sfx_ask(manifest, strategy)
+    shape_notices = [*shape_notices, *sfx_ask_notices]
     # KRI-374: validate/repair the uploaded-song fields. A no-op for every
     # strategy that is not `audio_strategy="user_song"`.
     try:
@@ -2598,6 +2670,8 @@ repair_creator_timed_cards = _repair_creator_timed_cards
 
 
 __all__ = [
+    "CAPABILITY_SFX_ASK",
+    "SFX_ASK_UNAVAILABLE_NOTICE",
     "CAPABILITY_TIMED_CARDS",
     "TIMED_CARDS_UNAVAILABLE_NOTICE",
     "repair_creator_timed_cards",
