@@ -275,6 +275,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
         if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
+        if textLayers.contains(where: { $0.scrim != nil }) { result.insert(.textDesigns) }
         // KRI-1192: a run drawn in a script-fallback face (Noto Sans KR / Arabic) needs a build that bundles it.
         // Mirrors `EditRecipeV2`, which reads the run's font asset file from the manifest.
         let scriptFontAssets = Set((assetManifest?.assets ?? []).compactMap { asset -> String? in
@@ -613,7 +614,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
-         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, textDesigns, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
          speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse, splitBlankPanel,
          colorMoments, speechDuck

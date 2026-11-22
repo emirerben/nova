@@ -303,6 +303,40 @@ class TextBackground(_TextModel):
     radius: float = Field(ge=0, le=1000)
 
 
+class TextScrim(_TextModel):
+    """KRI-1581: a vertical gradient behind the text, full canvas width, from ``top`` down
+    ``height`` px. It fades with the layer's opacity and never moves with its motion. Needs
+    ``textDesigns``."""
+
+    top: float = Field(ge=0, le=10000)
+    height: float = Field(gt=0, le=20000)
+    stops: list[TextGradientStop] = Field(min_length=2, max_length=8)
+
+    @model_validator(mode="after")
+    def ordered_stops(self):
+        positions = [stop.position for stop in self.stops]
+        if positions != sorted(positions):
+            raise ValueError("scrim stops must be ordered")
+        return self
+
+
+# KRI-1581: painters that draw a layer's scrim (``_draw_centered_text`` in the cloud, the
+# compositor's text pass on device). The Swift twin is ``PortableTextLayer.scrimSupported``.
+SCRIM_SUPPORTED_EFFECTS = frozenset(
+    {
+        "static",
+        "none",
+        "fade-in",
+        "pop-in",
+        "scale-up",
+        "slide-up",
+        "slide-down",
+        "slide-in",
+        "bounce",
+    }
+)
+
+
 # KRI-646 Bend: effects whose text can be drawn along an arc on device. Everything else
 # (ink-reveal, handwriting, typewriter, stream-in, smooth-type, staggered-slice,
 # dissolve-out, karaoke-line, lyric-line) reveals or animates per glyph/line geometry that
@@ -339,6 +373,7 @@ class PortableTextLayer(_TextModel):
     behind_subject: bool | None = None
     animation_phases: TextAnimationPhases | None = None
     background: TextBackground | None = None
+    scrim: TextScrim | None = None
     runs: list[PositionedTextRun] = Field(default_factory=list, max_length=100)
     effect: Literal[
         "static",
@@ -379,6 +414,8 @@ class PortableTextLayer(_TextModel):
             payload.pop("animation_phases", None)
         if self.background is None:
             payload.pop("background", None)
+        if self.scrim is None:
+            payload.pop("scrim", None)
         if not self.bend:
             payload.pop("bend", None)
         if not self.behind_subject:
@@ -389,6 +426,10 @@ class PortableTextLayer(_TextModel):
     def valid_window(self):
         if self.behind_subject and self.giant_title is not None:
             raise ValueError("behind_subject is unsupported with a giant title")
+        if self.scrim is not None and (
+            self.effect not in SCRIM_SUPPORTED_EFFECTS or self.giant_title is not None
+        ):
+            raise ValueError("scrim is unsupported for this text painter")
         if self.bend and (
             self.effect not in BEND_SUPPORTED_EFFECTS
             or (

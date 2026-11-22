@@ -3587,6 +3587,7 @@
                 "sourceCrop",
                 "freehandDrawing",
                 "textBend",
+                "textDesigns",
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
@@ -3738,6 +3739,7 @@
                 "sourceCrop",
                 "freehandDrawing",
                 "textBend",
+                "textDesigns",
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
@@ -10344,6 +10346,11 @@
             "title": "Runs",
             "type": "array"
           },
+          "scrim": {
+            "$ref": "#/components/schemas/TextScrim",
+            "default": null,
+            "nullable": true
+          },
           "smooth_reveal": {
             "$ref": "#/components/schemas/SmoothRevealContent",
             "default": null,
@@ -14804,6 +14811,41 @@
           "bottom"
         ],
         "title": "TextRevealBounds",
+        "type": "object"
+      },
+      "TextScrim": {
+        "additionalProperties": false,
+        "description": "KRI-1581: a vertical gradient behind the text, full canvas width, from ``top`` down\n``height`` px. It fades with the layer's opacity and never moves with its motion. Needs\n``textDesigns``.",
+        "properties": {
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 20000,
+            "minimum": 0,
+            "title": "Height",
+            "type": "number"
+          },
+          "stops": {
+            "items": {
+              "$ref": "#/components/schemas/TextGradientStop"
+            },
+            "maxItems": 8,
+            "minItems": 2,
+            "title": "Stops",
+            "type": "array"
+          },
+          "top": {
+            "maximum": 10000,
+            "minimum": 0,
+            "title": "Top",
+            "type": "number"
+          }
+        },
+        "required": [
+          "top",
+          "height",
+          "stops"
+        ],
+        "title": "TextScrim",
         "type": "object"
       },
       "TextStrokePoint": {

@@ -56,6 +56,32 @@ public struct TextGradientStop: Codable, Equatable, Sendable {
     }
 }
 
+/// KRI-1581: a vertical gradient behind a layer's text, full canvas width, from `top` down `height`
+/// canvas px (top-left origin). Painted by the compositor with the layer's opacity and never its motion.
+/// Python twin: `app.kria.portable_text.TextScrim`. Needs `MediaCapability.textDesigns`.
+public struct TextScrim: Codable, Equatable, Sendable {
+    public let top: Double
+    public let height: Double
+    public let stops: [TextGradientStop]
+    public init(top: Double, height: Double, stops: [TextGradientStop]) { self.top = top; self.height = height; self.stops = stops }
+    private enum CodingKeys: String, CodingKey { case top, height, stops }
+    public init(from decoder: Decoder) throws {
+        try rejectUnknownAssetFields(decoder, allowed: ["top", "height", "stops"])
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        top = try c.decode(Double.self, forKey: .top); height = try c.decode(Double.self, forKey: .height)
+        stops = try c.decode([TextGradientStop].self, forKey: .stops)
+        try validate()
+    }
+    func validate() throws {
+        guard top.isFinite, height.isFinite, (0...10000).contains(top), height > 0, height <= 20000,
+              (2...8).contains(stops.count), stops.map(\.position) == stops.map(\.position).sorted() else { throw RecipeError.invalidTimeline }
+        for stop in stops {
+            try stop.color.validate()
+            guard stop.position.isFinite, (0...1).contains(stop.position) else { throw RecipeError.invalidTimeline }
+        }
+    }
+}
+
 public struct TextGradient: Codable, Equatable, Sendable {
     public let startX: Double
     public let startY: Double
@@ -267,18 +293,22 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     /// (`NativeSubjectMatte`, `SubjectOcclusion`). Omitted from the wire when nil/false. Needs
     /// `MediaCapability.behindSubject`; refused with a giant title (its own compositing lane).
     public var behindSubject: Bool?
-    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background, bend, behindSubject }
+    /// KRI-1581: the soft gradient behind informative text (design A2). Omitted from the wire when nil.
+    public var scrim: TextScrim?
+    private enum CodingKeys: String, CodingKey { case id, start, end, anchorX, anchorY, rotationDegrees, runs, effect, motion, revealBounds, handwriting, discreteReveal, smoothReveal, staggered, dissolveSeed, karaoke, fade, giantTitle, animationPhases, background, bend, behindSubject, scrim }
     public init(id: String, start: Double, end: Double, anchorX: Double, anchorY: Double,
-                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil, bend: Double? = nil, behindSubject: Bool? = nil) {
+                rotationDegrees: Double, runs: [PositionedTextRun], effect: Effect = .static, motion: TextMotionParameters? = nil, revealBounds: TextRevealBounds? = nil, handwriting: HandwritingContent? = nil, discreteReveal: DiscreteRevealContent? = nil, smoothReveal: SmoothRevealContent? = nil, staggered: StaggeredContent? = nil, dissolveSeed: UInt32? = nil, karaoke: KaraokeContent? = nil, fade: TextFadeEnvelope? = nil, giantTitle: GiantTitleTransition? = nil, animationPhases: TextAnimationPhases? = nil, background: TextBackground? = nil, bend: Double? = nil, behindSubject: Bool? = nil, scrim: TextScrim? = nil) {
         self.bend = bend
         self.behindSubject = behindSubject
+        self.scrim = scrim
         self.id = id; self.start = start; self.end = end; self.anchorX = anchorX; self.anchorY = anchorY
         self.rotationDegrees = rotationDegrees; self.runs = runs; self.effect = effect; self.motion = motion; self.revealBounds = revealBounds; self.handwriting = handwriting; self.discreteReveal = discreteReveal; self.smoothReveal = smoothReveal; self.staggered = staggered; self.dissolveSeed = dissolveSeed; self.karaoke = karaoke; self.fade = fade; self.giantTitle = giantTitle; self.animationPhases = animationPhases; self.background = background
     }
     public init(from decoder: Decoder) throws {
-        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background", "bend", "behindSubject"])
+        try rejectUnknownAssetFields(decoder, allowed: ["id", "start", "end", "anchorX", "anchorY", "rotationDegrees", "runs", "effect", "motion", "revealBounds", "handwriting", "discreteReveal", "smoothReveal", "staggered", "dissolveSeed", "karaoke", "fade", "giantTitle", "animationPhases", "background", "bend", "behindSubject", "scrim"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         bend = try c.decodeIfPresent(Double.self, forKey: .bend)
+        scrim = try c.decodeIfPresent(TextScrim.self, forKey: .scrim)
         behindSubject = try c.decodeIfPresent(Bool.self, forKey: .behindSubject)
         id = try c.decode(String.self, forKey: .id); start = try c.decode(Double.self, forKey: .start)
         end = try c.decode(Double.self, forKey: .end); anchorX = try c.decode(Double.self, forKey: .anchorX)
@@ -306,6 +336,10 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         case .static, .none, .fadeIn, .scaleUp, .slideUp, .slideDown, .slideIn, .popIn, .bounce, .captionPop: return true
         case .inkReveal, .handwriting, .typewriter, .streamIn, .smoothType, .staggeredSlice, .dissolveOut, .karaokeLine, .lyricLine: return false
         }
+    }
+    /// Whether the compositor paints a scrim under `effect`. Python twin: `SCRIM_SUPPORTED_EFFECTS`.
+    public static func scrimSupported(effect: Effect) -> Bool {
+        [.static, .none, .fadeIn, .popIn, .scaleUp, .slideUp, .slideDown, .slideIn, .bounce].contains(effect)
     }
     public func validate(duration: Double, manifest: RenderAssetManifest?) throws {
         guard !id.isEmpty, id.count <= 160, [start, end, anchorX, anchorY, rotationDegrees].allSatisfy(\.isFinite),
@@ -347,6 +381,10 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
         // Occlusion multiplies the final placed bitmap, so every painter composes with it except the
         // giant-title transition, which paints its own scene (the cloud keeps `theme_transition` apart too).
         if behindSubject == true { guard giantTitle == nil else { throw RecipeError.invalidTimeline } }
+        if let scrim {
+            try scrim.validate()
+            guard Self.scrimSupported(effect: effect), giantTitle == nil else { throw RecipeError.invalidTimeline }
+        }
         for run in runs + (discreteReveal?.lines.map(\.cursorRun) ?? []) + (staggered?.glyphs.map(\.run) ?? []) {
             try run.validate()
             guard let font = manifest?.assets.first(where: { $0.id == run.fontAssetID }),

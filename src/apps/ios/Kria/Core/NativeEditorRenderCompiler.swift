@@ -776,6 +776,8 @@ enum NativeEditorRenderError: Error, Equatable {
                 legacyEffect: [.typewriter, .streamIn, .smoothType, .inkReveal].contains(PortableTextLayer.Effect(rawValue: legacy) ?? .none) ? PortableTextLayer.Effect(rawValue: legacy)! : .none,
                 motion: explicitPhases ? nil : try Self.normalizedMotion(effect: legacy, raw: raw["motion"]))
             layout.behindSubject = behindSubject
+            let scrim = try textScrim(raw["scrim"], canvas: canvas)
+            layout.scrim = PortableTextLayer.scrimSupported(effect: layout.effect) ? scrim : nil
             if explicitPhases || ["typewriter", "stream-in", "smooth-type", "ink-reveal"].contains(legacy) {
                 text.append(layout)
             } else {
@@ -788,7 +790,8 @@ enum NativeEditorRenderError: Error, Equatable {
                     background: layout.background,
                     // `layout` was compiled as a plain effect; the real effect decides whether the arc survives.
                     bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil,
-                    behindSubject: behindSubject))
+                    behindSubject: behindSubject,
+                    scrim: PortableTextLayer.scrimSupported(effect: legacyEffect) ? scrim : nil))
             }
         }
         if !document.captionCues.isEmpty && document.captionMeta["enabled"] != .bool(false) {
@@ -1579,12 +1582,14 @@ enum NativeEditorRenderError: Error, Equatable {
         let raw = element.raw
         var shadows: [TextBlurLayer] = []
         if raw["shadow_enabled"] != .bool(false) {
-            if raw["shadow_style"]?.stringValue == "high_visibility" && ["stroke_color", "shadow_color", "shadow_opacity"].allSatisfy({ raw[$0] == nil || raw[$0] == .null }) {
+            if raw["shadow_style"]?.stringValue == "high_visibility" && ["stroke_color", "shadow_color", "shadow_opacity", "shadow_blur", "shadow_offset_y"].allSatisfy({ raw[$0] == nil || raw[$0] == .null }) {
                 shadows = [TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 115.0 / 255), sigma: 14, dx: 0, dy: 8),
                            TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 200.0 / 255), sigma: 3, dx: 0, dy: 2)]
             } else {
+                // KRI-1581: `shadow_blur` / `shadow_offset_y` mirror the cloud `_text_shadow_style` (12 / 6 unset).
                 shadows.append(TextBlurLayer(color: try ink(raw["shadow_color"], fallback: "#000000",
-                    alpha: ((raw["shadow_opacity"]?.numberValue ?? (160.0 / 255)) * 255).rounded(.toNearestOrEven) / 255), sigma: 12, dx: 0, dy: 6))
+                    alpha: ((raw["shadow_opacity"]?.numberValue ?? (160.0 / 255)) * 255).rounded(.toNearestOrEven) / 255),
+                    sigma: max(0, raw["shadow_blur"]?.numberValue ?? 12), dx: 0, dy: raw["shadow_offset_y"]?.numberValue ?? 6))
             }
         }
         if let strength = raw["glow_strength"]?.numberValue, strength > 0, let glow = raw["glow_color"]?.stringValue {
@@ -1763,6 +1768,24 @@ enum NativeEditorRenderError: Error, Equatable {
             if let url = fontURLs[name] { return url }
         }
         throw NativeEditorRenderError.missingFont(family)
+    }
+
+    /// KRI-1581: a row's `scrim` (`top_frac`, `opacity`, `color`) as the layer's gradient. Mirrors the cloud
+    /// `portable_text_layout._stamp_scrim` and `text_overlay.scrim_stops`: transparent at the top, the peak
+    /// opacity at `scrimRampFraction` of the span, flat to the canvas bottom.
+    static let scrimRampFraction = 0.6
+    private func textScrim(_ value: JSONValue?, canvas: KriaMediaEngine.Canvas) throws -> TextScrim? {
+        guard let spec = value?.objectValue, let topFrac = spec["top_frac"]?.numberValue,
+              let opacity = spec["opacity"]?.numberValue, topFrac.isFinite, opacity.isFinite,
+              (0...0.95).contains(topFrac), opacity > 0, opacity <= 1 else { return nil }
+        let top = topFrac * Double(canvas.height)
+        let clear = try ink(spec["color"], fallback: "#000000", alpha: 0)
+        let peak = try ink(spec["color"], fallback: "#000000", alpha: opacity)
+        return TextScrim(top: top, height: Double(canvas.height) - top, stops: [
+            TextGradientStop(position: 0, color: clear),
+            TextGradientStop(position: Self.scrimRampFraction, color: peak),
+            TextGradientStop(position: 1, color: peak),
+        ])
     }
 
     private func ink(_ value: JSONValue?, fallback: String, alpha: Double = 1) throws -> TextInk {

@@ -272,7 +272,56 @@ def compile_text_overlay(overlay: dict, *, layer_id: str, canvas, dissolve_seed:
         layer = layer.model_copy(update={"bend": bend})
     if overlay.get("behind_subject"):
         layer = _stamp_behind_subject(layer, layer_id=layer_id)
+    if isinstance(overlay.get("scrim"), dict):
+        layer = _stamp_scrim(layer, overlay["scrim"], layer_id=layer_id, canvas=canvas)
     return layer, font
+
+
+def _stamp_scrim(layer, scrim: dict, *, layer_id: str, canvas):
+    """Draw a row's scrim on device only where the gate is open and the painter supports it.
+
+    Otherwise the scrim is dropped and the text keeps its own shadow, so an older build or an
+    unverified device gets the text without the gradient, never a recipe it cannot decode.
+    """
+    from app.kria.portable_text import (  # noqa: PLC0415
+        SCRIM_SUPPORTED_EFFECTS,
+        TextGradientStop,
+        TextInk,
+        TextScrim,
+    )
+    from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+    from app.services.phone_rollout import text_designs_phone_supported  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    reason = None
+    if layer.effect not in SCRIM_SUPPORTED_EFFECTS or layer.giant_title is not None:
+        reason = "unsupported_effect"
+    elif not text_designs_phone_supported():
+        reason = "phone_gate_closed"
+    if reason is not None:
+        record_pipeline_event(
+            "overlay", "text_scrim_phone_fallback", {"layer_id": layer_id, "reason": reason}
+        )
+        return layer
+    top = float(scrim["top_frac"]) * canvas.height
+    red, green, blue, _ = cloud._hex_to_rgba(scrim.get("color") or "#000000")
+    return layer.model_copy(
+        update={
+            "scrim": TextScrim(
+                top=top,
+                height=canvas.height - top,
+                stops=[
+                    TextGradientStop(
+                        position=position,
+                        color=TextInk(
+                            red=red / 255, green=green / 255, blue=blue / 255, alpha=alpha
+                        ),
+                    )
+                    for position, alpha in cloud.scrim_stops(scrim)
+                ],
+            )
+        }
+    )
 
 
 # The cloud lane's wording (`text_behind_subject_fallback` in generative_build.py) reused for

@@ -1,0 +1,740 @@
+{
+ "_source": "KRI-1581. The teardown generator's own copy and windows (make_round1.py, round 1), as the rows a writer hands the resolver: a hook row, then fact pairs (A1-A3) or guide lines (B1). The mock-up stills these must match are byte-identical to the published teardown stills.",
+ "designs": {
+  "A1": [
+   {
+    "id": "kri1585-hook",
+    "text": "Kyoto'nun en güzel 25 dakikası",
+    "start_s": 0.3,
+    "end_s": 3.7,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "phone_text_role": "hook",
+     "text_design": "A1"
+    }
+   },
+   {
+    "id": "kri1585-fact-0-heading",
+    "text": "7,3 km",
+    "start_s": 4.0,
+    "end_s": 9.05,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 0
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-0",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-0-detail",
+    "text": "Saga'dan Kameoka'ya, yaklaşık 25 dakika",
+    "start_s": 4.0,
+    "end_s": 9.05,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 0
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-0",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-1-heading",
+    "text": "Sagano Romantik Treni",
+    "start_s": 9.9,
+    "end_s": 17.72,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 1
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-1",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-1-detail",
+    "text": "Hozukyo Vadisi boyunca giden tarihi hat",
+    "start_s": 9.9,
+    "end_s": 17.72,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 1
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-1",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-2-heading",
+    "text": "Retro vagonlar",
+    "start_s": 18.57,
+    "end_s": 24.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 2
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-2",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-2-detail",
+    "text": "Ahşap banklar, eski usul tasarım",
+    "start_s": 18.57,
+    "end_s": 24.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 2
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-2",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-3-heading",
+    "text": "Hozukyo Vadisi",
+    "start_s": 41.27,
+    "end_s": 49.78,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 5
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-3",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-3-detail",
+    "text": "Ray, nehrin kıyısı boyunca kıvrılıyor",
+    "start_s": 41.27,
+    "end_s": 49.78,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 5
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-3",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-4-heading",
+    "text": "Her mevsim başka",
+    "start_s": 50.63,
+    "end_s": 59.65,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 6
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-4",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-4-detail",
+    "text": "İlkbaharda kiraz çiçekleri, sonbaharda kızıl yapraklar",
+    "start_s": 50.63,
+    "end_s": 59.65,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 6
+     },
+     "text_design": "A1",
+     "text_stack_v1": {
+      "stack_id": "fact-4",
+      "heading_level": 3
+     }
+    }
+   }
+  ],
+  "A2": [
+   {
+    "id": "kri1585-hook",
+    "text": "Kyoto'nun en güzel 25 dakikası",
+    "start_s": 0.3,
+    "end_s": 3.7,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "phone_text_role": "hook",
+     "text_design": "A2"
+    }
+   },
+   {
+    "id": "kri1585-fact-0-heading",
+    "text": "7,3 km",
+    "start_s": 4.0,
+    "end_s": 9.05,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 0
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-0",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-0-detail",
+    "text": "Saga'dan Kameoka'ya, yaklaşık 25 dakika",
+    "start_s": 4.0,
+    "end_s": 9.05,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 0
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-0",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-1-heading",
+    "text": "Sagano Romantik Treni",
+    "start_s": 9.9,
+    "end_s": 17.72,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 1
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-1",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-1-detail",
+    "text": "Hozukyo Vadisi boyunca giden tarihi hat",
+    "start_s": 9.9,
+    "end_s": 17.72,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 1
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-1",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-2-heading",
+    "text": "Retro vagonlar",
+    "start_s": 18.57,
+    "end_s": 24.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 2
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-2",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-2-detail",
+    "text": "Ahşap banklar, eski usul tasarım",
+    "start_s": 18.57,
+    "end_s": 24.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 2
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-2",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-3-heading",
+    "text": "Hozukyo Vadisi",
+    "start_s": 41.27,
+    "end_s": 49.78,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 5
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-3",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-3-detail",
+    "text": "Ray, nehrin kıyısı boyunca kıvrılıyor",
+    "start_s": 41.27,
+    "end_s": 49.78,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 5
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-3",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-4-heading",
+    "text": "Her mevsim başka",
+    "start_s": 50.63,
+    "end_s": 59.65,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 6
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-4",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-4-detail",
+    "text": "İlkbaharda kiraz çiçekleri, sonbaharda kızıl yapraklar",
+    "start_s": 50.63,
+    "end_s": 59.65,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 6
+     },
+     "text_design": "A2",
+     "text_stack_v1": {
+      "stack_id": "fact-4",
+      "heading_level": 3
+     }
+    }
+   }
+  ],
+  "A3": [
+   {
+    "id": "kri1585-hook",
+    "text": "Kyoto'nun en güzel 25 dakikası",
+    "start_s": 0.3,
+    "end_s": 3.7,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "phone_text_role": "hook",
+     "text_design": "A3"
+    }
+   },
+   {
+    "id": "kri1585-fact-0-heading",
+    "text": "7,3 km",
+    "start_s": 4.0,
+    "end_s": 9.05,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 0
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-0",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-0-detail",
+    "text": "Saga'dan Kameoka'ya, yaklaşık 25 dakika",
+    "start_s": 4.0,
+    "end_s": 9.05,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 0
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-0",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-1-heading",
+    "text": "Sagano Romantik Treni",
+    "start_s": 9.9,
+    "end_s": 17.72,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 1
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-1",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-1-detail",
+    "text": "Hozukyo Vadisi boyunca giden tarihi hat",
+    "start_s": 9.9,
+    "end_s": 17.72,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 1
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-1",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-2-heading",
+    "text": "Retro vagonlar",
+    "start_s": 18.57,
+    "end_s": 24.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 2
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-2",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-2-detail",
+    "text": "Ahşap banklar, eski usul tasarım",
+    "start_s": 18.57,
+    "end_s": 24.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 2
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-2",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-3-heading",
+    "text": "Hozukyo Vadisi",
+    "start_s": 41.27,
+    "end_s": 49.78,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 5
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-3",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-3-detail",
+    "text": "Ray, nehrin kıyısı boyunca kıvrılıyor",
+    "start_s": 41.27,
+    "end_s": 49.78,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 5
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-3",
+      "heading_level": 3
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-4-heading",
+    "text": "Her mevsim başka",
+    "start_s": 50.63,
+    "end_s": 59.65,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 6
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-4",
+      "heading_level": 2
+     }
+    }
+   },
+   {
+    "id": "kri1585-fact-4-detail",
+    "text": "İlkbaharda kiraz çiçekleri, sonbaharda kızıl yapraklar",
+    "start_s": 50.63,
+    "end_s": 59.65,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 6
+     },
+     "text_design": "A3",
+     "text_stack_v1": {
+      "stack_id": "fact-4",
+      "heading_level": 3
+     }
+    }
+   }
+  ],
+  "B1": [
+   {
+    "id": "kri1585-hook",
+    "text": "Kyoto'nun en güzel 25 dakikası",
+    "start_s": 0.3,
+    "end_s": 3.7,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "phone_text_role": "hook",
+     "text_design": "B1"
+    }
+   },
+   {
+    "id": "kri1585-line-0",
+    "text": "Saga'dan Kameoka'ya, 7,3 km'lik bir yol",
+    "start_s": 4.0,
+    "end_s": 9.05,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 0
+     },
+     "text_design": "B1"
+    }
+   },
+   {
+    "id": "kri1585-line-1",
+    "text": "İşte trenimiz, Sagano Romantik Treni",
+    "start_s": 9.9,
+    "end_s": 17.72,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 1
+     },
+     "text_design": "B1"
+    }
+   },
+   {
+    "id": "kri1585-line-2",
+    "text": "Ahşap banklı retro vagonlara biniyoruz",
+    "start_s": 18.57,
+    "end_s": 24.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 2
+     },
+     "text_design": "B1"
+    }
+   },
+   {
+    "id": "kri1585-line-3",
+    "text": "Ray, Hozukyo Vadisi boyunca kıvrılıyor",
+    "start_s": 25.27,
+    "end_s": 31.08,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 3
+     },
+     "text_design": "B1"
+    }
+   },
+   {
+    "id": "kri1585-line-4",
+    "text": "Manzara mevsime göre değişiyor",
+    "start_s": 31.93,
+    "end_s": 40.42,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 4
+     },
+     "text_design": "B1"
+    }
+   },
+   {
+    "id": "kri1585-line-5",
+    "text": "Hozukyo Vadisi'nin tam ortasındayız",
+    "start_s": 41.27,
+    "end_s": 49.78,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 5
+     },
+     "text_design": "B1"
+    }
+   },
+   {
+    "id": "kri1585-line-6",
+    "text": "İlkbaharda kiraz, sonbaharda bu kızıl yapraklar",
+    "start_s": 50.63,
+    "end_s": 59.65,
+    "role": "generative_intro",
+    "effect": "static",
+    "position": "middle",
+    "source_params": {
+     "research": {
+      "clip": 6
+     },
+     "text_design": "B1"
+    }
+   }
+  ]
+ }
+}

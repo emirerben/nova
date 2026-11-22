@@ -1039,12 +1039,16 @@ def build_overlays_from_text_elements(
                 "stroke_color",
                 "shadow_color",
                 "shadow_opacity",
+                "shadow_blur",
+                "shadow_offset_y",
                 "background_color",
                 "editor_preset",
             ):
                 value = getattr(elem, field, None)
                 if value is not None:
                     overlay[field] = value
+            if elem.scrim is not None:
+                overlay["scrim"] = elem.scrim.model_dump()
             if elem.animation_phases is not None:
                 overlay["animation_phases"] = elem.animation_phases.model_dump()
                 # Explicit phases replace the legacy single-effect schedule.
