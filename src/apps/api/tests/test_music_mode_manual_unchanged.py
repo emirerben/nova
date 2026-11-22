@@ -131,8 +131,7 @@ def test_processing_failed_status_string_unchanged() -> None:
     """Failed music jobs end in status=processing_failed."""
     src = inspect.getsource(_fail_job)
     assert '"processing_failed"' in src, (
-        "_fail_job no longer writes processing_failed — "
-        "the failure status path changed shape."
+        "_fail_job no longer writes processing_failed — the failure status path changed shape."
     )
 
 

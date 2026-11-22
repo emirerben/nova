@@ -29,16 +29,34 @@ from app.pipeline.style_sets import (
 )
 from app.pipeline.text_overlay import CANVAS_H, CANVAS_W, render_overlays_at_time
 
-OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".devtest", "preview"))
+OUT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", ".devtest", "preview")
+)
 
 # Showcase role + sample copy per set. `long` exercises the constraint pass.
 SHOWCASE: dict[str, dict] = {
     "default": {"role": "hook", "short": "YOUR HOOK HERE", "long": "Antananarivo Madagascar"},
-    "lyric_karaoke_bold": {"role": "lyric_karaoke", "short": "city lights call my name", "long": "we were dancing all night under neon skies forever"},
-    "lyric_line_calm": {"role": "lyric_line", "short": "and I think to myself", "long": "what a wonderful world it is when the morning comes around"},
-    "lyric_word_pop_punchy": {"role": "lyric_word_pop", "short": "LET'S GO", "long": "every single moment counts so make it loud right now"},
+    "lyric_karaoke_bold": {
+        "role": "lyric_karaoke",
+        "short": "city lights call my name",
+        "long": "we were dancing all night under neon skies forever",
+    },
+    "lyric_line_calm": {
+        "role": "lyric_line",
+        "short": "and I think to myself",
+        "long": "what a wonderful world it is when the morning comes around",
+    },
+    "lyric_word_pop_punchy": {
+        "role": "lyric_word_pop",
+        "short": "LET'S GO",
+        "long": "every single moment counts so make it loud right now",
+    },
     "travel_editorial": {"role": "label", "short": "BARCELONA", "long": "ANTANANARIVO MADAGASCAR"},
-    "lifestyle_clean": {"role": "hook", "short": "morning routine", "long": "the little things that make a big difference"},
+    "lifestyle_clean": {
+        "role": "hook",
+        "short": "morning routine",
+        "long": "the little things that make a big difference",
+    },
 }
 
 # A few backgrounds so white/gold text is legible against varied content.
@@ -102,7 +120,7 @@ def main() -> None:
         st = get_style_set(sid)
         cards.append(
             f'<figure><img src="{fname}" width="360"/>'
-            f"<figcaption><b>{sid}</b><br><span>{st.get('label','')}</span><br>"
+            f"<figcaption><b>{sid}</b><br><span>{st.get('label', '')}</span><br>"
             f"<small>{', '.join(st.get('tags', []))}</small><br>"
             f"<small>applies_to: {', '.join(st['applies_to'])}</small></figcaption></figure>"
         )

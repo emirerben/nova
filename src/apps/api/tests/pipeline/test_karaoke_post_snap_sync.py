@@ -76,9 +76,7 @@ def _make_cache() -> dict:
                 "text": "sync test",
                 "start_s": _LINE_START,
                 "end_s": _LINE_END,
-                "words": [
-                    {"text": "sync", "start_s": _WORD_START, "end_s": _WORD_END}
-                ],
+                "words": [{"text": "sync", "start_s": _WORD_START, "end_s": _WORD_END}],
             }
         ],
     }
@@ -136,9 +134,7 @@ def test_helper_produces_post_snap_dur_for_slot_0():
         {"target_duration_s": _PRE_SNAP_DUR_0},
         {"target_duration_s": _DUR_1},
     ]
-    result = compute_snapped_slot_durations(
-        slots, [_BEAT], is_agentic=False, user_total_dur_s=None
-    )
+    result = compute_snapped_slot_durations(slots, [_BEAT], is_agentic=False, user_total_dur_s=None)
     assert abs(result[0] - _POST_SNAP_DUR_0) < 1e-9, (
         f"Helper returned {result[0]:.4f} for slot 0; expected {_POST_SNAP_DUR_0}"
     )
@@ -187,9 +183,7 @@ def test_karaoke_drift_below_50ms_on_post_snap_injection():
     overlays = _inject_and_collect(_POST_SNAP_DUR_0)
     karaoke = _karaoke_overlays(overlays)
 
-    assert len(karaoke) == 1, (
-        f"Expected 1 karaoke overlay after fix, got {len(karaoke)}"
-    )
+    assert len(karaoke) == 1, f"Expected 1 karaoke overlay after fix, got {len(karaoke)}"
     ov = karaoke[0]
     drift_s = abs(ov["start_s"] - _LINE_START)
     assert drift_s <= _TOLERANCE_S, (
@@ -223,9 +217,7 @@ def test_using_helper_to_seed_recipe_eliminates_drift():
     for i, s in enumerate(snapped):
         recipe["slots"][i]["target_duration_s"] = s
 
-    out = inject_lyric_overlays(
-        recipe, _make_cache(), _BEST_START_S, _BEST_END_S, _LYRICS_CFG
-    )
+    out = inject_lyric_overlays(recipe, _make_cache(), _BEST_START_S, _BEST_END_S, _LYRICS_CFG)
     post_snap_durations = [_POST_SNAP_DUR_0, _DUR_1]
     steps = [{"slot": s, "clip_id": f"c{i}"} for i, s in enumerate(out["slots"])]
     abs_overlays = _collect_absolute_overlays(steps, post_snap_durations, None, "")

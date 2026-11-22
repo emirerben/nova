@@ -84,9 +84,7 @@ async def prefetch_analyze(
     # error — the frontend should never send a stale id. We use the recipe's
     # clip_filter_hint with the same "" default the orchestrator uses
     # (template_orchestrate.py: `getattr(recipe, "clip_filter_hint", "") or ""`).
-    result = await db.execute(
-        select(VideoTemplate).where(VideoTemplate.id == body.template_id)
-    )
+    result = await db.execute(select(VideoTemplate).where(VideoTemplate.id == body.template_id))
     template = result.scalar_one_or_none()
     if template is None:
         raise HTTPException(

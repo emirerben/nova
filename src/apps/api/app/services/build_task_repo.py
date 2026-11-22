@@ -148,9 +148,7 @@ def claim_next_task(db: Session, *, claimed_by: str | None = None) -> BuildTask 
     return task
 
 
-def claim_next_gating_task(
-    db: Session, *, claimed_by: str | None = None
-) -> BuildTask | None:
+def claim_next_gating_task(db: Session, *, claimed_by: str | None = None) -> BuildTask | None:
     """Atomically claim the oldest UNCLAIMED `gating` task, or None.
 
     The gate tick's analogue of `claim_next_task`: the builder leaves a built

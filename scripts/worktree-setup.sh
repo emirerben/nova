@@ -21,6 +21,18 @@ REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 log()  { printf '[worktree-setup] %s\n' "$*"; }
 warn() { printf '[worktree-setup] WARN: %s\n' "$*"; }
 
+# ── 0. Git hooks ─────────────────────────────────────────────────────────────
+# hk.pkl defines a commit and a push hook. `hk install` writes them into the
+# repository's git config, which every worktree shares, so once is enough.
+if [ -f "$REPO/hk.pkl" ]; then
+  if ! command -v hk >/dev/null 2>&1; then
+    warn "hk is not installed, so commits and pushes run no local checks. Run: brew install hk && hk install"
+  elif ! git config --get hook.hk-pre-push.command >/dev/null 2>&1; then
+    (cd "$REPO" && hk install >/dev/null 2>&1) && log "installed git hooks (hk)" \
+      || warn "hk install failed; run it by hand in $REPO"
+  fi
+fi
+
 if [ "$REPO" = "$PRIMARY" ]; then
   log "This IS the primary checkout ($PRIMARY) — nothing to link. Exiting."
   exit 0

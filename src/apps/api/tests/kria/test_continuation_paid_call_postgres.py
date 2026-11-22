@@ -22,7 +22,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from app.agents._runtime import ProviderOutcomeUnknownError, TerminalError, TransientError
+from app.agents._runtime import (
+    PaidCallAlreadySettledError,
+    TerminalError,
+    TransientError,
+)
 from app.agents._schemas.creator_agent import (
     CapabilityAvailability,
     CreatorMediaRef,
@@ -169,7 +173,7 @@ async def test_a_replay_of_the_same_run_is_still_refused(one_run) -> None:
     """The ledger still protects a genuine duplicate: same epoch, same prompt, same key."""
 
     await one_run(2)
-    with pytest.raises(ProviderOutcomeUnknownError, match="already settled"):
+    with pytest.raises(PaidCallAlreadySettledError, match="already settled"):
         await one_run(2)
 
 

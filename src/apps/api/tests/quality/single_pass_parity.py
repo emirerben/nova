@@ -50,6 +50,7 @@ no xfade, no absolute overlays):
 To add a milestone-N template, drop a recipe JSON into
 ``tests/fixtures/parity_templates/`` and append to ``PARITY_TEMPLATE_FIXTURES``.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,9 +66,7 @@ from pathlib import Path
 import pytest
 
 PARITY_CLIPS_DIR = Path(os.environ.get("PARITY_CLIPS_DIR", "")).expanduser()
-PARITY_REPORT_DIR = Path(
-    os.environ.get("PARITY_REPORT_DIR", tempfile.gettempdir())
-).expanduser()
+PARITY_REPORT_DIR = Path(os.environ.get("PARITY_REPORT_DIR", tempfile.gettempdir())).expanduser()
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "parity_templates"
 
 # SSIM threshold calibration history (2026-05-15):
@@ -129,12 +128,22 @@ def _ffprobe(path: Path) -> ProbeMeta:
     """Extract metadata for parity comparison. Uses a single ffprobe call."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
             "-show_entries",
             "stream=codec_name,width,height,r_frame_rate,pix_fmt,nb_read_packets,bit_rate,duration",
-            "-count_packets", "-of", "json", str(path),
+            "-count_packets",
+            "-of",
+            "json",
+            str(path),
         ],
-        capture_output=True, text=True, timeout=30, check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
     )
     stream = json.loads(result.stdout)["streams"][0]
     num, denom = (int(x) for x in stream["r_frame_rate"].split("/"))
@@ -163,12 +172,25 @@ def _compute_ssim(reference: Path, candidate: Path, stats_path: Path) -> tuple[f
     """
     result = subprocess.run(
         [
-            "ffmpeg", "-nostdin", "-loglevel", "info", "-y",
-            "-i", str(reference), "-i", str(candidate),
-            "-lavfi", f"ssim=stats_file={stats_path}",
-            "-f", "null", "-",
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "info",
+            "-y",
+            "-i",
+            str(reference),
+            "-i",
+            str(candidate),
+            "-lavfi",
+            f"ssim=stats_file={stats_path}",
+            "-f",
+            "null",
+            "-",
         ],
-        capture_output=True, text=True, timeout=600, check=False,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg ssim failed: {result.stderr[-500:]}")
@@ -264,7 +286,10 @@ def _build_steps_and_probes(fixture: dict, clips: list[Path]):
 
 
 def _render(
-    fixture: dict, clips: list[Path], tmp_path: Path, force_single_pass: bool,
+    fixture: dict,
+    clips: list[Path],
+    tmp_path: Path,
+    force_single_pass: bool,
 ) -> tuple[Path, float]:
     """Run _assemble_clips once. Returns (output_path, elapsed_seconds)."""
     from app.tasks.template_orchestrate import _assemble_clips
@@ -293,7 +318,7 @@ def _render(
 @pytest.mark.skipif(
     not _load_clips(),
     reason="PARITY_CLIPS_DIR must point to a dir with ≥2 mp4 clips. "
-           "Raw clips are not committed; supply your own reference set.",
+    "Raw clips are not committed; supply your own reference set.",
 )
 @pytest.mark.parametrize("template_name", PARITY_TEMPLATE_FIXTURES)
 def test_single_pass_parity_with_multi_pass(template_name: str, tmp_path: Path) -> None:
@@ -308,8 +333,7 @@ def test_single_pass_parity_with_multi_pass(template_name: str, tmp_path: Path) 
     fixture = _load_fixture(template_name)
     if fixture is None:
         pytest.skip(
-            f"Fixture {template_name}.json not in {FIXTURES_DIR}. "
-            f"Add it before running Phase 0.5."
+            f"Fixture {template_name}.json not in {FIXTURES_DIR}. Add it before running Phase 0.5."
         )
 
     clips = _load_clips()
@@ -371,7 +395,8 @@ def test_single_pass_parity_with_multi_pass(template_name: str, tmp_path: Path) 
 
     if reasons:
         pytest.fail(
-            f"Parity failed for {template_name}:\n  - " + "\n  - ".join(reasons)
+            f"Parity failed for {template_name}:\n  - "
+            + "\n  - ".join(reasons)
             + f"\nReport: {PARITY_REPORT_DIR}/single-pass-parity.md"
         )
 

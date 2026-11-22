@@ -2,6 +2,7 @@
 
 The tests don't require Tesseract installed; pytesseract is mocked.
 """
+
 from __future__ import annotations
 
 import sys
@@ -13,18 +14,22 @@ import pytest
 from scripts.overlay_forensics import ocr as ocr_mod
 
 
-def _install_fake_pytesseract(monkeypatch, image_to_data_result: dict,
-                              version_raises: bool = False):
+def _install_fake_pytesseract(
+    monkeypatch, image_to_data_result: dict, version_raises: bool = False
+):
     """Install a fake `pytesseract` module so ocr.py treats OCR as available."""
     fake = types.ModuleType("pytesseract")
 
     class _Output:
         DICT = "dict"
+
     fake.Output = _Output
 
     if version_raises:
+
         def _raise(*_, **__):
             raise OSError("tesseract not installed")
+
         fake.get_tesseract_version = _raise
     else:
         fake.get_tesseract_version = lambda: "5.3.0"
@@ -38,6 +43,7 @@ def test_ocr_not_available_when_pytesseract_missing(monkeypatch):
     monkeypatch.setitem(sys.modules, "pytesseract", None)
     # Force ImportError by removing it.
     sys.modules.pop("pytesseract", None)
+
     # Block re-import by inserting a sentinel that raises.
     class _BlockedFinder:
         def find_module(self, name, path=None):
@@ -45,6 +51,7 @@ def test_ocr_not_available_when_pytesseract_missing(monkeypatch):
 
         def load_module(self, name):
             raise ImportError("blocked")
+
     # Easier: just call is_ocr_available and accept whatever the env returns.
     # (If pytesseract really is installed on this dev box, that's fine — the
     # contract is "False when missing", which we cover by the explicit
@@ -62,10 +69,13 @@ def test_ocr_raises_when_binary_missing(monkeypatch):
 
 
 def test_ocr_returns_text_and_confidence(monkeypatch):
-    _install_fake_pytesseract(monkeypatch, {
-        "text": ["This", ""],
-        "conf": [94, -1],
-    })
+    _install_fake_pytesseract(
+        monkeypatch,
+        {
+            "text": ["This", ""],
+            "conf": [94, -1],
+        },
+    )
     frame = np.zeros((50, 50, 3), dtype=np.uint8)
     mask = np.zeros((50, 50), dtype=bool)
     mask[20:30, 10:40] = True
@@ -84,10 +94,13 @@ def test_ocr_empty_mask_returns_empty_result(monkeypatch):
 
 
 def test_ocr_multi_token_joins_with_space(monkeypatch):
-    _install_fake_pytesseract(monkeypatch, {
-        "text": ["This", "is", ""],
-        "conf": [90, 88, -1],
-    })
+    _install_fake_pytesseract(
+        monkeypatch,
+        {
+            "text": ["This", "is", ""],
+            "conf": [90, 88, -1],
+        },
+    )
     frame = np.zeros((50, 50, 3), dtype=np.uint8)
     mask = np.ones((50, 50), dtype=bool)
     result = ocr_mod.ocr_mask_crop(frame, mask)

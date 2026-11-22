@@ -111,9 +111,7 @@ for hook in HOOKS:
         reveal_window_s=REVEAL,
         style=EDITORIAL_STYLE,
     )
-    cases.append(
-        {"hook": hook, "base_size_px": BASE, "reveal_window_s": REVEAL, "blocks": blocks}
-    )
+    cases.append({"hook": hook, "base_size_px": BASE, "reveal_window_s": REVEAL, "blocks": blocks})
     # Replay the px ladder to record the measures the TS port needs (only for the
     # non-null shapes that reach the measure stage: word count in [1, 6]).
     words = hook.split()

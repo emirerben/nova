@@ -16,6 +16,7 @@ trajectory over the event's first ~0.4s:
   - scale-up   : text pixel count grows monotonically.
   - static     : nothing changes meaningfully.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ class FrameObservation:
     Keep `frame_array` reference if downstream OCR / font-shape analysis
     needs the original pixels; set to None to drop memory.
     """
+
     t_s: float
     color_key: str
     bbox: BBox
@@ -47,6 +49,7 @@ class FrameObservation:
 @dataclass
 class TextEvent:
     """A contiguous run of frame observations of the same overlay."""
+
     color_key: str
     observations: list[FrameObservation]
     text: str | None = None
@@ -85,8 +88,9 @@ class TextEvent:
         return max(self.observations, key=lambda o: o.mask_pixel_count)
 
 
-def _region_bucket(centroid: tuple[float, float], frame_w: int, frame_h: int,
-                   grid: int = 6) -> tuple[int, int]:
+def _region_bucket(
+    centroid: tuple[float, float], frame_w: int, frame_h: int, grid: int = 6
+) -> tuple[int, int]:
     """Quantize a centroid to a coarse grid cell so jittery bboxes still
     cluster together. Default 6x6 grid is generous enough to absorb a
     slide-up settle while still distinguishing "top-left" from "center"."""

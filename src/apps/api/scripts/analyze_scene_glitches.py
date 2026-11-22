@@ -35,6 +35,7 @@ If --job-id is omitted, the script still runs full-frame MAD,
 region-MAD, stutter detection, and audio sweep — but findings are
 reported by timestamp only (no slot/source-clip labels).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,15 +54,15 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 # Thresholds tuned for 1080×1920 output at 30fps. Lower MAD = less motion.
-FREEZE_MAD_THRESHOLD = 1.0          # below this between consecutive frames = frozen
-LOW_MOTION_MAD_THRESHOLD = 2.0      # below this = suspicious, worth flagging
-SLOT_BOUNDARY_SPIKE_MIN = 15.0      # full-frame MAD spike that proves a real cut
-AUDIO_DROP_DB = 30.0                # drop > this many dB vs prior 500ms = glitch
-AUDIO_CLIP_RMS = 0.95               # RMS this close to 1.0 = clipping
+FREEZE_MAD_THRESHOLD = 1.0  # below this between consecutive frames = frozen
+LOW_MOTION_MAD_THRESHOLD = 2.0  # below this = suspicious, worth flagging
+SLOT_BOUNDARY_SPIKE_MIN = 15.0  # full-frame MAD spike that proves a real cut
+AUDIO_DROP_DB = 30.0  # drop > this many dB vs prior 500ms = glitch
+AUDIO_CLIP_RMS = 0.95  # RMS this close to 1.0 = clipping
 
 # Geometry: BRAZIL/Welcome region defaults (match seed_dimples_passport_brazil.py)
-TITLE_Y_FRAC = 0.45                  # PERU_Y_FRAC
-TITLE_Y_BAND_PX = 220                # half-height of band where title can sit
+TITLE_Y_FRAC = 0.45  # PERU_Y_FRAC
+TITLE_Y_BAND_PX = 220  # half-height of band where title can sit
 WELCOME_Y_FRAC = 0.4779
 WELCOME_Y_BAND_PX = 50
 
@@ -70,6 +71,7 @@ FRAME_W = 1080
 
 
 # ---------------- slot mapping ----------------
+
 
 @dataclass
 class SlotInfo:
@@ -102,12 +104,14 @@ async def _load_slot_map(job_id: str) -> list[SlotInfo]:
         pos = slot.get("position")
         dur = float(slot.get("target_duration_s") or 0.0)
         src = step.get("clip_gcs_path") or ""
-        slots.append(SlotInfo(
-            position=pos,
-            t_start_s=t,
-            t_end_s=t + dur,
-            source_gcs=src,
-        ))
+        slots.append(
+            SlotInfo(
+                position=pos,
+                t_start_s=t,
+                t_end_s=t + dur,
+                source_gcs=src,
+            )
+        )
         t += dur
     return slots
 
@@ -120,8 +124,10 @@ def _probe_source_fps(slots: list[SlotInfo]) -> None:
         from app.config import settings  # noqa: PLC0415
         from app.storage import _get_client  # noqa: PLC0415
     except Exception as exc:
-        print(f"warning: cannot import storage module ({exc}); "
-              f"source-fps probe skipped", file=sys.stderr)
+        print(
+            f"warning: cannot import storage module ({exc}); source-fps probe skipped",
+            file=sys.stderr,
+        )
         return
 
     bucket = _get_client().bucket(settings.storage_bucket)
@@ -131,14 +137,25 @@ def _probe_source_fps(slots: list[SlotInfo]) -> None:
         try:
             blob = bucket.blob(s.source_gcs)
             url = blob.generate_signed_url(
-                expiration=timedelta(minutes=5), version="v4", method="GET",
+                expiration=timedelta(minutes=5),
+                version="v4",
+                method="GET",
             )
             out = subprocess.check_output(
-                ["ffprobe", "-v", "error",
-                 "-show_entries", "stream=codec_name,r_frame_rate",
-                 "-of", "csv=p=0",
-                 "-select_streams", "v:0", url],
-                text=True, timeout=20,
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=codec_name,r_frame_rate",
+                    "-of",
+                    "csv=p=0",
+                    "-select_streams",
+                    "v:0",
+                    url,
+                ],
+                text=True,
+                timeout=20,
             ).strip()
             parts = out.split(",")
             codec = parts[0] if parts else "?"
@@ -166,6 +183,7 @@ def _slot_at(slots: list[SlotInfo], t: float) -> SlotInfo | None:
 
 # ---------------- frame analysis ----------------
 
+
 @dataclass
 class FrameMAD:
     frame_idx: int
@@ -175,18 +193,28 @@ class FrameMAD:
     text_band: float
 
 
-def _extract_frames(video: Path, out_dir: Path,
-                    scale_w: int = 540, scale_h: int = 960) -> int:
+def _extract_frames(video: Path, out_dir: Path, scale_w: int = 540, scale_h: int = 960) -> int:
     """Native-rate frame extraction via `-vsync passthrough` so the decoder
     emits exactly the frames in the stream (no virtual-frame interpolation
     from `fps=N` filter)."""
-    subprocess.run([
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-i", str(video),
-        "-vsync", "passthrough",
-        "-vf", f"scale={scale_w}:{scale_h}",
-        "-y", str(out_dir / "f_%04d.png"),
-    ], check=True, timeout=180)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-vsync",
+            "passthrough",
+            "-vf",
+            f"scale={scale_w}:{scale_h}",
+            "-y",
+            str(out_dir / "f_%04d.png"),
+        ],
+        check=True,
+        timeout=180,
+    )
     return len(list(out_dir.glob("f_*.png")))
 
 
@@ -207,8 +235,9 @@ def _region_y_bounds(scaled_h: int) -> dict[str, tuple[int, int]]:
     }
 
 
-def _region_mad_pair(prev: np.ndarray, curr: np.ndarray,
-                     regions: dict[str, tuple[int, int]]) -> dict[str, float]:
+def _region_mad_pair(
+    prev: np.ndarray, curr: np.ndarray, regions: dict[str, tuple[int, int]]
+) -> dict[str, float]:
     """Return MAD per region for one consecutive frame pair."""
     diff = np.abs(curr.astype(np.int16) - prev.astype(np.int16))
     out = {}
@@ -228,18 +257,21 @@ def _scan_frames(frames_dir: Path, fps_out: float) -> list[FrameMAD]:
     for i, fp in enumerate(paths[1:], start=1):
         curr = np.array(Image.open(fp).convert("RGB"))
         mads = _region_mad_pair(prev, curr, regions)
-        obs.append(FrameMAD(
-            frame_idx=i,
-            t_s=i / fps_out,
-            full=mads["full"],
-            bg_below_text=mads["bg_below_text"],
-            text_band=mads["text_band"],
-        ))
+        obs.append(
+            FrameMAD(
+                frame_idx=i,
+                t_s=i / fps_out,
+                full=mads["full"],
+                bg_below_text=mads["bg_below_text"],
+                text_band=mads["text_band"],
+            )
+        )
         prev = curr
     return obs
 
 
 # ---------------- stutter pattern detection ----------------
+
 
 @dataclass
 class StutterCluster:
@@ -251,13 +283,13 @@ class StutterCluster:
     frame_indices: list[int]
 
 
-def detect_stutter_clusters(obs: list[FrameMAD],
-                            field_name: str = "bg_below_text",
-                            mad_threshold: float = FREEZE_MAD_THRESHOLD,
-                            ) -> list[StutterCluster]:
+def detect_stutter_clusters(
+    obs: list[FrameMAD],
+    field_name: str = "bg_below_text",
+    mad_threshold: float = FREEZE_MAD_THRESHOLD,
+) -> list[StutterCluster]:
     """Find regular periodic freezes that indicate fps mismatch."""
-    low_frames = [(o.frame_idx, o.t_s) for o in obs
-                  if getattr(o, field_name) < mad_threshold]
+    low_frames = [(o.frame_idx, o.t_s) for o in obs if getattr(o, field_name) < mad_threshold]
     if len(low_frames) < 3:
         return []
     # Group into clusters where successive low-frames are evenly spaced.
@@ -289,24 +321,27 @@ def detect_stutter_clusters(obs: list[FrameMAD],
             # 30→24: period=5, ratio 4/5=0.8, 30*0.8=24 ✓
             # 30→25: period=6, ratio 5/6=0.833, 30*0.833=25 ✓
             implied_fps = 30.0 * (period_frames - 1) / period_frames
-            clusters.append(StutterCluster(
-                t_start_s=ts[0],
-                t_end_s=ts[-1],
-                period_s=period_s,
-                implied_source_fps=implied_fps,
-                count=len(ts),
-                frame_indices=idxs,
-            ))
+            clusters.append(
+                StutterCluster(
+                    t_start_s=ts[0],
+                    t_end_s=ts[-1],
+                    period_s=period_s,
+                    implied_source_fps=implied_fps,
+                    count=len(ts),
+                    frame_indices=idxs,
+                )
+            )
         i = j + 1 if j > i else i + 1
     return clusters
 
 
 # ---------------- audio sweep ----------------
 
+
 @dataclass
 class AudioGlitch:
     t_s: float
-    kind: str   # "drop", "clip", "silence"
+    kind: str  # "drop", "clip", "silence"
     detail: str
 
 
@@ -318,18 +353,27 @@ def detect_audio_glitches(video: Path) -> list[AudioGlitch]:
     """
     sr = 44100
     win = int(sr * 0.05)  # 50 ms
-    raw = subprocess.check_output([
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-i", str(video),
-        "-ac", "1", "-ar", str(sr),
-        "-f", "s16le", "pipe:1",
-    ], timeout=60)
+    raw = subprocess.check_output(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-ac",
+            "1",
+            "-ar",
+            str(sr),
+            "-f",
+            "s16le",
+            "pipe:1",
+        ],
+        timeout=60,
+    )
     samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     n_wins = len(samples) // win
-    rms = np.array([
-        np.sqrt(np.mean(samples[i * win:(i + 1) * win] ** 2))
-        for i in range(n_wins)
-    ])
+    rms = np.array([np.sqrt(np.mean(samples[i * win : (i + 1) * win] ** 2)) for i in range(n_wins)])
     if rms.size < 11:
         return []
 
@@ -337,36 +381,42 @@ def detect_audio_glitches(video: Path) -> list[AudioGlitch]:
     # Clipping
     for i, r in enumerate(rms):
         if r > AUDIO_CLIP_RMS:
-            glitches.append(AudioGlitch(
-                t_s=i * 0.05, kind="clip",
-                detail=f"RMS={r:.3f} (≥{AUDIO_CLIP_RMS})",
-            ))
+            glitches.append(
+                AudioGlitch(
+                    t_s=i * 0.05,
+                    kind="clip",
+                    detail=f"RMS={r:.3f} (≥{AUDIO_CLIP_RMS})",
+                )
+            )
     # Amplitude drop: compare each window's dB vs the mean over the
     # prior 0.5s (10 windows).
     db = 20 * np.log10(np.maximum(rms, 1e-6))
     for i in range(10, n_wins):
-        prev_mean = db[i - 10:i].mean()
+        prev_mean = db[i - 10 : i].mean()
         if db[i] < prev_mean - AUDIO_DROP_DB:
-            glitches.append(AudioGlitch(
-                t_s=i * 0.05, kind="drop",
-                detail=f"{db[i]:.1f}dB vs prior 500ms {prev_mean:.1f}dB",
-            ))
+            glitches.append(
+                AudioGlitch(
+                    t_s=i * 0.05,
+                    kind="drop",
+                    detail=f"{db[i]:.1f}dB vs prior 500ms {prev_mean:.1f}dB",
+                )
+            )
     return glitches
 
 
 # ---------------- slot-boundary check ----------------
+
 
 @dataclass
 class BoundaryIssue:
     slot_in: int | None
     slot_out: int | None
     t_s: float
-    kind: str   # "no_spike" or "double_spike"
+    kind: str  # "no_spike" or "double_spike"
     detail: str
 
 
-def detect_boundary_issues(obs: list[FrameMAD],
-                           slots: list[SlotInfo]) -> list[BoundaryIssue]:
+def detect_boundary_issues(obs: list[FrameMAD], slots: list[SlotInfo]) -> list[BoundaryIssue]:
     if not slots:
         return []
     issues: list[BoundaryIssue] = []
@@ -381,30 +431,35 @@ def detect_boundary_issues(obs: list[FrameMAD],
         if peak.full < SLOT_BOUNDARY_SPIKE_MIN and slots[i].position != slots[i + 1].position - 0:
             # Cut should be visible — no spike here = clips might be from
             # the same source or concat silently joined identical content.
-            issues.append(BoundaryIssue(
-                slot_in=slots[i].position,
-                slot_out=slots[i + 1].position,
-                t_s=boundary_t,
-                kind="no_spike",
-                detail=f"peak full-MAD={peak.full:.2f} (expected ≥{SLOT_BOUNDARY_SPIKE_MIN})",
-            ))
+            issues.append(
+                BoundaryIssue(
+                    slot_in=slots[i].position,
+                    slot_out=slots[i + 1].position,
+                    t_s=boundary_t,
+                    kind="no_spike",
+                    detail=f"peak full-MAD={peak.full:.2f} (expected ≥{SLOT_BOUNDARY_SPIKE_MIN})",
+                )
+            )
         # Double spike: two consecutive frames both above the threshold —
         # suggests a ghost frame at the join.
         nearby = [o for o in obs if boundary_t - 0.05 <= o.t_s <= boundary_t + 0.05]
         spikes = [o for o in nearby if o.full > SLOT_BOUNDARY_SPIKE_MIN]
         if len(spikes) >= 2:
-            issues.append(BoundaryIssue(
-                slot_in=slots[i].position,
-                slot_out=slots[i + 1].position,
-                t_s=boundary_t,
-                kind="double_spike",
-                detail=f"{len(spikes)} consecutive spikes at the cut "
-                       f"(MADs: {[f'{s.full:.1f}' for s in spikes]})",
-            ))
+            issues.append(
+                BoundaryIssue(
+                    slot_in=slots[i].position,
+                    slot_out=slots[i + 1].position,
+                    t_s=boundary_t,
+                    kind="double_spike",
+                    detail=f"{len(spikes)} consecutive spikes at the cut "
+                    f"(MADs: {[f'{s.full:.1f}' for s in spikes]})",
+                )
+            )
     return issues
 
 
 # ---------------- report writer ----------------
+
 
 def _fmt_fps(fps: float | None) -> str:
     if fps is None:
@@ -454,9 +509,11 @@ def write_report(
         full_freezes = [o for o in in_slot if o.full < FREEZE_MAD_THRESHOLD]
         bg_freezes = [o for o in in_slot if o.bg_below_text < FREEZE_MAD_THRESHOLD]
         # Stutter clusters that overlap this slot
-        slot_stutters = [c for c in stutters
-                         if s.t_start_s <= c.t_start_s < s.t_end_s
-                         or s.t_start_s <= c.t_end_s < s.t_end_s]
+        slot_stutters = [
+            c
+            for c in stutters
+            if s.t_start_s <= c.t_start_s < s.t_end_s or s.t_start_s <= c.t_end_s < s.t_end_s
+        ]
         # Verdict
         verdict_parts = []
         if s.source_probe_ok and s.source_fps and not (29.5 < s.source_fps < 30.5):
@@ -468,10 +525,12 @@ def write_report(
         if slot_stutters:
             verdict_parts.append(f"STUTTER ×{sum(c.count for c in slot_stutters)}")
         verdict = " / ".join(verdict_parts) if verdict_parts else "OK"
-        stutter_brief = ", ".join(
-            f"{c.count}@{c.period_s:.3f}s≈{c.implied_source_fps:.1f}fps"
-            for c in slot_stutters
-        ) or "—"
+        stutter_brief = (
+            ", ".join(
+                f"{c.count}@{c.period_s:.3f}s≈{c.implied_source_fps:.1f}fps" for c in slot_stutters
+            )
+            or "—"
+        )
         lines.append(
             f"| {s.position} | {s.t_start_s:.2f}-{s.t_end_s:.2f} | "
             f"{_fmt_fps(s.source_fps)} | {len(full_freezes)} | "
@@ -513,9 +572,7 @@ def write_report(
         for a in audio[:30]:
             slot = _slot_at(slots, a.t_s)
             label = f"slot {slot.position}" if slot else "—"
-            lines.append(
-                f"- t={a.t_s:.3f}s ({label}): **{a.kind}** — {a.detail}"
-            )
+            lines.append(f"- t={a.t_s:.3f}s ({label}): **{a.kind}** — {a.detail}")
         if len(audio) > 30:
             lines.append(f"- … {len(audio) - 30} more")
         lines.append("")
@@ -553,15 +610,15 @@ def write_report(
             ],
             "boundaries": [
                 {
-                    "slot_in": b.slot_in, "slot_out": b.slot_out,
-                    "t_s": b.t_s, "kind": b.kind, "detail": b.detail,
+                    "slot_in": b.slot_in,
+                    "slot_out": b.slot_out,
+                    "t_s": b.t_s,
+                    "kind": b.kind,
+                    "detail": b.detail,
                 }
                 for b in boundaries
             ],
-            "audio_glitches": [
-                {"t_s": a.t_s, "kind": a.kind, "detail": a.detail}
-                for a in audio
-            ],
+            "audio_glitches": [{"t_s": a.t_s, "kind": a.kind, "detail": a.detail} for a in audio],
         }
         json_path.write_text(json.dumps(payload, indent=2))
         print(f"json written: {json_path}", file=sys.stderr)
@@ -571,9 +628,10 @@ def write_report(
 
 # ---------------- visual strip ----------------
 
-def write_strip(frames_dir: Path, obs: list[FrameMAD],
-                stutters: list[StutterCluster],
-                out_path: Path) -> None:
+
+def write_strip(
+    frames_dir: Path, obs: list[FrameMAD], stutters: list[StutterCluster], out_path: Path
+) -> None:
     """Render a strip showing the lowest-MAD suspect frames."""
     # Top 12 lowest-MAD on bg_below_text — those are the strongest stutter
     # candidates. Pad with a cell explaining the bug-class.
@@ -582,8 +640,7 @@ def write_strip(frames_dir: Path, obs: list[FrameMAD],
         return
     paths = sorted(frames_dir.glob("f_*.png"))
     cell_w, cell_h = 200, 360
-    img = Image.new("RGB", (cell_w * len(candidates), cell_h + 40),
-                    (24, 24, 24))
+    img = Image.new("RGB", (cell_w * len(candidates), cell_h + 40), (24, 24, 24))
     d = ImageDraw.Draw(img)
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", 14)
@@ -594,26 +651,30 @@ def write_strip(frames_dir: Path, obs: list[FrameMAD],
             cell = Image.open(paths[fobs.frame_idx]).convert("RGB")
             cell.thumbnail((cell_w - 4, cell_h - 4))
             img.paste(cell, (i * cell_w + 2, 2))
-        d.text((i * cell_w + 4, cell_h + 4),
-               f"t={fobs.t_s:.3f}s", fill=(220, 220, 220), font=font)
-        d.text((i * cell_w + 4, cell_h + 20),
-               f"bg={fobs.bg_below_text:.2f}", fill=(255, 180, 80), font=font)
+        d.text((i * cell_w + 4, cell_h + 4), f"t={fobs.t_s:.3f}s", fill=(220, 220, 220), font=font)
+        d.text(
+            (i * cell_w + 4, cell_h + 20),
+            f"bg={fobs.bg_below_text:.2f}",
+            fill=(255, 180, 80),
+            font=font,
+        )
     img.save(out_path)
     print(f"strip written: {out_path}", file=sys.stderr)
 
 
 # ---------------- main ----------------
 
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("video", help="rendered MP4 to analyze")
     ap.add_argument("--job-id", help="template job UUID (enables slot/source labels)")
     ap.add_argument("--report", type=Path, help="markdown report output")
     ap.add_argument("--json", type=Path, help="structured JSON output")
     ap.add_argument("--strip", type=Path, help="suspect-frame strip PNG output")
-    ap.add_argument("--fps-out", type=float, default=30.0,
-                    help="output container fps (default 30)")
+    ap.add_argument("--fps-out", type=float, default=30.0, help="output container fps (default 30)")
     args = ap.parse_args()
 
     video_path = Path(args.video)
@@ -648,15 +709,28 @@ def main() -> int:
         # Also on full frame, for slots without text overlays
         full_stutters = detect_stutter_clusters(obs, field_name="full")
         # Merge by t_start
-        all_stutters = sorted(set(
-            (c.t_start_s, c.t_end_s, c.period_s, c.implied_source_fps,
-             c.count, tuple(c.frame_indices))
-            for c in (bg_stutters + full_stutters)
-        ))
+        all_stutters = sorted(
+            set(
+                (
+                    c.t_start_s,
+                    c.t_end_s,
+                    c.period_s,
+                    c.implied_source_fps,
+                    c.count,
+                    tuple(c.frame_indices),
+                )
+                for c in (bg_stutters + full_stutters)
+            )
+        )
         stutters: list[StutterCluster] = [
-            StutterCluster(t_start_s=t0, t_end_s=t1, period_s=p,
-                           implied_source_fps=fps, count=n,
-                           frame_indices=list(idxs))
+            StutterCluster(
+                t_start_s=t0,
+                t_end_s=t1,
+                period_s=p,
+                implied_source_fps=fps,
+                count=n,
+                frame_indices=list(idxs),
+            )
             for (t0, t1, p, fps, n, idxs) in all_stutters
         ]
         print(f"  {len(stutters)} stutter cluster(s) found", file=sys.stderr)
@@ -672,8 +746,14 @@ def main() -> int:
 
         # Write outputs
         text = write_report(
-            video_path, slots, obs, stutters, boundaries, audio,
-            args.report, args.json,
+            video_path,
+            slots,
+            obs,
+            stutters,
+            boundaries,
+            audio,
+            args.report,
+            args.json,
         )
         print()
         print(text)

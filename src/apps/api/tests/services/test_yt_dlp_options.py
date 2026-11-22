@@ -17,10 +17,7 @@ from app.services.yt_dlp_options import (
     with_yt_dlp_options,
 )
 
-COOKIE_TEXT = (
-    "# Netscape HTTP Cookie File\n"
-    ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session\n"
-)
+COOKIE_TEXT = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session\n"
 
 
 @pytest.fixture(autouse=True)

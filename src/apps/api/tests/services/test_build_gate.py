@@ -88,9 +88,7 @@ def test_render_empty_diff_false():
 
 
 def test_high_risk_migration_and_auth():
-    assert high_risk_paths_touched(
-        "src/apps/api/app/migrations/versions/0047_x.py\n"
-    ) is True
+    assert high_risk_paths_touched("src/apps/api/app/migrations/versions/0047_x.py\n") is True
     assert high_risk_paths_touched("src/apps/web/src/lib/auth.ts\n") is True
 
 

@@ -222,9 +222,7 @@ def test_karaoke_finalize_clamps_surviving_overlapping_line_windows() -> None:
     assert len(finalized) == 2
     first, second = finalized
     assert first["end_s"] == pytest.approx(second["start_s"], abs=1e-3)
-    assert first["section_end_anchor_s"] == pytest.approx(
-        second["section_anchor_s"], abs=1e-3
-    )
+    assert first["section_end_anchor_s"] == pytest.approx(second["section_anchor_s"], abs=1e-3)
 
     first_span_s = float(first["end_s"]) - float(first["start_s"])
     for wt in first["word_timings"]:

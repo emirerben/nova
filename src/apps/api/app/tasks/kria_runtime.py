@@ -7084,6 +7084,10 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     if editor_payload.music_track_id
                     else None
                 )
+                # KRI-1562: a chat song on a phone Talking edit is the background-music section.
+                bed = getattr(editor_payload, "background_music", None)
+                bed_track_id = bed.track_id if bed is not None else None
+                background_music_track = db.get(MusicTrack, bed_track_id) if bed_track_id else None
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
                 plan_before_background_pin = current_job.assembly_plan
                 try:
@@ -7109,6 +7113,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         editor_payload,
                         user_id=str(thread.creator_id),
                         music_track=music_track,
+                        background_music_track=background_music_track,
                         plan_item_id=str(item.id),
                         phone_sfx_catalog_paths=phone_sfx_catalog_paths,
                         # The validated approval binding is staged with the
@@ -9069,6 +9074,28 @@ def _with_clip_sound_toggles(job: Job, variant: dict, facts: Any, *, brief_bindi
     return dataclasses.replace(facts, clip_sound_toggles=receipt) if receipt is not None else facts
 
 
+def _with_recipe_music(job: Job, variant: dict, facts: Any) -> Any:
+    """KRI-1562: ``facts`` with whether the recipe pinned for this phone Talking ``variant``
+    plays a song. The recipe decides, never the stored treatment: a Save with the rollout off
+    drops the bed and keeps the treatment. Only the recipe this variant rendered counts (a later
+    Save pins a newer one); without it the facts stand."""
+    from app.services.device_render import device_status  # noqa: PLC0415
+    from app.services.talking_music import recipe_plays_music  # noqa: PLC0415
+
+    variant_id = variant.get("variant_id")
+    if not facts.phone_talking or not variant_id:
+        return facts
+    try:
+        status = device_status(job, str(variant_id))
+    except (AttributeError, KeyError, ValueError, TypeError):
+        return facts
+    rendered = variant.get("render_generation_id")
+    if not rendered or rendered not in {status.base_generation, status.published_generation}:
+        return facts
+    plays = recipe_plays_music(status.request.recipe)
+    return dataclasses.replace(facts, recipe_music=plays, music_in_render=plays)
+
+
 def _order_source_context_sync(db, *, brief, item_id, creator_id):
     from app.kria.order_replacement_sources import load_brief_order_source_context_sync
 
@@ -9182,6 +9209,7 @@ def _approved_generation_requirements_review(
             )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
+    facts = _with_recipe_music(job, variant, facts)
     # KRI-1189: a restart ask with no retake cut says "didn't find" only where this render's
     # cleanup could have cut one, read the same way as the finished-render note below.
     facts = dataclasses.replace(

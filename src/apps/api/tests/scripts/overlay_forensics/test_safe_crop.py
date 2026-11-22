@@ -1,4 +1,5 @@
 """Tests for scripts/overlay_forensics/safe_crop.py."""
+
 from __future__ import annotations
 
 from scripts.overlay_forensics.masking import BBox

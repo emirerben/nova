@@ -13,9 +13,20 @@ Nothing here reads the catalogue: an empty catalogue is found when effects are c
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+
 from app.config import settings
 from app.kria.reply_language import say
 from app.services.sfx_chooser import SfxLimit
+
+
+def _closed_gate(flags: Sequence[bool], features: Iterable[str]) -> SfxLimit:
+    """Which kind of gate is closed: a switch first, then the device features."""
+    if not all(flags):
+        return SfxLimit.flag_off
+    if not set(features) <= set(settings.phone_render_verified_features):
+        return SfxLimit.feature_unverified
+    return SfxLimit.flag_off
 
 
 def guided_sfx_limit() -> SfxLimit | None:
@@ -27,11 +38,54 @@ def guided_sfx_limit() -> SfxLimit | None:
 
     if phone_guided_sfx_supported():
         return None
-    if not (settings.sound_effects_enabled and settings.phone_guided_sfx_enabled):
-        return SfxLimit.flag_off
-    if not set(PHONE_GUIDED_SFX_FEATURES) <= set(settings.phone_render_verified_features):
-        return SfxLimit.feature_unverified
-    return SfxLimit.flag_off
+    return _closed_gate(
+        (settings.sound_effects_enabled, settings.phone_guided_sfx_enabled),
+        PHONE_GUIDED_SFX_FEATURES,
+    )
+
+
+def subtitled_sfx_limit() -> SfxLimit | None:
+    """None when a phone Talking edit takes chosen sound effects as editable lane rows.
+
+    The rows are the Talking `sound_effects` lane an editor Save recompiles, so the gate is the
+    lane's (`phone_rollout.phone_subtitled_editor_lanes_supported`) plus the effects switch."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        PHONE_SUBTITLED_EDITOR_FEATURES,
+        phone_subtitled_editor_lanes_supported,
+    )
+
+    if settings.sound_effects_enabled and phone_subtitled_editor_lanes_supported():
+        return None
+    return _closed_gate(
+        (
+            settings.sound_effects_enabled,
+            settings.phone_subtitled_editor_lanes_enabled,
+            settings.phone_subtitled_media_lanes_enabled,
+        ),
+        PHONE_SUBTITLED_EDITOR_FEATURES,
+    )
+
+
+def voiceover_sfx_limit() -> SfxLimit | None:
+    """None when a phone Voiceover (narrated) edit takes chosen sound effects as lane rows.
+
+    The worker's own answer: `phone_voiceover_editor_lanes_supported` judged on the server-side
+    gates alone (``require_client=False``), as the narrated worker reads it."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        PHONE_VOICEOVER_EDITOR_FEATURES,
+        phone_voiceover_editor_lanes_supported,
+    )
+
+    if phone_voiceover_editor_lanes_supported(require_client=False):
+        return None
+    return _closed_gate(
+        (
+            settings.sound_effects_enabled,
+            settings.phone_voiceover_editor_lanes_enabled,
+            settings.media_overlays_enabled,
+        ),
+        PHONE_VOICEOVER_EDITOR_FEATURES,
+    )
 
 
 def limit_line(limit: SfxLimit) -> str:

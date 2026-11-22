@@ -49,10 +49,7 @@ from app.pipeline.text_overlay_v2.pipeline import (
 from tests.agents.conftest import MockModelClient
 
 _FIXTURE = (
-    Path(__file__).parent.parent.parent
-    / "fixtures"
-    / "text_overlay_v2"
-    / "89cde014_stage_e.json"
+    Path(__file__).parent.parent.parent / "fixtures" / "text_overlay_v2" / "89cde014_stage_e.json"
 )
 
 # The spoken transcript for this template (drives Stage G grouping + per-word
@@ -60,13 +57,34 @@ _FIXTURE = (
 # produce them for this fast word-by-word build-up, so the test exercises the
 # de-clustering pass.
 _TRANSCRIPT = [
-    ("it's", 0.0), ("not", 0.9), ("just", 1.5), ("luck", 1.7),
-    ("if", 2.0), ("you", 3.0), ("put", 3.5), ("in", 4.0),
-    ("the", 4.5), ("work", 5.0), ("to", 5.5), ("get", 5.6),
-    ("just", 6.5), ("luck", 6.6), ("is", 6.7), ("a", 6.8),
-    ("combination", 7.5), ("of", 7.6), ("and", 8.0), ("good", 8.5),
-    ("timing", 8.6), ("don't", 9.0), ("to", 9.5), ("allow", 9.6),
-    ("anyone", 9.7), ("diminish", 9.8), ("your", 10.0), ("hard", 10.1),
+    ("it's", 0.0),
+    ("not", 0.9),
+    ("just", 1.5),
+    ("luck", 1.7),
+    ("if", 2.0),
+    ("you", 3.0),
+    ("put", 3.5),
+    ("in", 4.0),
+    ("the", 4.5),
+    ("work", 5.0),
+    ("to", 5.5),
+    ("get", 5.6),
+    ("just", 6.5),
+    ("luck", 6.6),
+    ("is", 6.7),
+    ("a", 6.8),
+    ("combination", 7.5),
+    ("of", 7.6),
+    ("and", 8.0),
+    ("good", 8.5),
+    ("timing", 8.6),
+    ("don't", 9.0),
+    ("to", 9.5),
+    ("allow", 9.6),
+    ("anyone", 9.7),
+    ("diminish", 9.8),
+    ("your", 10.0),
+    ("hard", 10.1),
     ("work", 10.2),
 ]
 
@@ -87,9 +105,7 @@ def _aligned_phrases_via_stage_e() -> list[Phrase]:
         )
         for p in fixture["input_phrases"]
     ]
-    transcript_words = [
-        TranscriptWord(text=t, start_s=s, end_s=s + 0.3) for t, s in _TRANSCRIPT
-    ]
+    transcript_words = [TranscriptWord(text=t, start_s=s, end_s=s + 0.3) for t, s in _TRANSCRIPT]
     client = MockModelClient()
     client.queue(
         "gemini-2.5-flash",
@@ -108,9 +124,7 @@ def _aligned_phrases_via_stage_e() -> list[Phrase]:
 
 
 def _run_stage_g(aligned: list[Phrase]):
-    transcript_words = [
-        TranscriptWord(text=t, start_s=s, end_s=s + 0.3) for t, s in _TRANSCRIPT
-    ]
+    transcript_words = [TranscriptWord(text=t, start_s=s, end_s=s + 0.3) for t, s in _TRANSCRIPT]
     # The bridge forces every Layer-2 overlay to the uniform render size, so
     # the classifier's per-phrase size_class is irrelevant here — use the
     # default. Cumulative emit reads pop animation off effect, so set pop-in.
@@ -163,16 +177,13 @@ def test_e2e_overlays_fit_no_jump_proper_timing():
             text_size=LAYER2_RENDER_TEXT_SIZE,
             text_size_px=LAYER2_RENDER_TEXT_SIZE_PX,
         )
-        assert w <= max_w_px, (
-            f"overlay {ov.sample_text!r} measures {w}px > {max_w_px}px budget"
-        )
+        assert w <= max_w_px, f"overlay {ov.sample_text!r} measures {w}px > {max_w_px}px budget"
 
     # GOAL 3 — proper timing. No zero/negative-duration overlays; all clear floor.
     for ov in overlays:
         dur = ov.end_s - ov.start_s
         assert dur >= 0.2 - 1e-6, (
-            f"overlay {ov.sample_text!r} duration {dur:.3f}s below floor "
-            f"({ov.start_s}-{ov.end_s})"
+            f"overlay {ov.sample_text!r} duration {dur:.3f}s below floor ({ov.start_s}-{ov.end_s})"
         )
 
     # GOAL 2 — no jumping. Within each y-band (one cumulative reveal line),
@@ -189,8 +200,7 @@ def test_e2e_overlays_fit_no_jump_proper_timing():
             wc = len(ov.sample_text.split())
             if prev_wordcount and wc > prev_wordcount:
                 assert wc - prev_wordcount == 1, (
-                    f"y={y}: reveal jumped {prev_wordcount}->{wc} words at "
-                    f"{ov.sample_text!r}"
+                    f"y={y}: reveal jumped {prev_wordcount}->{wc} words at {ov.sample_text!r}"
                 )
             prev_wordcount = wc
             if prev_start is not None:
@@ -216,9 +226,7 @@ def test_e2e_no_known_jumble_fragments():
     forbidden = ["and combination", "good don't", "work your hard", "good don't allow"]
     for frag in forbidden:
         for t in texts:
-            assert frag not in t, (
-                f"jumbled fragment {frag!r} reappeared in overlay {t!r}"
-            )
+            assert frag not in t, f"jumbled fragment {frag!r} reappeared in overlay {t!r}"
 
     # Stronger invariant: within every overlay, the words appear in the same
     # order they appear in the aligned phrase list (no scrambling). Build a

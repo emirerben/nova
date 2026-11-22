@@ -76,9 +76,7 @@ def upgrade() -> None:
     )
 
     # ── Index on jobs.template_id (if_not_exists for idempotency) ─────────
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_jobs_template_id ON jobs (template_id)"
-    )
+    op.execute("CREATE INDEX IF NOT EXISTS idx_jobs_template_id ON jobs (template_id)")
 
 
 def downgrade() -> None:

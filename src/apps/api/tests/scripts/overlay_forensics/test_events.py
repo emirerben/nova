@@ -1,4 +1,5 @@
 """Tests for scripts/overlay_forensics/events.py."""
+
 from __future__ import annotations
 
 from scripts.overlay_forensics.events import (
@@ -11,11 +12,15 @@ from scripts.overlay_forensics.events import (
 from scripts.overlay_forensics.masking import BBox
 
 
-def _obs(t: float, color: str, bbox: BBox, pixels: int = 1000,
-         brightness: float = 0.8) -> FrameObservation:
+def _obs(
+    t: float, color: str, bbox: BBox, pixels: int = 1000, brightness: float = 0.8
+) -> FrameObservation:
     return FrameObservation(
-        t_s=t, color_key=color, bbox=bbox,
-        mask_pixel_count=pixels, mean_brightness=brightness,
+        t_s=t,
+        color_key=color,
+        bbox=bbox,
+        mask_pixel_count=pixels,
+        mean_brightness=brightness,
     )
 
 
@@ -46,7 +51,11 @@ def test_cluster_tolerates_1_frame_gap():
         _obs(0.20, "white", WHITE_LEFT),
     ]
     events = cluster_observations_to_events(
-        obs, 1080, 1920, step_s=0.05, gap_tolerance_steps=1,
+        obs,
+        1080,
+        1920,
+        step_s=0.05,
+        gap_tolerance_steps=1,
     )
     assert len(events) == 1
 
@@ -60,7 +69,11 @@ def test_cluster_splits_on_large_gap():
         _obs(0.35, "white", WHITE_LEFT),
     ]
     events = cluster_observations_to_events(
-        obs, 1080, 1920, step_s=0.05, gap_tolerance_steps=1,
+        obs,
+        1080,
+        1920,
+        step_s=0.05,
+        gap_tolerance_steps=1,
     )
     assert len(events) == 2
 
@@ -89,7 +102,11 @@ def test_cluster_drops_events_below_min_duration():
         # Single-frame "event" — below min_duration=0.10 since step is 0.05.
     ]
     events = cluster_observations_to_events(
-        obs, 1080, 1920, step_s=0.05, min_duration_s=0.10,
+        obs,
+        1080,
+        1920,
+        step_s=0.05,
+        min_duration_s=0.10,
     )
     assert len(events) == 0
 
@@ -122,8 +139,7 @@ def test_classify_entrance_font_cycle_detected():
     bbox = BBox(x_min=300, y_min=860, x_max=700, y_max=1060)
     pixels_seq = [2000, 3500, 1800, 4000, 2200, 3800, 1900, 3600]
     obs = [
-        _obs(i * 0.05, "maize", bbox, pixels=p, brightness=0.9)
-        for i, p in enumerate(pixels_seq)
+        _obs(i * 0.05, "maize", bbox, pixels=p, brightness=0.9) for i, p in enumerate(pixels_seq)
     ]
     ev = TextEvent(color_key="maize", observations=obs)
     kind, _ = classify_entrance(ev, frame_w=1080, frame_h=1920)
@@ -143,8 +159,7 @@ def test_classify_entrance_scale_up_detected():
     # Strictly-monotonic pixel growth from 500 to 2000.
     pixels_seq = [500, 700, 900, 1200, 1500, 1700, 1900, 2000]
     obs = [
-        _obs(i * 0.05, "white", bbox, pixels=p, brightness=0.8)
-        for i, p in enumerate(pixels_seq)
+        _obs(i * 0.05, "white", bbox, pixels=p, brightness=0.8) for i, p in enumerate(pixels_seq)
     ]
     ev = TextEvent(color_key="white", observations=obs)
     kind, _ = classify_entrance(ev, frame_w=1080, frame_h=1920)
@@ -152,14 +167,20 @@ def test_classify_entrance_scale_up_detected():
 
 
 def test_cooccurrence_intervals_visible_when_all_present():
-    ev_this = TextEvent(color_key="white", observations=[
-        _obs(0.0, "white", WHITE_LEFT), _obs(2.0, "white", WHITE_LEFT)])
+    ev_this = TextEvent(
+        color_key="white",
+        observations=[_obs(0.0, "white", WHITE_LEFT), _obs(2.0, "white", WHITE_LEFT)],
+    )
     ev_this.text = "This"
-    ev_is = TextEvent(color_key="white", observations=[
-        _obs(0.5, "white", WHITE_RIGHT), _obs(2.0, "white", WHITE_RIGHT)])
+    ev_is = TextEvent(
+        color_key="white",
+        observations=[_obs(0.5, "white", WHITE_RIGHT), _obs(2.0, "white", WHITE_RIGHT)],
+    )
     ev_is.text = "is"
-    ev_africa = TextEvent(color_key="maize", observations=[
-        _obs(1.0, "maize", MAIZE_CENTER), _obs(3.0, "maize", MAIZE_CENTER)])
+    ev_africa = TextEvent(
+        color_key="maize",
+        observations=[_obs(1.0, "maize", MAIZE_CENTER), _obs(3.0, "maize", MAIZE_CENTER)],
+    )
     ev_africa.text = "Africa"
 
     intervals = cooccurrence_intervals([ev_this, ev_is, ev_africa])

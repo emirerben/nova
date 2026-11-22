@@ -44,10 +44,16 @@ def _lyrics() -> dict:
         words = text.split()
         per = 3.6 / len(words)
         wlist = [
-            {"text": w, "start_s": round(start + i * per, 3), "end_s": round(start + (i + 1) * per, 3)}
+            {
+                "text": w,
+                "start_s": round(start + i * per, 3),
+                "end_s": round(start + (i + 1) * per, 3),
+            }
             for i, w in enumerate(words)
         ]
-        lines.append({"text": text, "start_s": start, "end_s": round(start + 3.6, 3), "words": wlist})
+        lines.append(
+            {"text": text, "start_s": start, "end_s": round(start + 3.6, 3), "words": wlist}
+        )
     return {"lines": lines, "source": "demo-seed"}
 
 
@@ -62,9 +68,24 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as td:
         audio = os.path.join(td, "audio.m4a")
         subprocess.run(
-            ["ffmpeg", "-y", "-stream_loop", "-1", "-i", src, "-t", "26",
-             "-vn", "-c:a", "aac", "-b:a", "128k", audio],
-            check=True, capture_output=True,
+            [
+                "ffmpeg",
+                "-y",
+                "-stream_loop",
+                "-1",
+                "-i",
+                src,
+                "-t",
+                "26",
+                "-vn",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                audio,
+            ],
+            check=True,
+            capture_output=True,
         )
         object_path = f"music/{track_id}/audio.m4a"
         upload_public_read(audio, object_path, content_type="audio/mp4")

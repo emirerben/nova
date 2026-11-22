@@ -74,9 +74,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_agent_run_has_owner",
         "agent_run",
-        "(job_id IS NOT NULL) "
-        "OR (template_id IS NOT NULL) "
-        "OR (music_track_id IS NOT NULL)",
+        "(job_id IS NOT NULL) OR (template_id IS NOT NULL) OR (music_track_id IS NOT NULL)",
     )
 
 

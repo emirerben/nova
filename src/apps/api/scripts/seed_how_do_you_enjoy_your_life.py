@@ -12,6 +12,7 @@ music_30s_loop.m4a). See the asset-prep section in the design doc:
 
 Run: cd src/apps/api && .venv/bin/python scripts/seed_how_do_you_enjoy_your_life.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,30 +56,26 @@ BODY_DURATION_S = TOTAL_DURATION_S - INTRO_DURATION_S  # 19.5
 #       gs://<bucket>/templates/how-do-you-enjoy-your-life/music_30s_loop.m4a
 # These are stored as object keys (not full gs:// URIs) for parity with
 # `audio_gcs_path` on existing templates.
-TEMPLATE_AUDIO_GCS_PATH = (
-    "templates/how-do-you-enjoy-your-life/body_music_15s.m4a"
-)
+TEMPLATE_AUDIO_GCS_PATH = "templates/how-do-you-enjoy-your-life/body_music_15s.m4a"
 # Voiceover field is unused in v2 (intro audio comes from the reference
 # video copy), kept here for backward compat with the schema.
 TEMPLATE_VOICEOVER_GCS_PATH = None
 # Reference video. analysis_status="ready" skips Gemini re-analysis.
-REFERENCE_GCS_PATH = (
-    "templates/how-do-you-enjoy-your-life/reference.mp4"
-)
+REFERENCE_GCS_PATH = "templates/how-do-you-enjoy-your-life/reference.mp4"
 
 # Caption timings extracted from frame analysis of the reference at 4fps.
 # Each pair (Q, A) is shown briefly, leading up to the punchline question that
 # triggers the body video drop. Timings have ~100ms tolerance — verified
 # visually against frames 1-31 of the reference at 4fps.
 INTRO_CAPTIONS = [
-    {"text": "Do you smoke?",                "start_s": 0.0,  "end_s": 1.4},
-    {"text": "No",                           "start_s": 1.5,  "end_s": 2.7},
-    {"text": "Do you drink?",                "start_s": 3.0,  "end_s": 4.0},
-    {"text": "Nah",                          "start_s": 4.2,  "end_s": 5.4},
-    {"text": "Do you have a girlfriend?",    "start_s": 5.7,  "end_s": 7.1},
-    {"text": "I don't have",                 "start_s": 7.3,  "end_s": 8.5},
-    {"text": "Then...",                      "start_s": 8.7,  "end_s": 9.4},
-    {"text": "How do you enjoy your life?",  "start_s": 9.8,  "end_s": 10.85},
+    {"text": "Do you smoke?", "start_s": 0.0, "end_s": 1.4},
+    {"text": "No", "start_s": 1.5, "end_s": 2.7},
+    {"text": "Do you drink?", "start_s": 3.0, "end_s": 4.0},
+    {"text": "Nah", "start_s": 4.2, "end_s": 5.4},
+    {"text": "Do you have a girlfriend?", "start_s": 5.7, "end_s": 7.1},
+    {"text": "I don't have", "start_s": 7.3, "end_s": 8.5},
+    {"text": "Then...", "start_s": 8.7, "end_s": 9.4},
+    {"text": "How do you enjoy your life?", "start_s": 9.8, "end_s": 10.85},
 ]
 
 
@@ -142,9 +139,7 @@ def build_recipe() -> dict:
 async def seed() -> None:
     recipe = build_recipe()
     async with AsyncSessionLocal() as db:
-        existing = await db.execute(
-            select(VideoTemplate).where(VideoTemplate.id == TEMPLATE_ID)
-        )
+        existing = await db.execute(select(VideoTemplate).where(VideoTemplate.id == TEMPLATE_ID))
         row = existing.scalars().first()
         now = datetime.now(UTC)
         if row:

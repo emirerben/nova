@@ -43,6 +43,7 @@ from app.agents._schemas.reaction_beats import (
 from app.agents._schemas.sfx_intent import (
     CreatorSfxIntent,
     LicensedSfxIntent,
+    SfxAskIntent,
     SfxIntent,
 )
 from app.agents._schemas.split_screen import InitialSplitScreen
@@ -569,6 +570,11 @@ class CreativeStrategy(_CreatorModel):
     # and the tool schema serves every render program). The creator prompt
     # describes this field only when the `reaction_beats` capability is
     # available on the manifest.
+    # KRI-1561: a general "add sound effects where they fit" ask. Same pattern as
+    # `reaction_beats`: out of every derived JSON schema (the planner does not see it yet), omitted
+    # when None so stored strategies and hashes stay byte-identical, and read by the phone
+    # Talking and Voiceover workers only (`sfx_chooser.choose_sfx`).
+    sfx_ask: SkipJsonSchema[SfxAskIntent | None] = Field(default=None)
     reaction_beats: SkipJsonSchema[list[ReactionBeat] | None] = Field(
         default=None,
         max_length=MAX_REACTION_BEATS,
@@ -718,6 +724,7 @@ class CreativeStrategy(_CreatorModel):
             "choice_answers",
             "omitted_copy_targets",
             "reaction_beats",
+            "sfx_ask",
             "closing_media",
             "ending_clip",
             "insert_clips",

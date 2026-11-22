@@ -51,6 +51,9 @@ elif name == 'xcodebuild':
             if time.monotonic() > deadline:
                 sys.exit(99)
             time.sleep(.01)
+        if '-showBuildTimingSummary' in args and mode != 'no_timing':
+            print('Build Timing Summary\n\nSwiftCompile (120 tasks) | 180.000 seconds\n\n'
+                  'Ld (3 tasks) | 12.000 seconds\n\n** TEST BUILD SUCCEEDED ** [232.1 sec]')
         sys.exit(23 if mode == 'build_failure' else 0)
     elif args[-1] == 'test-without-building':
         if not (root / 'boot_finished').exists():
@@ -386,6 +389,36 @@ class VerifyShellTests(unittest.TestCase):
         self.assertIn("Compilation", result.stdout)
         self.assertIn("Unit execution", result.stdout)
         self.assertIn("UI execution", result.stdout)
+
+    # Ways the build-timing report could mislead or do harm: the flag is passed
+    # but the numbers never reach the job summary; reading them turns a failed
+    # build green; a build that prints no timing section turns red.
+    def test_the_build_reports_where_its_time_went(self):
+        summary = self.root / "step-summary.md"
+        result = self.run_verify(suite="unit", extra_env={"GITHUB_STEP_SUMMARY": str(summary)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        build = next(c for c in self.calls if c[-1] == "build-for-testing")
+        self.assertIn("-showBuildTimingSummary", build)
+        text = summary.read_text()
+        self.assertIn("SwiftCompile (120 tasks) | 180.000 seconds", text)
+        self.assertIn("Ld (3 tasks) | 12.000 seconds", text)
+        self.assertNotIn("TEST BUILD SUCCEEDED", text)
+
+    def test_a_failed_build_stays_failed_with_the_timing_report(self):
+        summary = self.root / "step-summary.md"
+        result = self.run_verify(
+            "build_failure", suite="unit", extra_env={"GITHUB_STEP_SUMMARY": str(summary)}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("test-without-building", self.actions)
+
+    def test_a_build_without_a_timing_section_still_passes(self):
+        summary = self.root / "step-summary.md"
+        result = self.run_verify(
+            "no_timing", suite="unit", extra_env={"GITHUB_STEP_SUMMARY": str(summary)}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Build timing summary", summary.read_text())
 
     def test_ui_requires_successful_current_build(self):
         self.assertNotEqual(self.run_verify(suite="ui").returncode, 0)

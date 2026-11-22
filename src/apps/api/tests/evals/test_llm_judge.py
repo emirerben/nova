@@ -83,9 +83,7 @@ def test_judge_score_passes(tmp_path: Path):
     )
     judge = LLMJudge(rubric, client=client)
 
-    result = judge.score(
-        agent_name="nova.test", agent_input={"x": 1}, agent_output={"y": 2}
-    )
+    result = judge.score(agent_name="nova.test", agent_input={"x": 1}, agent_output={"y": 2})
 
     assert result.passed
     assert result.avg == 4.5

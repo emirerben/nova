@@ -53,9 +53,7 @@ def download_and_upload(url: str) -> str:
             "no_warnings": True,
             "noplaylist": True,
             # Reject very long videos early via match_filter
-            "match_filter": yt_dlp.utils.match_filter_func(
-                f"duration <= {MAX_DURATION_S}"
-            ),
+            "match_filter": yt_dlp.utils.match_filter_func(f"duration <= {MAX_DURATION_S}"),
         }
 
         log.info("url_download_start", url=url, gcs_path=gcs_path)

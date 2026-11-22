@@ -433,7 +433,7 @@ def _extractor_prompt(**kw) -> str:
 # KRI-1384 (every stated ask is recorded whatever the action) moves it from c0151ced250653122….
 # KRI-1405 (typed `no_sound_effects`; a kept ask after a simpler version is restated) moves it
 # from f8a8e0b780319462….
-_BRIEF_SECTION_BEFORE_INSERTS = "3799fbe71c7cd2fb0601d3db3581dd5fc6156d7a3a6b416ba668d927b50cc61b"
+_BRIEF_SECTION_BEFORE_INSERTS = "63a08717391bb6da832abe0c84986cf8b2c63f2773184be18bcc2c4f055927ea"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():
