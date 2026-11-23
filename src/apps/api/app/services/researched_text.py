@@ -1190,23 +1190,27 @@ def design_windows(snapshot: dict, text_design: str) -> list[dict]:
             spans.append((start, end, stretch))
     merged: list[list[float]] = []
     run: list[float] | None = None
-    run_stretch = merged_stretch = -1
     for start, end, stretch in spans:
-        if run is not None and stretch == run_stretch:
+        if run is not None and stretch == run[2]:
             run[1] = end
         else:
-            run, run_stretch = [start, end], stretch
+            run = [start, end, stretch]
         if run[1] - run[0] >= min_window_s:
             merged.append(run)
-            merged_stretch = run_stretch
             run = None
-    if run is not None and merged and run_stretch == merged_stretch:
+    if run is not None and merged and run[2] == merged[-1][2]:
         merged[-1][1] = run[1]
     while guide and len(merged) > design_row_budget(hook):
-        index = min(range(len(merged) - 1), key=lambda i: merged[i + 1][1] - merged[i][0])
-        merged[index : index + 2] = [[merged[index][0], merged[index + 1][1]]]
+        pairs = range(len(merged) - 1)
+        # Over budget a guide line may still cross a hole, but only when no stretch is left
+        # that holds two rows.
+        index = min(
+            pairs,
+            key=lambda i: (merged[i][2] != merged[i + 1][2], merged[i + 1][1] - merged[i][0]),
+        )
+        merged[index : index + 2] = [[merged[index][0], merged[index + 1][1], merged[index][2]]]
     result = []
-    for start, end in merged:
+    for start, end, _stretch in merged:
         start, end = round(start, 3), round(end, 3)
         chosen = _pictured(slots, start, end)
         result.append(

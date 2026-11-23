@@ -658,6 +658,27 @@ def test_every_clip_after_the_hook_is_offered_with_cross_fades_of_0_3_s(
         assert uncovered_design_windows(output.ops, snapshot) == []
 
 
+def test_a_guide_over_its_row_budget_never_joins_clips_across_a_timeline_hole():
+    snapshot = _crossfaded(16, 2.0, 0.0)
+    clock = 0.0
+    for index, slot in enumerate(snapshot["slots"]):
+        length = 1.6 if index in (7, 8) else 2.0
+        clock += 0.3 if index == 8 else 0.0
+        slot.update(output_start_s=round(clock, 3), output_end_s=round(clock + length, 3))
+        clock += length
+    hole = (15.6, 15.9)
+    windows = design_windows(snapshot, "B1")
+    assert len(windows) <= researched_text.design_row_budget(design_opening(snapshot)[0])
+    assert not [row for row in windows if row["start_s"] < hole[0] and row["end_s"] > hole[1]]
+    spans = _own_spans(snapshot)
+    offered = {
+        clip
+        for clip, (start, end) in spans.items()
+        if any(row["start_s"] <= start and end <= row["end_s"] for row in windows)
+    }
+    assert offered == set(spans)
+
+
 def _partial(keep: int) -> tuple[dict, set[str]]:
     full = _designed("B1").model_dump()
     kept = full["captions"][:keep]
@@ -1413,21 +1434,27 @@ def test_a_text_layer_under_a_design_reads_decimals_too():
         validate_research_layers([layer], _evidence(), snapshot, _request(), text_design="A2")
 
 
-@pytest.mark.parametrize("text_design", ["A2", "B1"])
+_COLON_LABEL_CASES = [
+    ("hook", "25 dakika: Kyoto'nun en güzeli", ["fact-1", "fact-6"]),
+    ("line", "7,3 km'lik güzergah: Saga'dan Kameoka'ya", ["fact-6"]),
+    ("line", "1899'dan beri: Kyoto'yu Sonobe'ye bağlıyor", ["fact-1"]),
+    ("line", "5 vagon: biri tamamen açık", ["fact-12"]),
+    ("heading", "Güzergah:", ["fact-6"]),
+    ("line", "Saat 10:30 treni: Saga'dan Kameoka'ya", ["fact-6"]),
+]
+
+
 @pytest.mark.parametrize(
-    ("where", "text", "ids"),
+    ("text_design", "where", "text", "ids"),
     [
-        ("hook", "25 dakika: Kyoto'nun en güzeli", ["fact-1", "fact-6"]),
-        ("line", "7,3 km'lik güzergah: Saga'dan Kameoka'ya", ["fact-6"]),
-        ("line", "1899'dan beri: Kyoto'yu Sonobe'ye bağlıyor", ["fact-1"]),
-        ("line", "5 vagon: biri tamamen açık", ["fact-12"]),
-        ("heading", "Güzergah:", ["fact-6"]),
-        ("line", "Saat 10:30 treni: Saga'dan Kameoka'ya", ["fact-6"]),
+        (design, where, text, ids)
+        for design in ("A2", "B1")
+        for where, text, ids in _COLON_LABEL_CASES
+        # B1 lines carry no heading.
+        if not (design == "B1" and where == "heading")
     ],
 )
 def test_a_colon_label_is_rejected_with_digits_or_at_the_end(text_design, where, text, ids):
-    if where == "heading" and text_design == "B1":
-        pytest.skip("B1 lines have no heading")
     written = _opened(text_design, "Her mevsim başka", _FACT6_LINE)
     if where == "hook":
         written["hook"] = {"text": text, "evidence_ids": ids}
