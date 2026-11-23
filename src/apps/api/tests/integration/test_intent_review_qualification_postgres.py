@@ -168,8 +168,11 @@ def test_a_perfect_reviewer_passes_the_pilot_and_then_the_full_run_and_every_num
     assert first["spend"]["settled_over_estimate"] < 1
     projection = first["projection"]
     full_estimate = q.subtotal(q.spend_table(built, q.plan_items()), "full")
-    assert projection["items_remaining"] == 7 and projection["ceiling_usd"] == full_estimate
-    assert projection["projected_full_usd"] == pytest.approx(7 * SETTLED_USD, abs=1e-4)
+    full_items = sum(item.stage == "full" for item in q.plan_items())
+    assert (
+        projection["items_remaining"] == full_items and projection["ceiling_usd"] == full_estimate
+    )
+    assert projection["projected_full_usd"] == pytest.approx(full_items * SETTLED_USD, abs=1e-4)
     assert (
         projection["band95_usd"][0] <= projection["projected_full_usd"] <= projection["ceiling_usd"]
     )
@@ -189,9 +192,9 @@ def test_a_perfect_reviewer_passes_the_pilot_and_then_the_full_run_and_every_num
     out = capsys.readouterr().out
     assert "QUALIFICATION: pass" in out
     assert sorted(sdk.cases) == sorted(name for case in q.CASES for name in (case.name, case.name))
-    assert len(rows(FULL)) == 7 and all(r["status"] == "settled" for r in rows(FULL))
+    assert len(rows(FULL)) == full_items and all(r["status"] == "settled" for r in rows(FULL))
     ledgered = journal(tmp_path)
-    assert ledgered.committed_usd() == pytest.approx(10 * SETTLED_USD, abs=1e-4)
+    assert ledgered.committed_usd() == pytest.approx((3 + full_items) * SETTLED_USD, abs=1e-4)
     assert ledgered.unknown() == [] and ledgered.committed_usd() < q.TOTAL_CAP_USD
     for path in tmp_path.rglob("*"):
         if path.is_file() and path.suffix in {".json", ".txt"}:

@@ -71,6 +71,9 @@ _COPY_STYLE_KEYS = (
     "stroke_color",
     "shadow_color",
     "shadow_opacity",
+    # KRI-1581: a copied bar keeps the design's soft shadow. Never its scrim: two would stack.
+    "shadow_blur",
+    "shadow_offset_y",
 )
 
 
@@ -1437,5 +1440,9 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
     )
     if isinstance(op.get("research"), dict):
         row["source_params"] = {**(row.get("source_params") or {}), "research": op["research"]}
+        if (op["research"].get("design") or {}).get("level") == "hook":
+            # KRI-1580: the hook title's role (`informative_text.HOOK_ROLE`), styled apart
+            # from the facts under it.
+            row["source_params"]["phone_text_role"] = "hook"
     state.text.append(row)
     state.changed.add("text")

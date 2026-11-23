@@ -159,8 +159,10 @@ struct AttachmentSheet: View {
     private var hasSongStep: Bool {
         guard capabilities?.songUploadEnabled == true, !usesVisualPoolOnly else { return false }
         guard let resolved = resolvedFormat else { return thread == nil }
-        return resolved.runsAsMontage
+        return capabilities?.songAttachAvailable(for: resolved) == true
     }
+    /// A Talking edit plays the song quietly under the speaker's voice: no order, placement or filming-range questions.
+    private var songUnderVoice: Bool { resolvedFormat == .talkingToCamera }
     /// A lip-sync starts from the song, so its song step leads the sheet.
     private var songLeads: Bool { hasSongStep && resolvedFormat == .lipsync }
     private var hasOverlaysStep: Bool { usesVisualPoolOnly || (capabilities?.visualsEnabled == true && itemID != nil) }
@@ -719,6 +721,7 @@ struct AttachmentSheet: View {
             AttachmentHeading(title: songPreview.hasRecording ? String(localized: "Review your song") : String(localized: "Add your song"),
                               subtitle: songPreview.hasRecording ? String(localized: "Listen before adding this song to your video.")
                                   : resolvedFormat == .lipsync ? String(localized: "Add the song you’re lip-syncing to.")
+                                  : songUnderVoice ? String(localized: "Pick a song to play quietly under your voice.")
                                   : String(localized: "Cut your clips to a song, or lip-sync to it. Tell Kria which in your message."))
             if songPreview.hasRecording {
                 SongReviewView(player: songPreview)
@@ -850,7 +853,7 @@ struct AttachmentSheet: View {
     /// The range row shows only when the server offers it, a song is attached and its length is known and long
     /// enough to hold a range. It never appears for footage or voiceover.
     private func offersSongRange(for attachment: CreationAttachedMedia) -> Bool {
-        capabilities?.songFilmingRangeEnabled == true && !songRangeUnavailable && attachment.isSong
+        capabilities?.songFilmingRangeEnabled == true && !songRangeUnavailable && attachment.isSong && !songUnderVoice
             && SongRangeMath.pickableSeconds(duration: attachment.durationS) != nil
     }
     private func submitSongRange(_ range: SongFilmingRange?) async -> SongRangeSubmission {
@@ -881,6 +884,11 @@ struct AttachmentSheet: View {
                         CreationAttachmentThumbnail(media: attachment)
                     }
                     .disabled(locked)
+                    if role == .song, songUnderVoice {
+                        Text("Plays quietly under your voice.").font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+                            .accessibilityIdentifier("song-under-voice-hint")
+                    }
                     if offersSongRange(for: attachment) {
                         SongRangeRow(range: attachment.filmingRange, isEnabled: !locked) { showsSongRange = true }
                     }

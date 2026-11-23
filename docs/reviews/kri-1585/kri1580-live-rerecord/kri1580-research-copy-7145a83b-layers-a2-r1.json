@@ -1,0 +1,138 @@
+{
+  "head": "7145a83be50c1c8d56456b70d26d241c161694c2",
+  "design": "A2",
+  "test_run_id": "kri1580-research-copy-7145a83b-layers-a2-r1",
+  "prompt_fingerprints": {
+    "writer": "rc-def013c0f7f1",
+    "review": "rr-def013c0f7f1",
+    "layers": "rl-3ba89612f211"
+  },
+  "outcome": "accepted",
+  "unmet_requests": [],
+  "ledger": {
+    "calls": [
+      {
+        "status": "settled",
+        "settled_cost_usd": 0.070522
+      },
+      {
+        "status": "settled",
+        "settled_cost_usd": 0.008254
+      }
+    ],
+    "settled_total_usd": 0.078776
+  },
+  "calls": [
+    {
+      "kind": "layers",
+      "prompt_version": "rl-3ba89612f211",
+      "prompt_sha256": "43875c77755cda144fb6a3817a7cdf8469a24ca94229186a0b8bb7a3bd8a678f",
+      "correction": "",
+      "text_design": "A2",
+      "reservation_estimate_usd": 0.40042,
+      "raw_text": "{\n  \"layers\": [\n    {\n      \"text\": \"Torokko Saga İstasyonu'ndan Torokko Kameoka'ya giden bu trenle Hozukyo Geçidi boyunca yirmi beş dakikalık bir yolculuğa çıkıyoruz.\",\n      \"language\": \"tr\",\n      \"position\": \"bottom\",\n      \"start_s\": 0.5,\n      \"end_s\": 9.0,\n      \"evidence_ids\": [\n        \"fact-6\"\n      ]\n    },\n    {\n      \"text\": \"We are taking a twenty-five minute journey along the Hozukyo Gorge on this train going from Torokko Saga Station to Torokko Kameoka.\",\n      \"language\": \"en\",\n      \"position\": \"top\",\n      \"start_s\": 0.5,\n      \"end_s\": 9.0,\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"translation_of\": 0\n    },\n    {\n      \"text\": \"Eski tarz ahşap banklı bu retro tren beş vagonlu. Dördünün pencereleri açılabiliyor, biri ise The Rich adında tamamen açık bir vagon.\",\n      \"language\": \"tr\",\n      \"position\": \"bottom\",\n      \"start_s\": 9.5,\n      \"end_s\": 18.0,\n      \"evidence_ids\": [\n        \"fact-11\",\n        \"fact-12\"\n      ]\n    },\n    {\n      \"text\": \"This retro train with old style wooden benches has five cars. Four have opening windows, and one is a fully open car named The Rich.\",\n      \"language\": \"en\",\n      \"position\": \"top\",\n      \"start_s\": 9.5,\n      \"end_s\": 18.0,\n      \"evidence_ids\": [\n        \"fact-11\",\n        \"fact-12\"\n      ],\n      \"translation_of\": 2\n    },\n    {\n      \"text\": \"Yolculukta ilkbaharda kiraz çiçeklerini, yazın yeşil doğayı, sonbaharda ise sonbahar yapraklarını görebiliyorsunuz.\",\n      \"language\": \"tr\",\n      \"position\": \"bottom\",\n      \"start_s\": 25.0,\n      \"end_s\": 35.0,\n      \"evidence_ids\": [\n        \"fact-8\"\n      ]\n    },\n    {\n      \"text\": \"On the journey you can see the cherry blossoms in spring, the green nature in summer, and the autumn leaves in fall.\",\n      \"language\": \"en\",\n      \"position\": \"top\",\n      \"start_s\": 25.0,\n      \"end_s\": 35.0,\n      \"evidence_ids\": [\n        \"fact-8\"\n      ],\n      \"translation_of\": 4\n    }\n  ],\n  \"unmet_requests\": []\n}",
+      "model_calls": 1,
+      "model_used": "gemini-3.1-pro-preview",
+      "output": {
+        "layers": [
+          {
+            "text": "Torokko Saga İstasyonu'ndan Torokko Kameoka'ya giden bu trenle Hozukyo Geçidi boyunca yirmi beş dakikalık bir yolculuğa çıkıyoruz.",
+            "language": "tr",
+            "position": "bottom",
+            "start_s": 0.5,
+            "end_s": 9.0,
+            "evidence_ids": [
+              "fact-6"
+            ],
+            "translation_of": null,
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "text": "We are taking a twenty-five minute journey along the Hozukyo Gorge on this train going from Torokko Saga Station to Torokko Kameoka.",
+            "language": "en",
+            "position": "top",
+            "start_s": 0.5,
+            "end_s": 9.0,
+            "evidence_ids": [
+              "fact-6"
+            ],
+            "translation_of": 0,
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "text": "Eski tarz ahşap banklı bu retro tren beş vagonlu. Dördünün pencereleri açılabiliyor, biri ise The Rich adında tamamen açık bir vagon.",
+            "language": "tr",
+            "position": "bottom",
+            "start_s": 9.5,
+            "end_s": 18.0,
+            "evidence_ids": [
+              "fact-11",
+              "fact-12"
+            ],
+            "translation_of": null,
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "text": "This retro train with old style wooden benches has five cars. Four have opening windows, and one is a fully open car named The Rich.",
+            "language": "en",
+            "position": "top",
+            "start_s": 9.5,
+            "end_s": 18.0,
+            "evidence_ids": [
+              "fact-11",
+              "fact-12"
+            ],
+            "translation_of": 2,
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "text": "Yolculukta ilkbaharda kiraz çiçeklerini, yazın yeşil doğayı, sonbaharda ise sonbahar yapraklarını görebiliyorsunuz.",
+            "language": "tr",
+            "position": "bottom",
+            "start_s": 25.0,
+            "end_s": 35.0,
+            "evidence_ids": [
+              "fact-8"
+            ],
+            "translation_of": null,
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "text": "On the journey you can see the cherry blossoms in spring, the green nature in summer, and the autumn leaves in fall.",
+            "language": "en",
+            "position": "top",
+            "start_s": 25.0,
+            "end_s": 35.0,
+            "evidence_ids": [
+              "fact-8"
+            ],
+            "translation_of": 4,
+            "subject_name": "",
+            "identity_quote": ""
+          }
+        ],
+        "unmet_requests": []
+      }
+    },
+    {
+      "kind": "review",
+      "prompt_version": "rr-def013c0f7f1",
+      "prompt_sha256": "f77cb9fff06a9e09e9d0e36db827fd93b74ce566920d40c529f0f6967dd7605d",
+      "correction": null,
+      "text_design": "A2",
+      "reservation_estimate_usd": 0.106158,
+      "raw_text": "{\n  \"approved\": true,\n  \"reason\": \"The proposed text layers accurately reflect the cited facts, maintain proper formatting and positioning, and provide correct English translations. No captions are proposed, as text layers meet the requirement. Facts are correctly cited and the time bounds fit the specified video context.\"\n}",
+      "model_calls": 1,
+      "model_used": "gemini-3.1-pro-preview",
+      "output": {
+        "approved": true,
+        "reason": "The proposed text layers accurately reflect the cited facts, maintain proper formatting and positioning, and provide correct English translations. No captions are proposed, as text layers meet the requirement. Facts are correctly cited and the time bounds fit the specified video context."
+      }
+    }
+  ]
+}

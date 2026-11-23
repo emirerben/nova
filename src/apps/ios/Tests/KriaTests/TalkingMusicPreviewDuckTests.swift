@@ -20,7 +20,7 @@ import KriaMediaEngine
         .object(["text": .string(text), "start_s": .number(start), "end_s": .number(end)])
     }
 
-    private func recipe(format: String = "subtitled", cues: [EditorCaptionCue], bed: EditorBackgroundMusic?,
+    private func recipe(format: String = "subtitled", cues: [EditorCaptionCue], bed: EditorBackgroundMusic?, song: Bool = false,
                         bedDuration: Double = 30, videoDuration: Double = 10) throws -> KriaMediaEngine.EditRecipe {
         let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: videoDuration,
                               trimIn: 0, trimOut: videoDuration, sourceDuration: videoDuration, slotID: "slot")
@@ -30,7 +30,8 @@ import KriaMediaEngine
         let items = cues.map { NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: $0.id), start: $0.startS, end: $0.endS) }
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         return try compiler.compile(document: document, clips: [clip], items: items, sources: [0: source("original", duration: videoDuration)],
-                                    audioSources: bed?.trackID.map { [$0: source($0, duration: bedDuration)] } ?? [:]).recipe
+                                    audioSources: (bed?.trackID.map { [$0: source($0, duration: bedDuration)] } ?? [:])
+                                        .merging(song ? [NativeEditorRenderCompiler.songSourceKey: source("creator-song", duration: bedDuration)] : [:]) { $1 }).recipe
     }
 
     private var spokenCues: [EditorCaptionCue] {
@@ -107,5 +108,56 @@ import KriaMediaEngine
         XCTAssertFalse(text.contains("speechWindows"))
         XCTAssertFalse(text.contains("speechDuckGain"))
         XCTAssertFalse(text.contains("\"role\""))
+    }
+
+    // MARK: the creator's own song on a Talking edit (KRI-1578)
+
+    private func camera(_ recipe: KriaMediaEngine.EditRecipe) throws -> Double {
+        try XCTUnwrap(recipe.tracks.first { $0.kind == .video }?.clips.first).volume
+    }
+
+    func testTalkingSongDucksLikeTheBedAndNeverMutesTheVoice() throws {
+        let result = try recipe(cues: spokenCues, bed: nil, song: true)
+        let track = try XCTUnwrap(result.tracks.first { $0.id == "song" })
+        XCTAssertEqual(track.role, .music)
+        XCTAssertEqual(result.audio.speechDuckGain, 0.25)
+        XCTAssertEqual(result.audio.speechWindows, [SpeechWindow(start: 1, end: 3), SpeechWindow(start: 5, end: 6)])
+        XCTAssertEqual(try camera(result), 1, "the speaker's voice is the camera audio and keeps playing")
+    }
+
+    func testMontageSongStillMutesTheCameraAndNeverDucks() throws {
+        let result = try recipe(format: "montage", cues: spokenCues, bed: nil, song: true)
+        XCTAssertNil(try XCTUnwrap(result.tracks.first { $0.id == "song" }).role)
+        XCTAssertTrue(result.audio.speechWindows.isEmpty)
+        XCTAssertNil(result.audio.speechDuckGain)
+        XCTAssertEqual(try camera(result), 0)
+    }
+
+    func testTalkingSongWithNoCuesHasNoRoleNoWindowsAndTheVoiceStays() throws {
+        let result = try recipe(cues: [], bed: nil, song: true)
+        XCTAssertNil(try XCTUnwrap(result.tracks.first { $0.id == "song" }).role)
+        XCTAssertTrue(result.audio.speechWindows.isEmpty)
+        XCTAssertNil(result.audio.speechDuckGain)
+        XCTAssertEqual(try camera(result), 1)
+    }
+
+    func testTalkingEditWithoutASongHasNoSongTrackRoleOrWindowsFromTheSong() throws {
+        let result = try recipe(cues: spokenCues, bed: nil, song: false)
+        XCTAssertNil(result.tracks.first { $0.id == "song" })
+        XCTAssertTrue(result.audio.speechWindows.isEmpty)
+        XCTAssertEqual(try camera(result), 1)
+    }
+
+    func testTalkingSongShorterThanTheVideoLoopsItsWindowLikeTheServer() throws {
+        let track = try XCTUnwrap(try recipe(cues: spokenCues, bed: nil, song: true, bedDuration: 4).tracks.first { $0.id == "song" })
+        XCTAssertEqual(track.clips.map(\.timelineStart), [0, 4, 8])
+        XCTAssertEqual(track.clips.map(\.sourceDuration), [4, 4, 2])
+        XCTAssertEqual(track.clips.map(\.sourceStart), [0, 0, 0])
+        XCTAssertEqual(Set(track.clips.map(\.id)).count, 3)
+    }
+
+    func testMontageSongShorterThanTheVideoPlaysOnceAndStops() throws {
+        let track = try XCTUnwrap(try recipe(format: "montage", cues: spokenCues, bed: nil, song: true, bedDuration: 4).tracks.first { $0.id == "song" })
+        XCTAssertEqual(track.clips.map(\.sourceDuration), [4])
     }
 }

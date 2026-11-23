@@ -689,6 +689,25 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         return frame
     }
 
+    /// A `TextScrim` as a canvas-space image: one linear gradient per pair of stops, each cropped to its
+    /// own whole-pixel band so the bands meet without a seam. Mirrors the cloud `_draw_scrim`.
+    static func scrimImage(_ scrim: TextScrim, canvas: CGRect) -> CIImage {
+        let top = canvas.height - scrim.top
+        var image = CIImage.empty()
+        for (upper, lower) in zip(scrim.stops, scrim.stops.dropFirst()) {
+            let y0 = top - upper.position * scrim.height, y1 = top - lower.position * scrim.height
+            let band = CGRect(x: canvas.minX, y: y1.rounded(), width: canvas.width, height: y0.rounded() - y1.rounded())
+            guard band.height > 0 else { continue }
+            let gradient = CIFilter(name: "CILinearGradient", parameters: [
+                "inputPoint0": CIVector(x: 0, y: y0), "inputColor0": CIColor(cgColor: upper.color.cgColor),
+                "inputPoint1": CIVector(x: 0, y: y1), "inputColor1": CIColor(cgColor: lower.color.cgColor),
+            ])?.outputImage
+            guard let gradient else { continue }
+            image = gradient.cropped(to: band).composited(over: image)
+        }
+        return image
+    }
+
     /// `occlusion`: the canvas-space person mask (1 = subject) for this frame; a layer with
     /// `behindSubject` keeps its alpha only where the mask is 0 (`SubjectOcclusion.apply`). nil paints plain.
     static func paintText(_ texts: [RecipeTextLayer], over initial: CIImage, canvas: CGRect, time: Double, occlusion: CIImage? = nil) throws -> CIImage {
@@ -742,7 +761,18 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     // Text behind people: the multiply happens AFTER placement, in canvas space, where the
                     // mask lives (F1). No mask this frame = plain text, never a missing layer (F3, F13).
                     if layer.behindSubject == true, let occlusion { placed = SubjectOcclusion.apply(to: placed, mask: occlusion) }
-                    frame = opacity(placed, state.alpha).composited(over: frame)
+                    // KRI-1581: a designed layer (and its scrim) blends in sRGB-encoded values, as the cloud burn
+                    // and the approved mock-ups do. In this compositor's linear working space black at 0.6 only
+                    // darkens the picture to 0.66, and a 0.55 shadow about half as much as in the cloud. The scrim
+                    // fades with the text but stays put while the text moves.
+                    if layer.srgbBlend == true || layer.scrim != nil {
+                        var encoded = frame.applyingFilter("CILinearToSRGBToneCurve")
+                        if let scrim = layer.scrim { encoded = opacity(scrimImage(scrim, canvas: canvas), state.alpha).composited(over: encoded) }
+                        encoded = opacity(placed.applyingFilter("CILinearToSRGBToneCurve"), state.alpha).composited(over: encoded)
+                        frame = encoded.applyingFilter("CISRGBToneCurveToLinear")
+                    } else {
+                        frame = opacity(placed, state.alpha).composited(over: frame)
+                    }
                 } catch { throw error }
                 continue
             }
