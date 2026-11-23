@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.96.0] - 2026-11-23
+
+### Changed
+- KRI-1581: informative text shapes: heading and detail pair, scrim, configurable shadow (#2474) <!-- release-pr: 2474 -->
+
 ## [0.89.95.0] - 2026-11-23
 
 ### Changed
