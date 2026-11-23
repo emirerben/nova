@@ -1356,12 +1356,38 @@ later render is not blocked by an unservable ask. Key-less "first/last/then" ask
 keep their draft; a message that asks for anything else keeps its draft. A turn with a render whose editor
 target could not load also reads as "not rendered".
 
+**Taking an order back (KRI-1594).** Every reader folds the same events (`ledger_events_clause`:
+the assistant events plus the system `turn_cancelled` events), and `fold_clip_order` drops what was
+taken back. A draft undo (`draft_undone`, `restored_from_draft_id`) puts the ledger back to what it was
+the moment the restored draft was last the newest one, so the undone draft's entries leave with it and
+undoing the undo brings them back; a restored draft with no event of its own (the baseline under a first
+editor update) goes back to just before the undone draft. A removed or stopped message
+(`runtime.cancel_turn`) writes a `retract` row naming its turn: that turn's entries never count, even
+when its worker finishes after the cancel. A turn that restarts the request before a render (the
+extraction's typed `starts_fresh`, or the message after a "Change my request" tap, noted through
+`clip_order_ledger.note_restarted`) plans on the order the clips were added (`planning_state`) and
+writes a reset row ahead of its own entries. After a render the timeline is the order and no reset is
+written. Retraction rows use the actor `retract`, which `LedgerEntry.from_payload` rejects, so a reader
+that only replays entries skips them. The `creator_agent` route folds each chat on its own.
+
+**One reader per rule (KRI-1594).** Which order rows place clips now is `clip_order_sequence.seats_now`
+(the planner, the contract, the phone preflight, dispatch's `order_paths_by_resolved_intents` and the
+narrated worker's first/last/group pins all ask it; an `already_seated` row places nothing and its
+narrated receipt row claims no seat). The order-basis question gate's "placed" check
+(`choice_questions._placed_sequence`) reads `sequence_rows(seated=True)`, the rows the contract's own
+check reads, so a basis `order_by` row no longer counts as a placed sequence there. Clip names read the
+creator's group words through `clip_order_card.known_group_words` (the newest card's words, then the
+newest strategy's) in the card, the Main Creator's order line, the order listing and the reorder
+receipt; a note or group name that is exactly any clip's media id, file name or file stem is never a
+name (`labels_for`).
+
 **Not covered here.** Relative moves, swaps and undo BEFORE a render (the copilot needs a rendered
 variant; `_load_editor_target` returns nothing without one) are declined in one plain line when they are
 the turn's only ask (above). The first draft turn's `creator_text` entry seats only rows the planner resolved; an order that
 is the model's own story order (`ai_story`) is recorded only as the difference the next turn finds. The
-native render program still plays the model's `selected_media_ids` order. Guard:
-`tests/kria/test_clip_order_ledger.py` (the failure-mode list is its docstring).
+native render program (a recorded voiceover) still plays the model's `selected_media_ids` order (KRI-1594
+left it open: see the issue). Guards: `tests/kria/test_clip_order_ledger.py` and
+`tests/kria/test_clip_order_history_gaps.py` (the failure-mode lists are their docstrings).
 
 ## The clip-order card (`KRIA_CLIP_ORDER_LEDGER_ENABLED` + client protocol 54, KRI-1590)
 

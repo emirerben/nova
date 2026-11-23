@@ -521,6 +521,24 @@ class Settings(BaseSettings):
     # False: byte-identical rows and placement. Apply: `fly secrets set
     # TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
     title_legibility_enabled: bool = True
+    # Tahini run (2026-11-17, phone Voiceover): the narrated captions came out as whole
+    # sentences (14 words, 4 lines, 6 s on screen) and a spoken list's "2." / "3." each became
+    # a caption of its own. With this on, the phone narrated writer cuts its captions with the
+    # phone Talking budget (`captions.PHONE_CUE_BUDGET`: 8 words, 40 characters, 3 s) and a
+    # bare list number joins the words after it ("2. The topping."). Default TRUE. False:
+    # byte-identical cues. Apply: `fly secrets set NARRATED_CAPTION_BLOCKS_ENABLED=false`
+    # (api + worker) + restart.
+    narrated_caption_blocks_enabled: bool = True
+    # Tahini run: the phone narrated opening title was grey (#767676, the automatic fill's
+    # mid tone), dropped from its top spot to the middle of the food and gone after 1.56 s.
+    # With this on (`phone_narrated_plan.narrated_title_element`): white unless the creator
+    # chose a colour, a dark outline where the footage under it reads under 4.5:1 (the title
+    # legibility measurement, also behind TITLE_LEGIBILITY_ENABLED), its own top spot first
+    # when that is clear of faces and the wordmark (the captions then keep clear of the
+    # title), and held to the end of the first spoken sentence, 2.5-3 s. Default TRUE. False:
+    # byte-identical title and caption placement. Apply: `fly secrets set
+    # NARRATED_TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
+    narrated_title_legibility_enabled: bool = True
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
@@ -1997,6 +2015,20 @@ class Settings(BaseSettings):
     # (`narrated_footage_fit`). Edits that follow a filming guide are left as they were.
     # false = every clip from its first frame, slowed to fill its step, byte-identical.
     narrated_footage_fit_enabled: bool = True
+    # Tahini run (job 1d062f21, 2026-11-17) kill switch. On a phone Voiceover edit with no
+    # filming guide: a typed cut pace on the approved brief ("change the picture about once a
+    # second", `approximate_cut_duration_s`) cuts every long step into shots of about that
+    # length from footage not yet shown, instead of one long or slowed clip per step; a clip
+    # the creator named on a word ("the fork bite on "grab a fork"") that plays elsewhere is
+    # shown again on that word from a part of it not yet shown; and a named moment a hair
+    # short of a cut of its own is no longer refused (`narrated_footage_fit`). Needs
+    # NARRATED_FOOTAGE_FIT_ENABLED. false = byte-identical.
+    narrated_cut_pace_enabled: bool = True
+    # Tahini run kill switch. The finished phone Voiceover review judges a clip named on a word
+    # (which clip is on screen when the word is said) and a typed cut pace (shots, average and
+    # longest from the render's steps) instead of listing them under "Have a look". Render-time
+    # only: a draft is never held for them. false = byte-identical.
+    narrated_cue_receipts_enabled: bool = True
 
     # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
     # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.
@@ -3310,6 +3342,22 @@ class Settings(BaseSettings):
     # phone drew, not off the Voiceover record's language alone. false = the hold and the
     # language-only review, byte-identical.
     narrated_caption_render_promise_enabled: bool = True
+    # Tahini (prod job 1d062f21, 2026-11-17): "Keep my whole voiceover" (an `audio` row typed
+    # `keep_whole_take`) on a phone Voiceover draft is a render promise ("Your whole voiceover
+    # plays and the pictures are cut to it"), never "This narrated planned edit cuts your
+    # footage down; a Talking edit keeps the whole take."; the finished video is judged by
+    # its speech cleanup outcome. false = the format sentence, byte-identical.
+    narrated_whole_voiceover_promise_enabled: bool = True
+    # Tahini: three phone Voiceover DRAFT asks that read "I can't confirm this draft does it
+    # yet": a typed caption look ("White captions") is drawn by that writer too and said as
+    # done; "<x> sounds ... under my voice" is the footage bed like "the crowd" (KRI-1465);
+    # and a first/last clip the draft's resolved order intents pin is a render promise.
+    # false = all three as before, byte-identical.
+    narrated_draft_promises_enabled: bool = True
+    # Tahini: the finished video's review re-checks each ask the simpler version left out
+    # against the render; one the video does anyway reads "Done anyway: ..." instead of "Left
+    # out as agreed: ...". false = every left-out line as before, byte-identical.
+    left_out_recheck_enabled: bool = True
     # KRI-1354 (de1): "Make it without these" looped. A "simpler version" tap on a strategy
     # refusal still counts on later turns that are only choice taps (e.g. the readiness hold's
     # card), with no draft since, for the same dropped fields. false = per-turn consent only,
