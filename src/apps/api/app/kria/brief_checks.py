@@ -7447,8 +7447,7 @@ def _sfx_placed(count: int) -> str:
 
 
 def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    """KRI-1561: "add sound effects where they fit" on a phone Talking, Voiceover or
-    montage-with-voiceover edit.
+    """KRI-1561: "add sound effects where they fit" on a phone Talking, Voiceover or montage edit.
 
     A finished video is judged by the worker's receipt (`sfx_choice`): met only when it placed
     effects (and says how many), else not possible with the REAL reason, the closed gate or the
@@ -7458,6 +7457,7 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     format has no way to judge it here (neutral, as before).
     """
     from app.services.sfx_capability import (  # noqa: PLC0415
+        guided_sfx_limit,
         limit_line,
         subtitled_sfx_limit,
         voiceover_sfx_limit,
@@ -7465,7 +7465,7 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
     choice = facts.sfx_choice
-    if facts.rendered_variant and choice is not None:
+    if (facts.rendered_variant or facts.rendered_montage) and choice is not None:
         placed = choice.get("placed")
         if isinstance(placed, list) and placed:
             return _receipt(req, "met", _sfx_placed(len(placed)), stage="checked")
@@ -7478,13 +7478,15 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
         limit = subtitled_sfx_limit()
     elif facts.phone_narrated:
         limit = voiceover_sfx_limit()
+    elif facts.phone_montage:
+        limit = guided_sfx_limit()
     else:
         return _receipt(req, "partial", _NO_CHECKER)
-    if facts.rendered_variant:
+    if facts.rendered_variant or facts.rendered_montage:
         return _receipt(req, "not_possible", _SFX_NOT_PLACED, stage="checked")
     if limit is not None:
         return _receipt(req, "not_possible", limit_line(limit), stage="checked")
-    return _receipt(req, "partial", _SFX_PLAN)
+    return _receipt(req, "partial", _SFX_PLAN_MONTAGE if facts.phone_montage else _SFX_PLAN)
 
 
 def _check_voice_only(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -7852,6 +7854,8 @@ _TALKING_NO_SPOKEN_TEXT = "A Talking video can't show text at a word you say yet
 _MUSIC_PLAN = "I'll pick a song from the music library and play it quietly under your voice"
 # KRI-1561: the sound effects the writer will choose, and the finished video with none.
 _SFX_PLAN = "I'll place sound effects where your speech and pauses call for them"
+# A montage has no speech: its effects land on the cuts between the clips.
+_SFX_PLAN_MONTAGE = "I'll place sound effects on the cuts where your clips change"
 _SFX_NOT_PLACED = "The finished video has no sound effects"
 _MUSIC_NOT_PLAYED = "The finished video has no music"
 _MUSIC_APP_TOO_OLD = "Your iPhone app is too old to play music under your voice; update it first"
@@ -7977,6 +7981,7 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _MUSIC_PLAN,
     # KRI-1561: the sound effects the writer chooses for a general ask.
     _SFX_PLAN,
+    _SFX_PLAN_MONTAGE,
     # KRI-1578: the creator's own song under the talk.
     _MUSIC_PLAN_OWN_SONG,
     # KRI-1322: the picture above the opening title.
@@ -8313,6 +8318,7 @@ _REASON_TR: dict[str, str] = {
     _TALKING_NO_SPOKEN_TEXT: "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
     _MUSIC_PLAN: "Müzik kütüphanesinden bir şarkı seçip sesinin altında kısık çalarım",
     _SFX_PLAN: "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım",
+    _SFX_PLAN_MONTAGE: "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım",
     _SFX_NOT_PLACED: "Bitmiş videoda ses efekti yok",
     _MUSIC_PLAN_OWN_SONG: "Şarkını sesinin altında kısık çalarım",
     _SONG_TALKING_NO_LIPSYNC: (

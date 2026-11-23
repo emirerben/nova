@@ -2623,6 +2623,11 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "I'll place sound effects on the cuts where your clips change",
+   "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
   ]

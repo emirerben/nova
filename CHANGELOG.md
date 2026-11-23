@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.98.0] - 2026-11-23
+
+### Changed
+- feat(kria): a general sound-effect ask places effects on a montage with no voiceover (KRI-1561) (#2487) <!-- release-pr: 2487 -->
+
 ## [0.89.97.0] - 2026-11-23
 
 ### Changed
