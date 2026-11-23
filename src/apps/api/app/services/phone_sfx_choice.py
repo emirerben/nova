@@ -101,8 +101,12 @@ def choose_for_phone(
     catalog_loader: Callable[[], list[dict]],
     run_agent: AgentRunner,
     taken_at_s: Sequence[float] = (),
+    moments: Sequence[Mapping[str, Any]] = (),
 ) -> PhoneSfxChoice:
-    """Choose lane rows for ``ask``, or a receipt that says why none were."""
+    """Choose lane rows for ``ask``, or a receipt that says why none were.
+
+    Evidence is the timed words and, for an edit with no speech (a guided montage), the visual
+    ``moments`` ({start_s, end_s, description}) on the same clock."""
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
         SubtitledSoundEffect,
         sfx_path_is_playable,
@@ -111,7 +115,8 @@ def choose_for_phone(
     if limit is not None:
         return PhoneSfxChoice((), _receipt((), limit))
     speech = build_speech_map(list(words or []), duration_s, "task")
-    if speech is None:
+    described = tuple(m for m in moments if str(m.get("description") or "").strip())
+    if speech is None and not described:
         return PhoneSfxChoice((), _receipt((), SfxLimit.no_timed_evidence))
     # The catalogue loads only now: a decline above never touches the database. A database
     # error is not a decline; it propagates so the task retries.
@@ -125,8 +130,9 @@ def choose_for_phone(
         choice = choose_sfx(
             SfxAsk(request_text=ask.request_text, max_placements=ask.max_placements),
             SfxEvidence(
-                words=tuple(speech["words"]),
-                pauses=tuple(speech["pauses"]),
+                words=tuple(speech["words"]) if speech else (),
+                pauses=tuple(speech["pauses"]) if speech else (),
+                moments=tuple(dict(m) for m in described),
                 duration_s=float(duration_s),
             ),
             catalog,

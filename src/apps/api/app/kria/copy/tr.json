@@ -735,6 +735,7 @@
     "I'll keep your take up to right after {at_end}, if I find that line; if not, it runs to the end": "{v1}{at_end} cümlesinin hemen sonrasına kadar olan kısmını korurum, o cümleyi bulursam; bulamazsam video sonuna kadar sürer",
     "I'll leave out the word I couldn't make out": "Anlayamadığım kelimeyi çıkarırım",
     "I'll pick a song from the music library and play it quietly under your voice": "Müzik kütüphanesinden bir şarkı seçip sesinin altında kısık çalarım",
+    "I'll place sound effects on the cuts where your clips change": "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım",
     "I'll place sound effects where your speech and pauses call for them": "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım",
     "I'll place that text on the matching words in your recording. If they repeat, I'll need the occurrence you mean.": "Yazıyı kaydındaki eşleşen sözlerde göstereceğim. Sözler tekrarlanırsa hangi tekrarı istediğini bilmem gerekecek.",
     "I'll play your song quietly under your voice": "Şarkını sesinin altında kısık çalarım",
