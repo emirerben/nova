@@ -2283,6 +2283,15 @@ class _EditorTarget:
     # KRI-1387: the editor compiler bound to a detached copy of this job and projected
     # variant, so the copilot turn finds refused ops before the draft compile does.
     compile_check: CompileCheck | None = None
+    # KRI-1580: the job's phone text policy, for a variant that carries no copy of its stamp.
+    job_text_policy: dict | None = None
+
+
+def _chat_text_design(target: _EditorTarget, message: str) -> str | None:
+    """KRI-1580: research a follow-up chat asks for is written in the job's design shape."""
+    from app.services.researched_text import chat_text_design  # noqa: PLC0415
+
+    return chat_text_design(target.variant, message, job_policy=target.job_text_policy)
 
 
 async def _copilot_clip_context(
@@ -2389,10 +2398,26 @@ async def _copilot_clip_context(
 
             # What the creator asked this turn (`_turn_brief`) decides, else the saved brief.
             turn_brief = _turn_brief.get()
+            from app.services.talking_music import library_music_enabled  # noqa: PLC0415
+
             if asks_no_music(turn_brief if turn_brief is not None else brief):
                 context["no_music"] = True
-            else:
+            elif library_music_enabled():
                 context["music_library"] = await _talking_song_rows(db)
+            else:
+                # KRI-1578: a new song is the creator's own upload; no library read.
+                context["music_library_closed"] = True
+            from app.services.talking_music import talking_song, uploaded_song  # noqa: PLC0415
+
+            upload = uploaded_song(item)
+            if (
+                not context.get("no_music")
+                and talking_song(variant) is None
+                and upload is not None
+                and upload.duration_s
+            ):
+                # Her upload is not on this edit yet: chat may put it under her voice.
+                context["uploaded_song"] = {"duration_s": round(upload.duration_s, 3)}
     except Exception:  # noqa: BLE001 - fail closed: no candidates => no swap_music
         log.warning(
             "kria_copilot_music_library_unavailable", thread_id=str(thread_id), exc_info=True
@@ -2975,6 +3000,7 @@ async def _load_editor_target(
         snapshot=snapshot,
         conversation=conversation,
         variant=variant,
+        job_text_policy=copy.deepcopy((job.assembly_plan or {}).get("phone_text_style")),
         recovery_basis=recovery_basis,
         last_ready=(
             {
@@ -3136,6 +3162,7 @@ async def _plan_editor_revision(
         ),
         timeout_override_s=120.0,
         compile_check=target.compile_check,
+        text_design=_chat_text_design(target, user_message),
     )
     if (
         response.ops
@@ -7689,6 +7716,7 @@ async def _plan_scoped_turn(
                 ),
                 job_id=target.job_id,
                 compile_check=target.compile_check,
+                text_design=_chat_text_design(target, user_message),
             )
             kept, dropped = plan_review.filter_ops_to_scope(
                 list(response.ops), model_snapshot, model_scope

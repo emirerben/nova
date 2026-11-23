@@ -26934,6 +26934,22 @@
         }
       }
     },
+    "Pick a song to play quietly under your voice." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle einen Song, der leise unter deiner Stimme läuft."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sesinin altında kısık çalacak bir şarkı seç."
+          }
+        }
+      }
+    },
     "Pick a type at the top." : {
       "localizations" : {
         "de" : {
@@ -27714,6 +27730,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Son klibinden sonra oynar. Düzenlenemez."
+          }
+        }
+      }
+    },
+    "Plays quietly under your voice." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Läuft leise unter deiner Stimme."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sesinin altında kısık çalar."
           }
         }
       }
@@ -35396,6 +35428,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Şarkı kaldırıldı. Bunun yerine kamera sesin çalar."
+          }
+        }
+      }
+    },
+    "Song removed. Your voice plays on its own." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Song entfernt. Deine Stimme läuft allein weiter."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Şarkı kaldırıldı. Sadece sesin çalar."
           }
         }
       }
@@ -49483,6 +49531,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Elindeki çekimlerin üzerine sesin"
+          }
+        }
+      }
+    },
+    "Your voice plays on its own. You can undo this before saving." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Stimme läuft allein weiter. Du kannst das vor dem Speichern rückgängig machen."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sadece sesin çalar. Kaydetmeden önce geri alabilirsin."
           }
         }
       }

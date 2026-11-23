@@ -42,6 +42,15 @@ confirms a completed cancellation in this repository's main TestFlight workflow,
 and its attempt-specific raw job inventory explicitly reports zero total jobs
 and an empty list. Missing, mismatched or inconsistent records still block.
 
+A cancelled job whose upload step reported no result is excluded only when the
+raw Actions job record shows that step still pending with no start, end or
+result, and the archive step with no end or result. Actions keeps step records
+apart from the log, so this holds when the log was never stored: the move to
+the organization ended run 45030190568 that way, 35 seconds into its archive.
+An upload step in any other state, a repeated or missing step, or a job that is
+not completed and cancelled still blocks. Do not delete such a run to clear the
+gate.
+
 The gate checks the most recent 100 runs, including failed/cancelled runs and
 previous attempts of reruns (including its own), and
 compares all verified uploaded sources by Git ancestry, independent of dispatch

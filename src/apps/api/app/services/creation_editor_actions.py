@@ -40,6 +40,9 @@ from app.services.phone_speaker_background import (
     BACKGROUND_REFUSALS,
     pin_background_for_commit,
 )
+from app.services.phone_subtitled_editor import is_phone_subtitled_editor_variant
+from app.services.researched_text import chat_text_design
+from app.services.talking_music import UploadedSongRead, uploaded_song
 
 log = structlog.get_logger()
 
@@ -735,6 +738,9 @@ async def execute_copilot_edit(
         ),
         job_id=job_id,
         compile_check=editor_compile_check(job, variant),
+        text_design=chat_text_design(
+            variant, body.message, job_policy=(job.assembly_plan or {}).get("phone_text_style")
+        ),
     )
     rejections = list(getattr(response, "rejection_reasons", None) or []) if honest else []
     unmet = list(getattr(response, "unmet_requests", None) or []) if honest else []
@@ -851,6 +857,13 @@ async def execute_copilot_edit(
             plan_item_id=str(thread.active_plan_item_id),
             visual_assets=visual_assets,
             phone_sfx_catalog_paths=await _phone_subtitled_sfx_paths(db, job, variant),
+            # KRI-1578: a chat change to her own song on a Talking edit re-pins it from the item.
+            uploaded_song=(
+                UploadedSongRead(uploaded_song(await db.get(PlanItem, thread.active_plan_item_id)))
+                if is_phone_subtitled_editor_variant(variant)
+                and thread.active_plan_item_id is not None
+                else None
+            ),
             # KRI-1562: a chat song on a phone Talking edit is the background-music section.
             background_music_track=(
                 await db.get(MusicTrack, payload.background_music.track_id)

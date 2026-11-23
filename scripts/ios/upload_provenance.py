@@ -171,6 +171,36 @@ def never_executed(job):
     )
 
 
+def cut_off_before_upload(job):
+    """Actions ended the job before its upload step started.
+
+    Actions keeps step records apart from the log, so they remain when the log
+    was never stored (a repository transfer ends jobs that way). The upload
+    step must have no start, end or result, and the archive it uploads must
+    never have finished. A step missing, repeated or in any other state, or a
+    job that is not completed and cancelled, remains unknown.
+    """
+    steps = job.get("steps")
+    if not isinstance(steps, list) or not all(isinstance(s, dict) for s in steps):
+        return False
+    archives = [step for step in steps if step.get("name") == ARCHIVE]
+    uploads = [step for step in steps if step.get("name") == UPLOAD]
+    if len(archives) != 1 or len(uploads) != 1:
+        return False
+    archive, upload = archives[0], uploads[0]
+    unset = object()
+    return (
+        job.get("status") == "completed"
+        and job.get("conclusion") == "cancelled"
+        and upload.get("status") == "pending"
+        and all(
+            upload.get(key, unset) is None
+            for key in ("conclusion", "started_at", "completed_at")
+        )
+        and all(archive.get(key, unset) is None for key in ("conclusion", "completed_at"))
+    )
+
+
 def unstarted_attempt(run_id, attempt_number, repo):
     """Prove an exact cancelled attempt never created any Actions job."""
     path = f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt_number}"
@@ -261,6 +291,17 @@ def main():
                 command("gh", "api", f"repos/{repo}/actions/jobs/{job_id}")
             )
             if never_executed(detail):
+                continue
+        if job["conclusion"] == "cancelled" and any(
+            step["name"] == UPLOAD and not step["conclusion"] for step in job["steps"]
+        ):
+            # The upload step reported no result. Read its exact raw record: the
+            # attempt is left out only when that step never started.
+            repo = os.environ["GITHUB_REPOSITORY"]
+            detail = json.loads(
+                command("gh", "api", f"repos/{repo}/actions/jobs/{job['databaseId']}")
+            )
+            if cut_off_before_upload(detail):
                 continue
         attempts.append(
             dict(

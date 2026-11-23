@@ -2589,11 +2589,14 @@ def _run_draft_attempt(
             snapshot_copy_constraints,
         )
         from app.services.edit_proposals import _validated_scheduled_draft  # noqa: PLC0415
+        from app.services.researched_text import approval_text_designs  # noqa: PLC0415
 
         snapshot = _validated_scheduled_draft(snapshot, current)
         text_drops: list = []
         snapshot = compose_creation_text(
             snapshot,
+            # KRI-1580: no job is stamped before approval; what the approval will stamp decides.
+            informative_text_designs=approval_text_designs(),
             creator_request=brief.creator_request,
             ctx=RunContext(plan_item_id=item_id, request_id=f"creation-text:{attempt_id}"),
             copy_constraints=snapshot_copy_constraints(snapshot),

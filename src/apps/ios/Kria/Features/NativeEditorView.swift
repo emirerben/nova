@@ -1478,7 +1478,8 @@ private struct NativeSoundsControls: View {
             } else if session.userSongRemoved {
                 // KRI-428: removed but unsaved. No catalog controls: the variant is reference-only, and
                 // Undo (or leaving without saving) brings the song back.
-                Label(NativeEditorYourSong.removedHelperCopy, systemImage: "speaker.wave.2")
+                Label(session.songPlaysUnderVoice ? NativeEditorYourSong.removedUnderVoiceHelperCopy : NativeEditorYourSong.removedHelperCopy,
+                      systemImage: "speaker.wave.2")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("native-editor-your-song-removed")

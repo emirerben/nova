@@ -53,7 +53,8 @@ class ProvenanceCLITests(unittest.TestCase):
         a = sys.argv
         if a[1] == 'api': print(json.dumps(f['raw_responses'][a[2]]))
         elif a[1:3] == ['run','list']: print(json.dumps(f['runs']))
-        elif '--log' in a: print(f['logs'][a[3]])
+        elif '--log' in a: print(f['logs'][a[3]]) if f['logs'][a[3]] is not None else sys.exit('log not found: 22')
+        elif f.get('cut_job') and a[3] == '2': print(json.dumps({'jobs':[f['cut_job']]}))
         elif f['jobless'] and a[3] == '2' and a[a.index('--attempt')+1] == str(f.get('empty_attempt',1)): print(json.dumps({'jobs':[]}))
         elif f.get('run2_jobs') and a[3] == '2': print(json.dumps({'jobs': f['run2_jobs']}))
         elif f['unallocated'] and a[3] == '2': print(json.dumps({'jobs':[{'databaseId':22,'name':'release','conclusion':'cancelled','completedAt':'2','steps':[]}]}))
@@ -133,6 +134,18 @@ class ProvenanceCLITests(unittest.TestCase):
                 ("gate succeeded mac never started", [old, "unknown"], None),
                 ("gate missing mac never started", [old, "unknown"], None),
                 ("two gates mac never started", [old, "unknown"], None),
+                # Run 2 ended before its upload step started and its log was never
+                # stored (45030190568/1). Only complete step records prove no upload.
+                ("cut off before upload", [old, None], old + " false"),
+                ("cut off before the archive", [old, None], old + " false"),
+                ("cut off upload running", [old, None], None),
+                ("cut off upload has a start", [old, None], None),
+                ("cut off archive finished", [old, None], None),
+                ("cut off job failed", [old, None], None),
+                ("cut off job still running", [old, None], None),
+                ("cut off start time absent", [old, None], None),
+                ("cut off steps absent", [old, None], None),
+                ("cut off no prior upload", [old, None], None),
                 ("wrong job name", [old], None),
             ]:
                 data["runs"] = [
@@ -144,7 +157,10 @@ class ProvenanceCLITests(unittest.TestCase):
                     }
                     for i in range(1, len(sources) + 1)
                 ]
-                data["logs"] = {str(i): logs(sha) for i, sha in enumerate(sources, 1)}
+                data["logs"] = {
+                    str(i): None if sha is None else logs(sha)
+                    for i, sha in enumerate(sources, 1)
+                }
                 data["unallocated"] = name.startswith("unallocated")
                 data["raw_job"] = {
                     "status": "completed",
@@ -199,6 +215,65 @@ class ProvenanceCLITests(unittest.TestCase):
                         "runner_group_name": None,
                         "steps": [],
                     }
+                data["cut_job"] = None
+                if name.startswith("cut off"):
+                    # `gh run view --json jobs` reports an unfinished step with
+                    # an empty conclusion; the raw job record reports null.
+                    data["cut_job"] = {
+                        "databaseId": 22,
+                        "name": "release",
+                        "conclusion": "cancelled",
+                        "completedAt": "2",
+                        "steps": [
+                            {
+                                "name": "Archive signed Release IPA",
+                                "status": "in_progress",
+                                "conclusion": "",
+                            },
+                            {
+                                "name": "Upload and distribute to external TestFlight",
+                                "status": "pending",
+                                "conclusion": "",
+                            },
+                        ],
+                    }
+                    archive = {
+                        "name": "Archive signed Release IPA",
+                        "status": "in_progress",
+                        "conclusion": None,
+                        "started_at": "2026-11-22T14:02:07Z",
+                        "completed_at": None,
+                    }
+                    upload = {
+                        "name": "Upload and distribute to external TestFlight",
+                        "status": "pending",
+                        "conclusion": None,
+                        "started_at": None,
+                        "completed_at": None,
+                    }
+                    if name == "cut off before the archive":
+                        archive.update(status="pending", started_at=None)
+                    if name == "cut off upload running":
+                        upload["status"] = "in_progress"
+                    if name == "cut off upload has a start":
+                        upload["started_at"] = "2026-11-22T14:26:00Z"
+                    if name == "cut off archive finished":
+                        archive.update(status="completed", conclusion="success")
+                    if name == "cut off start time absent":
+                        del upload["started_at"]
+                    data["raw_job"] = {
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                        "steps": [archive, upload],
+                    }
+                    if name == "cut off job failed":
+                        data["raw_job"]["conclusion"] = "failure"
+                    if name == "cut off job still running":
+                        data["raw_job"]["status"] = "in_progress"
+                    if name == "cut off steps absent":
+                        del data["raw_job"]["steps"]
+                    if name == "cut off no prior upload":
+                        data["runs"] = data["runs"][1:]
                 if name == "ambiguous releases":
                     data["job_override"] = [{"name": "release"}, {"name": "release"}]
                 if name == "wrong job name":
@@ -262,6 +337,10 @@ class ProvenanceCLITests(unittest.TestCase):
                             else "missing or ambiguous release job"
                         )
                         self.assertIn(reason, result.stderr, name)
+                    if name == "cut off no prior upload":
+                        self.assertIn(
+                            "No verified upload in retained history", result.stderr, name
+                        )
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(), expected, name)

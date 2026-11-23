@@ -397,7 +397,11 @@ def resolve_next_audio_mode(strategy: Any, item: PlanItem) -> str | None:
         # KRI-374: the creator's own song. No attached song => None, handled by
         # the caller exactly like the `voiceover_required` case (the policy has
         # already refused a song-less `user_song` strategy before approval).
-        return "song" if getattr(item, "song_gcs_path", None) else None
+        if not getattr(item, "song_gcs_path", None):
+            return None
+        # KRI-1578: on a Talking edit the song plays under the voice, which stays the item's
+        # soundtrack policy (the speech fingerprint its cleanup consent is bound to).
+        return "original" if getattr(item, "edit_format", None) == "subtitled" else "song"
     if item.voiceover_gcs_path:
         return "voiceover"
     return None

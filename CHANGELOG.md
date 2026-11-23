@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.99.0] - 2026-11-23
+
+### Changed
+- fix(testflight): a release the platform cut off before upload no longer blocks every later release (KRI-1597) (#2488) <!-- release-pr: 2488 -->
+
+## [0.89.98.0] - 2026-11-23
+
+### Changed
+- feat(kria): a general sound-effect ask places effects on a montage with no voiceover (KRI-1561) (#2487) <!-- release-pr: 2487 -->
+
+## [0.89.97.0] - 2026-11-23
+
+### Changed
+- KRI-1580: research copy in the chosen design, hook title first, grounded headings (KRI-1585 PR2) (#2473) <!-- release-pr: 2473 -->
+
+## [0.89.96.0] - 2026-11-23
+
+### Changed
+- KRI-1581: informative text shapes: heading and detail pair, scrim, configurable shadow (#2474) <!-- release-pr: 2474 -->
+
+## [0.89.95.0] - 2026-11-23
+
+### Changed
+- feat(ios): add your own song on a Talking edit, ducked under your voice (#2468) <!-- release-pr: 2468 -->
+
+## [0.89.94.0] - 2026-11-22
+
+### Changed
+- feat(kria): play the creator's own uploaded song under a Talking edit (#2467) <!-- release-pr: 2467 -->
+
 ## [0.89.93.0] - 2026-11-22
 
 ### Changed

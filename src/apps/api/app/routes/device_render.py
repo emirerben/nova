@@ -655,6 +655,13 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "text_behind_subject",
             "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
         }
+    from app.services.phone_rollout import text_designs_update_detail  # noqa: PLC0415
+
+    text_designs = text_designs_update_detail(recipe)
+    if text_designs is not None:
+        # KRI-1581: an older build rejects a layer's `scrim` / `srgb_blend` and would fail the
+        # render as `renderer_outdated`, a gap nothing re-pins once the creator updates.
+        return text_designs
     if recipe_has_color_moments(recipe) and not color_moments_client_supported():
         # KRI-1350: an older build rejects `color_moments` / `end_fade` as unknown recipe keys (and
         # the `colorMoments` token) and would FAIL the whole render.
@@ -1347,22 +1354,21 @@ async def _song_download_url(
     song is a bare ``PlanItem`` column, so ownership is already established by
     ``_owned_job``'s lock chain and the item is looked up by the JOB's own
     ``content_plan_item_id`` (the asset's ``plan_item_id`` is only cross-checked
-    against it: another item => 404). The item must still be in ``song`` audio mode
-    with the recipe's exact generation attached, so a removed or replaced song fails
-    closed (409) instead of granting different bytes. The device re-hashes the
-    download against the pinned SHA-256.
+    against it: another item => 404). The item's song must still be one that plays there
+    (`talking_music.uploaded_song`: ``song`` audio mode, or a Talking item, KRI-1578) with the
+    recipe's exact generation attached, so a removed or replaced song fails closed (409)
+    instead of granting different bytes. The device re-hashes the download against the
+    pinned SHA-256.
     """
+    from app.services.talking_music import uploaded_song  # noqa: PLC0415
+
     if job.content_plan_item_id is None or str(job.content_plan_item_id) != asset.plan_item_id:
         raise HTTPException(404, "Song unavailable")
     item = await db.get(PlanItem, job.content_plan_item_id, populate_existing=True)
-    if (
-        item is None
-        or getattr(item, "audio_mode", None) != "song"
-        or not getattr(item, "song_gcs_path", None)
-        or str(getattr(item, "song_generation", None) or "") != asset.generation
-    ):
+    song = uploaded_song(item)
+    if song is None or str(song.generation) != asset.generation:
         raise HTTPException(409, "Song changed; refresh the recipe")
-    path = str(item.song_gcs_path)
+    path = song.gcs_path
     await db.rollback()
     try:
         return await asyncio.to_thread(

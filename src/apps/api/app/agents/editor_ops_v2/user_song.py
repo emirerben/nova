@@ -110,6 +110,27 @@ def user_song_snapshot(job: Any, variant: dict[str, Any], caps: dict[str, Any]) 
     return out
 
 
+def addable_song_snapshot(upload: dict[str, Any]) -> dict[str, Any]:
+    """KRI-1578: her uploaded song as YOUR SONG on a phone Talking edit that does not play it
+    yet (``on_edit`` False): any ``set_user_song`` that is not a removal puts it on, from the
+    song's start at the Talking level, unless the op says otherwise."""
+    from app.services.talking_music import CREATOR_SONG_VOLUME  # noqa: PLC0415
+
+    duration = round(float(upload["duration_s"]), 3)
+    return {
+        "mode": "background",
+        "on_edit": False,
+        "duration_s": duration,
+        "window_start_s": 0.0,
+        "window_end_s": duration,
+        "volume": round(CREATOR_SONG_VOLUME, 3),
+        "min_window_s": MIN_PLAYABLE_SONG_S,
+        "volume_editable": True,
+        "window_editable": True,
+        "removable": False,
+    }
+
+
 def _refuse(state: Any, name: str, en: str, tr: str) -> None:
     detail = say(en=en, tr=tr)
     state.reject(op=name, reason="capability_unavailable", detail=detail)
@@ -169,6 +190,8 @@ def _coerce(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None
             return None
         out.update({key: round(value, 3) for key, value in values.items() if value is not None})
     if not out:
+        if song.get("on_edit") is False:
+            return {}  # put her uploaded song on as it is
         state.invalid_value("Say what to change: volume, window_start_s, window_end_s or remove.")
         return None
     return out
@@ -197,10 +220,34 @@ def window_error(song: dict[str, Any], start: float | None, end: float | None) -
     return None
 
 
+def _talking(variant: dict[str, Any]) -> bool:
+    from app.services.phone_subtitled_editor import is_phone_subtitled_editor_variant  # noqa: PLC0415
+
+    return (
+        variant.get("render_destination") == "device"
+        and is_phone_subtitled_editor_variant(variant)
+        and variant.get("editor_timeline_mode") != "authored"
+    )
+
+
 def _op_set_user_song(state: Any, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
 
     current = song_state(state.job, state.variant)
+    if current is None and _talking(state.variant) and not op.get("remove"):
+        # KRI-1578: her upload goes on this Talking edit; the Save pins it from the item and
+        # refuses (`user_song_unavailable`) if nothing is uploaded.
+        edit = {
+            key: round(float(op[key]), 3)
+            for key in ("volume", "window_start_s", "window_end_s")
+            if op.get(key) is not None
+        }
+        if "volume" in edit:
+            edit["volume"] = round(min(max(edit["volume"], 0.0), 1.0), 2)
+        state.user_song = edit
+        state.changed.add(FAMILY)
+        state.summary = "Added your song"
+        return
     if current is None or current.get("removed"):
         raise KriaEditorOpError("This edit has no song of your own to change")
     pending = dict(state.user_song or {})
