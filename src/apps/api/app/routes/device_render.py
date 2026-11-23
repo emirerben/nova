@@ -655,6 +655,13 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "text_behind_subject",
             "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
         }
+    from app.services.phone_rollout import text_designs_update_detail  # noqa: PLC0415
+
+    text_designs = text_designs_update_detail(recipe)
+    if text_designs is not None:
+        # KRI-1581: an older build rejects a layer's `scrim` / `srgb_blend` and would fail the
+        # render as `renderer_outdated`, a gap nothing re-pins once the creator updates.
+        return text_designs
     if recipe_has_color_moments(recipe) and not color_moments_client_supported():
         # KRI-1350: an older build rejects `color_moments` / `end_fade` as unknown recipe keys (and
         # the `colorMoments` token) and would FAIL the whole render.

@@ -119,6 +119,13 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// the server only advertises it when the feature is on for this account and this app's protocol.
     var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
     var songUploadEnabled: Bool { songLimit != nil }
+    /// Whether "Add song" is offered for `format`. Montage and lip-sync cut to or sing along with the song; a Talking
+    /// edit plays it quietly under the speaker's voice (KRI-1578). This is the one place that decides which formats take
+    /// a song: `media.song` is the server's only song signal today, so Talking follows it.
+    func songAttachAvailable(for format: CreationFormat?) -> Bool {
+        guard songUploadEnabled, let format else { return false }
+        return format.runsAsMontage || format == .talkingToCamera
+    }
     var choiceQuestionsEnabled: Bool { choiceQuestions == true }
     var voiceoverScriptCardsEnabled: Bool { voiceoverScriptCards == true }
     var wrongFactFeedbackEnabled: Bool { wrongFactFeedback == true }

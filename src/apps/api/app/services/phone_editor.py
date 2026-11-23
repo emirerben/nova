@@ -131,6 +131,7 @@ from app.services.phone_rollout import (
     speech_duck_client_supported,
     talking_music_supported,
     text_bend_client_supported,
+    text_designs_update_detail,
     validate_phone_pilot_recipe,
 )
 from app.services.phone_sources import (
@@ -1164,6 +1165,11 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    text_designs = text_designs_update_detail(device_status(staged, variant_id).request.recipe)
+    if text_designs is not None:
+        # KRI-1581: a Save that patches the pinned recipe (a Narrated caption edit) keeps the
+        # worker's designed layers as they are; this build cannot decode them.
+        raise HTTPException(426, detail=text_designs)
     if (
         getattr(device_status(staged, variant_id).request.recipe, "speaker_background", None)
         is not None

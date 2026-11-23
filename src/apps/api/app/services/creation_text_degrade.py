@@ -40,6 +40,8 @@ TextGateReason = Literal[
     "hierarchy_unmet",
     "editorial_unmet",
     "incomplete",
+    # KRI-1580: a running guide (B1) rendered its lines, but one clip had no sourced line.
+    "bare_clip",
 ]
 
 # How a rejected program is narrowed, per typed reason. A reason not listed is not degraded.
@@ -96,6 +98,12 @@ class TextDrop:
                 en="Left out {text} because I couldn't add it as its own line",
                 tr="{text} metnini ayrı bir satır olarak ekleyemediğim için çıkardım",
                 text=quoted,
+            )
+        if self.reason == "bare_clip":
+            return say(
+                en="No sourced line for {count} of the clips.",
+                tr="Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı.",
+                count=count,
             )
         if self.reason == "incomplete":
             if quoted is not None:
