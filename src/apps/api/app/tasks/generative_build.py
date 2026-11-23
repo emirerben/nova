@@ -18071,6 +18071,7 @@ def _narrated_footage_fit(
     media_id_for_clip: Callable[[str], str | None],
     brief: Any,
     job_id: str,
+    spoken_words: Sequence[Any] = (),
 ) -> _NarratedFootageFit | None:
     """`fit_steps_to_footage` over this job's steps, failing open (KRI-1466).
 
@@ -18080,6 +18081,11 @@ def _narrated_footage_fit(
     order intent, or the brief's ``last_clip``), and the last clip when it should play on
     after the voice (KRI-842), keep their whole step. Any failure returns None and the steps
     render as they were; the outcome is on the trace.
+
+    Tahini run (``NARRATED_CUT_PACE_ENABLED``): the approved brief's typed pace
+    (`brief_cut_pace_s`) and its clip-scoped word cues (`_narrated_clip_cues`, timed on the
+    voiceover's ``spoken_words``) are passed on, and in-points round down. A clip shown again
+    on its word takes the moment named for that word; its step elsewhere does not.
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -18114,13 +18120,39 @@ def _narrated_footage_fit(
             for row in ((media_snapshot or {}).get("clip_assignments") or [])
             if isinstance(row, Mapping) and isinstance(row.get("analysis"), Mapping)
         }
+        pace_on = bool(settings.narrated_cut_pace_enabled)
+        cut_s: float | None = None
+        cues: list[Any] = []
+        cue_names: dict[str, str] = {}
+        if pace_on and brief is not None:
+            from app.kria.narrated_render_checks import brief_cut_pace_s  # noqa: PLC0415
+
+            live = list(brief.live())
+            cut_s = brief_cut_pace_s(live)
+            media_by_key = {
+                **{proxy_names[m]: m for m in durations if proxy_names.get(m)},
+                **{m: m for m in durations},
+            }
+            cues, cue_names = _narrated_clip_cues(
+                live, steps=steps, words=spoken_words, media_by_key=media_by_key
+            )
+        # (media, words) of a clip that comes back on its word: that word's moment is the cue's.
+        reshown = {
+            (cue.media_id, cue_names[cue.cue_id])
+            for cue in cues
+            if not any(
+                s.start_s <= cue.at_s < s.end_s and str(s.media_id) == cue.media_id for s in steps
+            )
+        }
         words_by_step: dict[str, list[str]] = {}
         rendered_by_step: dict[str, dict[str, Any]] = {}
         stored_by_step: dict[str, Mapping[str, Any]] = {}
         for step, clip_id in zip(steps, step_clip_ids, strict=True):
             media_id = str(step.media_id)
             keys = [key for key in (media_id, proxy_names.get(media_id)) if key]
-            words = [w for key in keys for w in words_by_key.get(key, [])]
+            words = [
+                w for key in keys for w in words_by_key.get(key, []) if (media_id, w) not in reshown
+            ]
             if not words:
                 continue
             words_by_step[str(step.step_id)] = list(dict.fromkeys(words))
@@ -18167,6 +18199,22 @@ def _narrated_footage_fit(
             # The brief names the clip to end on, or the last clip plays on after the voice
             # (KRI-842): nothing may follow the last step.
             keep_whole.add(str(steps[-1].step_id))
+        # Tahini run: where each cued clip shows what the creator named it for, by the same
+        # reading of its analysis (the render's, else the chat's stored record).
+        cue_moments = _narrated_cue_moments(
+            cues,
+            cue_names,
+            steps=steps,
+            step_clip_ids=step_clip_ids,
+            meta_by_clip=meta_by_clip,
+            stored=stored,
+            durations=durations,
+            locate=located_step_moments,
+        )
+        cues = [
+            replace(cue, moment=(m.start_s, m.end_s)) if (m := cue_moments.get(cue.cue_id)) else cue
+            for cue in cues
+        ]
         # The approved plan is the only word on reuse (never the request's text, KRI-470):
         # footage plays a second time only when it says `allow_repeat`.
         fit = fit_steps_to_footage(
@@ -18175,7 +18223,11 @@ def _narrated_footage_fit(
             moments={step_id: (m.start_s, m.end_s) for step_id, m in moments.items()},
             keep_whole=keep_whole,
             allow_replay=strategy.get("video_reuse_policy") == "allow_repeat",
+            **({"cut_s": cut_s, "cues": cues, "floor_in_points": True} if pace_on else {}),
         )
+        for cue_id, step_id in fit.cue_step_ids.items():
+            if cue_id in cue_moments:
+                moments[step_id] = cue_moments[cue_id]
     except Exception as exc:  # noqa: BLE001 - a better cut never costs the creator the video
         log.warning("narrated_footage_fit_failed", job_id=job_id, error=str(exc))
         record_pipeline_event(
@@ -18200,9 +18252,120 @@ def _narrated_footage_fit(
                 }
                 for step_id, moment in moments.items()
             ],
+            **(
+                {"cut_s": cut_s, "cue_steps": dict(fit.cue_step_ids), "cues": len(cues)}
+                if pace_on
+                else {}
+            ),
         },
     )
     return _NarratedFootageFit(fit=fit, moments=moments)
+
+
+def _narrated_clip_cues(
+    requirements: Sequence[Any],
+    *,
+    steps: Sequence[Any],
+    words: Sequence[Any],
+    media_by_key: Mapping[str, str],
+) -> tuple[list[Any], dict[str, str]]:
+    """Tahini run: the approved brief's clip-scoped word cues, timed on the voiceover.
+
+    A live non-text row scoped to one clip that names the words it plays on ("the fork bite
+    on "grab a fork"", `clip_cue_triggers`) is one `ClipCue` per named phrase found in the
+    voiceover, from the first word's start to the last word's end. Where the phrase is said
+    more than once, the time the step on screen already shows the clip wins (nothing to
+    change), else the first. Returns the cues and, by cue id, the row's own words for the shot
+    (to find the moment it names). A phrase the voiceover never says is no cue.
+    """
+    from app.kria.narrated_render_checks import clip_cue_triggers  # noqa: PLC0415
+    from app.pipeline.narrated_footage_fit import ClipCue  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    tokens: list[str] = []
+    owners: list[int] = []
+    for index, word in enumerate(words):
+        folded = fold_tokens(getattr(word, "text", ""))
+        tokens.extend(folded)
+        owners.extend([index] * len(folded))
+    cues: list[Any] = []
+    names: dict[str, str] = {}
+    for req in requirements:
+        asked = clip_cue_triggers(req)
+        media_id = media_by_key.get(asked[0]) if asked is not None else None
+        if asked is None or media_id is None:
+            continue
+        for number, trigger in enumerate(asked[1], start=1):
+            wanted = fold_tokens(trigger)
+            said = [
+                (owners[i], owners[i + len(wanted) - 1])
+                for i in range(len(tokens) - len(wanted) + 1)
+                if wanted and tokens[i : i + len(wanted)] == wanted
+            ]
+            if not said:
+                continue
+
+            def shown(span: tuple[int, int], media: str = media_id) -> bool:
+                at = float(words[span[0]].start_s)
+                return any(s.start_s <= at < s.end_s and str(s.media_id) == media for s in steps)
+
+            first, last = next((span for span in said if shown(span)), said[0])
+            cue_id = f"{req.id}:{number}"
+            cues.append(
+                ClipCue(
+                    cue_id=cue_id,
+                    media_id=media_id,
+                    at_s=round(float(words[first].start_s), 3),
+                    end_s=round(max(float(words[last].end_s), float(words[first].start_s)), 3),
+                )
+            )
+            names[cue_id] = " ".join(str(req.description or "").split())
+    return cues, names
+
+
+def _narrated_cue_moments(
+    cues: Sequence[Any],
+    names: Mapping[str, str],
+    *,
+    steps: Sequence[Any],
+    step_clip_ids: Sequence[str],
+    meta_by_clip: Mapping[str, Any],
+    stored: Mapping[str, Any],
+    durations: Mapping[str, float],
+    locate: Callable[..., Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Tahini run: by cue id, the moment its row's words name inside the cued clip (KRI-1466's
+    `located_step_moments`, on this render's analysis, else the chat's stored record)."""
+    from app.pipeline.phone_narrated_plan import NarratedPhoneStep  # noqa: PLC0415
+
+    clip_by_media = {str(s.media_id): c for s, c in zip(steps, step_clip_ids, strict=True)}
+    found: dict[str, Any] = {}
+    for cue in cues:
+        words = names.get(cue.cue_id) or ""
+        if not words or cue.media_id not in durations:
+            continue
+        probe = NarratedPhoneStep(
+            step_id=f"cue-{cue.cue_id}", media_id=cue.media_id, start_s=0.0, end_s=1.0
+        )
+        rendered = [
+            row if isinstance(row, Mapping) else getattr(row, "model_dump", dict)()
+            for row in (
+                getattr(meta_by_clip.get(clip_by_media.get(cue.media_id, "")), "best_moments", None)
+                or []
+            )
+        ]
+        analysis = {"best_moments": rendered} if rendered else stored.get(cue.media_id)
+        if not analysis:
+            continue
+        located = locate(
+            [probe],
+            words_by_step={probe.step_id: [words]},
+            analysis_by_step={probe.step_id: analysis},
+            durations=durations,
+        )
+        if probe.step_id in located:
+            found[cue.cue_id] = located[probe.step_id]
+    return found
 
 
 def _narrated_alignment_record(
@@ -18241,6 +18404,11 @@ def _narrated_alignment_record(
     fill_ids = footage_fit.fit.fill_step_ids if footage_fit is not None else frozenset()
     moments = footage_fit.moments if footage_fit is not None else {}
     moment_at = footage_fit.fit.moment_at_s if footage_fit is not None else {}
+    # Tahini run: a clip shown again on its named word is the creator's shot (its labels), but
+    # never the first / last seat its earlier step holds.
+    shown_again = (
+        frozenset(footage_fit.fit.cue_step_ids.values()) if footage_fit is not None else frozenset()
+    )
     labels_by_key: dict[str, list[str]] = {}
     placed_by_key: dict[str, list[dict[str, str]]] = {}
     for intent in strategy.get("resolved_clip_intents") or []:
@@ -18252,7 +18420,13 @@ def _narrated_alignment_record(
         name = " ".join(str(intent.get("attribute") or "").split())
         if not name:
             continue
-        spot = intent.get("position") if intent.get("op") == "order" else None
+        # A first / last row an earlier turn already seated names the clip, but no longer puts it
+        # there (KRI-1594: the creator has moved the clips since): its words stay, its spot goes.
+        spot = (
+            intent.get("position")
+            if intent.get("op") == "order" and not intent.get("already_seated")
+            else None
+        )
         for assignment in intent.get("assignments") or []:
             key = assignment.get("media_id") if isinstance(assignment, Mapping) else None
             if not key:
@@ -18288,7 +18462,7 @@ def _narrated_alignment_record(
                 "media_id": media_id,
                 "clip": clip,
                 "labels": [] if fill else labels,
-                "placed": [] if fill else placed,
+                "placed": [] if fill or str(step.step_id) in shown_again else placed,
                 "start_s": round(float(step.start_s), 3),
                 "end_s": round(float(step.end_s), 3),
                 "text": spoken[:_NARRATED_STEP_TEXT_CHARS],
@@ -18298,6 +18472,7 @@ def _narrated_alignment_record(
                     else {}
                 ),
                 **({"fill": True} if fill else {}),
+                **({"shown_on_word": True} if str(step.step_id) in shown_again else {}),
                 **({"source_start_s": source_start} if source_start > 0 else {}),
                 **(
                     {
@@ -18981,7 +19156,15 @@ def _run_phone_narrated_job(
                     variant_id="narrated",
                     glossary=_caption_glossary(snapshot, all_candidates),
                 )
-                cues = build_plain_cues(caption_transcript.words, attach_words=True)
+                # Tahini run: a spoken list's "2." stays with its words (off: as before).
+                from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+                    narrated_caption_blocks,
+                    narrated_cue_blocks,
+                )
+
+                cues = build_plain_cues(
+                    caption_transcript.words, attach_words=True, **narrated_cue_blocks()
+                )
                 cues = correct_caption_cues(
                     cues,
                     detected_lang,
@@ -19006,6 +19189,9 @@ def _run_phone_narrated_job(
                     cues = _apply_creator_spellings(
                         cues, _caption_glossary(snapshot, all_candidates)
                     )
+                # Tahini run: the finished sentences cut into short blocks (the phone Talking
+                # budget); off keeps the 14-word sentence cues.
+                cues = narrated_caption_blocks(cues)
                 # KRI-1177: this writer draws the typed caption look too, so the asked case is
                 # the cue text here as well (else its receipt reads as a look later changed).
                 cues = generation_caption_cues(cues, language=detected_lang)
@@ -19064,6 +19250,7 @@ def _run_phone_narrated_job(
                     media_id_for_clip=_media_id_for_clip,
                     brief=narrated_brief,
                     job_id=job_id,
+                    spoken_words=list(transcript.words),
                 )
                 if footage_fit is not None:
                     steps = footage_fit.fit.steps
@@ -19178,8 +19365,14 @@ def _run_phone_narrated_job(
                         bound=bool(snapshot.get("creator_brief_binding")),
                     )
 
-            opening_title_end_s = narrated_title_end_s(
-                transcript.words[0].end_s if transcript.words else None
+            # Tahini run: held to the end of the first sentence (2.5-3 s); off: a second
+            # after the first word, as the cloud narrated intro.
+            from app.pipeline.phone_narrated_plan import narrated_title_hold_end_s  # noqa: PLC0415
+
+            opening_title_end_s = (
+                narrated_title_hold_end_s(transcript.words)
+                if settings.narrated_title_legibility_enabled
+                else narrated_title_end_s(transcript.words[0].end_s if transcript.words else None)
             )
             spoken_rows: list[dict] = []
             spoken_receipt: dict | None = None
@@ -35256,19 +35449,18 @@ def _narrated_creator_clip_labels(
             clip_by_media.setdefault(key, clip_id)
 
     # Same seating as `clip_order_sequence.apply_sequence`: walk the order intents in
-    # listed order; a clip named by two intents belongs to the first one.
+    # listed order; a clip named by two intents belongs to the first one. Which rows seat is
+    # the one rule the planner, the contract and the phone preflight read (KRI-1594,
+    # `clip_order_sequence.seats_now`): a row an earlier turn already seated, which the
+    # creator has moved the clips away from since, seats nothing.
+    from app.services.clip_order_sequence import seats_now  # noqa: PLC0415
+
     pinned: dict[str, list[str]] = {"first": [], "last": []}
     groups: list[list[str]] = []
     claimed: set[str] = set()
     for intent in resolved:
         position = intent.get("position")
-        if (
-            intent.get("op") != "order"
-            or position not in (None, "first", "last")
-            or intent.get("order_by")
-            or intent.get("placeholder")
-            or intent.get("status") not in (None, "resolved")
-        ):
+        if not seats_now(intent) or intent.get("status") not in (None, "resolved"):
             continue
         members: list[str] = []
         for assignment in intent.get("assignments") or []:

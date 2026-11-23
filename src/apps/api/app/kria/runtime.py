@@ -861,17 +861,27 @@ async def _validate_scoped_turn(
 async def _clip_order_events(
     db: AsyncSession, thread_id: uuid.UUID
 ) -> list[tuple[str, dict[str, Any] | None]]:
+    from app.services.clip_order_ledger import ledger_events_clause  # noqa: PLC0415
+
     rows = (
         await db.execute(
             select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(
-                CreationThreadEvent.thread_id == thread_id,
-                CreationThreadEvent.role == "assistant",
-            )
+            .where(CreationThreadEvent.thread_id == thread_id, ledger_events_clause())
             .order_by(CreationThreadEvent.sequence)
         )
     ).all()
     return [(role, payload) for role, payload in rows]
+
+
+def _clip_order_retraction(turn_id: uuid.UUID) -> dict[str, Any]:
+    """KRI-1594: a removed or stopped message's clip-order entries never count: its
+    ``turn_cancelled`` event takes them back (`clip_order_ledger.retract_turns_row`). Nothing is
+    added with the ledger off."""
+    from app.services import clip_order_ledger as ledger  # noqa: PLC0415
+
+    if not ledger.clip_order_ledger_on():
+        return {}
+    return {ledger.LEDGER_KEY: [ledger.retract_turns_row([str(turn_id)])]}
 
 
 async def _submit_clip_order_turn(
@@ -1938,6 +1948,7 @@ async def cancel_turn(
             "approval_ids": approval_ids,
             **({"steered_to_turn_id": steered_to} if steered_to is not None else {}),
             **({REMOVED_WHILE_WAITING: True} if removed_while_waiting else {}),
+            **_clip_order_retraction(turn.id),
         },
     )
     if steered_to is not None:

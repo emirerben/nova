@@ -109,6 +109,24 @@ def stated_anchors(brief: object) -> dict[str, str]:
     return out
 
 
+def seats_now(intent: object, *, seated: bool = False) -> bool:
+    """Whether ``intent`` is a row of the creator's described sequence that places clips now.
+
+    An ``order`` intent with a ``first`` / ``last`` position or none, no ``order_by`` (a basis
+    order is the brief's) and no placeholder. A row an earlier turn already seated
+    (``already_seated``, `clip_order_ledger`) places nothing now: the creator has moved the clips
+    since. ``seated=True`` still counts it, for a caller that only asks whether the ask was PLACED
+    (it was, by that earlier turn). Every reader of the order rows asks this (KRI-1594).
+    """
+    if not isinstance(intent, Mapping) or intent.get("op") != "order":
+        return False
+    if intent.get("order_by") or intent.get("placeholder"):
+        return False
+    if intent.get("already_seated") and not seated:
+        return False
+    return intent.get("position") in (None, "first", "last")
+
+
 def sequence_rows(resolved_intents: object, *, seated: bool = False) -> list[SequenceRow]:
     """The creator's stated sequence: (position, name, member ids, status), listed order.
 
@@ -118,18 +136,9 @@ def sequence_rows(resolved_intents: object, *, seated: bool = False) -> list[Seq
     """
     rows: list[SequenceRow] = []
     for intent in _sequence(resolved_intents):
-        if not isinstance(intent, Mapping) or intent.get("op") != "order":
-            continue
-        if intent.get("order_by") or intent.get("placeholder"):
-            continue
-        if intent.get("already_seated") and not seated:
-            # An earlier turn seated this row and the creator did not restate it: it seats
-            # nothing now (`clip_order_ledger`). ``seated=True`` still reads it, for the callers
-            # that only ask whether the creator's ask was PLACED (it was, by that earlier turn).
+        if not seats_now(intent, seated=seated):
             continue
         position = intent.get("position")
-        if position not in (None, "first", "last"):
-            continue
         status = str(intent.get("status") or "resolved")
         members = _members(intent) if status == "resolved" else []
         name = _nfc(intent.get("attribute"))
