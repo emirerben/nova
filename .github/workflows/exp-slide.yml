@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arm: [main, fix]
+        arm: [fix]
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -33,7 +33,8 @@ jobs:
           s = p.read_text()
           old = '        XCTAssertGreaterThan(count, 8, "auto-scroll kept selecting as rows passed under the finger: \\(count)")'
           assert s.count(old) == 1
-          p.write_text(s.replace(old, '        print("SLIDE-COUNT \\(count)")\n' + old))
+          tail = '        print("SLIDE-TAIL " + [47, 44, 41, 38, 35, 32].map { n in "\\(n):" + (self.tileButton(app, n).exists ? (self.tileButton(app, n).value as? String ?? "?") : "offscreen") }.joined(separator: " | "))\n'
+          p.write_text(s.replace(old, '        print("SLIDE-COUNT \\(count)")\n' + tail + old))
           PY
           git diff --stat
       - name: Build
