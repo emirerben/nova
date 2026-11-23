@@ -1,8 +1,8 @@
 {
- "_source": "KRI-1580. Writer answers in the designed shape for the Kyoto windows, authored from the approved teardown copy (round 1, B1 and A2 stills). Two teardown names are swapped for the ones the cited facts state: 'Sagano Romantik Treni' (in no fact) and 'Hozukyo Vadisi' (fact-6 says Geçidi). Not a model recording: the live re-record stage captures the real writer answer for this input. The hook cites fact-1 beside fact-6, because fact-1 is the one that says Kyoto and fact-6 the one that says 25 dakika.",
+ "_source": "KRI-1580. Live Gemini writer answers (caption_binding) for the Kyoto windows, recorded at head 7145a83b through run_researched_revision with the facts search replayed from research.json. Each answer was accepted on its first attempt and approved by the live claim review. Stored verbatim. B1: run kri1580-research-copy-7145a83b-b1-r1, writer rc-def013c0f7f1 prompt sha256 02042f988e15b60c; A2: run kri1580-research-copy-7145a83b-a2-r1, writer rc-def013c0f7f1 prompt sha256 8e90f73c419547a2. Run logs: docs/reviews/kri-1585/kri1580-live-rerecord/.",
  "B1": {
   "hook": {
-   "text": "Kyoto'nun en güzel 25 dakikası",
+   "text": "Bu Kyoto'da 25 dakikalık bir tren yolculuğu",
    "evidence_ids": [
     "fact-1",
     "fact-6"
@@ -11,68 +11,95 @@
   "captions": [
    {
     "window_id": "window-0",
-    "text": "Saga'dan Kameoka'ya, 7,3 km'lik bir yol",
+    "heading": "",
+    "text": "Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na yola çıkıyoruz.",
     "evidence_ids": [
      "fact-6"
     ],
-    "visual_quote": "map of a train route with photos"
+    "visual_quote": "pointing at a map while explaining a train route",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-1",
-    "text": "İşte trenimiz, beş vagonlu retro bir tren",
+    "heading": "",
+    "text": "Bu hat ilk olarak 1899 yılında Kyoto ve Sonobe'yi bağlamak için açılmış.",
     "evidence_ids": [
-     "fact-11",
-     "fact-12"
+     "fact-1"
     ],
-    "visual_quote": "red and yellow train A small red"
+    "visual_quote": "train arriving and passengers on platform",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-2",
-    "text": "Ahşap banklı retro vagonlara biniyoruz",
+    "heading": "",
+    "text": "Vagonların içi eski tarz ahşap banklarla retro bir tasarıma sahip.",
     "evidence_ids": [
      "fact-11"
     ],
-    "visual_quote": "people on a train The video show"
+    "visual_quote": "boarding a train and sitting inside it",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-3",
-    "text": "Ray, Hozukyo Geçidi boyunca kıvrılıyor",
+    "heading": "",
+    "text": "Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik bir güzergahtayız.",
     "evidence_ids": [
      "fact-6"
     ],
-    "visual_quote": "river and forested landscape fro"
+    "visual_quote": "traveling by train, viewing scenery",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-4",
-    "text": "Manzara mevsime göre değişiyor",
+    "heading": "",
+    "text": "Pencereleri açılabilen dört vagon ve The Rich adında tamamen açık beşinci bir vagon var.",
     "evidence_ids": [
-     "fact-8"
+     "fact-12"
     ],
-    "visual_quote": "people on a train viewing scener"
+    "visual_quote": "riding a train, looking out the window, pointing at scenery, talking",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-5",
-    "text": "Hozukyo Geçidi'nin tam ortasındayız",
-    "evidence_ids": [
-     "fact-6"
-    ],
-    "visual_quote": "scenic landscape from a train Th"
-   },
-   {
-    "window_id": "window-6",
-    "text": "İlkbaharda kiraz, sonbaharda bu kızıl yapraklar",
+    "heading": "",
+    "text": "Mevsimlere göre değişen bu manzarada ilkbaharda kiraz çiçekleri, yazın yeşil doğa var.",
     "evidence_ids": [
      "fact-8"
     ],
-    "visual_quote": "autumn mountain river landscape"
+    "visual_quote": "traveling through a valley by train",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
+   },
+   {
+    "window_id": "window-6",
+    "heading": "",
+    "text": "Bizim gibi sonbaharda geldiğinizde bu sonbahar yapraklarını görebilirsiniz.",
+    "evidence_ids": [
+     "fact-8"
+    ],
+    "visual_quote": "traveling through a scenic route",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    }
   ],
-  "limitations": "",
+  "limitations": "Sadece sağlanan gerçekler kullanılmıştır. İstenilen ses kapatma işlemi başka bir adımda uygulanacağı için karşılanamayan isteklere eklenmemiştir.",
   "unmet_requests": []
  },
  "A2": {
   "hook": {
-   "text": "Kyoto'nun en güzel 25 dakikası",
+   "text": "İşte Kyoto'daki 25 dakikalık tren yolculuğu",
    "evidence_ids": [
     "fact-1",
     "fact-6"
@@ -81,48 +108,64 @@
   "captions": [
    {
     "window_id": "window-0",
-    "heading": "7,3 km",
-    "text": "Saga'dan Kameoka'ya, yaklaşık 25 dakika",
+    "heading": "7.3 kilometrelik hat",
+    "text": "Yolculuk Torokko Saga İstasyonu'nda başlıyor.",
     "evidence_ids": [
      "fact-6"
     ],
-    "visual_quote": "map of a train route with photos"
+    "visual_quote": "map of a train route with photos",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-1",
-    "heading": "Beş vagon",
-    "text": "Biri tamamen açık, dördünün pencereleri açılıyor",
+    "heading": "Retro tasarım",
+    "text": "Trenin kapalı ve açık olmak üzere toplam beş vagonu var.",
     "evidence_ids": [
+     "fact-11",
      "fact-12"
     ],
-    "visual_quote": "red and yellow train A small red"
+    "visual_quote": "red and yellow train",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-2",
-    "heading": "Retro vagonlar",
-    "text": "Ahşap banklar, eski usul tasarım",
+    "heading": "Ahşap banklar",
+    "text": "İçerisi eski tarz ahşap banklarla donatılmış.",
     "evidence_ids": [
      "fact-11"
     ],
-    "visual_quote": "people on a train The video show"
+    "visual_quote": "people on a train",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
-    "window_id": "window-5",
+    "window_id": "window-3",
     "heading": "Hozukyo Geçidi",
-    "text": "Ray, nehrin kıyısı boyunca kıvrılıyor",
+    "text": "Güzergahımız tam olarak bu geçit boyunca uzanıyor.",
     "evidence_ids": [
      "fact-6"
     ],
-    "visual_quote": "scenic landscape from a train Th"
+    "visual_quote": "river and forested landscape from train window",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    },
    {
     "window_id": "window-6",
-    "heading": "Mevsimden mevsime",
-    "text": "İlkbaharda kiraz çiçekleri, sonbaharda kızıl yapraklar",
+    "heading": "Sonbahar yaprakları",
+    "text": "İlkbaharda kiraz çiçekleri, şimdi ise sonbahar yaprakları görülebiliyor.",
     "evidence_ids": [
      "fact-8"
     ],
-    "visual_quote": "autumn mountain river landscape"
+    "visual_quote": "autumn mountain river landscape",
+    "scope": "context",
+    "subject_name": "",
+    "identity_quote": ""
    }
   ],
   "limitations": "",

@@ -28,8 +28,8 @@ Failure modes, written before the code:
    reading time together, a titled fact with no heading, a fact set on every row outgrowing the
    editor state, a partly bare guide reported as her whole ask failing.
 
-The writer answers in `research_copy_designed.json` are authored from the teardown, and reviews
-are stubbed: assertions on them are structural, so a live capture can replace the file.
+The writer answers in `research_copy_designed.json` are live captures (decisions 2.55-2.58), and
+reviews are stubbed: assertions on them are structural, so a later capture can replace the file.
 """
 
 from __future__ import annotations
