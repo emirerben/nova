@@ -25,18 +25,6 @@ jobs:
         run: |
           git checkout origin/main -- src/apps/ios/Kria/Core/DragSelect.swift src/apps/ios/Kria/Features/DragSelectScrollView.swift src/apps/ios/Tests/KriaTests/DragSelectTests.swift
           git status --short
-      - name: Print the count the UI test reads
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("src/apps/ios/Tests/KriaUITests/CreationUITests.swift")
-          s = p.read_text()
-          old = '        XCTAssertGreaterThan(count, 8, "auto-scroll kept selecting as rows passed under the finger: \\(count)")'
-          assert s.count(old) == 1
-          tail = '        print("SLIDE-TAIL " + [47, 44, 41, 38, 35, 32].map { n in "\\(n):" + (self.tileButton(app, n).exists ? (self.tileButton(app, n).value as? String ?? "?") : "offscreen") }.joined(separator: " | "))\n'
-          p.write_text(s.replace(old, '        print("SLIDE-COUNT \\(count)")\n' + tail + old))
-          PY
-          git diff --stat
       - name: Build
         run: |
           set -euo pipefail
@@ -68,7 +56,7 @@ jobs:
             -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 \
             -only-testing:KriaUITests/CreationUITests/testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls \
             -only-testing:KriaUITests/CreationUITests/testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsCircleAndTapToWatch \
-            -test-iterations 15 test-without-building > idle.log 2>&1 || status=$?
+            -test-iterations 20 test-without-building > idle.log 2>&1 || status=$?
           echo "xcodebuild exit $status"
           bash ../../../scripts/exp-slide-summary.sh idle.log
           echo "across-tiles test: passed $(grep -c "testClipPickerSlideAcrossTiles.*\]' passed" idle.log || true), failed $(grep -c "testClipPickerSlideAcrossTiles.*\]' failed" idle.log || true)"

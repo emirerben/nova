@@ -1668,6 +1668,12 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(eventually { self.selectedCount(app) != "0 of 48 selected" })
         let count = Int(selectedCount(app).split(separator: " ").first ?? "0") ?? 0
         XCTAssertGreaterThan(count, 8, "auto-scroll kept selecting as rows passed under the finger: \(count)")
+        // The hold outlasts the grid at any redraw speed (KRI-1602). The finger rests on the last column, so every
+        // row that passed under it has that column's clip selected, down to the last one.
+        XCTAssertTrue(tileButton(app, 47).exists, "the grid scrolled to its last row")
+        for n in [47, 44, 41, 38, 35] where tileButton(app, n).exists {
+            XCTAssertEqual(tileButton(app, n).value as? String, "Selected", "clip \(n + 1): no row passes under the finger unseen")
+        }
     }
 
     /// KRI-693: a Visuals photo in the picker shows its thumbnail and reads as a photo in the chat's language,
