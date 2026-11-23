@@ -709,18 +709,18 @@ waits for three green nightlies in a row before it ships.
 **Rollback:** `gh variable set CI_MAC_SELECTION --body full`, the same switch as
 the PR rule. Every push starts the Mac again from the next run; no code change.
 
-**Replay** (2026-11-06 to 11-22, run list and local git only, no paid call):
+**Replay** (2026-11-06 to 11-22, run list and local git only, no paid call; selector as of 2026-11-23, after KRI-1551 classified more root paths):
 
 | | Pushes | No Mac under the rule |
 | --- | --- | --- |
-| Each push compared with its own parent (upper bound) | 357 | 117 (33%) |
-| Real queue: each run compared with the last green run before it | 352 | 28 (8%) |
+| Each push compared with its own parent (upper bound) | 358 | 123 (34%) |
+| Real queue: each run compared with the last green run before it | 352 | 30 (9%) |
 
 The real figure lies between the two. Today a push waits behind a ~40-minute
 Mac run and pending runs are replaced, so one run covers 2 to 13 commits and
 almost always contains an iPhone change. Under the rule a run with no Mac ends
 in minutes, so runs cover fewer commits. Most ranges that need a Mac touch
-`src/apps/ios/` (239 of 304); after that `src/apps/api/app/config.py` (131, a
+`src/apps/ios/` (239 of 304 in the first replay); after that `src/apps/api/app/config.py` (131, a
 TestFlight release input that changes with every new flag), a native journey
 row (103) and unclassified root paths such as `.gitignore` and `fly.toml`.
 In the same period 20 pushes would have run the Mac because the last
