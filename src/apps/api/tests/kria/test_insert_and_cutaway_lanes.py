@@ -105,11 +105,14 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned again for KRI-1561 PR 6 (the typed `sound_effects` brief fact, taught while a writer's
 # gate is open); masking that one sentence reproduces the values before it: c9391bb9 / 33304ad0 /
 # 98ebf115 / 4cc5fdd1.
+# Re-pinned for KRI-1561 PR 5b (the general sound-effect section also names what each clip shows,
+# taught for a montage with no voiceover); replacing that one section with its previous text
+# reproduces the values before it, for all four prompts.
 MAIN_PROMPT_SHA = {
-    "neither": "caa371d9624d36dd0eb180442b15d75ce09d5de3ec41d18cbf6a930ca386a984",
-    (True, True): "da1d5f1d4608fe70188b5af234bb3060c84b14620cd7ae08109e8d0f019ffc85",
-    (True, False): "a19e6eabab089222c7965b126c17325b9590ea514d0b74e939d0f4faa0ffc520",
-    (False, True): "16e7270fd4a762168dce4e9059079f64ec9dd1c7d8951a2c623b72f707798fe3",
+    "neither": "5df476e68bfa87c214bb88fbc8ea5f1ca06f666be72803f9d5ce08f2a1e0e2f7",
+    (True, True): "6e96cdb69cae787deeac795d7a40281f93417419c4a4dc69c09b5bcac5c82cbe",
+    (True, False): "3ffcb2009f72cce3e3df09b8d2956b3bc57bd0ea04a840f16011b4f4801192d9",
+    (False, True): "f40fa3c94192871eadc445224a98622a703921387aff00ef10288ee41459aba4",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (
