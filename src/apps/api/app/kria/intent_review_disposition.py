@@ -16,11 +16,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents._schemas.intent_review import (
-    DEFECTS_BY_REQUIREMENT_KIND,
+    LEGIBILITY_DEFECT,
     IntentFinding,
     IntentReviewOutput,
     InvalidReviewOutput,
     counts_as_met,
+    defects_by_requirement_kind,
     parse_review_output,
 )
 from app.kria.intent_review_catalog import ReviewCatalog
@@ -94,6 +95,7 @@ def validate_review_output(
     output: IntentReviewOutput, catalog: ReviewCatalog
 ) -> list[IntentFinding]:
     issued = {item.requirement_id: item for item in catalog.requirements}
+    allowed = defects_by_requirement_kind(legibility=catalog.text_legibility)
     frames = set(catalog.frame_ids)
     checked: list[IntentFinding] = []
     for finding in output.findings:
@@ -102,10 +104,7 @@ def validate_review_output(
             raise InvalidReviewOutput("unknown_requirement")
         if not set(finding.evidence_frame_ids) <= frames:
             raise InvalidReviewOutput("unknown_frame")
-        if (
-            finding.verdict == "unmet"
-            and finding.defect_kind not in DEFECTS_BY_REQUIREMENT_KIND[requirement.kind]
-        ):
+        if finding.verdict == "unmet" and finding.defect_kind not in allowed[requirement.kind]:
             raise InvalidReviewOutput("incompatible_defect_kind")
         if finding.verdict == "met" and requirement.kind == "timing":
             # Stills sample instants; they cannot show how long anything stays on screen.
@@ -186,6 +185,9 @@ def dispose(
                 )
                 for candidate in matching
             )
+        elif finding.defect_kind == LEGIBILITY_DEFECT:
+            # No candidate repaints text; the creator is told it may not read clearly.
+            suggestions.append(Suggestion(requirement_id=alias, why="no_candidate"))
         elif requirement.kind in _TEXT_KINDS and requirement.draft_matches_authority:
             suggestions.append(Suggestion(requirement_id=alias, why="render_fidelity"))
         elif (

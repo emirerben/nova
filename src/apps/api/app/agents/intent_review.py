@@ -17,9 +17,9 @@ from pydantic import BaseModel, Field, ValidationError
 from app.agents._openai_vision import DEFAULT_TIMEOUT_S, MAX_OUTPUT_TOKENS, VISION_MODEL
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.intent_review import (
-    DEFECTS_BY_REQUIREMENT_KIND,
     IntentReviewOutput,
     InvalidReviewOutput,
+    defects_by_requirement_kind,
     parse_review_output,
 )
 from app.agents.prompt_vocab import PROMPT_VOCABULARIES
@@ -28,6 +28,16 @@ from app.pipeline.prompt_loader import load_prompt
 from app.services.ai_cost_control import UsageMeter, calculate_cost_usd
 
 PROMPT_VERSION = "intent_review_v3"
+# KRI-1583: the v3 prompt plus the legibility rule and defect kind, sent only for a catalog with
+# `text_legibility` (a job stamped for informative text designs). Every other review sends v3.
+LEGIBILITY_PROMPT_VERSION = "intent_review_v4"
+LEGIBILITY_RULE = (
+    "- Text that is on screen but hard to read is not satisfied: dark text on a dark part of "
+    "the picture, light text on a light part, or letters lost in a busy background. When a "
+    'frame shows a text requirement\'s text that way, return "unmet" with "text_illegible" '
+    "and cite that frame. Judge only whether a viewer can read it, not whether you like the "
+    "colour or font.\n"
+)
 FRAMES_REQUIRED = "frames://intent-review"
 MAX_REQUEST_CHARS = 2_000
 
@@ -45,10 +55,16 @@ def _line(value: dict) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
 
 
+def prompt_version_for(catalog: ReviewCatalog) -> str:
+    return LEGIBILITY_PROMPT_VERSION if catalog.text_legibility else PROMPT_VERSION
+
+
 def render_review_prompt(input: IntentReviewInput) -> str:  # noqa: A002
     catalog = input.catalog
     request = input.original_request[:MAX_REQUEST_CHARS]
     kinds = sorted({item.kind for item in catalog.requirements})
+    legible = catalog.text_legibility
+    allowed = defects_by_requirement_kind(legibility=legible)
     return load_prompt(
         "intent_review",
         request_json=json.dumps(request, ensure_ascii=False),
@@ -73,12 +89,13 @@ def render_review_prompt(input: IntentReviewInput) -> str:  # noqa: A002
             )
             for frame in catalog.frames
         ),
-        defects_by_kind="\n".join(
-            f"  - {kind}: {', '.join(DEFECTS_BY_REQUIREMENT_KIND[kind])}" for kind in kinds
-        ),
+        defects_by_kind="\n".join(f"  - {kind}: {', '.join(allowed[kind])}" for kind in kinds),
         verdicts=PROMPT_VOCABULARIES["INTENT_REVIEW_VERDICTS"].rendered,
-        defect_kinds=PROMPT_VOCABULARIES["INTENT_REVIEW_DEFECT_KINDS"].rendered,
+        defect_kinds=PROMPT_VOCABULARIES[
+            "INTENT_REVIEW_LEGIBILITY_DEFECT_KINDS" if legible else "INTENT_REVIEW_DEFECT_KINDS"
+        ].rendered,
         confidence_levels=PROMPT_VOCABULARIES["INTENT_REVIEW_CONFIDENCE"].rendered,
+        legibility_rule=LEGIBILITY_RULE if legible else "",
     )
 
 
