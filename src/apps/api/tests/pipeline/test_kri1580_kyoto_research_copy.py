@@ -1369,3 +1369,23 @@ def test_a_full_guide_with_a_full_fact_set_fits_the_editor_state(monkeypatch):
         {"base_generation": "g1", "client_state_id": "s1", "lanes": {"text_elements": rows}}
     )
     assert [fact.id for fact in prepared_evidence_facts(output.ops)] == [f.id for f in facts]
+
+
+@pytest.mark.parametrize(
+    ("heading", "ids", "unstated"),
+    [
+        ("Her mevsim başka", ["fact-8"], None),
+        ("Bu Sagano treni", ["fact-6"], "Sagano"),
+        ("İşte Hozukyo Geçidi", ["fact-6"], None),
+    ],
+)
+def test_a_heading_may_open_with_a_framing_word_but_not_an_ungrounded_name(heading, ids, unstated):
+    written = _one(heading, "Ahşap banklar", ["fact-11"])
+    written["captions"][0]["evidence_ids"] = ids + ["fact-11"]
+    if unstated is None:
+        ops, _missing = designed_operations(
+            DesignedCopyOutput.model_validate(written), _evidence(), _snapshot(), _request(), "A2"
+        )
+        assert ops[1]["text"] == heading
+    else:
+        assert _reject(written, "A2").split("do not: ")[1] == unstated
