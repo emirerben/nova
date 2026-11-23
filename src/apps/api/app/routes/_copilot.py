@@ -427,6 +427,7 @@ async def run_copilot_turn(
     deadline_monotonic: float | None = None,
     timeout_override_s: float | None = 40.0,
     compile_check: CompileCheck | None = None,
+    text_design: str | None = None,
 ) -> CopilotTurnResponse:
     """Run one stateless edit-copilot turn.
 
@@ -517,6 +518,8 @@ async def run_copilot_turn(
                     deadline_monotonic=deadline_monotonic,
                     timeout_override_s=timeout_override_s,
                 ),
+                # KRI-1580: set by the server from the job's stamp, never by the client body.
+                text_design=text_design,
             )
         except (ResearchUnavailable, TerminalError) as exc:
             if isinstance(exc, (AiBudgetExceededError, ProviderOutcomeUnknownError)):

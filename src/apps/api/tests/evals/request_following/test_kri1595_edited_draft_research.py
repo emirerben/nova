@@ -24,6 +24,8 @@ Failure modes written before the test:
 9. The refusal log leaks content (media ids, text) instead of key names and value types.
 10. A draft whose clips already state windows (unedited guided story, split screen) changes.
 11. Garbage from an untrusted client snapshot (text, NaN, a flag) crashes the turn.
+12. A job stamped with an informative text design (KRI-1580) reads its hook and per-clip
+    windows from the raw slots, so the same request on the same draft is refused again.
 
 Independent expectation: ``tests/fixtures/kri1595_edited_draft/prod_timeline.json``, the prod
 timeline as stored and its clock worked out by hand, whose last end is the job's recorded
@@ -53,6 +55,8 @@ from app.services.researched_text import (
     ResearchCopyAgent,
     ResearchReviewAgent,
     ResearchReviewOutput,
+    design_opening,
+    design_windows,
     evidence_from_response,
     research_windows,
 )
@@ -205,11 +209,12 @@ def stub_models(monkeypatch, *, on="valley"):
     return calls
 
 
-def turn(snapshot):
+def turn(snapshot, text_design=None):
     return asyncio.run(
         run_copilot_turn(
             CopilotTurnBody(message=REQUEST, snapshot=snapshot, client_contract_version=2),
             job_id=uuid.uuid4(),
+            text_design=text_design,
         )
     )
 
@@ -319,3 +324,75 @@ def test_timing_refusal_reads_in_english_for_other_callers():
     """The render-time composer wraps ``str(exc)``; it stays an English reason."""
     exc = ClipTimingMissing(2)
     assert str(exc) == "Clip 2 has no usable length, so its place in the video is unknown"
+
+
+@pytest.mark.parametrize("text_design", ["A1", "A2", "A3", "B1"])
+def test_every_design_reads_the_same_derived_clock(text_design):
+    """Failure mode 12: a design's hook and windows sit on the hand-written clock."""
+    job, variant = edited_job()
+    snapshot = snapshot_of(job, variant)
+
+    hook, facts_start = design_opening(snapshot)
+    windows = design_windows(snapshot, text_design)
+
+    assert (hook["start_s"], hook["end_s"], hook["media_ids"]) == (0.0, 3.4, ["friends"])
+    assert windows and windows[0]["start_s"] >= facts_start
+    assert windows[-1]["end_s"] == pytest.approx(RECORDED_EDIT_DURATION_S, abs=1e-3)
+    for window in windows:
+        assert window["media_ids"], window
+        for media_id in window["media_ids"]:
+            start, end = CLOCK[media_id]
+            assert window["start_s"] < end and window["end_s"] > start, (media_id, window)
+    for before, after in zip(windows, windows[1:], strict=False):
+        assert before["end_s"] <= after["start_s"]
+
+
+def test_a_design_job_gets_its_hook_and_titled_fact_on_the_edited_draft(monkeypatch):
+    """Failure mode 12, whole turn: design A1 on the incident draft, hook plus one fact."""
+    job, variant = edited_job()
+    calls = stub_models(monkeypatch)
+
+    def write(self, input, *, ctx=None):
+        windows = input.snapshot["research_windows"]
+        calls.append(("design", input.text_design, copy.deepcopy(windows)))
+        # The last window: the valley clip after the ticket clip's cross-fade.
+        valley = windows[-1]
+        return self.parse(
+            json.dumps(
+                {
+                    "hook": {
+                        "text": "This is the Sagano Scenic Railway",
+                        "evidence_ids": ["fact-0"],
+                    },
+                    "captions": [
+                        {
+                            "window_id": valley["id"],
+                            "heading": "Sagano Scenic Railway",
+                            "text": "Open carriages run along the Hozu River.",
+                            "evidence_ids": ["fact-0"],
+                            "visual_quote": "open sightseeing carriage",
+                            "scope": "context",
+                        }
+                    ],
+                }
+            ),
+            input,
+        )
+
+    monkeypatch.setattr(ResearchCopyAgent, "run", write)
+
+    result = turn(snapshot_of(job, variant), text_design="A1")
+
+    assert result.outcome == "proposed", result.reply
+    assert "output window" not in result.reply
+    [_search, (_design, design, _windows)] = calls
+    assert design == "A1"
+    hook, heading, detail = result.ops
+    assert (hook["start_s"], hook["end_s"]) == pytest.approx((0.0, 3.4))
+    assert hook["research"]["media_ids"] == ["friends"]
+    # The fact runs from the end of the ticket clip's cross-fade to the end of the edit.
+    valley = (CLOCK["ticket"][1], CLOCK["valley"][1])
+    for row in (heading, detail):
+        assert (row["start_s"], row["end_s"]) == pytest.approx(valley, abs=1e-3)
+        assert "valley" in row["research"]["media_ids"]
+        assert row["research"]["sources"][0]["url"] == SOURCE

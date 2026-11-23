@@ -439,6 +439,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Colour speaker backgrounds await native parity and device qualification",
             capability="speakerBackgroundColor",
         )
+    # KRI-1581: same explicit gate for a text scrim (`compile_text_overlay` drops it before it
+    # gets here unless verified; this catches a caller that added one afterwards).
+    if recipe_has_text_designs(recipe) and "textDesigns" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Designed text backgrounds await native parity and device qualification",
+            capability="textDesigns",
+        )
     # Text behind people: same explicit gate (`compile_text_overlay` strips the flag before
     # it gets here unless verified; this catches a caller that stamped it afterwards).
     if any(layer.behind_subject for layer in recipe.text_layers) and "behindSubject" not in set(
@@ -879,6 +888,79 @@ def text_behind_subject_phone_supported(*, require_client: bool | None = None) -
         and "behindSubject" in set(settings.phone_render_verified_features)
         and text_behind_subject_phone_client_supported(require_client=require_client)
     )
+
+
+def text_designs_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a text layer's ``scrim`` (KRI-1581)?
+
+    ``require_client`` ``None`` applies the gate only inside an HTTP request (a worker has no
+    app build to qualify). Mirrors `text_behind_subject_phone_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        INFORMATIVE_TEXT_DESIGNS_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= INFORMATIVE_TEXT_DESIGNS_PROTOCOL
+
+
+def text_designs_phone_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry a text ``scrim`` right now? Flag on, ``textDesigns`` verified on
+    device and a build that decodes it. When False, `compile_text_overlay` drops the scrim."""
+    return bool(
+        settings.informative_text_designs_enabled
+        and "textDesigns" in set(settings.phone_render_verified_features)
+        and text_designs_client_supported(require_client=require_client)
+    )
+
+
+def text_designs_planned_for(client_protocol: int | None) -> bool:
+    """May a job approved from ``client_protocol`` be styled in an informative design (KRI-1581)?
+
+    Read like `caption_shape_planned_for`: the stamp is the approving build. Below
+    ``INFORMATIVE_TEXT_DESIGNS_PROTOCOL`` its editor would redraw the design with the standard
+    shadow and no scrim, so the job keeps plain informative rows.
+    """
+    from app.services.client_protocol import INFORMATIVE_TEXT_DESIGNS_PROTOCOL  # noqa: PLC0415
+
+    return bool(
+        settings.informative_text_designs_enabled
+        and "textDesigns" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= INFORMATIVE_TEXT_DESIGNS_PROTOCOL
+    )
+
+
+def recipe_has_text_designs(recipe: Any) -> bool:
+    """Does a text layer of ``recipe`` carry design paint (a ``scrim`` or ``srgb_blend``)?"""
+    return any(
+        getattr(layer, "scrim", None) is not None or getattr(layer, "srgb_blend", None)
+        for layer in getattr(recipe, "text_layers", None) or []
+    )
+
+
+def text_designs_update_detail(recipe: Any) -> dict | None:
+    """The 426 detail for a build that cannot decode ``recipe``'s designed text, else None.
+
+    Compile drops the paint for such a build's own saves; this covers a recipe the worker or a
+    newer build pinned. Only the build is checked, never the flag or the verified token: turning
+    those off must not lock a protocol-55 phone out of a recipe that is already pinned.
+    """
+    from app.services.client_protocol import INFORMATIVE_TEXT_DESIGNS_PROTOCOL  # noqa: PLC0415
+
+    if not recipe_has_text_designs(recipe) or text_designs_client_supported():
+        return None
+    return {
+        "code": "client_update_required",
+        "feature": "text_designs",
+        "minimum_client_protocol": INFORMATIVE_TEXT_DESIGNS_PROTOCOL,
+    }
 
 
 def speaker_background_client_supported(*, require_client: bool | None = None) -> bool:

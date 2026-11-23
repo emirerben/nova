@@ -1,0 +1,1222 @@
+{
+ "_source": "KRI-1581. Numbers only (no footage): scripts/ios/kri-1581-text-designs-e2e.py score, after prepare and the simulator export (DeviceInformativeTextRenderE2ETests, iPhone 17 Pro, iOS 26.5). Boxes are [left, top, right, bottom] px at 1080x1920; delta is phone or Skia minus the mock-up; bottom_ratio is the band y 0.80-0.86 against the base; halo is the luminance ratio in a 2-7 px ring around the glyphs.",
+ "pass": true,
+ "designs": {
+  "A1": [
+   {
+    "t": 2.0,
+    "mock_box": [
+     116,
+     704,
+     967,
+     915
+    ],
+    "mock_bottom_ratio": 0.995,
+    "under_scrim": false,
+    "mock_halo": 0.914,
+    "phone": {
+     "box": [
+      116,
+      706,
+      985,
+      917
+     ],
+     "delta": [
+      0,
+      2,
+      18,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.92,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      116,
+      704,
+      967,
+      917
+     ],
+     "delta": [
+      0,
+      0,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.89,
+     "pass": true
+    }
+   },
+   {
+    "t": 6.53,
+    "mock_box": [
+     78,
+     1118,
+     897,
+     1321
+    ],
+    "mock_bottom_ratio": 1.041,
+    "under_scrim": false,
+    "mock_halo": 0.951,
+    "phone": {
+     "box": [
+      76,
+      1120,
+      909,
+      1321
+     ],
+     "delta": [
+      -2,
+      2,
+      12,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.935,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      76,
+      1118,
+      897,
+      1321
+     ],
+     "delta": [
+      -2,
+      0,
+      0,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.917,
+     "pass": true
+    }
+   },
+   {
+    "t": 13.81,
+    "mock_box": [
+     78,
+     1110,
+     891,
+     1321
+    ],
+    "mock_bottom_ratio": 1.004,
+    "under_scrim": false,
+    "mock_halo": 0.909,
+    "phone": {
+     "box": [
+      76,
+      1112,
+      897,
+      1323
+     ],
+     "delta": [
+      -2,
+      2,
+      6,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.939,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      76,
+      1110,
+      889,
+      1323
+     ],
+     "delta": [
+      -2,
+      0,
+      -2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.927,
+     "pass": true
+    }
+   },
+   {
+    "t": 21.5,
+    "mock_box": [
+     76,
+     1118,
+     725,
+     1321
+    ],
+    "mock_bottom_ratio": 0.938,
+    "under_scrim": false,
+    "mock_halo": 0.939,
+    "phone": {
+     "box": [
+      76,
+      1118,
+      729,
+      1323
+     ],
+     "delta": [
+      0,
+      0,
+      4,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.935,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      76,
+      1118,
+      725,
+      1323
+     ],
+     "delta": [
+      0,
+      0,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.926,
+     "pass": true
+    }
+   },
+   {
+    "t": 45.53,
+    "mock_box": [
+     78,
+     1110,
+     781,
+     1333
+    ],
+    "mock_bottom_ratio": 1.01,
+    "under_scrim": false,
+    "mock_halo": 0.945,
+    "phone": {
+     "box": [
+      76,
+      1112,
+      793,
+      1333
+     ],
+     "delta": [
+      -2,
+      2,
+      12,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.943,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      76,
+      1110,
+      781,
+      1333
+     ],
+     "delta": [
+      -2,
+      0,
+      0,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.93,
+     "pass": true
+    }
+   },
+   {
+    "t": 55.14,
+    "mock_box": [
+     78,
+     1112,
+     797,
+     1333
+    ],
+    "mock_bottom_ratio": 1.013,
+    "under_scrim": false,
+    "mock_halo": 0.947,
+    "phone": {
+     "box": [
+      78,
+      1112,
+      801,
+      1333
+     ],
+     "delta": [
+      0,
+      0,
+      4,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.928,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      78,
+      1112,
+      797,
+      1333
+     ],
+     "delta": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.921,
+     "pass": true
+    }
+   }
+  ],
+  "A2": [
+   {
+    "t": 2.0,
+    "mock_box": [
+     122,
+     708,
+     953,
+     923
+    ],
+    "mock_bottom_ratio": 0.995,
+    "under_scrim": false,
+    "mock_halo": 0.902,
+    "phone": {
+     "box": [
+      124,
+      710,
+      953,
+      925
+     ],
+     "delta": [
+      2,
+      2,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.906,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      124,
+      710,
+      951,
+      925
+     ],
+     "delta": [
+      2,
+      2,
+      -2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.885,
+     "pass": true
+    }
+   },
+   {
+    "t": 6.53,
+    "mock_box": [
+     78,
+     1218,
+     791,
+     1335
+    ],
+    "mock_bottom_ratio": 0.413,
+    "under_scrim": true,
+    "phone": {
+     "box": [
+      78,
+      1222,
+      791,
+      1337
+     ],
+     "delta": [
+      0,
+      4,
+      0,
+      2
+     ],
+     "bottom_ratio": 0.392,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      78,
+      1220,
+      791,
+      1337
+     ],
+     "delta": [
+      0,
+      2,
+      0,
+      2
+     ],
+     "bottom_ratio": 0.4,
+     "pass": true
+    }
+   },
+   {
+    "t": 13.81,
+    "mock_box": [
+     78,
+     1216,
+     815,
+     1337
+    ],
+    "mock_bottom_ratio": 0.396,
+    "under_scrim": true,
+    "phone": {
+     "box": [
+      76,
+      1218,
+      823,
+      1339
+     ],
+     "delta": [
+      -2,
+      2,
+      8,
+      2
+     ],
+     "bottom_ratio": 0.388,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      76,
+      1216,
+      815,
+      1339
+     ],
+     "delta": [
+      -2,
+      0,
+      0,
+      2
+     ],
+     "bottom_ratio": 0.401,
+     "pass": true
+    }
+   },
+   {
+    "t": 21.5,
+    "mock_box": [
+     78,
+     1218,
+     625,
+     1337
+    ],
+    "mock_bottom_ratio": 0.371,
+    "under_scrim": true,
+    "phone": {
+     "box": [
+      76,
+      1222,
+      627,
+      1337
+     ],
+     "delta": [
+      -2,
+      4,
+      2,
+      0
+     ],
+     "bottom_ratio": 0.388,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      76,
+      1220,
+      625,
+      1337
+     ],
+     "delta": [
+      -2,
+      2,
+      0,
+      0
+     ],
+     "bottom_ratio": 0.4,
+     "pass": true
+    }
+   },
+   {
+    "t": 45.53,
+    "mock_box": [
+     78,
+     1214,
+     679,
+     1337
+    ],
+    "mock_bottom_ratio": 0.399,
+    "under_scrim": true,
+    "phone": {
+     "box": [
+      78,
+      1218,
+      681,
+      1337
+     ],
+     "delta": [
+      0,
+      4,
+      2,
+      0
+     ],
+     "bottom_ratio": 0.392,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      78,
+      1216,
+      679,
+      1337
+     ],
+     "delta": [
+      0,
+      2,
+      0,
+      0
+     ],
+     "bottom_ratio": 0.4,
+     "pass": true
+    }
+   },
+   {
+    "t": 55.14,
+    "mock_box": [
+     78,
+     1166,
+     801,
+     1335
+    ],
+    "mock_bottom_ratio": 0.401,
+    "under_scrim": true,
+    "phone": {
+     "box": [
+      76,
+      1170,
+      801,
+      1337
+     ],
+     "delta": [
+      -2,
+      4,
+      0,
+      2
+     ],
+     "bottom_ratio": 0.389,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      76,
+      1170,
+      801,
+      1337
+     ],
+     "delta": [
+      -2,
+      4,
+      0,
+      2
+     ],
+     "bottom_ratio": 0.4,
+     "pass": true
+    }
+   }
+  ],
+  "A3": [
+   {
+    "t": 2.0,
+    "mock_box": [
+     120,
+     664,
+     961,
+     937
+    ],
+    "mock_bottom_ratio": 0.995,
+    "under_scrim": false,
+    "mock_halo": 0.924,
+    "phone": {
+     "box": [
+      120,
+      668,
+      979,
+      941
+     ],
+     "delta": [
+      0,
+      4,
+      18,
+      4
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.933,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      120,
+      666,
+      961,
+      939
+     ],
+     "delta": [
+      0,
+      2,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.899,
+     "pass": true
+    }
+   },
+   {
+    "t": 6.53,
+    "mock_box": [
+     170,
+     1194,
+     911,
+     1337
+    ],
+    "mock_bottom_ratio": 1.041,
+    "under_scrim": false,
+    "mock_halo": 0.963,
+    "phone": {
+     "box": [
+      168,
+      1198,
+      909,
+      1337
+     ],
+     "delta": [
+      -2,
+      4,
+      -2,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.947,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      170,
+      1196,
+      909,
+      1337
+     ],
+     "delta": [
+      0,
+      2,
+      -2,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.936,
+     "pass": true
+    }
+   },
+   {
+    "t": 13.81,
+    "mock_box": [
+     184,
+     1194,
+     899,
+     1337
+    ],
+    "mock_bottom_ratio": 1.004,
+    "under_scrim": false,
+    "mock_halo": 0.929,
+    "phone": {
+     "box": [
+      182,
+      1196,
+      897,
+      1339
+     ],
+     "delta": [
+      -2,
+      2,
+      -2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.943,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      184,
+      1196,
+      897,
+      1339
+     ],
+     "delta": [
+      0,
+      2,
+      -2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.939,
+     "pass": true
+    }
+   },
+   {
+    "t": 21.5,
+    "mock_box": [
+     254,
+     1194,
+     827,
+     1337
+    ],
+    "mock_bottom_ratio": 0.938,
+    "under_scrim": false,
+    "mock_halo": 0.944,
+    "phone": {
+     "box": [
+      252,
+      1196,
+      823,
+      1337
+     ],
+     "delta": [
+      -2,
+      2,
+      -4,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.941,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      252,
+      1196,
+      825,
+      1337
+     ],
+     "delta": [
+      -2,
+      2,
+      -2,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.935,
+     "pass": true
+    }
+   },
+   {
+    "t": 45.53,
+    "mock_box": [
+     228,
+     1192,
+     857,
+     1337
+    ],
+    "mock_bottom_ratio": 1.01,
+    "under_scrim": false,
+    "mock_halo": 0.951,
+    "phone": {
+     "box": [
+      226,
+      1196,
+      853,
+      1337
+     ],
+     "delta": [
+      -2,
+      4,
+      -4,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.951,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      228,
+      1194,
+      855,
+      1339
+     ],
+     "delta": [
+      0,
+      2,
+      -2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.942,
+     "pass": true
+    }
+   },
+   {
+    "t": 55.14,
+    "mock_box": [
+     162,
+     1144,
+     917,
+     1337
+    ],
+    "mock_bottom_ratio": 1.013,
+    "under_scrim": false,
+    "mock_halo": 0.956,
+    "phone": {
+     "box": [
+      162,
+      1148,
+      915,
+      1337
+     ],
+     "delta": [
+      0,
+      4,
+      -2,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.937,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      162,
+      1148,
+      917,
+      1337
+     ],
+     "delta": [
+      0,
+      4,
+      0,
+      0
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.932,
+     "pass": true
+    }
+   }
+  ],
+  "B1": [
+   {
+    "t": 2.0,
+    "mock_box": [
+     120,
+     664,
+     961,
+     937
+    ],
+    "mock_bottom_ratio": 0.995,
+    "under_scrim": false,
+    "mock_halo": 0.924,
+    "phone": {
+     "box": [
+      120,
+      668,
+      979,
+      941
+     ],
+     "delta": [
+      0,
+      4,
+      18,
+      4
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.933,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      120,
+      666,
+      961,
+      939
+     ],
+     "delta": [
+      0,
+      2,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.899,
+     "pass": true
+    }
+   },
+   {
+    "t": 6.53,
+    "mock_box": [
+     104,
+     1196,
+     977,
+     1313
+    ],
+    "mock_bottom_ratio": 1.041,
+    "under_scrim": false,
+    "mock_halo": 0.952,
+    "phone": {
+     "box": [
+      104,
+      1200,
+      991,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      14,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.929,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      104,
+      1200,
+      977,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.917,
+     "pass": true
+    }
+   },
+   {
+    "t": 13.81,
+    "mock_box": [
+     166,
+     1188,
+     915,
+     1303
+    ],
+    "mock_bottom_ratio": 1.003,
+    "under_scrim": false,
+    "mock_halo": 0.903,
+    "phone": {
+     "box": [
+      166,
+      1192,
+      917,
+      1305
+     ],
+     "delta": [
+      0,
+      4,
+      2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.926,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      166,
+      1190,
+      915,
+      1307
+     ],
+     "delta": [
+      0,
+      2,
+      0,
+      4
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.924,
+     "pass": true
+    }
+   },
+   {
+    "t": 21.5,
+    "mock_box": [
+     190,
+     1198,
+     887,
+     1313
+    ],
+    "mock_bottom_ratio": 0.938,
+    "under_scrim": false,
+    "mock_halo": 0.932,
+    "phone": {
+     "box": [
+      190,
+      1202,
+      889,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.924,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      190,
+      1202,
+      887,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.921,
+     "pass": true
+    }
+   },
+   {
+    "t": 28.17,
+    "mock_box": [
+     184,
+     1196,
+     895,
+     1313
+    ],
+    "mock_bottom_ratio": 0.977,
+    "under_scrim": false,
+    "mock_halo": 0.949,
+    "phone": {
+     "box": [
+      182,
+      1200,
+      905,
+      1315
+     ],
+     "delta": [
+      -2,
+      4,
+      10,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.935,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      184,
+      1200,
+      895,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.922,
+     "pass": true
+    }
+   },
+   {
+    "t": 36.17,
+    "mock_box": [
+     138,
+     1264,
+     943,
+     1313
+    ],
+    "mock_bottom_ratio": 1.004,
+    "under_scrim": false,
+    "mock_halo": 0.929,
+    "phone": {
+     "box": [
+      140,
+      1268,
+      947,
+      1315
+     ],
+     "delta": [
+      2,
+      4,
+      4,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.923,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      138,
+      1266,
+      943,
+      1317
+     ],
+     "delta": [
+      0,
+      2,
+      0,
+      4
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.918,
+     "pass": true
+    }
+   },
+   {
+    "t": 45.53,
+    "mock_box": [
+     254,
+     1196,
+     823,
+     1313
+    ],
+    "mock_bottom_ratio": 1.01,
+    "under_scrim": false,
+    "mock_halo": 0.935,
+    "phone": {
+     "box": [
+      254,
+      1200,
+      827,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      4,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.93,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      254,
+      1200,
+      825,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      2,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.925,
+     "pass": true
+    }
+   },
+   {
+    "t": 55.14,
+    "mock_box": [
+     152,
+     1186,
+     927,
+     1313
+    ],
+    "mock_bottom_ratio": 1.013,
+    "under_scrim": false,
+    "mock_halo": 0.936,
+    "phone": {
+     "box": [
+      152,
+      1192,
+      931,
+      1315
+     ],
+     "delta": [
+      0,
+      6,
+      4,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.918,
+     "pass": true
+    },
+    "skia": {
+     "box": [
+      152,
+      1190,
+      927,
+      1315
+     ],
+     "delta": [
+      0,
+      4,
+      0,
+      2
+     ],
+     "bottom_ratio": 1.0,
+     "halo": 0.917,
+     "pass": true
+    }
+   }
+  ],
+  "halo_median": {
+   "phone": 0.933,
+   "mock": 0.936,
+   "skia": 0.922
+  },
+  "control": {
+   "what": "A1 hook without shadow_blur, shadow_offset_y or scrim, exported on the phone",
+   "box": [
+    116,
+    706,
+    985,
+    917
+   ],
+   "designed_box": [
+    116,
+    706,
+    985,
+    917
+   ],
+   "skia_box": [
+    116,
+    704,
+    967,
+    917
+   ],
+   "same_width_as_designed": true
+  }
+ }
+}

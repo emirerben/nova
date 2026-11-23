@@ -1,0 +1,209 @@
+{
+ "head": "073c3faf698b976a338dffaa4be86a779f719a7c",
+ "design": "A2",
+ "test_run_id": "kri1580-research-copy-073c3faf-a2-r1",
+ "prompt_fingerprints": {
+  "writer": "rc-50e50e5a9980",
+  "review": "rr-50e50e5a9980"
+ },
+ "outcome": "ResearchUnavailable: The heading “Trenin retro tasarımı” states what its cited facts do not: Trenin",
+ "unmet_requests": null,
+ "ledger": {
+  "calls": [
+   {
+    "status": "settled",
+    "settled_cost_usd": 0.09031
+   },
+   {
+    "status": "settled",
+    "settled_cost_usd": 0.070068
+   }
+  ],
+  "settled_total_usd": 0.160378
+ },
+ "calls": [
+  {
+   "kind": "writer",
+   "correction": "",
+   "text_design": "A2",
+   "window_ids": [
+    "window-0",
+    "window-1",
+    "window-2",
+    "window-3",
+    "window-4",
+    "window-5",
+    "window-6"
+   ],
+   "max_captions": 5,
+   "raw_text": "{\n  \"hook\": {\n    \"text\": \"İşte Kyoto'nun en güzel 25 dakikası\",\n    \"evidence_ids\": [\n      \"fact-1\",\n      \"fact-6\"\n    ]\n  },\n  \"captions\": [\n    {\n      \"window_id\": \"window-0\",\n      \"heading\": \"7.3 kilometrelik\",\n      \"text\": \"Torokko Saga İstasyonu'ndan yola çıkıyoruz.\",\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"visual_quote\": \"tracing the route on a large map\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-1\",\n      \"heading\": \"1899 yılında\",\n      \"text\": \"Burası Kyoto'yu Sonobe'ye bağlamak için açılmıştı.\",\n      \"evidence_ids\": [\n        \"fact-1\"\n      ],\n      \"visual_quote\": \"train arriving and passengers on platform\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-2\",\n      \"heading\": \"Retro tasarım\",\n      \"text\": \"Trende beş vagon ve eski tarz ahşap banklar var.\",\n      \"evidence_ids\": [\n        \"fact-11\",\n        \"fact-12\"\n      ],\n      \"visual_quote\": \"sitting inside a train\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-4\",\n      \"heading\": \"Pencereleri açılabilen\",\n      \"text\": \"Trende pencereleri açılabilen dört kapalı vagon var.\",\n      \"evidence_ids\": [\n        \"fact-12\"\n      ],\n      \"visual_quote\": \"looking out the window\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-6\",\n      \"heading\": \"Sonbahar yaprakları\",\n      \"text\": \"Mevsimlere göre manzara değişiyor, ilkbaharda kiraz çiçekleri de görebilirsiniz.\",\n      \"evidence_ids\": [\n        \"fact-8\"\n      ],\n      \"visual_quote\": \"vibrant autumn foliage\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    }\n  ],\n  \"limitations\": \"Sadece sağlanan gerçekler kullanılarak kısa, sıcak ve konuşma dilinde metinler hazırlandı; çıkarım veya ekleme yapılmadı.\",\n  \"unmet_requests\": [\n    \"videoların seslerini de kapat\"\n  ]\n}",
+   "output": {
+    "hook": {
+     "text": "İşte Kyoto'nun en güzel 25 dakikası",
+     "evidence_ids": [
+      "fact-1",
+      "fact-6"
+     ]
+    },
+    "captions": [
+     {
+      "window_id": "window-0",
+      "heading": "7.3 kilometrelik",
+      "text": "Torokko Saga İstasyonu'ndan yola çıkıyoruz.",
+      "evidence_ids": [
+       "fact-6"
+      ],
+      "visual_quote": "tracing the route on a large map",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-1",
+      "heading": "1899 yılında",
+      "text": "Burası Kyoto'yu Sonobe'ye bağlamak için açılmıştı.",
+      "evidence_ids": [
+       "fact-1"
+      ],
+      "visual_quote": "train arriving and passengers on platform",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-2",
+      "heading": "Retro tasarım",
+      "text": "Trende beş vagon ve eski tarz ahşap banklar var.",
+      "evidence_ids": [
+       "fact-11",
+       "fact-12"
+      ],
+      "visual_quote": "sitting inside a train",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-4",
+      "heading": "Pencereleri açılabilen",
+      "text": "Trende pencereleri açılabilen dört kapalı vagon var.",
+      "evidence_ids": [
+       "fact-12"
+      ],
+      "visual_quote": "looking out the window",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-6",
+      "heading": "Sonbahar yaprakları",
+      "text": "Mevsimlere göre manzara değişiyor, ilkbaharda kiraz çiçekleri de görebilirsiniz.",
+      "evidence_ids": [
+       "fact-8"
+      ],
+      "visual_quote": "vibrant autumn foliage",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     }
+    ],
+    "limitations": "Sadece sağlanan gerçekler kullanılarak kısa, sıcak ve konuşma dilinde metinler hazırlandı; çıkarım veya ekleme yapılmadı.",
+    "unmet_requests": [
+     "videoların seslerini de kapat"
+    ]
+   },
+   "prompt_sha256": "d5f498a9f15ea0197d0f5436f274c8b20a6f2d41e1828a31b6d34c0ed70579b3"
+  },
+  {
+   "kind": "writer",
+   "correction": "The hook title states what its cited facts do not: İşte",
+   "text_design": "A2",
+   "window_ids": [
+    "window-0",
+    "window-1",
+    "window-2",
+    "window-3",
+    "window-4",
+    "window-5",
+    "window-6"
+   ],
+   "max_captions": 5,
+   "raw_text": "{\n  \"hook\": {\n    \"text\": \"Bu 25 dakikalık Kyoto yolculuğu\",\n    \"evidence_ids\": [\n      \"fact-6\",\n      \"fact-1\"\n    ]\n  },\n  \"captions\": [\n    {\n      \"window_id\": \"window-0\",\n      \"heading\": \"7.3 kilometrelik rota\",\n      \"text\": \"Torokko Saga İstasyonu'ndan maceramıza başlıyoruz.\",\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"visual_quote\": \"tracing the route on a large map\",\n      \"scope\": \"context\"\n    },\n    {\n      \"window_id\": \"window-1\",\n      \"heading\": \"Trenin retro tasarımı\",\n      \"text\": \"Eski tarz ahşap banklarıyla çok nostaljik bir ortam.\",\n      \"evidence_ids\": [\n        \"fact-11\"\n      ],\n      \"visual_quote\": \"red and yellow train\",\n      \"scope\": \"context\"\n    },\n    {\n      \"window_id\": \"window-2\",\n      \"heading\": \"Beş vagonlu tren\",\n      \"text\": \"Dört tanesinin pencereleri boydan boya açılabiliyor.\",\n      \"evidence_ids\": [\n        \"fact-12\"\n      ],\n      \"visual_quote\": \"sitting inside a train\",\n      \"scope\": \"context\"\n    },\n    {\n      \"window_id\": \"window-3\",\n      \"heading\": \"Mevsimlere göre manzaralar\",\n      \"text\": \"Özellikle sonbahar yaprakları büyüleyici görünüyor.\",\n      \"evidence_ids\": [\n        \"fact-8\"\n      ],\n      \"visual_quote\": \"autumn foliage\",\n      \"scope\": \"context\"\n    },\n    {\n      \"window_id\": \"window-6\",\n      \"heading\": \"Hozukyo Geçidi boyunca\",\n      \"text\": \"Dağların ve nehrin arasındaki bu yolculuk şahane.\",\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"visual_quote\": \"mountain valley with a river\",\n      \"scope\": \"context\"\n    }\n  ],\n  \"limitations\": \"\",\n  \"unmet_requests\": []\n}",
+   "output": {
+    "hook": {
+     "text": "Bu 25 dakikalık Kyoto yolculuğu",
+     "evidence_ids": [
+      "fact-6",
+      "fact-1"
+     ]
+    },
+    "captions": [
+     {
+      "window_id": "window-0",
+      "heading": "7.3 kilometrelik rota",
+      "text": "Torokko Saga İstasyonu'ndan maceramıza başlıyoruz.",
+      "evidence_ids": [
+       "fact-6"
+      ],
+      "visual_quote": "tracing the route on a large map",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-1",
+      "heading": "Trenin retro tasarımı",
+      "text": "Eski tarz ahşap banklarıyla çok nostaljik bir ortam.",
+      "evidence_ids": [
+       "fact-11"
+      ],
+      "visual_quote": "red and yellow train",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-2",
+      "heading": "Beş vagonlu tren",
+      "text": "Dört tanesinin pencereleri boydan boya açılabiliyor.",
+      "evidence_ids": [
+       "fact-12"
+      ],
+      "visual_quote": "sitting inside a train",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-3",
+      "heading": "Mevsimlere göre manzaralar",
+      "text": "Özellikle sonbahar yaprakları büyüleyici görünüyor.",
+      "evidence_ids": [
+       "fact-8"
+      ],
+      "visual_quote": "autumn foliage",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     },
+     {
+      "window_id": "window-6",
+      "heading": "Hozukyo Geçidi boyunca",
+      "text": "Dağların ve nehrin arasındaki bu yolculuk şahane.",
+      "evidence_ids": [
+       "fact-6"
+      ],
+      "visual_quote": "mountain valley with a river",
+      "scope": "context",
+      "subject_name": "",
+      "identity_quote": ""
+     }
+    ],
+    "limitations": "",
+    "unmet_requests": []
+   },
+   "prompt_sha256": "afcf0232c3310534cb16e86512f7f923a970ce3a9ff5534b93a2a1d4a0fd7eb1"
+  }
+ ]
+}

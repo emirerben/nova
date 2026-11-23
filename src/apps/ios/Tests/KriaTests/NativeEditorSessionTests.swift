@@ -582,6 +582,59 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(removed: true))
     }
 
+    /// KRI-1578: a Talking edit's song is a bed under the speaker's voice. The editor finds it on the music-role
+    /// track, keeps the voice (camera audio) playing, shows the row with its controls, and Save/Remove send the same
+    /// `user_song` section as any creator song.
+    func testTalkingSongKeepsTheVoiceAndEditsAndRemovesLikeAnyCreatorSong() async throws {
+        let (session, fake, sourceURL) = try await userSongSession(
+            mode: "background", caps: ["volume": true, "window": true, "remove": true], talking: true)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        func cameraLevels() throws -> [Double] {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.kind == .video }?.clips.map(\.volume) ?? []
+        }
+        func songClip() throws -> TimelineClip? {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.kind == .audio && $0.clips.contains { $0.id == "song" } }?.clips.first
+        }
+        XCTAssertTrue(session.songPlaysUnderVoice)
+        XCTAssertEqual(session.deviceSongBed?.assetID, "song-item", "the song is found on the music-role track")
+        XCTAssertNotNil(session.yourSong)
+        XCTAssertEqual(session.yourSongControls?.canEditVolume, true)
+        XCTAssertEqual(session.yourSongControls?.canRemove, true)
+        XCTAssertNotNil(try songClip(), "the song plays in the preview")
+        XCTAssertTrue(try cameraLevels().allSatisfy { $0 > 0 }, "the voice is the camera audio and stays audible")
+        XCTAssertEqual(session.originalAudioLevel, 1, "a Talking song does not silence the voice by default")
+
+        session.setUserSongVolume(0.4)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try songClip()?.volume ?? -1, 0.4, accuracy: 0.001, "the song level is baked into the clip, not the player")
+        XCTAssertFalse(session.liveSongVolumeActive, "a player-wide level would scale the voice too")
+        XCTAssertTrue(try cameraLevels().allSatisfy { $0 > 0 }, "the voice stays audible while the level moves")
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: 0.4, windowStartS: nil, removed: false))
+
+        session.removeUserSong()
+        XCTAssertNil(session.yourSong)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertNil(try songClip(), "no song once removed")
+        XCTAssertTrue(try cameraLevels().allSatisfy { $0 > 0 })
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(removed: true))
+    }
+
+    /// The control for the test above: a montage song still silences the camera, so the Talking branch is not a
+    /// general change to creator songs.
+    func testMontageSongStillSilencesTheCameraByDefault() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: ["volume": true])
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertFalse(session.songPlaysUnderVoice)
+        XCTAssertEqual(session.originalAudioLevel, 0)
+        let video = try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.kind == .video }?.clips ?? []
+        XCTAssertTrue(video.allSatisfy { $0.volume == 0 })
+    }
+
     /// The Sounds tab's Original audio control and the per-clip audio button: a creator-song video plays the
     /// song alone until the creator turns the camera up, then both play at their own levels; each edit is dirty,
     /// undoable, saved as `mix.original_level` / the slot's `muted`, and heard in the live preview.
@@ -1638,6 +1691,7 @@ final class NativeEditorSessionTests: XCTestCase {
     private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2,
                                  originalAudio: Bool = false, savedOriginalLevel: Double? = nil,
                                  pool: NativeEditorSourcePool? = nil, chatSong: JSONValue? = nil,
+                                 talking: Bool = false,
                                  editVariant: ((inout [String: JSONValue]) -> Void)? = nil) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
         let threadID = UUID(), jobID = UUID()
         let wav = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav")
@@ -1648,9 +1702,10 @@ final class NativeEditorSessionTests: XCTestCase {
                                         source: .song(planItemID: "item", generation: "3"))
         var recipe = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a").recipe
         recipe.assets.append(MediaAsset(id: song.id, relativePath: song.id, fingerprint: fingerprint, duration: 4))
-        recipe.tracks.append(TimelineTrack(id: "song", kind: .audio, clips: [
-            TimelineClip(id: "song-bed", sourceAssetID: song.id, sourceStart: 1, sourceDuration: 2, volume: 1)]))
-        recipe.audio = AudioMixRecipe(musicAssetID: song.id, originalVolume: 0)
+        // A Talking edit's song is a music-role track under the voice, with no music bed id (KRI-1578).
+        recipe.tracks.append(TimelineTrack(id: talking ? "music" : "song", kind: .audio, clips: [
+            TimelineClip(id: "song-bed", sourceAssetID: song.id, sourceStart: 1, sourceDuration: 2, volume: 1)], role: talking ? .music : nil))
+        recipe.audio = talking ? AudioMixRecipe(originalVolume: 1) : AudioMixRecipe(musicAssetID: song.id, originalVolume: 0)
         recipe.assetManifest = RenderAssetManifest(assets: [song])
         let request = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: jobID, variantID: "variant", recipeRevision: 1,
             recipeDigest: String(repeating: "a", count: 64)), recipe: recipe)
@@ -1661,7 +1716,7 @@ final class NativeEditorSessionTests: XCTestCase {
         var authoritative = Self.variant(duration: videoDuration, generation: "generation-1")
         authoritative["render_destination"] = .string("device")
         authoritative["music_playback_mode"] = .string("reference_only")
-        authoritative["source_audio_preserved"] = .bool(false)
+        authoritative["source_audio_preserved"] = .bool(talking)
         authoritative["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string(mode),
             "duration_s": .number(songDuration), "window_start_s": .number(1), "window_end_s": .number(3)])
         if let savedOriginalLevel {
@@ -1682,7 +1737,7 @@ final class NativeEditorSessionTests: XCTestCase {
             draftSnapshot: chatSong.map { Self.chatSongHead($0, revision: 2, jobID: jobID.uuidString) }
                 ?? DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
                     snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
-                    snapshot: [:], canUndo: false, createdAt: .now),
+                    snapshot: talking ? ["edit_format": .string("subtitled")] : [:], canUndo: false, createdAt: .now),
             authoritativeVariant: authoritative
         )
         fake.sourcePoolResult = pool ?? NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")

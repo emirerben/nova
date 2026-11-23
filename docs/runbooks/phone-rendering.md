@@ -791,6 +791,17 @@ three extra lanes on top of the unchanged speaker clip + captions:
   the render, YOUR SONG `on_edit: false`) adds it, and "no music" takes it off; protocol 53
   only. Guards: `tests/kria/test_talking_creator_song.py`,
   `tests/pipeline/test_creator_song_bed.py`.
+
+  A creator's own song on a Talking edit (KRI-1578, iOS half): the song is a
+  `song`-kind render asset on a `role: music` track, so it ducks exactly like the
+  library bed (`TalkingMusicDuckLevelTests` song cases: -10.5 dB at the default
+  0.3 gain, -12 dB at 0.25, flat with no windows). The device finds it by the
+  asset it plays (`NativeEditorSongBed(recipe:)`, `resolveSong(assetID:)`), not by
+  `audio.musicAssetID` or a track id. "Add song" for Talking is decided only by
+  `CreationCapabilities.songAttachAvailable(for:)`; the Talking sheet asks no
+  order, placement or filming-range questions. In the editor a Talking song never
+  mutes the voice (`NativeEditorSession.songPlaysUnderVoice`) and the preview ducks
+  it under the caption-cue windows (`speechDuckGain` 0.25), like the library bed.
 - **ending_clip** — a Visuals-pool VIDEO appended as a second clip on the
   main video track with per-clip `volume=0` (muted), which sidesteps the five
   "exactly one clip" gates (capabilities `max_clips`, upload/register routes,
