@@ -89,11 +89,21 @@ final class SongOrderUITests: XCTestCase {
     }
 
     /// The preview's accessibility value is "Clip 1 · 0:02.0, video at 0:02.1": the chip, then the real video position.
-    private func previewVideoTime(_ app: XCUIApplication) -> Double {
+    /// Both clocks come from ONE read of it: where the song is inside the clip (the chip) and where the picture
+    /// really is. Nil when no clip is under the playhead. The transport's playhead is a second element; reading it
+    /// after the video compares two running clocks at two moments (1.8 s apart on a slow runner, KRI-1604).
+    private func previewClocks(_ app: XCUIApplication) -> (song: Double, video: Double)? {
         let value = (any(app, "song-timeline-preview").value as? String) ?? ""
-        guard let tail = value.components(separatedBy: "video at ").last, value.contains("video at ") else { return -1 }
-        let parts = tail.split(separator: ":")
-        guard parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1]) else { return -1 }
+        let halves = value.components(separatedBy: ", video at ")
+        guard halves.count == 2, let chip = halves[0].components(separatedBy: " · ").last,
+              let song = seconds(chip), let video = seconds(halves[1]) else { return nil }
+        return (song, video)
+    }
+
+    /// "0:02.1" in seconds.
+    private func seconds(_ timecode: String) -> Double? {
+        let parts = timecode.split(separator: ":")
+        guard parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1]) else { return nil }
         return minutes * 60 + seconds
     }
 
@@ -139,9 +149,20 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moving, object: nil)], timeout: 8), .completed, "the playhead advances while the song plays")
         XCTAssertEqual(play.label, "Pause song")
         // The video follows the song: its position tracks (playhead - 4 s, the clip's start) while playing.
-        let videoMoving = NSPredicate { _, _ in self.previewVideoTime(app) > 0.3 }
+        // The read that shows the video moving is the one compared, so the video and the chip are from one instant.
+        // The transport is read just before and just after it: a running clock read in between lies between them.
+        var clocks: (song: Double, video: Double)?
+        var before = 0.0, after = 0.0
+        let videoMoving = NSPredicate { _, _ in
+            before = self.playhead(app)
+            clocks = self.previewClocks(app)
+            after = self.playhead(app)
+            return (clocks?.video ?? 0) > 0.3
+        }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: videoMoving, object: nil)], timeout: 8), .completed, "the preview video plays")
-        XCTAssertEqual(previewVideoTime(app), playhead(app) - 4, accuracy: 0.6, "the video stays in step with the song")
+        XCTAssertEqual(clocks?.video ?? -1, clocks?.song ?? -2, accuracy: 0.6, "the video stays in step with the song")
+        let songInClip = (clocks?.song ?? -1) + 4
+        XCTAssertTrue((before - 0.15...after + 0.15).contains(songInClip), "the chip is the playhead inside the clip (it starts at 0:04): \(before) <= \(songInClip) <= \(after)")
         play.tap()
         let held = playhead(app)
         Thread.sleep(forTimeInterval: 0.7)
