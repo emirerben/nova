@@ -13,6 +13,13 @@ Three steps, run from the repo root (any worktree):
   3. score (text boxes and scrim against the mock-up stills, montage):
      src/apps/api/.venv/bin/python scripts/ios/kri-1581-text-designs-e2e.py score OUT
 
+``prepare --writer`` writes ``cases/R-<design>/`` instead (and ``cases/none``): the rows come
+from the real research writer path (``run_researched_revision`` on the captured writer answers
+in ``research_copy_designed.json``, A1 and A3 on the A2 answer whose shape they share, review
+stubbed approved), so the copy and its ``text_language`` are the writer's own. score does not
+read these cases (the copy is not the mock-ups'); read a frame with ffmpeg, e.g. the A1 heading
+"HOZUKYO GEÇİDİ" at 28.2 s of ``cases/R-A1/phone.mp4``.
+
 Inputs come from the gitignored ``.cache/kri1585-kyoto/mockup/``: ``base.mp4`` (the textless
 edit the mock-ups were drawn over), ``variants/*.json`` (the generator's rows) and
 ``site/*_still*.jpg`` (the published stills). The rows are the generator's own copy and
@@ -112,7 +119,25 @@ def _frame(video: Path, t: float, out: Path, *, width: int = 540) -> Path:
 # ---------------------------------------------------------------------------- prepare
 
 
-def prepare(out: Path) -> int:
+def _writer_rows(design: str) -> list[dict]:
+    import pytest
+
+    from tests.pipeline import test_kri1580_kyoto_research_copy as kyoto
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        kyoto._stub_agents(
+            monkeypatch,
+            [kyoto._designed("B1" if design == "B1" else "A2").model_dump()],
+        )
+        rows = kyoto._rows(kyoto._run(design).ops)
+    finally:
+        monkeypatch.undo()
+    # base.mp4 is the 60 s edit without its brand tail.
+    return [{**row, "end_s": min(float(row["end_s"]), 60.0)} for row in rows]
+
+
+def prepare(out: Path, *, writer: bool = False) -> int:
     for key, value in TEST_ENV.items():
         os.environ.setdefault(key, value)
     sys.path.insert(0, str(API))
@@ -224,7 +249,8 @@ def prepare(out: Path) -> int:
     )
     (none / "assets.json").write_text(json.dumps({"base": str(base)}, indent=1))
     for design in DESIGNS:
-        rows = [TextElement.model_validate(r).model_dump(mode="json") for r in designed[design]]
+        source = _writer_rows(design) if writer else designed[design]
+        rows = [TextElement.model_validate(r).model_dump(mode="json") for r in source]
         rows = resolve_phone_text_style(
             rows,
             preferences=policy["preferences"],
@@ -254,11 +280,20 @@ def prepare(out: Path) -> int:
                 )
                 paths[font.id] = str(fonts_dir / font.catalog_id)
         recipe = make_recipe(layers, manifest, assets)
-        case = out / "cases" / design
+        case = out / "cases" / (f"R-{design}" if writer else design)
         case.mkdir(parents=True, exist_ok=True)
         (case / "recipe.json").write_text(json.dumps(recipe.model_dump(mode="json"), indent=1))
         (case / "assets.json").write_text(json.dumps(paths, indent=1))
         (case / "rows.json").write_text(json.dumps(rows, ensure_ascii=False, indent=1))
+        summary[design] = {
+            "layers": len(layers),
+            "scrims": sum(layer.scrim is not None for layer in layers),
+            "capabilities": sorted(recipe.required_capabilities),
+            "fonts": sorted({Path(p).name for k, p in paths.items() if k != "base"}),
+        }
+        if writer:
+            summary[design]["texts"] = ["".join(run.text for run in layer.runs) for layer in layers]
+            continue
         # The cloud burn of the same rows at every still time, over the same base frame.
         for still, t in enumerate(_still_times(design)):
             frame = _frame(base, t, out / "base" / f"{design}_still{still}.png", width=1080)
@@ -282,12 +317,9 @@ def prepare(out: Path) -> int:
             composed.convert("RGB").resize((540, 960), Image.LANCZOS).save(
                 out / "skia" / f"{design}_still{still}.png"
             )
-        summary[design] = {
-            "layers": len(layers),
-            "scrims": sum(layer.scrim is not None for layer in layers),
-            "capabilities": sorted(recipe.required_capabilities),
-            "fonts": sorted({Path(p).name for k, p in paths.items() if k != "base"}),
-        }
+    if writer:
+        (out / "prepare.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1))
+        return 0
     # Control: A1's hook with the KRI-1581 keys taken out (standard shadow), to show the phone's
     # line widths are the device's own shaping, not something this change draws.
     hook = {
@@ -482,9 +514,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("step", choices=("prepare", "score"))
     parser.add_argument("out", type=Path)
+    parser.add_argument("--writer", action="store_true", help="prepare: rows from the writer path")
     args = parser.parse_args()
     out = args.out.resolve()
-    return prepare(out) if args.step == "prepare" else score(out)
+    return prepare(out, writer=args.writer) if args.step == "prepare" else score(out)
 
 
 if __name__ == "__main__":

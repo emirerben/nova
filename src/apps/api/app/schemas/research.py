@@ -112,6 +112,13 @@ class PreparedResearchText(BaseModel):
     sources: list[ResearchSource] = Field(min_length=1, max_length=16)
     facts: list[ResearchFact] = Field(min_length=1, max_length=5)
     design: ResearchDesignTag | None = Field(default=None, exclude_if=lambda value: value is None)
+    # The copy's language, so a design's text_case follows its rules (KRI-1585).
+    text_language: str | None = Field(
+        default=None,
+        max_length=16,
+        pattern=r"^[A-Za-z-]+$",
+        exclude_if=lambda value: value is None,
+    )
 
 
 class ReviewedClip(BaseModel):

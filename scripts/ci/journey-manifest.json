@@ -3974,7 +3974,7 @@
     {
       "id": "kri-1585-informative-text",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py tests/pipeline/test_kri1580_kyoto_research_copy.py tests/pipeline/test_kri1583_readability.py tests/kria/test_kri1583_intent_review_legibility.py tests/kria/test_kri1582_design_picker.py",
+      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py tests/pipeline/test_kri1580_kyoto_research_copy.py tests/pipeline/test_kri1583_readability.py tests/kria/test_kri1583_intent_review_legibility.py tests/kria/test_kri1582_design_picker.py tests/pipeline/test_kri1579_creator_edits_win.py tests/pipeline/test_kri1584_font_owner.py tests/pipeline/test_kri1585_writer_text_language.py",
       "paths": [
         "src/apps/api/tests/fixtures/kri1585_kyoto/plan.json",
         "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows.json",
@@ -3988,6 +3988,8 @@
         "src/apps/api/tests/pipeline/test_kri1580_kyoto_research_copy.py",
         "src/apps/api/tests/pipeline/test_kri1585_kyoto_fixture.py",
         "src/apps/api/tests/pipeline/test_kri1579_creator_edits_win.py",
+        "src/apps/api/tests/pipeline/test_kri1584_font_owner.py",
+        "src/apps/api/tests/pipeline/test_kri1585_writer_text_language.py",
         "src/apps/api/app/pipeline/informative_text.py",
         "src/apps/api/app/pipeline/text_designs.py",
         "scripts/kri1585_kyoto_fixture.py",
