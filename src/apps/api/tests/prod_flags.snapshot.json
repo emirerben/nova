@@ -721,6 +721,10 @@
       "source": "default",
       "value": true
     },
+    "left_out_recheck_enabled": {
+      "source": "default",
+      "value": true
+    },
     "lipsync_route_follows_prompt_enabled": {
       "source": "default",
       "value": true
@@ -885,11 +889,27 @@
       "source": "default",
       "value": true
     },
+    "narrated_caption_blocks_enabled": {
+      "source": "default",
+      "value": true
+    },
     "narrated_caption_render_promise_enabled": {
       "source": "default",
       "value": true
     },
     "narrated_clip_alignment_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "narrated_cue_receipts_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "narrated_cut_pace_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "narrated_draft_promises_enabled": {
       "source": "default",
       "value": true
     },
@@ -925,9 +945,17 @@
       "source": "legacy-fly-digest-2026-10-08",
       "value": true
     },
+    "narrated_title_legibility_enabled": {
+      "source": "default",
+      "value": true
+    },
     "narrated_whisper_model": {
       "source": "default",
       "value": "small.en"
+    },
+    "narrated_whole_voiceover_promise_enabled": {
+      "source": "default",
+      "value": true
     },
     "native_notifications_enabled": {
       "source": "default",

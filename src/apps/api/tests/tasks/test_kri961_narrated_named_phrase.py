@@ -101,7 +101,19 @@ def review(job, variant, binding):
 
 
 def _phrase_cue(variant):
-    return next(c for c in variant["caption_cues"] if "butcher" in c["text"])
+    """The spoken sentence holding the phrase, joined across its caption blocks (the phone
+    narrated captions are cut into short blocks since the Tahini run,
+    NARRATED_CAPTION_BLOCKS_ENABLED); its words in order."""
+    from app.pipeline.captions import text_ends_sentence
+
+    cues = variant["caption_cues"]
+    first = next(i for i, c in enumerate(cues) if "butcher" in c["text"])
+    last = next(i for i in range(first, len(cues)) if text_ends_sentence(cues[i]["text"]))
+    sentence = cues[first : last + 1]
+    return {
+        "text": " ".join(c["text"] for c in sentence),
+        "words": [w for c in sentence for w in c["words"]],
+    }
 
 
 def test_captions_card_and_receipts_all_hear_ojo_de_bife(monkeypatch):

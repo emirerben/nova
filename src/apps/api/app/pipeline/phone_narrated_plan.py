@@ -203,6 +203,9 @@ TITLE_LAYER_PREFIX = "title-"
 _TITLE_MIN_S = 0.5
 _TITLE_MAX_S = 3.0
 _TITLE_AFTER_FIRST_WORD_S = 1.0
+# Tahini run: the shortest hold a phone title gets when it follows the first sentence; a
+# five-word title needs about 1.5 s to read, twice that to land.
+_TITLE_READ_MIN_S = 2.5
 _TITLE_MAX_CHARS = 80
 NARRATED_TITLE_ELEMENT_ID = "narrated-title"
 
@@ -344,6 +347,51 @@ def narrated_title_end_s(first_word_end_s: float | None) -> float:
     if first_word_end_s is None:
         return _TITLE_MAX_S
     return max(_TITLE_MIN_S, min(_TITLE_MAX_S, float(first_word_end_s) + _TITLE_AFTER_FIRST_WORD_S))
+
+
+def narrated_title_hold_end_s(words: Sequence[Any]) -> float:
+    """Tahini run (`NARRATED_TITLE_LEGIBILITY_ENABLED`): when the phone opening title fades out:
+    at the end of the first spoken sentence, held between `_TITLE_READ_MIN_S` and 3 s. A
+    second after the first word (`narrated_title_end_s`, the cloud intro's rule) gave a
+    five-word title 1.56 s on screen. No spoken word or no sentence end: the full 3 s. A
+    deliberate divergence from the cloud narrated intro, which keeps `narrated_title_end_s`."""
+    from app.pipeline.captions import ends_sentence  # noqa: PLC0415
+
+    end = next((float(word.end_s) for word in words if ends_sentence(str(word.text))), None)
+    if end is None:
+        return _TITLE_MAX_S
+    return max(_TITLE_READ_MIN_S, min(_TITLE_MAX_S, end))
+
+
+def narrated_cue_blocks() -> dict[str, Any]:
+    """Tahini run (`NARRATED_CAPTION_BLOCKS_ENABLED`): the `captions.build_plain_cues` options
+    the phone narrated writer builds its sentence cues with: a spoken list's number ("2.")
+    stays with the words it numbers. Off: none (byte-identical)."""
+    from app.config import settings  # noqa: PLC0415
+
+    return {"join_list_numbers": True} if settings.narrated_caption_blocks_enabled else {}
+
+
+def narrated_caption_blocks(cues: list[dict] | None) -> list[dict] | None:
+    """Tahini run (`NARRATED_CAPTION_BLOCKS_ENABLED`): the phone narrated captions, finished as
+    whole sentences (correction, re-split, spellings), cut into the short blocks the screen
+    shows: the phone Talking budget (`captions.PHONE_CUE_BUDGET`: 8 words, 40 characters,
+    3 s). Whole sentences of up to 14 words and 4 lines stayed up 6 s. Off: ``cues``."""
+    from app.config import settings  # noqa: PLC0415
+    from app.pipeline.captions import PHONE_CUE_BUDGET, split_cues_by_budget  # noqa: PLC0415
+
+    if not cues or not settings.narrated_caption_blocks_enabled:
+        return cues
+    return split_cues_by_budget(cues, PHONE_CUE_BUDGET)
+
+
+def _readable_title() -> bool:
+    """`NARRATED_TITLE_LEGIBILITY_ENABLED` inside a phone styling generation (no policy: the
+    element is the cloud intro's, unchanged)."""
+    from app.config import settings  # noqa: PLC0415
+    from app.services.phone_text_styling import current_phone_text_policy  # noqa: PLC0415
+
+    return bool(settings.narrated_title_legibility_enabled and current_phone_text_policy())
 
 
 def _follows_prompt() -> bool:
@@ -509,6 +557,11 @@ def narrated_title_element(
     ``end_s`` ``None`` holds the title the full 3 s (`narrated_title_end_s`).
     ``entrance`` (`narrated_title_entrance`) replaces the fade-in before the text
     style pass measures the title.
+
+    Tahini run (`NARRATED_TITLE_LEGIBILITY_ENABLED`, inside a phone styling generation): the
+    style pass tries the top band before its cascade (`PREFERRED_POSITION`), then
+    `narrated_title_readable` keeps it white with an outline where the footage needs one and
+    records its block for the captions to keep off.
     """
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.narrated_title import narrated_title_placement
@@ -537,7 +590,14 @@ def narrated_title_element(
     row = element.model_dump(mode="json", exclude_none=True)
     if entrance:
         row.update(entrance)
-    return TextElement.model_validate(generation_style_rows([row], canvas=canvas)[0])
+    if not _readable_title():
+        return TextElement.model_validate(generation_style_rows([row], canvas=canvas)[0])
+    from app.pipeline.phone_text_style import PREFERRED_POSITION
+    from app.services.phone_text_styling import narrated_title_readable
+
+    row["source_params"] = {**row["source_params"], PREFERRED_POSITION: "top"}
+    styled = generation_style_rows([row], canvas=canvas)[0]
+    return TextElement.model_validate(narrated_title_readable(styled, canvas=canvas))
 
 
 def narrated_title_text_elements(
@@ -1241,17 +1301,20 @@ def compile_phone_narrated_plan(
 
     register_generation_timeline(clips)
 
-    captions_first = bool(current_phone_text_policy() and caption_cues)
-    if captions_first:
-        recipe = replace_narrated_captions(
-            recipe, caption_cues=caption_cues, caption_style=caption_style, look=caption_look
-        )
     title_entrance = None
     if _follows_prompt():
         if opening_title is None and strategy is not None:
             planned_title = strategy.get("opening_title")
             opening_title = planned_title if isinstance(planned_title, str) else None
         title_entrance = narrated_title_entrance(strategy, requirements)
+    # Tahini run: a readable title takes its top spot first and the captions keep off it;
+    # otherwise the captions are styled first and the title finds room around them.
+    title_first = bool(opening_title and opening_title.strip()) and _readable_title()
+    captions_first = bool(current_phone_text_policy() and caption_cues) and not title_first
+    if captions_first:
+        recipe = replace_narrated_captions(
+            recipe, caption_cues=caption_cues, caption_style=caption_style, look=caption_look
+        )
     title = narrated_title_element(
         opening_title,
         end_s=opening_title_end_s,

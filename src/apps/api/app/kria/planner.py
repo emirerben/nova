@@ -200,7 +200,7 @@ from app.schemas.user_song import (
     SONG_ORDER_ANSWER_KEY,
     SONG_RANGE_ANSWER_KEY,
 )
-from app.services import clip_order_ledger
+from app.services import clip_order_card, clip_order_ledger
 from app.services.anchor_exclusions import withdraw_excluded_anchors
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
@@ -1153,6 +1153,9 @@ class PlannedKriaTurn:
     # payloads (`clip_order_ledger.LedgerEntry.to_payload`) with no `turn_id` yet; the completion
     # transaction stamps it and writes them on the turn's assistant event. Empty with the flag off.
     clip_order_entries: tuple[dict[str, Any], ...] = ()
+    # The creator's own words for each clip's group (`clip_order_card.known_group_words`), so a
+    # receipt written after planning names clips the way the card and the order line do.
+    clip_order_groups: dict[str, str] | None = field(default=None, compare=False, repr=False)
     # The language the model that read the creator's message says they write in (Main Creator
     # or brief extractor `conversation_language`); None when no model ran or it could not tell.
     # The worker rebinds the turn's copy to it and stores it with the completed turn.
@@ -1216,6 +1219,7 @@ def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202
     Creator's brief updates when no separate extraction ran.
     """
     if any(getattr(output, "starts_fresh", False) is True for output in outputs):
+        clip_order_ledger.note_restarted(clip_order_ledger.RESTART_STARTS_FRESH)
         return start_fresh_updates(prior, updates)
     return tuple(updates)
 
@@ -1327,12 +1331,14 @@ def brief_order_fields(
         fresh = brief is None or any(
             req.kind == "order" and req.source_turn_id is None for req in brief.live()
         )
+        # KRI-1594: a request restarted before a render plans on the order the clips were added.
+        state = clip_order_ledger.planning_state(turn)
         intents = clip_order_ledger.mark_seated_rows(
             intents,
-            applied=clip_order_ledger.applied_row_fingerprints(turn.state.entries),
+            applied=clip_order_ledger.applied_row_fingerprints(state.entries),
             fresh_order_ask=fresh,
-            base_ids=turn.state.order,
-            known_ids=clip_order_ledger.applied_known_ids(turn.state.entries),
+            base_ids=state.order,
+            known_ids=clip_order_ledger.applied_known_ids(state.entries),
         )
     return intents, ordering_choice
 
@@ -3519,6 +3525,8 @@ async def _load_creator_inputs(
         # KRI-1360: the brief model reads this message as the new request after "Change my
         # request" and removes the earlier asks it no longer includes. Unset: input unchanged.
         extra["changes_request"] = True
+        # KRI-1594: the order the old request set goes with it (before a render).
+        clip_order_ledger.note_restarted(clip_order_ledger.RESTART_CHANGE_REQUEST)
     compact_copy_state = [
         {
             "target": target,
@@ -3539,7 +3547,7 @@ async def _load_creator_inputs(
             update={
                 "media": clip_order_ledger.ordered_by_ids(
                     list(manifest.media),
-                    clip_order_ledger.turn_clip_order.get().state.order,
+                    clip_order_ledger.planning_state(clip_order_ledger.turn_clip_order.get()).order,
                     key=lambda ref: str(ref.media_id),
                 )
             }
@@ -3774,6 +3782,13 @@ def _adopt_read_language(output: object) -> None:
     server copy and agent this turn runs (clip intents, readiness, receipts, the copilot) follows
     it. A stand-in output without the field, or None, keeps the stored language."""
     adopt_conversation_language(getattr(output, "conversation_language", None))
+
+
+def _note_starts_fresh(output: object) -> None:
+    """KRI-1594: the extraction step typed ``starts_fresh`` (it already withdrew the saved brief in
+    parse), so the order the old request set goes too (`clip_order_ledger.note_restarted`)."""
+    if getattr(output, "starts_fresh", False) is True:
+        clip_order_ledger.note_restarted(clip_order_ledger.RESTART_STARTS_FRESH)
 
 
 def _extraction_request_scope(
@@ -6887,12 +6902,13 @@ async def _turn_clip_order(
                 select(CreationThreadEvent.role, CreationThreadEvent.payload)
                 .where(
                     CreationThreadEvent.thread_id == thread_id,
-                    CreationThreadEvent.role == "assistant",
+                    clip_order_ledger.ledger_events_clause(),
                 )
                 .order_by(CreationThreadEvent.sequence)
             )
         ).all()
-        entries = clip_order_ledger.fold_clip_order((role, payload) for role, payload in rows)
+        events = [(role, payload) for role, payload in rows]
+        entries = clip_order_ledger.fold_clip_order(events)
         rendered: list[str] | None = None
         manual = False
         miss_token = _editor_target_miss.set(None)
@@ -6938,16 +6954,41 @@ async def _turn_clip_order(
             entries=(*entries, *([observed] if observed else [])),
             rendered_ids=rendered,
         )
+        # KRI-1594: clips are named with the creator's group words everywhere the card names them.
+        try:
+            intents = await _active_resolved_clip_intents(db, thread_id)
+        except Exception:  # noqa: BLE001 - a missing name costs a name, never the order
+            log.warning("kria_clip_order_groups_failed", thread_id=str(thread_id), exc_info=True)
+            intents = None
+        groups = clip_order_card.known_group_words(events, intents)
         return clip_order_ledger.TurnClipOrder(
             state=state,
             attachment_ids=attachment,
             rendered=bool(rendered),
-            labels=clip_order_ledger.labels_for(state.order, assignments),
+            labels=clip_order_ledger.labels_for(state.order, assignments, group_words=groups),
             observed=observed,
+            groups=groups,
         )
     except Exception:  # noqa: BLE001 - the ledger must never break a turn
         log.warning("kria_clip_order_state_failed", thread_id=str(thread_id), exc_info=True)
         return None
+
+
+async def _active_resolved_clip_intents(db: AsyncSession, thread_id: uuid.UUID) -> object:
+    """The resolved clip intents of the thread's newest strategy draft (the session's active
+    plan), for the creator's group words; None when there is none."""
+    active = (
+        await db.execute(
+            select(CreatorAgentSession.active_plan)
+            .join(
+                CreationThread,
+                CreationThread.active_creator_agent_session_id == CreatorAgentSession.id,
+            )
+            .where(CreationThread.id == thread_id)
+        )
+    ).scalar_one_or_none()
+    strategy = active.get("strategy") if isinstance(active, dict) else None
+    return strategy.get("resolved_clip_intents") if isinstance(strategy, dict) else None
 
 
 _REORDER_OPS = frozenset({"reorder_clip", "reorder_clips_by"})
@@ -7095,22 +7136,32 @@ def _with_clip_order_entries(
     if turn.observed is not None:
         entries.append(turn.observed)
     plan = planned.plan
+    state = clip_order_ledger.planning_state(turn)
     if plan.mode == "act" and plan.intents and plan.intents[0].tool_name == "draft.apply_strategy":
         strategy = plan.intents[0].arguments.get("strategy")
         seated = clip_order_ledger.seated_entry(
-            turn.state.order,
+            state.order,
             (strategy or {}).get("resolved_clip_intents") if isinstance(strategy, dict) else None,
             actor=clip_order_ledger.CREATOR_TEXT,
             turn_id=None,
         )
-        applied = clip_order_ledger.applied_row_fingerprints(turn.state.entries)
+        applied = clip_order_ledger.applied_row_fingerprints(state.entries)
         if seated is not None and (
             seated.after_ids != seated.before_ids or not set(seated.rows) <= applied
         ):
             entries.append(seated)
-    if not entries:
+    # KRI-1594: a request restarted before a render takes the older entries back, for every later
+    # reader, ahead of this turn's own. Only on a turn that stands (a draft, or a brief change).
+    reset = clip_order_ledger.restarts_order(turn) and (
+        plan.mode == "act" or bool(planned.brief_updates)
+    )
+    payloads = [
+        *([clip_order_ledger.reset_row()] if reset else []),
+        *(entry.to_payload() for entry in entries),
+    ]
+    if not payloads:
         return planned
-    return replace(planned, clip_order_entries=tuple(e.to_payload() for e in entries))
+    return replace(planned, clip_order_entries=tuple(payloads))
 
 
 async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
@@ -7143,6 +7194,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
             planned = _declined_pre_render_move(planned)
         planned = _scrubbed_reply(_without_unasked_reorders(planned), turn_order)
         planned = _with_clip_order_entries(planned, turn_order)
+        planned = replace(planned, clip_order_groups=dict(turn_order.groups))
     if planned.plan.mode != "act":
         return planned
     current = await db.get(PlanItem, kwargs["item_id"], populate_existing=True)
@@ -7173,7 +7225,9 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
             ),
         )
     if turn_order is not None:
-        after = clip_order_ledger.with_clip_order_ids(after, turn_order.state)
+        after = clip_order_ledger.with_clip_order_ids(
+            after, clip_order_ledger.planning_state(turn_order)
+        )
     planned = replace(planned, media_snapshot=after, client_protocol=client_protocol)
     return await _gate_unresolved_choices(
         db,
@@ -8786,6 +8840,7 @@ async def _plan_live_turn(
                     )
                 )
                 _adopt_read_language(extraction_outputs[-1])
+                _note_starts_fresh(extraction_outputs[-1])
                 if batch is not None:
                     pre_extracted_retrieved_ids.extend(batch.requirement_ids)
             semantic_request_scope, clarification = _extraction_request_scope(extraction_outputs)
@@ -9460,6 +9515,7 @@ async def extract_deferred_brief(
         )
         extraction_outputs.append(output)
         _adopt_read_language(output)
+        _note_starts_fresh(output)
     scope, _clarification = _extraction_request_scope(extraction_outputs)
     if scope == "clarify":
         return (), None

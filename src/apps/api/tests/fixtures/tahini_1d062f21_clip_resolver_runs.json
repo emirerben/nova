@@ -1,0 +1,2794 @@
+{
+ "source": "prod job 1d062f21 / thread c07abe31, turn 1 (2026-11-17 20:58Z): clip analyses from the job snapshot (understanding only) and the nova.plan.clip_request_resolver outputs per continued run, keyed by shard aliases; read-only admin proposal-trace",
+ "intents": [
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "every uploaded file",
+   "intent_id": "include_all_files",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "order",
+   "position": "first",
+   "attribute": "the crispy topping stirred in the pan",
+   "intent_id": "open_finished_dish_clip_1",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "order",
+   "position": null,
+   "attribute": "the topping going over the carrots on the plate",
+   "intent_id": "open_finished_dish_clip_2",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "order",
+   "position": null,
+   "attribute": "the fork taking a bite",
+   "intent_id": "open_finished_dish_clip_3",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "slicing carrots",
+   "intent_id": "show_slicing_carrots",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "dark syrup poured over the tray",
+   "intent_id": "show_dark_syrup",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "the roasted tray",
+   "intent_id": "show_roasted_tray",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "almonds going into the garlic pan",
+   "intent_id": "show_almonds_garlic_pan",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "dates and capers",
+   "intent_id": "show_dates_capers",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "lemon grated over the yogurt",
+   "intent_id": "show_lemon_grated_yogurt",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "tahini stirred in",
+   "intent_id": "show_tahini_stirred_in",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "yogurt spread on the plate",
+   "intent_id": "show_yogurt_spread",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "carrots laid on it",
+   "intent_id": "show_carrots_laid_on",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "topping over them",
+   "intent_id": "show_topping_over",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "the fork bite",
+   "intent_id": "show_fork_bite",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  }
+ ],
+ "clips": [
+  {
+   "media_id": "tahini-01-02_tray_molasses-drizzle",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "black metal baking sheet",
+     "purple carrots",
+     "orange carrots",
+     "yellow carrots",
+     "dark red sauce"
+    ],
+    "brands": [],
+    "people": {
+     "note": "",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "drizzling dark sauce over carrots"
+    ],
+    "setting": "kitchen counter",
+    "subject": "carrots on baking sheet",
+    "summary": "Various colored carrots (purple, orange, and yellow) are arranged on a black baking sheet and then drizzled with a dark red sauce.",
+    "activity": "drizzling sauce on carrots",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 1.0,
+      "start_s": 0.0,
+      "description": "dark sauce pouring"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "tahini-02-01_board_slicing-carrots",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "wooden cutting board",
+     "purple carrot",
+     "yellow carrot",
+     "orange carrot",
+     "stainless steel chef's knife"
+    ],
+    "brands": [],
+    "people": {
+     "note": "",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "places a purple carrot on cutting board",
+     "positions a yellow carrot for slicing",
+     "slices a yellow carrot lengthwise with a knife"
+    ],
+    "setting": "kitchen counter",
+    "subject": "carrots on cutting board",
+    "summary": "A hand places a purple carrot on a wooden cutting board next to several other carrots, both whole and halved. Another hand uses a knife to slice a yellow carrot lengthwise.",
+    "activity": "slicing carrots on a wooden cutting board",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 3.7,
+      "start_s": 1.83,
+      "description": "slices yellow carrot"
+     },
+     {
+      "end_s": 5.0,
+      "start_s": 4.0,
+      "description": "reveals sliced carrot"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "tahini-03-03_tray_roasted-out-of-oven",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "metal baking sheet",
+     "purple roasted carrots",
+     "orange roasted carrots",
+     "yellow roasted carrots",
+     "colorful oven mitt"
+    ],
+    "brands": [],
+    "people": {
+     "note": "",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "hand with oven mitt holds baking sheet"
+    ],
+    "setting": "kitchen",
+    "subject": "roasted carrots on baking sheet",
+    "summary": "A baking sheet filled with roasted purple, orange, and yellow carrots, some with a glaze, is shown fresh out of the oven, accompanied by a sizzling sound.",
+    "activity": "displaying roasted carrots",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 1.5,
+      "start_s": 0.0,
+      "description": "baking sheet with carrots sizzling"
+     },
+     {
+      "end_s": 5.0,
+      "start_s": 2.5,
+      "description": "colorful roasted carrots displayed"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "tahini-04-04_pan_garlic-and-almonds",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "black frying pan",
+     "sliced garlic",
+     "slivered almonds",
+     "cooking oil"
+    ],
+    "brands": [],
+    "people": {
+     "note": "",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "adds sliced garlic to oil in pan",
+     "adds slivered almonds to oil in pan"
+    ],
+    "setting": "kitchen",
+    "subject": "hand adding ingredients to a pan",
+    "summary": "A hand adds sliced garlic and slivered almonds to a frying pan containing oil and previously added garlic.",
+    "activity": "adding cooking ingredients to a pan",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": []
+   }
+  },
+  {
+   "media_id": "tahini-05-06_pan_finished-topping",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "black non-stick pan",
+     "silver metal spoon",
+     "sliced almonds",
+     "dried cranberries",
+     "green capers"
+    ],
+    "brands": [],
+    "people": {
+     "note": "",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "hand stirs ingredients with spoon",
+     "spoon lifts mixture in pan"
+    ],
+    "setting": "kitchen",
+    "subject": "food ingredients sautéing in a pan",
+    "summary": "A hand uses a spoon to stir a mixture of sliced almonds, dried cranberries, and capers in a black non-stick pan on a stovetop, appearing to sauté them.",
+    "activity": "sautéing sliced almonds, dried cranberries, and capers in a pan",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 1.76,
+      "start_s": 0.0,
+      "description": "spoon stirs ingredients in pan"
+     },
+     {
+      "end_s": 4.19,
+      "start_s": 2.23,
+      "description": "spoon lifts and turns mixture"
+     },
+     {
+      "end_s": 5.73,
+      "start_s": 4.63,
+      "description": "spoon scoops mixture to side"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "tahini-06-05_pan_dates-and-capers",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "black frying pan",
+     "white bowl",
+     "sliced white garlic or ginger",
+     "dark red dried fruit",
+     "small green peas",
+     "silver spoon"
+    ],
+    "brands": [],
+    "people": {
+     "note": "",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "pours dried red fruit into a pan",
+     "pours green peas into the pan",
+     "stirs ingredients in the pan"
+    ],
+    "setting": "kitchen",
+    "subject": "ingredients in a pan",
+    "summary": "A hand adds dried fruit and green peas to a frying pan containing sliced garlic or ginger and oil, then stirs the ingredients with a spoon.",
+    "activity": "adding and stirring ingredients in a pan",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": []
+   }
+  },
+  {
+   "media_id": "tahini-07-07_bowl_lemon-zest",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "yellow lemon",
+     "silver microplane grater",
+     "clear glass bowl",
+     "white creamy substance",
+     "chopped green dill"
+    ],
+    "brands": [],
+    "people": {
+     "note": "a person's hands",
+     "count": 1,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "person grates lemon zest into bowl"
+    ],
+    "setting": "kitchen counter",
+    "subject": "person grating lemon zest into a bowl",
+    "summary": "A person uses a microplane to grate lemon zest into a clear glass bowl containing a creamy white base and chopped green herbs.",
+    "activity": "grating lemon zest into a bowl",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 2.5,
+      "start_s": 0.0,
+      "description": "grating lemon zest into bowl"
+     },
+     {
+      "end_s": 5.0,
+      "start_s": 3.0,
+      "description": "lemon zest falling into bowl"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "tahini-08-09_plate_yogurt-swirl",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "white ceramic serving plate",
+     "silver metal spoon",
+     "white creamy dip",
+     "green chopped dill"
+    ],
+    "brands": [],
+    "people": {
+     "note": "a single hand",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "hand dips spoon into white dip",
+     "hand stirs white dip in a swirl",
+     "hand lifts spoon from white dip"
+    ],
+    "setting": "kitchen counter with natural light",
+    "subject": "hand mixing creamy dip",
+    "summary": "A hand uses a silver spoon to swirl a creamy white dip, garnished with chopped green dill, in a white serving plate, creating a decorative pattern.",
+    "activity": "mixing a dip with a spoon",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": []
+   }
+  },
+  {
+   "media_id": "tahini-09-08_bowl_tahini-stir",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "clear glass mixing bowl",
+     "silver spoon",
+     "white creamy sauce",
+     "green chopped herbs",
+     "light brown liquid dressing",
+     "yellow lemon",
+     "metal grater"
+    ],
+    "brands": [],
+    "people": {
+     "note": "a hand is visible",
+     "count": 1,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "hand pours liquid with a spoon into a bowl",
+     "hand stirs ingredients in the bowl"
+    ],
+    "setting": "kitchen counter",
+    "subject": "person mixing ingredients",
+    "summary": "A hand uses a spoon to add a light brown liquid to a bowl of white creamy sauce and green herbs, then mixes them together.",
+    "activity": "mixing a sauce or dressing",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": []
+   }
+  },
+  {
+   "media_id": "tahini-10-10_plate_carrots-on-yogurt",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "white ceramic plate",
+     "white creamy dip",
+     "fresh green dill",
+     "dark purple roasted carrot"
+    ],
+    "brands": [],
+    "people": {
+     "note": "a person's hands",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "person places carrot on dip",
+     "person splits carrot"
+    ],
+    "setting": "kitchen counter",
+    "subject": "person handling a roasted carrot",
+    "summary": "A person places a dark roasted carrot on a bed of creamy white dip garnished with dill, then carefully splits the carrot in half to reveal its vibrant orange interior.",
+    "activity": "plating a roasted carrot with dip",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 1.2,
+      "start_s": 0.0,
+      "description": "hands place carrot on dip"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "tahini-11-11_plate_topping-over",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "white oval platter",
+     "roasted colorful carrots",
+     "white creamy sauce",
+     "toasted sliced almonds",
+     "fresh dill sprigs",
+     "small green peas",
+     "small red grapes",
+     "silver serving spoon"
+    ],
+    "brands": [],
+    "people": {
+     "note": "a hand of an unseen person",
+     "count": 1,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "hand holds a spoon with toppings",
+     "hand sprinkles toppings onto the dish",
+     "hand removes spoon from over the dish"
+    ],
+    "setting": "kitchen counter",
+    "subject": "chef plating dish",
+    "summary": "A hand uses a spoon to add a mix of peas, grapes, and nuts as a topping to a platter of roasted colorful carrots, which are arranged on a creamy white sauce and already garnished with almonds and dill.",
+    "activity": "garnishing a roasted carrot dish",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": []
+   }
+  },
+  {
+   "media_id": "tahini-12-12_plate_fork-bite",
+   "kind": "video",
+   "understanding": {
+    "kind": "video",
+    "props": [
+     "white oval platter",
+     "multicolored roasted carrots",
+     "creamy white sauce",
+     "flaked almonds",
+     "small green capers",
+     "fresh dill sprigs",
+     "silver fork"
+    ],
+    "brands": [],
+    "people": {
+     "note": "",
+     "count": null,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": false,
+     "transcript": ""
+    },
+    "actions": [
+     "hand puts fork onto a roasted carrot",
+     "hand lifts fork with a carrot and sauce",
+     "hand moves fork with carrot toward camera"
+    ],
+    "setting": "indoor, likely a kitchen or dining table",
+    "subject": "plated roasted carrots",
+    "summary": "A close-up shot shows a hand using a fork to pick up a roasted carrot from a beautifully plated dish of colorful roasted carrots with a creamy sauce and toppings.",
+    "activity": "plating and serving a dish",
+    "audio_type": "ambient",
+    "content_type": "broll",
+    "on_screen_text": "",
+    "visual_quality": "sharp and steady",
+    "notable_moments": []
+   }
+  }
+ ],
+ "resolver_outputs_by_run": {
+  "1": {
+   "m004,m005,m006": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m004",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m006",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": "Which clip shows the finished dish, specifically the crispy topping being stirred in a pan?",
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": "Which clip shows the finished dish, specifically the topping going over the carrots on the plate?",
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": "Which clip shows the finished dish, specifically a fork taking a bite?",
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [
+       {
+        "media": "m004",
+        "value": null,
+        "evidence": "adds sliced garlic and slivered almonds to a frying pan",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "mixture of sliced almonds, dried cranberries, and capers in a pan",
+        "confidence": 0.8
+       },
+       {
+        "media": "m006",
+        "value": null,
+        "evidence": "pours dried red fruit into a pan",
+        "confidence": 0.8
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m007,m008,m009": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m007",
+        "value": null,
+        "evidence": "requested to use every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m008",
+        "value": null,
+        "evidence": "requested to use every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m009",
+        "value": null,
+        "evidence": "requested to use every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [
+       {
+        "media": "m007",
+        "value": null,
+        "evidence": "person grating lemon zest into a bowl, grates lemon zest into bowl",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [
+       {
+        "media": "m009",
+        "value": null,
+        "evidence": "hand pours liquid with a spoon into a bowl, hand stirs ingredients in the bowl",
+        "confidence": 0.7
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [
+       {
+        "media": "m008",
+        "value": null,
+        "evidence": "hand stirs white dip in a swirl, in a white serving plate",
+        "confidence": 0.8
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m010,m011,m012": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m010",
+        "value": null,
+        "evidence": "uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "hand uses a spoon to add a mix of peas, grapes, and nuts as a topping to a platter of roasted colorful carrots",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "hand using a fork to pick up a roasted carrot from a beautifully plated dish",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [
+       {
+        "media": "m010",
+        "value": null,
+        "evidence": "person places a dark roasted carrot on a bed of creamy white dip",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "hand uses a spoon to add a mix of peas, grapes, and nuts as a topping to a platter of roasted colorful carrots",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "hand using a fork to pick up a roasted carrot from a beautifully plated dish",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m001,m002,m003": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m001",
+        "value": null,
+        "evidence": "Creator requested 'Use every uploaded file'",
+        "confidence": 1.0
+       },
+       {
+        "media": "m002",
+        "value": null,
+        "evidence": "Creator requested 'Use every uploaded file'",
+        "confidence": 1.0
+       },
+       {
+        "media": "m003",
+        "value": null,
+        "evidence": "Creator requested 'Use every uploaded file'",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a crispy topping stirred in a pan?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a crispy topping stirred in a pan?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a crispy topping stirred in a pan?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a topping going over carrots on a plate?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a topping going over carrots on a plate?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a topping going over carrots on a plate?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a fork taking a bite?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [
+       {
+        "media": "m002",
+        "value": null,
+        "evidence": "A hand uses a knife to slice a yellow carrot lengthwise.",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [
+       {
+        "media": "m001",
+        "value": null,
+        "evidence": "carrots are then drizzled with a dark red sauce. ... drizzling dark sauce over carrots",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [
+       {
+        "media": "m003",
+        "value": null,
+        "evidence": "A baking sheet filled with roasted purple, orange, and yellow carrots, some with a glaze, is shown fresh out of the oven",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show almonds going into a garlic pan?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show almonds going into a garlic pan?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show almonds going into a garlic pan?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show dates and capers?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show dates and capers?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show dates and capers?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show lemon grated over yogurt?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show lemon grated over yogurt?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show lemon grated over yogurt?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show tahini being stirred in?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show tahini being stirred in?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show tahini being stirred in?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show yogurt spread on a plate?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show yogurt spread on a plate?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show yogurt spread on a plate?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show carrots being laid on a plate?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show carrots being laid on a plate?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show carrots being laid on a plate?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a topping going over carrots?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a topping going over carrots?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a topping going over carrots?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a fork taking a bite?"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "2": {
+   "m004,m005,m006": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m004",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m006",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "hand uses a spoon to stir a mixture of sliced almonds, dried cranberries, and capers in a black non-stick pan",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [
+       {
+        "media": "m004",
+        "value": null,
+        "evidence": "A hand adds sliced garlic and slivered almonds to a frying pan containing oil",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [
+       {
+        "media": "m006",
+        "value": null,
+        "evidence": "A hand adds dried fruit and green peas to a frying pan",
+        "confidence": 0.8
+       },
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "mixture of sliced almonds, dried cranberries, and capers in a black non-stick pan",
+        "confidence": 0.8
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m010,m011,m012": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m010",
+        "value": null,
+        "evidence": "Every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "Every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "Every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "hand sprinkles toppings onto the dish",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "hand lifts fork with a carrot",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [
+       {
+        "media": "m010",
+        "value": null,
+        "evidence": "person places carrot on dip",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "hand sprinkles toppings onto the dish",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "hand lifts fork with a carrot",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m007,m008,m009": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m007",
+        "value": null,
+        "evidence": "creator requested 'every uploaded file'",
+        "confidence": 1.0
+       },
+       {
+        "media": "m008",
+        "value": null,
+        "evidence": "creator requested 'every uploaded file'",
+        "confidence": 1.0
+       },
+       {
+        "media": "m009",
+        "value": null,
+        "evidence": "creator requested 'every uploaded file'",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [
+       {
+        "media": "m007",
+        "value": null,
+        "evidence": "person grating lemon zest into a bowl; person grates lemon zest into bowl",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [
+       {
+        "media": "m009",
+        "value": null,
+        "evidence": "hand uses a spoon to add a light brown liquid to a bowl of white creamy sauce and green herbs, then mixes them together; hand pours liquid with a spoon into a bowl, hand stirs ingredients in the bowl",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [
+       {
+        "media": "m008",
+        "value": null,
+        "evidence": "hand uses a silver spoon to swirl a creamy white dip ... in a white serving plate, creating a decorative pattern; hand stirs white dip in a swirl",
+        "confidence": 0.8
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m001,m002,m003": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m001",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m002",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m003",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a crispy topping stirred in the pan?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a crispy topping stirred in the pan?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a crispy topping stirred in the pan?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a topping going over carrots on a plate?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a topping going over carrots on a plate?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a topping going over carrots on a plate?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a fork taking a bite?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [
+       {
+        "media": "m002",
+        "value": null,
+        "evidence": "slices a yellow carrot lengthwise with a knife",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [
+       {
+        "media": "m001",
+        "value": null,
+        "evidence": "drizzled with a dark red sauce; drizzling dark sauce over carrots",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [
+       {
+        "media": "m003",
+        "value": null,
+        "evidence": "A baking sheet filled with roasted purple, orange, and yellow carrots, some with a glaze, is shown fresh out of the oven",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show almonds going into a garlic pan?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show almonds going into a garlic pan?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show almonds going into a garlic pan?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show dates and capers?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show dates and capers?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show dates and capers?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show lemon being grated over yogurt?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show lemon being grated over yogurt?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show lemon being grated over yogurt?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show tahini being stirred in?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show tahini being stirred in?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show tahini being stirred in?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show yogurt being spread on a plate?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show yogurt being spread on a plate?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show yogurt being spread on a plate?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show carrots being laid on a spread?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show carrots being laid on a spread?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show carrots being laid on a spread?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a topping going over carrots?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a topping going over carrots?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a topping going over carrots?"
+       }
+      ]
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": [
+       {
+        "media": "m001",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m002",
+        "question": "Does this clip show a fork taking a bite?"
+       },
+       {
+        "media": "m003",
+        "question": "Does this clip show a fork taking a bite?"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "3": {
+   "m007,m008,m009": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m007",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m008",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m009",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [
+       {
+        "media": "m007",
+        "value": null,
+        "evidence": "person grating lemon zest into a clear glass bowl containing a creamy white base",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [
+       {
+        "media": "m009",
+        "value": null,
+        "evidence": "hand pours liquid with a spoon into a bowl, hand stirs ingredients in the bowl",
+        "confidence": 0.7
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m001,m002,m003": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m001",
+        "value": null,
+        "evidence": "uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m002",
+        "value": null,
+        "evidence": "uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m003",
+        "value": null,
+        "evidence": "uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [
+       {
+        "media": "m002",
+        "value": null,
+        "evidence": "slices a yellow carrot lengthwise with a knife",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [
+       {
+        "media": "m001",
+        "value": null,
+        "evidence": "drizzled with a dark red sauce; drizzling dark sauce over carrots",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [
+       {
+        "media": "m003",
+        "value": null,
+        "evidence": "A baking sheet filled with roasted purple, orange, and yellow carrots, some with a glaze, is shown fresh out of the oven",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m004,m005,m006": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m004",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m006",
+        "value": null,
+        "evidence": "every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "hand uses a spoon to stir a mixture of sliced almonds, dried cranberries, and capers in a black non-stick pan",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [
+       {
+        "media": "m004",
+        "value": null,
+        "evidence": "hand adds sliced garlic and slivered almonds to a frying pan",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [
+       {
+        "media": "m006",
+        "value": null,
+        "evidence": "pours dried red fruit into a pan, pours green peas into the pan",
+        "confidence": 0.8
+       },
+       {
+        "media": "m005",
+        "value": null,
+        "evidence": "a mixture of sliced almonds, dried cranberries, and capers in a black non-stick pan",
+        "confidence": 0.8
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [],
+      "needs_vision": []
+     }
+    ]
+   },
+   "m010,m011,m012": {
+    "intents": [
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "include_all_files",
+      "assignments": [
+       {
+        "media": "m010",
+        "value": null,
+        "evidence": "requested to include every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "requested to include every uploaded file",
+        "confidence": 1.0
+       },
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "requested to include every uploaded file",
+        "confidence": 1.0
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_1",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_2",
+      "assignments": [
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "A hand uses a spoon to add a mix of peas, grapes, and nuts as a topping to a platter of roasted colorful carrots",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "open_finished_dish_clip_3",
+      "assignments": [
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "hand using a fork to pick up a roasted carrot from a beautifully plated dish",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_slicing_carrots",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dark_syrup",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_roasted_tray",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_almonds_garlic_pan",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_dates_capers",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_lemon_grated_yogurt",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_tahini_stirred_in",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_yogurt_spread",
+      "assignments": [],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_carrots_laid_on",
+      "assignments": [
+       {
+        "media": "m010",
+        "value": null,
+        "evidence": "person places carrot on dip",
+        "confidence": 0.85
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_topping_over",
+      "assignments": [
+       {
+        "media": "m011",
+        "value": null,
+        "evidence": "hand sprinkles toppings onto the dish",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     },
+     {
+      "caption": null,
+      "question": null,
+      "intent_id": "show_fork_bite",
+      "assignments": [
+       {
+        "media": "m012",
+        "value": null,
+        "evidence": "hand lifts fork with a carrot and sauce",
+        "confidence": 0.9
+       }
+      ],
+      "needs_vision": []
+     }
+    ]
+   }
+  }
+ }
+}
