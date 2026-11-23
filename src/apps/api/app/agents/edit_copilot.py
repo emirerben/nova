@@ -161,7 +161,7 @@ log = structlog.get_logger()
 # then a music ask is answered "send me the song you want", never swap_music.
 # v133 (KRI-1558): arrange_sections / set_section_layout / remove_background_window /
 # retime_background_window and the SECTIONS + LAYOUT WINDOWS lines (prompts/edit_copilot_ops/
-# speaker_sections.txt), printed only where the sections gate is open (a protocol 56 build with
+# speaker_sections.txt), printed only where the sections gate is open (a protocol 57 build with
 # speakerSections verified), so every other prompt is byte-identical.
 EDIT_COPILOT_PROMPT_VERSION = "2026-11-23-v133"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55

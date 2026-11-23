@@ -1348,7 +1348,7 @@ def background_sections_open(job: Any, variant: dict[str, Any]) -> bool:
     """May chat lay the speaker out per section (KRI-1558)?
 
     The windows lane is open AND the sections gate holds (flag, ``speakerSections`` verified, a
-    protocol 56 build: `speaker_sections_unavailable_reason`, same worker-side client rule). False
+    protocol 57 build: `speaker_sections_unavailable_reason`, same worker-side client rule). False
     adds nothing to the snapshot or the prompt, so a closed gate is byte-identical to before.
     """
     if not background_windows_open(job, variant):

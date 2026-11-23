@@ -655,6 +655,27 @@ def _source_label(source: Any) -> str:
     return host
 
 
+def _shown_texts(prepared: PreparedResearch) -> list[tuple[list[str], Any]]:
+    """Each explanation as the creator reads it on screen: a design's heading and its detail
+    are one fact in one window (KRI-1582), listed once with both lines; anything else is one
+    row. Each entry is ``(lines, first_row)`` with the pair's sources merged on the row."""
+    shown: list[tuple[list[str], Any]] = []
+    pairs: dict[int, int] = {}
+    for row in prepared.texts:
+        tag = row.design
+        if tag is not None and tag.level in ("heading", "detail") and tag.pair is not None:
+            at = pairs.get(tag.pair)
+            if at is not None:
+                lines, first = shown[at]
+                merged = list({s.url: s for s in [*first.sources, *row.sources]}.values())
+                ordered = [*lines, row.text] if tag.level == "detail" else [row.text, *lines]
+                shown[at] = (ordered, first.model_copy(update={"sources": merged}))
+                continue
+            pairs[tag.pair] = len(shown)
+        shown.append(([row.text], row))
+    return shown
+
+
 def preview_lines(prepared: PreparedResearch) -> str:
     """The sourced wording and its sources, for the reply before the approval card."""
     lines = [
@@ -663,10 +684,11 @@ def preview_lines(prepared: PreparedResearch) -> str:
             tr="Kaynaklı ekran açıklamaları (yalnızca bu taslağı onaylarsan eklenir):",
         )
     ]
-    for row in prepared.texts:
+    for texts, row in _shown_texts(prepared):
         sources = ", ".join(dict.fromkeys(_source_label(source) for source in row.sources))
+        quoted = " / ".join(f"“{text}”" for text in texts)
         lines.append(
-            f"- {_clock(row.start_s)}–{_clock(row.end_s)} · “{row.text}” · "
+            f"- {_clock(row.start_s)}–{_clock(row.end_s)} · {quoted} · "
             + say(en="Source", tr="Kaynak")
             + f": {sources}"
         )
@@ -688,12 +710,15 @@ def preview_payload(prepared: PreparedResearch) -> dict[str, Any]:
         "retrieved_at": prepared.retrieved_at,
         "explanations": [
             {
-                "text": row.text,
+                "text": "\n".join(texts),
                 "start_s": row.start_s,
                 "end_s": row.end_s,
                 "sources": [source.model_dump(mode="json") for source in row.sources],
             }
-            for row in [*prepared.texts, *prepared.layers]
+            for texts, row in [
+                *_shown_texts(prepared),
+                *(([layer.text], layer) for layer in prepared.layers),
+            ]
         ],
     }
 

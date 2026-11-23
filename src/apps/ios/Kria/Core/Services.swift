@@ -1450,10 +1450,13 @@ enum KriaClientProtocolContract {
     /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
     /// 53 (music under speech): a Talking or Voiceover recipe may carry `audio.speech_windows` with a music-role audio track; the
     /// device ducks that track under those windows. Needs `speechDuck`.
-    /// 56 (KRI-1558): plays a Talking take split where the speaker's layout changes (back-to-back pieces of one take with
+    /// 56 (KRI-1582): reads `choice_question` version 2, whose options may carry a `preview` (text layers drawn over a frame
+    /// of the creator's own clip). The server sends the informative text design picker with previews only to this protocol;
+    /// a 55 build gets the same question as text-only cards.
+    /// 57 (KRI-1558): plays a Talking take split where the speaker's layout changes (back-to-back pieces of one take with
     /// nothing removed, each with its own `speaker_frame_override`) as one shot: no declick at the join and the cut-out keeps
     /// its state across it. Needs `speakerSections`. The server plans layouts per topic only for this protocol.
-    static let version = 56
+    static let version = 57
     static let header = "X-Kria-Client-Protocol"
 }
 

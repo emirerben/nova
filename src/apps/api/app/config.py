@@ -1167,7 +1167,7 @@ class Settings(BaseSettings):
     # set SPEAKER_SECTIONS_ENABLED=true --app nova-video` + restart (api + worker); rollback =
     # `...=false` + restart. Design: docs/reviews/kri-1558-section-layout-failure-modes.md.
     speaker_sections_enabled: bool = False
-    speaker_sections_min_client_protocol: int = 56
+    speaker_sections_min_client_protocol: int = 57
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on

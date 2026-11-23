@@ -10,6 +10,7 @@
     "CameraRollStoriesUITests": "creation",
     "ClipOrderUITests": "creation",
     "CreationUITests": "creation",
+    "DesignPickerUITests": "creation",
     "DeviceRenderUITests": "creation",
     "DrawingJourneyUITests": "editor",
     "EditorUITests": "editor",
@@ -225,6 +226,10 @@
     "src/apps/ios/Kria/Features/KriaCameraChrome.swift": "creation",
     "src/apps/ios/Kria/Core/SteerNow.swift": "creation",
     "src/apps/ios/Kria/Features/WaitingMessageBar.swift": "creation",
-    "src/apps/ios/Kria/Features/NativeEditorPlaybackAdmissionFixture.swift": "editor"
+    "src/apps/ios/Kria/Features/NativeEditorPlaybackAdmissionFixture.swift": "editor",
+    "src/apps/ios/Kria/Features/DesignPreviewStrip.swift": "creation",
+    "src/apps/ios/Kria/Features/DesignPickerUITestFixture.swift": "creation",
+    "src/apps/ios/Kria/Core/ChoiceQuestion.swift": "creation",
+    "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift": "creation"
   }
 }
