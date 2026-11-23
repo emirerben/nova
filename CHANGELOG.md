@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.103.0] - 2026-11-23
+
+### Changed
+- ci: main seeds the Docker cache, locked installs, classify five root paths (KRI-1551) (#2479) <!-- release-pr: 2479 -->
+
 ## [0.89.102.0] - 2026-11-23
 
 ### Changed
