@@ -210,3 +210,70 @@ def test_a_real_render_with_a_closed_gate_is_judged_with_that_gate(monkeypatch):
     assert variant["phone_sfx_choice_receipt"]["declined"] == "flag_off"
     assert receipt.status == "not_possible"
     assert receipt.reason == limit_line(SfxLimit.flag_off)
+
+
+def _montage(**changes) -> PlanFacts:
+    return PlanFacts(edit_format="montage", audio_strategy="licensed_music", **changes)
+
+
+def test_a_rendered_guided_montage_is_judged_from_its_own_receipt():
+    placed = _receipt_of(ASK_EN, _montage(rendered_montage=True, sfx_choice=_placed(2)))
+    assert placed.status == "met" and placed.reason == "I added 2 sound effects"
+    declined = _receipt_of(
+        ASK_EN,
+        _montage(
+            rendered_montage=True,
+            sfx_choice={**_placed(0), "declined": SfxLimit.no_timed_evidence.value},
+        ),
+    )
+    assert declined.status == "not_possible"
+    assert declined.reason == limit_line(SfxLimit.no_timed_evidence)
+
+
+def test_a_montage_draft_promises_the_effects_while_the_gate_is_open(monkeypatch):
+    from app.kria.approval_readiness import _promised_at_render
+    from app.services import sfx_capability
+
+    monkeypatch.setattr(sfx_capability, "guided_sfx_limit", lambda: None)
+    facts = _montage(phone_montage=True)
+    receipt = _receipt_of(ASK_EN, facts)
+    assert receipt.status == "partial"
+    assert receipt.reason == "I'll place sound effects on the cuts where your clips change"
+    assert _promised_at_render(ASK_EN, receipt, facts)
+    with reply_language_for("tr"):
+        assert _promised_at_render(ASK_TR, _receipt_of(ASK_TR, facts), facts)
+
+
+def test_a_montage_draft_with_the_gate_closed_names_it(monkeypatch):
+    from app.services import sfx_capability
+
+    monkeypatch.setattr(sfx_capability, "guided_sfx_limit", lambda: SfxLimit.feature_unverified)
+    receipt = _receipt_of(ASK_EN, _montage(phone_montage=True))
+    assert receipt.status == "not_possible"
+    assert receipt.reason == limit_line(SfxLimit.feature_unverified)
+
+
+def test_a_rendered_montage_with_no_receipt_is_never_judged_met():
+    receipt = _receipt_of(ASK_EN, _montage(rendered_montage=True))
+    assert receipt.status != "met"
+
+
+def test_the_manifest_opens_sfx_ask_for_a_montage_only_while_its_gate_is_open(monkeypatch):
+    from app.services import creator_capabilities as cc
+    from app.services import sfx_capability
+
+    class _Audio:
+        available = True
+
+    capabilities = {cc.CAPABILITY_PHONE_SOURCE_AUDIO: _Audio()}
+    kwargs = dict(
+        phone_source_media_ids=["m1"],
+        normalized_format="montage",
+        has_voiceover=False,
+        is_phone_subtitled=False,
+        is_phone_voiceover=False,
+    )
+    monkeypatch.setattr(sfx_capability, "guided_sfx_limit", lambda: None)
+    assert cc._sfx_ask_open(capabilities, **kwargs) is True
+    monkeypatch.setattr(sfx_capability, "guided_sfx_limit", lambda: SfxLimit.flag_off)
+    assert cc._sfx_ask_open(capabilities, **kwargs) is False

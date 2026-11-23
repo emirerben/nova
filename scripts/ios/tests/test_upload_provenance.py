@@ -106,6 +106,67 @@ class ProvenanceTests(unittest.TestCase):
                     p.never_executed({k: v for k, v in job.items() if k != key})
                 )
 
+    def test_a_job_cut_off_before_upload_requires_complete_step_records(self):
+        # Raw Actions metadata for 45030190568/1 (job 137231874902). The repository
+        # transfer ended the job 35 s into an archive that takes about 24 minutes,
+        # and its log was never stored. Step records are all that is left.
+        archive = {
+            "name": p.ARCHIVE,
+            "status": "in_progress",
+            "conclusion": None,
+            "started_at": "2026-11-22T14:02:07Z",
+            "completed_at": None,
+        }
+        upload = {
+            "name": p.UPLOAD,
+            "status": "pending",
+            "conclusion": None,
+            "started_at": None,
+            "completed_at": None,
+        }
+        job = {"status": "completed", "conclusion": "cancelled", "steps": [archive, upload]}
+        self.assertTrue(p.cut_off_before_upload(job))
+        not_reached = dict(archive, status="pending", started_at=None)
+        self.assertTrue(p.cut_off_before_upload(dict(job, steps=[not_reached, upload])))
+
+        def with_steps(a=archive, u=upload):
+            return dict(job, steps=[a, u])
+
+        unknown = {
+            "upload running": with_steps(u=dict(upload, status="in_progress")),
+            "upload has a start": with_steps(u=dict(upload, started_at="2026-11-22T14:26:00Z")),
+            "upload has an end": with_steps(u=dict(upload, completed_at="2026-11-22T14:30:00Z")),
+            "upload cancelled": with_steps(u=dict(upload, conclusion="cancelled")),
+            "upload skipped": with_steps(u=dict(upload, conclusion="skipped")),
+            "upload succeeded": with_steps(u=dict(upload, status="completed", conclusion="success")),
+            "archive finished": with_steps(a=dict(archive, status="completed", conclusion="success")),
+            "archive has an end": with_steps(a=dict(archive, completed_at="2026-11-22T14:26:00Z")),
+            "job failed": dict(job, conclusion="failure"),
+            "job still running": dict(job, status="in_progress"),
+            "two upload steps": dict(job, steps=[archive, upload, upload]),
+            "two archive steps": dict(job, steps=[archive, archive, upload]),
+            "no upload step": dict(job, steps=[archive]),
+            "no archive step": dict(job, steps=[upload]),
+            "no steps": dict(job, steps=[]),
+            "steps are not a list": dict(job, steps=None),
+        }
+        for name, changed in unknown.items():
+            with self.subTest(name):
+                self.assertFalse(p.cut_off_before_upload(changed))
+        for key in job:
+            with self.subTest(missing=key):
+                self.assertFalse(
+                    p.cut_off_before_upload({k: v for k, v in job.items() if k != key})
+                )
+        for key in ("status", "conclusion", "started_at", "completed_at"):
+            with self.subTest(upload_missing=key):
+                partial = {k: v for k, v in upload.items() if k != key}
+                self.assertFalse(p.cut_off_before_upload(with_steps(u=partial)))
+        for key in ("conclusion", "completed_at"):
+            with self.subTest(archive_missing=key):
+                partial = {k: v for k, v in archive.items() if k != key}
+                self.assertFalse(p.cut_off_before_upload(with_steps(a=partial)))
+
     def test_transfer_receipt_requires_complete_fastlane_runtime_message(self):
         marker = "Successfully uploaded the new binary to App Store Connect"
         for text in ["release notes mention " + marker, marker + " (example only)"]:

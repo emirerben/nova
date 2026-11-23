@@ -14502,6 +14502,22 @@
         }
       }
     },
+    "Drawing preview" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorschau wird gezeichnet"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önizleme çiziliyor"
+          }
+        }
+      }
+    },
     "Drawing · %lld strokes" : {
       "localizations" : {
         "de" : {
@@ -23886,6 +23902,22 @@
         }
       }
     },
+    "No preview" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Vorschau"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önizleme yok"
+          }
+        }
+      }
+    },
     "No projects yet" : {
       "localizations" : {
         "de" : {
@@ -28389,6 +28421,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Klip önizlemesi"
+          }
+        }
+      }
+    },
+    "Preview drawn over your clip" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorschau über deinem Clip"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önizleme klibinin üzerinde"
+          }
+        }
+      }
+    },
+    "Preview drawn over your clip's poster" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorschau über dem Standbild deines Clips"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önizleme klibinin kapak görselinin üzerinde"
+          }
+        }
+      }
+    },
+    "Preview drawn without your clip" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorschau ohne deinen Clip"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Önizleme klibin olmadan"
           }
         }
       }

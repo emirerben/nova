@@ -204,6 +204,8 @@ from app.services import clip_order_card, clip_order_ledger
 from app.services.anchor_exclusions import withdraw_excluded_anchors
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
+    CONFLICT_TEXT_DESIGN,
+    CONTENT_KEY,
     ORDER_VS_GROUP_OPTIONS,
     SIMPLER_OMITTED_IDS_KEY,
     SIMPLER_VERSION_REASON,
@@ -6962,6 +6964,16 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     )
 
 
+def _creator_messages(events: Sequence[tuple[str, Any]]) -> str:
+    """The thread's creator lines as the choice gate has them (each cut to 400 characters by
+    `tag_event`): the fallback when her full request is over the planning bound."""
+    return "\n".join(
+        str(payload[CONTENT_KEY])
+        for role, payload in events
+        if role == "user" and isinstance(payload, dict) and payload.get(CONTENT_KEY)
+    )
+
+
 async def _gate_unresolved_choices(
     db: AsyncSession,
     planned: PlannedKriaTurn,
@@ -7341,6 +7353,12 @@ async def _gate_unresolved_choices(
         planned = replace(planned, plan=plan)
     if not settings.kria_choice_questions_enabled:
         return planned
+    # KRI-1582: the design default reads her whole request, uncut, as the research writer does.
+    creator_request = (
+        await _load_raw_creator_request(db, thread_id=thread_id, user_message=creator_text or "")
+        if settings.informative_text_designs_enabled
+        else None
+    ) or _creator_messages(events)
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),
@@ -7352,6 +7370,7 @@ async def _gate_unresolved_choices(
             voice_route=settings.voice_behind_footage_enabled,
             speech_occurrence=settings.speech_occurrence_question_enabled,
             client_protocol=planned.client_protocol,
+            creator_request=creator_request,
         ),
     )
     if resolution.question is not None:
@@ -7376,6 +7395,15 @@ async def _gate_unresolved_choices(
             )
         candidate = resolution.question.candidate()
         question = build_choice_question(candidate)
+        if candidate.kind == CONFLICT_TEXT_DESIGN:
+            from app.kria.text_design_ask import with_design_previews  # noqa: PLC0415
+
+            question = with_design_previews(
+                question,
+                brief=brief,
+                media_snapshot=enriched_snapshot,
+                client_protocol=planned.client_protocol,
+            )
         if frozen_music is not None:
             question["length_context"] = {
                 "input_digest": music_input_digest,

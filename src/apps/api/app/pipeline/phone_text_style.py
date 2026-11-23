@@ -550,6 +550,20 @@ def _designed_fact(row: dict) -> bool:
     )
 
 
+def _scrimmed_stacks(rows) -> set[str]:
+    """Stack ids whose block carries a scrim (KRI-1581 puts it on the pair's first row)."""
+    from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM
+
+    return {
+        str(stack["stack_id"])
+        for row in rows
+        if isinstance(row.get("scrim"), dict)
+        and (stack := (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM) or {}).get(
+            "stack_id"
+        )
+    }
+
+
 def _restore(rows, snapshot) -> None:
     for row, kept in zip(rows, snapshot, strict=True):
         row.clear()
@@ -1328,9 +1342,25 @@ def resolve_phone_text_style(
             placed.append(row)
     from app.pipeline.phone_text_background import automatic_fill
 
+    scrimmed = _scrimmed_stacks(rows)
     for row in rows:
         authored = authored_fields(row)
         frames = [frame for frame in background_frames or [] if _same_window(row, frame)]
+        if informative_role(row) is not None:
+            from app.pipeline.phone_title_legibility import settle_informative_text
+            from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM
+
+            stack = (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM) or {}
+            settle_informative_text(
+                row,
+                frames,
+                wanted=rules[text_role(row)],
+                asked=effective_text_rule({}, requested, text_role(row)),
+                canvas=canvas,
+                shapes=informative_shapes_active(),
+                scrimmed=isinstance(row.get("scrim"), dict) or stack.get("stack_id") in scrimmed,
+            )
+            continue
         if frames and "color" not in rules[text_role(row)] and "color" not in authored:
             row["color"], _score = automatic_fill(measure_box(row, canvas), frames)
     from app.services.pipeline_trace import record_pipeline_event

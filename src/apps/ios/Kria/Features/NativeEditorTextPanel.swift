@@ -479,6 +479,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                         .overlay(Circle().stroke(string("color", "#FFFFFF") == hex ? KriaColor.sky : KriaColor.line, lineWidth: 2))
                         .frame(width: 28, height: 28).frame(minWidth: 44, minHeight: 44)
                 }.accessibilityLabel("Text color \(hex)")
+                .accessibilityAddTraits(string("color", "#FFFFFF") == hex ? .isSelected : [])
             }
             ColorPicker("Custom color", selection: colorBinding("color", fallback: "#FFFFFF"), supportsOpacity: false)
                 .labelsHidden().frame(minWidth: 44, minHeight: 44).accessibilityLabel("Custom text color")

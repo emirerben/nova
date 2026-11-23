@@ -5190,6 +5190,75 @@ def _run_phone_guided_job(
                     reason="compile_dropped",
                 )
                 timed_cards = ()
+    # KRI-1561: the creator's general sound-effect ask on a montage with no voiceover. The first
+    # compile fixed the real length; the effects are chosen from the clips' own moments (a montage
+    # has no speech), then the plan compiles once more with them. A refusal renders the plain
+    # compile and says so on the receipt, never a failed job. Kept off the canonical plan: only
+    # this variant's private plan carries the rows, so the approved plan stays as approved.
+    sfx_choice_receipt: dict | None = None
+    sfx_rows: list[dict] = []
+    if plan.narration is None and not plan.editor_sound_effects and not plan.licensed_sfx_intent:
+        from app.services.phone_sfx_choice import read_sfx_ask  # noqa: PLC0415
+
+        if read_sfx_ask(creator_strategy) is not None:
+            from app.pipeline.guided_story import validate_guided_snapshot  # noqa: PLC0415
+            from app.services.explicit_sfx import trusted_visual_moments  # noqa: PLC0415
+            from app.services.sfx_capability import guided_sfx_limit  # noqa: PLC0415
+
+            lane_drops: list[dict] = []
+            chosen, sfx_choice_receipt = _phone_choose_sound_effects(
+                job_id,
+                strategy=creator_strategy,
+                limit=guided_sfx_limit(),
+                words=None,
+                duration_s=float(recipe.duration),
+                taken_at_s=[],
+                lane_drops=lane_drops,
+                snapshot=snapshot,
+                moments=trusted_visual_moments(
+                    validate_guided_snapshot(guided)[2], list(raw_plan["story_timeline"])
+                ),
+            )
+            if chosen:
+                names = {row["id"]: row.get("name") for row in sfx_choice_receipt["placed"]}
+                sfx_rows = _guided_ask_sfx_rows(chosen, names)
+                trial_plan = GuidedStoryExecutionPlan.model_validate(
+                    {**raw_plan, "editor_sound_effects": sfx_rows}
+                )
+                try:
+                    with _worker_reply_language(snapshot):
+                        trial = compile_phone_guided_repaired(
+                            trial_plan,
+                            bindings,
+                            contract=contract,
+                            visuals=visuals,
+                            narration=narration_bed,
+                            song=song_bed,
+                            sound_effects=tuple(chosen),
+                            landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                            **(
+                                {"timed_cards": timed_cards, "allow_editor_media": True}
+                                if timed_cards
+                                else {}
+                            ),
+                        )
+                    validate_phone_pilot_recipe(trial.recipe, allow_editor_media=bool(timed_cards))
+                except (UnsupportedPhonePlan, ValueError) as exc:
+                    log.warning("phone_guided_sfx.compile_dropped", job_id=job_id, error=str(exc))
+                    from app.services.phone_sfx_choice import demote_receipt  # noqa: PLC0415
+
+                    sfx_choice_receipt = demote_receipt(
+                        sfx_choice_receipt, [row["id"] for row in sfx_rows]
+                    )
+                    sfx_rows = []
+                else:
+                    raw_plan, plan, compiled = (
+                        {**raw_plan, "editor_sound_effects": sfx_rows},
+                        trial_plan,
+                        trial,
+                    )
+                    recipe, repair_notes = compiled.recipe, list(compiled.notes)
+                    sound_effects = tuple(chosen)
     # KRI-942: the creator's "clip sound off / on" asks, built on the compiled clock like the
     # cards above. A candidate the compile, the pilot check or the contract's camera-audio
     # promise refuses steps down to the next; the last one is the plan as it was.
@@ -5285,7 +5354,7 @@ def _run_phone_guided_job(
     # and (KRI-1027) their vertical framing.
     repaired_plan_payload = (
         copy.deepcopy(raw_plan)
-        if current_phone_text_policy() or toggle_changed or framing_changed
+        if current_phone_text_policy() or toggle_changed or framing_changed or sfx_rows
         else None
     )
     if compiled.plan is not plan:
@@ -5374,6 +5443,11 @@ def _run_phone_guided_job(
             current["variants"][0]["sound_effects"] = copy.deepcopy(
                 raw_plan["editor_sound_effects"]
             )
+        if sfx_choice_receipt is not None:
+            from app.services.phone_sfx_choice import RECEIPT_FIELD as SFX_CHOICE_FIELD  # noqa: PLC0415
+
+            # KRI-1561: what the general sound-effect ask got on this montage, and why not.
+            current["variants"][0][SFX_CHOICE_FIELD] = sfx_choice_receipt
         if repair_notes:
             # Creator-visible (job projection -> render_notes): what Kria changed so
             # the plan could render on the phone (KRI-129: never a silent override).
@@ -5898,6 +5972,32 @@ def _no_sound_effects_asked(snapshot: Any) -> bool:
     return asks_no_sound_effects(brief)
 
 
+def _guided_ask_sfx_rows(resolved: list[Any], names: dict[str, Any]) -> list[dict]:
+    """KRI-1561: ``SoundEffectPlacement`` rows for chosen, resolved effects, so a guided plan
+    and the editor hold them like any placed effect. Time, level and identity are copied from the
+    resolved request unchanged: the phone compile matches bound assets to these rows by them."""
+    from app.models import SoundEffect  # noqa: PLC0415
+
+    rows: list[dict] = []
+    with _sync_session() as db:
+        for effect in resolved:
+            request = effect.request
+            row = db.get(SoundEffect, request.catalog_id)
+            rows.append(
+                {
+                    "id": request.id,
+                    "sound_effect_id": request.catalog_id,
+                    "src_gcs_path": str(row.audio_gcs_path),
+                    "at_s": request.at_s,
+                    "gain": request.volume,
+                    "duration_s": effect.duration_s,
+                    "label": names.get(request.id),
+                    "source": "ask",
+                }
+            )
+    return rows
+
+
 def _phone_choose_sound_effects(
     job_id: str,
     *,
@@ -5908,6 +6008,7 @@ def _phone_choose_sound_effects(
     taken_at_s: list[float],
     lane_drops: list[dict],
     snapshot: Any = None,
+    moments: Any = (),
 ) -> tuple[list[Any], dict | None]:
     """KRI-1561: resolved lane rows for the creator's general sound-effect ask, and the receipt.
 
@@ -5950,6 +6051,7 @@ def _phone_choose_sound_effects(
         catalog_loader=catalog,
         run_agent=run_agent,
         taken_at_s=taken_at_s,
+        moments=moments,
     )
     resolved: list[Any] = []
     dropped: list[str] = []

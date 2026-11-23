@@ -22,7 +22,12 @@ MAX_FRAMES = 6
 
 VERDICTS = ("met", "unmet", "unverifiable")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
-DEFECT_KINDS = (
+# KRI-1583: "text_illegible" is on screen, but the picture behind swallows it (black on a dark
+# roof). Offered only on a review of a job stamped for informative text designs
+# (`ReviewCatalog.text_legibility`); every other review renders, and is schema-bound to,
+# `DEFECT_KINDS`, the v3 vocabulary, byte for byte.
+LEGIBILITY_DEFECT = "text_illegible"
+LEGIBILITY_DEFECT_KINDS = (
     "wrong_content",
     "copy_mismatch",
     "text_missing",
@@ -30,13 +35,15 @@ DEFECT_KINDS = (
     "text_obstructed",
     "order_mismatch",
     "style_mismatch",
+    "text_illegible",
     "other",
 )
+DEFECT_KINDS = tuple(kind for kind in LEGIBILITY_DEFECT_KINDS if kind != LEGIBILITY_DEFECT)
 ISSUABLE_KINDS = ("text", "text_sequence", "select", "order", "timing", "style")
 
 Verdict = Literal[*VERDICTS]
 Confidence = Literal[*CONFIDENCE_LEVELS]
-DefectKind = Literal[*DEFECT_KINDS]
+DefectKind = Literal[*LEGIBILITY_DEFECT_KINDS]
 
 DEFECTS_BY_REQUIREMENT_KIND: dict[str, tuple[str, ...]] = {
     "text": ("copy_mismatch", "text_missing", "text_cut_off", "text_obstructed", "other"),
@@ -46,6 +53,20 @@ DEFECTS_BY_REQUIREMENT_KIND: dict[str, tuple[str, ...]] = {
     "timing": ("text_missing", "text_cut_off", "other"),
     "style": ("style_mismatch", "text_obstructed", "other"),
 }
+_LEGIBLE_KINDS = frozenset({"text", "text_sequence", "style"})
+LEGIBILITY_DEFECTS_BY_REQUIREMENT_KIND: dict[str, tuple[str, ...]] = {
+    kind: (*defects[:-1], LEGIBILITY_DEFECT, defects[-1]) if kind in _LEGIBLE_KINDS else defects
+    for kind, defects in DEFECTS_BY_REQUIREMENT_KIND.items()
+}
+
+
+def defect_kinds(*, legibility: bool) -> tuple[str, ...]:
+    return LEGIBILITY_DEFECT_KINDS if legibility else DEFECT_KINDS
+
+
+def defects_by_requirement_kind(*, legibility: bool) -> dict[str, tuple[str, ...]]:
+    return LEGIBILITY_DEFECTS_BY_REQUIREMENT_KIND if legibility else DEFECTS_BY_REQUIREMENT_KIND
+
 
 _REQUIREMENT_ALIAS = re.compile(r"^R([1-9][0-9]?)$")
 _FRAME_ALIAS = re.compile(r"^f([0-9])$")
@@ -138,7 +159,9 @@ def parse_review_output(raw_text: str) -> IntentReviewOutput:
         raise InvalidReviewOutput(reason) from None
 
 
-def response_schema(requirement_ids: Sequence[str], frame_ids: Sequence[str]) -> dict[str, Any]:
+def response_schema(
+    requirement_ids: Sequence[str], frame_ids: Sequence[str], *, legibility: bool = False
+) -> dict[str, Any]:
     """Strict JSON schema sent with the call, closed over exactly the aliases that were issued."""
     if not requirement_ids or not frame_ids:
         raise ValueError("a review needs at least one requirement and one frame")
@@ -155,7 +178,10 @@ def response_schema(requirement_ids: Sequence[str], frame_ids: Sequence[str]) ->
         "properties": {
             "requirement_id": {"type": "string", "enum": list(requirement_ids)},
             "verdict": {"type": "string", "enum": list(VERDICTS)},
-            "defect_kind": {"type": ["string", "null"], "enum": [*DEFECT_KINDS, None]},
+            "defect_kind": {
+                "type": ["string", "null"],
+                "enum": [*defect_kinds(legibility=legibility), None],
+            },
             "evidence_frame_ids": {
                 "type": "array",
                 "items": {"type": "string", "enum": list(frame_ids)},
