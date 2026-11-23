@@ -22,6 +22,11 @@ Failure modes, written before the code:
 11. The windows the writer is offered disagree with what placement accepts: a generated opening
    she deleted (an editor tombstone) offers a hook that placement then refuses, or a spoken
    edit offers more pauses than the row budget holds while the guide must fill every one.
+12. Live answers the checks wrongly refuse: a framing opener before a name ("İşte Kyoto'nun"),
+   a fact word with a Turkish ending ("Trenin" over "Tren"), German nouns read as names.
+13. Limits a row slips past: "3 km" grounded by "7.3 km", a heading and detail over the window's
+   reading time together, a titled fact with no heading, a fact set on every row outgrowing the
+   editor state, a partly bare guide reported as her whole ask failing.
 
 The writer answers in `research_copy_designed.json` are authored from the teardown, and reviews
 are stubbed: assertions on them are structural, so a live capture can replace the file.
@@ -299,6 +304,16 @@ def _opened(text_design: str, hook: str, line: str, ids=("fact-6",)) -> dict:
 _FACT6_LINE = "Saga'dan Kameoka'ya 25 dakika"
 # The authored Kyoto copy's sentence openers that are framing, not names ("İşte trenimiz").
 _FRAMING_OPENERS = {"İşte", "Ray"}
+# Endings the Kyoto copy puts on a fact's own word ("Tren" -> "Trenin", "Trenimiz").
+_ORACLE_ENDINGS = ("", "i", "in", "imiz", "e", "de", "den", "le", "ler", "lar")
+
+
+def _oracle_grounded(name: str, cited_text: str, cited_words: set[str]) -> bool:
+    """A plain oracle, not the server's check: the name's first five letters are in the cited
+    text, or it is a cited word plus one of the copy's own endings."""
+    return name[: min(5, len(name))] in cited_text or any(
+        name == word + ending for word in cited_words for ending in _ORACLE_ENDINGS
+    )
 
 
 @pytest.mark.parametrize("text_design", ["A2", "B1"])
@@ -449,6 +464,11 @@ def test_her_text_in_the_first_clip_keeps_the_clip_and_the_guide_still_fills(mon
     assert uncovered_design_windows(output.ops, snapshot) == []
 
 
+def _fit(text: str, limit: int) -> str:
+    """The line cut to the window at a word boundary, as a writer shortens it."""
+    return text if len(text) <= limit else text[: limit + 1].rsplit(" ", 1)[0].rstrip(",")
+
+
 def _fill_every_window(calls: dict):
     """A writer that answers every offered window, as the B1 prompt asks."""
     lines = [(c.text, c.evidence_ids) for c in _designed("B1").captions]
@@ -467,7 +487,7 @@ def _fill_every_window(calls: dict):
                 {
                     "window_id": window["id"],
                     "heading": heading,
-                    "text": text[: window["max_characters"]],
+                    "text": _fit(text, window["max_characters"]),
                     "evidence_ids": ids,
                     "visual_quote": window["seen"][0]["text"][:16],
                 }
@@ -552,9 +572,10 @@ def test_kyoto_design_copy_opens_with_the_hook_then_grounded_facts(monkeypatch, 
     assert min(row["start_s"] for row in facts) >= 4.0
     assert not [row["text"] for row in rows if _LABEL.match(row["text"])]
     every_fact = [fact.id for fact in _evidence().facts]
+    assert [f["id"] for f in hook["source_params"]["research"]["evidence_facts"]] == every_fact
+    assert not [row for row in facts if "evidence_facts" in row["source_params"]["research"]]
     for row in rows:
         research = row["source_params"]["research"]
-        assert [fact["id"] for fact in research["evidence_facts"]] == every_fact
         assert research["design"]["id"] == text_design
         cited = [
             fact for fact in _evidence().facts if fact.id in {f["id"] for f in research["facts"]}
@@ -562,19 +583,30 @@ def test_kyoto_design_copy_opens_with_the_hook_then_grounded_facts(monkeypatch, 
         # Every capitalised word, the opener included: only the copy's framing words are free.
         # Read with a plain substring oracle, not the server's own check.
         cited_text = loose_text(" ".join(fact.text for fact in cited))
+        cited_words = set(re.findall(r"\w+", cited_text))
         names = {
             re.split(r"['’]", word)[0]
             for word in re.findall(r"[^\W\d_][\w'’]*", row["text"])
             if word[:1].isupper()
         }
+        if _level(row) in {"line", "detail"}:
+            # The contract leaves a line's plain sentence opener to the writer ("Trende beş
+            # vagon var"): one with no apostrophe and no capitalised word after it.
+            names -= {
+                match.group(1)
+                for match in re.finditer(
+                    r"(?:^|[.!?;]\s+)([^\W\d_]+)(?=\s+[^\W\d_A-ZÇĞİÖŞÜ]|,|$)", row["text"]
+                )
+            }
         unstated = {
             name
             for name in names - _FRAMING_OPENERS
-            if len(name) >= 3 and loose_text(name)[: min(5, len(name))] not in cited_text
+            if len(name) >= 3 and not _oracle_grounded(loose_text(name), cited_text, cited_words)
         }
         assert not unstated, (row["text"], unstated)
-        numbers = set(re.findall(r"\d+", row["text"]))
-        assert numbers <= set(re.findall(r"\d+", cited_text)), row["text"]
+        numbers = {n.replace(",", ".") for n in re.findall(r"\d+(?:[.,]\d+)*", row["text"])}
+        stated = {n.replace(",", ".") for n in re.findall(r"\d+(?:[.,]\d+)*", cited_text)}
+        assert numbers <= stated, row["text"]
 
     if text_design == "B1":
         assert {_level(row) for row in facts} == {"line"}
@@ -716,7 +748,7 @@ def _route_and_write(monkeypatch, *, lines_per_answer: int | None = None) -> dic
             "captions": [
                 {
                     "window_id": window["id"],
-                    "text": lines[index % len(lines)][0][: window["max_characters"]],
+                    "text": _fit(lines[index % len(lines)][0], window["max_characters"]),
                     "evidence_ids": lines[index % len(lines)][1],
                     "visual_quote": window["seen"][0]["text"][:16],
                 }
@@ -772,7 +804,7 @@ def test_a_bare_clip_after_correction_renders_with_a_note_not_a_question(monkeyp
         _plan().snapshot, creator_request=_ASK, informative_text_designs=True, drops=drops
     )
     assert [_level(row) for row in _compiled_rows(composed)] == ["hook", "line"]
-    assert [(drop.reason, drop.text) for drop in drops] == [("incomplete", _ASK)]
+    assert drops and {drop.reason for drop in drops} == {"bare_clip"}
 
 
 _RESEARCH_ASK = BriefRequirement(
@@ -1117,3 +1149,223 @@ def test_a_spoken_guide_is_offered_only_the_pauses_its_rows_hold(monkeypatch):
     assert len(offered) <= calls["writer"][0].snapshot["max_captions"] <= 12
     assert "No sourced line" not in output.reply_notes
     assert uncovered_design_windows(output.ops, snapshot) == []
+
+
+# -- 12. live answers the checks refused, and the limits a design row must keep ---------------
+
+
+@pytest.mark.parametrize("text_design", ["A2", "B1"])
+@pytest.mark.parametrize(
+    ("hook", "ids"),
+    [
+        ("İşte Kyoto'nun en güzel 25 dakikası", ["fact-1", "fact-6"]),
+        ("This Kyoto ride takes 25 minutes", ["fact-1", "fact-6"]),
+    ],
+)
+def test_a_framing_opener_before_a_grounded_name_passes_in_a_hook(text_design, hook, ids):
+    """Live re-record (2.33): 2 of 3 first answers opened "İşte Kyoto'nun ..."."""
+    written = DesignedCopyOutput.model_validate(_opened(text_design, hook, _FACT6_LINE, ids))
+    ops, _missing = designed_operations(written, _evidence(), _snapshot(), _request(), text_design)
+    assert ops[0]["text"] == hook
+
+
+@pytest.mark.parametrize(
+    ("text_design", "line"),
+    [
+        ("B1", "İşte Hozukyo Geçidi, 25 dakika"),
+        ("B1", "The Hozukyo gorge, 25 minutes"),
+        ("A2", "İşte Hozukyo Geçidi, 25 dakika"),
+        ("A2", "The Hozukyo gorge, 25 minutes"),
+        # Live A2 r1, first answer: "Burası" ("this place") opens a line naming its fact.
+        ("A2", "Burası Hozukyo Geçidi, 25 dakika"),
+        ("B1", "Burası Hozukyo Geçidi, 25 dakika"),
+    ],
+)
+def test_a_framing_opener_before_a_grounded_name_passes_in_a_line(text_design, line):
+    written = DesignedCopyOutput.model_validate(_opened(text_design, "Her mevsim başka", line))
+    ops, _missing = designed_operations(written, _evidence(), _snapshot(), _request(), text_design)
+    assert ops[-1]["text"] == line
+
+
+@pytest.mark.parametrize("text_design", ["A2", "B1"])
+@pytest.mark.parametrize(
+    ("hook", "line"),
+    [
+        ("İşte Nara'nın en güzel 25 dakikası", _FACT6_LINE),
+        ("Her mevsim başka", "İşte Sagano Geçidi, 25 dakika"),
+        ("This Nara ride takes 25 minutes", _FACT6_LINE),
+    ],
+)
+def test_the_name_after_a_framing_opener_is_still_checked(text_design, hook, line):
+    unstated = _reject(_opened(text_design, hook, line), text_design).split("do not: ")[1]
+    assert unstated in {"Nara", "Sagano"}
+
+
+@pytest.mark.parametrize(
+    ("heading", "text", "ids", "text_design"),
+    [
+        ("Trenin retro tasarımı", "Ahşap banklar", ["fact-11"], "A2"),
+        ("Trenimiz", "Ahşap banklı vagonlar", ["fact-11"], "A2"),
+        ("", "Trenimiz Hozukyo Geçidi boyunca kıvrılıyor", ["fact-6"], "B1"),
+    ],
+)
+def test_a_turkish_suffix_on_the_facts_word_still_grounds_it(heading, text, ids, text_design):
+    """Live re-record (2.34): fact-11 says "Tren"; "Trenin" ("the train's") is that word."""
+    written = _one(heading, text, ids)
+    ops, _missing = designed_operations(
+        DesignedCopyOutput.model_validate(written),
+        _evidence(),
+        _snapshot(),
+        _request(),
+        text_design,
+    )
+    assert ops[-1]["text"] == text
+
+
+@pytest.mark.parametrize(
+    ("heading", "ids", "name"),
+    [("Sagano treni", ["fact-6"], "Sagano"), ("Sagaon treni", ["fact-6"], "Sagaon")],
+)
+def test_a_longer_name_sharing_a_short_facts_word_is_still_rejected(heading, ids, name):
+    assert name in _reject(_one(heading, "Ahşap banklar", ids), "A2")
+
+
+def test_a_number_inside_a_decimal_its_fact_states_is_not_grounded():
+    """fact-6 states 7.3 km; "3 km" is a different number, "7,3 km" the same one."""
+    assert "3" in _reject(_one("Ray boyunca", "Ray boyunca 3 km", ["fact-6"]), "A2")
+    assert "3" in _reject(_one("3 km", "Saga'dan Kameoka'ya", ["fact-6"]), "A2")
+    written = DesignedCopyOutput.model_validate(_one("7,3 km", "Saga'dan Kameoka'ya", ["fact-6"]))
+    designed_operations(written, _evidence(), _snapshot(), _request(), "A2")
+
+
+def test_a_text_layer_under_a_design_reads_decimals_too():
+    from app.services.researched_text import validate_research_layers  # noqa: PLC0415
+
+    snapshot = {"slots": _snapshot()["slots"], "total_duration_s": 60.0}
+    layer = ResearchedLayer(
+        text="Ray boyunca 3 km",
+        language="tr",
+        position="bottom",
+        start_s=4,
+        end_s=9,
+        evidence_ids=["fact-6"],
+    )
+    with pytest.raises(ResearchUnavailable, match="3"):
+        validate_research_layers([layer], _evidence(), snapshot, _request(), text_design="A2")
+
+
+def test_a_heading_and_its_detail_share_the_windows_reading_time():
+    """15 characters a second is for what the window shows, heading and detail together."""
+    window = design_windows(_snapshot(), "A2")[0]
+    room = window["max_characters"]
+    heading = "Retro vagonlar ahşap banklar"
+    detail = ("Ahşap banklar, eski usul tasarım " * 4)[: room - len(heading) + 5].strip()
+    assert len(heading) <= room and len(detail) <= room < len(heading) + len(detail)
+    reason = _reject(_one(heading, detail, ["fact-11"]), "A2")
+    assert str(room) in reason
+
+
+@pytest.mark.parametrize("text_design", ["A1", "A2", "A3"])
+def test_a_titled_design_never_shows_a_detail_without_its_heading(text_design):
+    reason = _reject(_one("", "Ahşap banklar, eski usul tasarım", ["fact-11"]), text_design)
+    assert "heading" in reason
+
+
+_GERMAN_B1 = {
+    "hook": {"text": "Die schönsten 25 Minuten am Fluss", "evidence_ids": ["fact-6"]},
+    "captions": [
+        ("window-0", "Der Zug fährt 7,3 km durch die Schlucht", ["fact-6"]),
+        ("window-1", "Fünf Wagen, einer davon ganz offen", ["fact-12"]),
+        ("window-2", "Holzbänke im Retro-Design der Wagen", ["fact-11"]),
+        ("window-3", "Die Strecke folgt dem Fluss durch die Schlucht", ["fact-6"]),
+        ("window-4", "Die Landschaft wechselt mit der Jahreszeit", ["fact-8"]),
+        ("window-5", "Mitten in der Schlucht, 25 Minuten Fahrt", ["fact-6"]),
+        ("window-6", "Im Frühling Kirschblüten, im Herbst rotes Laub", ["fact-8"]),
+    ],
+}
+
+
+def _german(**replace: str) -> dict:
+    return {
+        "hook": _GERMAN_B1["hook"],
+        "captions": [
+            {
+                "window_id": window,
+                "text": replace.get(window, text),
+                "evidence_ids": ids,
+                "visual_quote": _quote(window),
+            }
+            for window, text, ids in _GERMAN_B1["captions"]
+        ],
+    }
+
+
+def test_german_nouns_are_not_names_but_german_numbers_are_still_checked():
+    """German capitalises every noun ("Zug", "Schlucht"), so capitals do not mark a name."""
+    written = DesignedCopyOutput.model_validate(_german())
+    ops, missing = designed_operations(written, _evidence(), _snapshot(), _request(), "B1")
+    assert missing == [] and ops[0]["text"] == _GERMAN_B1["hook"]["text"]
+    reason = _reject(_german(**{"window-0": "Der Zug fährt 3 km durch die Schlucht"}), "B1")
+    assert "3" in reason
+
+
+def test_a_partly_bare_guide_names_the_bare_clips_on_the_card_and_after_the_render(monkeypatch):
+    """Not "I couldn't do <her whole ask>": the lines render, only some clips stayed bare."""
+    from app.services.creation_text_degrade import (  # noqa: PLC0415
+        TEXT_DROPS_FIELD,
+        finished_render_notes,
+        text_drop_notes,
+        text_drops_record,
+    )
+
+    seen = _route_and_write(monkeypatch, lines_per_answer=1)
+    drops: list = []
+    compose_creation_text(
+        _plan().snapshot, creator_request=_ASK, informative_text_designs=True, drops=drops
+    )
+    bare = len(seen["writer"][-1].snapshot["research_windows"]) - 1
+    note = [f"No sourced line for {bare} of the clips."]
+    assert bare > 0 and text_drop_notes(drops) == note
+    reloaded = {"unified_montage": {TEXT_DROPS_FIELD: text_drops_record("g1", drops)}}
+    assert finished_render_notes(reloaded, {"g1"}) == note
+
+
+def test_a_full_guide_with_a_full_fact_set_fits_the_editor_state(monkeypatch):
+    """Twelve rows each carrying 30 facts would push the text lane past the turn's 256 KB."""
+    from app.kria.api_schemas import EditorStateIn  # noqa: PLC0415
+
+    base = _evidence()
+    facts = [
+        fact.model_copy(update={"id": f"{fact.id}-{copy}" if copy else fact.id})
+        for copy in range(5)
+        for fact in base.facts
+    ]
+    evidence = base.model_copy(update={"facts": facts})
+    snapshot = _snapshot()
+    slots = snapshot["slots"]
+    snapshot["slots"] = [
+        {
+            **slots[index % len(slots)],
+            "media_id": f"clip-{index}",
+            "output_start_s": 3.0 * index,
+            "output_end_s": 3.0 * index + 3.0,
+        }
+        for index in range(13)
+    ]
+    snapshot["total_duration_s"] = 39.0
+    snapshot["story_beat_windows"] = []
+    calls = _stub_agents(monkeypatch, [])
+    monkeypatch.setattr(researched_text.GroundedResearchAgent, "run", lambda *a, **k: evidence)
+    monkeypatch.setattr(researched_text.ResearchCopyAgent, "run", _fill_every_window(calls))
+    output = run_researched_revision(
+        ResearchRequest.model_validate(_load("research.json")["public_facts"]["input"]),
+        utterance=_request(),
+        snapshot=snapshot,
+        text_design="B1",
+    )
+    rows = json.loads(json.dumps(apply_text_lane_ops([], snapshot["slots"], output.ops).text))
+    assert len(rows) == 12
+    EditorStateIn.model_validate(
+        {"base_generation": "g1", "client_state_id": "s1", "lanes": {"text_elements": rows}}
+    )
+    assert [fact.id for fact in prepared_evidence_facts(output.ops)] == [f.id for f in facts]

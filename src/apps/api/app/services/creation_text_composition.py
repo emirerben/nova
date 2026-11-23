@@ -2424,19 +2424,9 @@ def _compose_creation_text(
                 text_design=text_design,
             )
             bare = uncovered_design_windows(output.ops, model_snapshot) if text_design else []
-            if bare:
-                # KRI-1580: a subtitle ask the writer could not source on every clip still
-                # renders its lines; the note names how many clips stayed bare.
-                drops.append(
-                    shrink(
-                        CreationTextCompositionError(
-                            f"Text composition is incomplete: no sourced line for {len(bare)} "
-                            "clips",
-                            reason="incomplete",
-                        ),
-                        text=asked_research.request_quote,
-                    )
-                )
+            # KRI-1580: a guide the writer could not source on every clip still renders its
+            # lines; one drop per bare clip, so the note counts them.
+            drops.extend(TextDrop(reason="bare_clip", action="dropped") for _window in bare)
         except (ResearchUnavailable, TerminalSchemaError) as exc:
             # The creator approved this draft, so research that finds no usable source (or no
             # place to put it) renders the rest of the text and says so, instead of failing the
