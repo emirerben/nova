@@ -60,6 +60,8 @@ final class DesignPickerUITests: XCTestCase {
     /// Four designs drawn on this iPhone over her clip, the default marked, the tapped one sent and rendered; then
     /// a heading recoloured in the editor is what the re-rendered edit holds.
     func testFourDesignsRenderOnThePhoneThePickRendersAndHerHeadingColourSticks() {
+        // Chat, render, editor, Save and the re-render: about 65 s on a local simulator, so the CI runner gets room.
+        executionTimeAllowance = 300
         let app = launch()
 
         let strip = element(app, "design-preview-strip")

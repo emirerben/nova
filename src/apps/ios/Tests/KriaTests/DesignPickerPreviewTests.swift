@@ -8,8 +8,9 @@ import XCTest
 /// drawn by this build.
 ///
 /// Failure modes: a version 2 option loses its preview (a layer key this build rejects, a font asset it cannot
-/// find); a preview that cannot be drawn takes the whole card down instead of falling back to text; a still is drawn
-/// without the design's scrim (A2), or with one on a design that has none; a version 1 question changes shape.
+/// find); a preview that cannot be drawn takes the whole card down, or blanks one tile, instead of falling back
+/// to text; a still is drawn without the design's scrim (A2), or with one on a design that has none; a version 1
+/// question changes shape.
 final class DesignPickerPreviewTests: XCTestCase {
     private func fixture() throws -> [String: JSONValue] {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -39,7 +40,7 @@ final class DesignPickerPreviewTests: XCTestCase {
         }
     }
 
-    func testAnUndrawablePreviewLeavesTheOptionAsText() throws {
+    func testAnUndrawablePreviewLeavesTheQuestionAsText() throws {
         var root = try fixture()
         guard case .object(var question) = root["question"], case .array(var options) = question["options"],
               case .object(var first) = options[0], case .object(var preview) = first["preview"] else {
@@ -53,6 +54,7 @@ final class DesignPickerPreviewTests: XCTestCase {
         let parsed = try XCTUnwrap(ChoiceQuestion.parse(payload: ["choice_question": try XCTUnwrap(root["question"])]))
         XCTAssertNil(parsed.options[0].preview, "a run whose font is unknown cannot be drawn exactly")
         XCTAssertNotNil(parsed.options[1].preview)
+        XCTAssertFalse(parsed.hasPreviews, "the whole card falls back to text blocks, every option with its words")
         XCTAssertEqual(parsed.options.count, 4, "the card stays answerable")
     }
 

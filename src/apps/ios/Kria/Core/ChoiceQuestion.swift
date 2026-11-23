@@ -43,9 +43,9 @@ struct ChoiceQuestion: Equatable, Sendable {
     /// Version 2 adds an optional `preview` per option; a version 1 question parses exactly as before.
     static let supportedVersion = 2
 
-    /// Options with a preview are shown as a strip of stills; a question with none (or a preview that did not parse)
-    /// keeps the text blocks.
-    var hasPreviews: Bool { options.contains { $0.preview != nil } }
+    /// Shown as a strip of stills only when every option has a preview this build can draw; one that did not parse
+    /// keeps the whole question as text blocks, so no option loses its words.
+    var hasPreviews: Bool { options.allSatisfy { $0.preview != nil } }
 
     /// nil when the payload has no usable question (absent, newer version, fewer than two options).
     static func parse(payload: [String: JSONValue]?) -> ChoiceQuestion? {

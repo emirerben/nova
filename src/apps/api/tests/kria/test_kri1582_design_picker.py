@@ -49,6 +49,7 @@ from app.pipeline.text_designs import HEADING_COLOR, TEXT_DESIGNS
 from app.pipeline.unified_montage import BriefView, UnifiedClip, plan_unified_montage
 from app.services.choice_questions import (
     CONFLICT_TEXT_DESIGN,
+    CONTENT_KEY,
     ChoiceCapability,
     open_conflicts,
     tag_event,
@@ -140,6 +141,7 @@ async def _gate(
     events: tuple = (),
     snapshot: dict | None = None,
     language: str | None = "tr",
+    messages: tuple[str, ...] | None = None,
     **strategy: object,
 ) -> PlannedKriaTurn:
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=brief or _brief()))
@@ -148,6 +150,13 @@ async def _gate(
     monkeypatch.setattr(type(settings), "phone_rendering_for", lambda _s, _i: True)
     history = list(events) or [_said(_ASK)]
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=history))
+    # Her full request, as the thread holds it (the event copies are cut to 400 characters).
+    written = messages or [
+        p.get(CONTENT_KEY) for role, p in history if role == "user" and p.get(CONTENT_KEY)
+    ]
+    monkeypatch.setattr(
+        planner, "_load_raw_creator_request", AsyncMock(return_value="\n".join(written))
+    )
     planned = replace(_planned(protocol, **strategy), media_snapshot=snapshot or _snapshot())
     with reply_language_for(language):
         return await planner._gate_unresolved_choices(
@@ -253,6 +262,8 @@ async def test_the_picker_build_gets_a_preview_drawn_in_each_design(monkeypatch,
         # The quote research picked dropped the word; her message still asks for subtitles.
         ((_ASK,), _INFO_ASK, "B1"),
         (("Bilgilendirici yazılar olsun ama altyazı istemiyorum",), _INFO_ASK, "A2"),
+        # Past the 400 characters the gate's event copy keeps: her full request still counts.
+        (("Haritayı ilk göster. " * 25 + "Bilgilendirici alt yazı istiyorum",), _INFO_ASK, "B1"),
     ],
 )
 async def test_the_recommended_design_is_the_default_research_would_write(
@@ -264,6 +275,7 @@ async def test_the_recommended_design_is_the_default_research_would_write(
             protocol=INFORMATIVE_TEXT_DESIGNS_PROTOCOL,
             brief=_brief(_research_ask(quote)),
             events=tuple(_said(message) for message in messages),
+            messages=messages,
         )
     )
     assert [o["key"] for o in question["options"] if o["recommended"]] == [default]
@@ -332,6 +344,22 @@ async def test_a_tapped_design_reaches_the_snapshot_research_writes_for(monkeypa
     b1 = copy.deepcopy(strategy)
     b1["choice_answers"][0]["option"] = "B1"
     assert basis(strategy) != basis(b1)
+
+
+@pytest.mark.asyncio
+async def test_her_pick_holds_when_the_answer_turn_rewords_the_research_ask(
+    monkeypatch, designs_on
+):
+    """Her tap reaches the brief extractor as a message; a reworded ask with the same id keeps
+    the pick instead of asking again."""
+    question = _question(await _gate(monkeypatch))
+    reworded = _brief(_research_ask("Toroko treni hakkında bilgilendirici alt yazılar"))
+    picked = await _gate(
+        monkeypatch,
+        brief=reworded,
+        events=(_said(_ASK), ("assistant", {"choice_question": question}), _picked(question, "A3")),
+    )
+    assert text_design_answer(_strategy(picked)) == "A3"
 
 
 # -- 6/7. unanswered, typed --------------------------------------------------------------

@@ -6911,8 +6911,8 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
 
 
 def _creator_messages(events: Sequence[tuple[str, Any]]) -> str:
-    """Every line the creator wrote in this thread, oldest first (KRI-1582's design default
-    reads her whole request, as the research writer does)."""
+    """The thread's creator lines as the choice gate has them (each cut to 400 characters by
+    `tag_event`): the fallback when her full request is over the planning bound."""
     return "\n".join(
         str(payload[CONTENT_KEY])
         for role, payload in events
@@ -7299,6 +7299,12 @@ async def _gate_unresolved_choices(
         planned = replace(planned, plan=plan)
     if not settings.kria_choice_questions_enabled:
         return planned
+    # KRI-1582: the design default reads her whole request, uncut, as the research writer does.
+    creator_request = (
+        await _load_raw_creator_request(db, thread_id=thread_id, user_message=creator_text or "")
+        if settings.informative_text_designs_enabled
+        else None
+    ) or _creator_messages(events)
     resolution = resolve_choices(
         strategy,
         answered_brief(brief, strategy),
@@ -7310,7 +7316,7 @@ async def _gate_unresolved_choices(
             voice_route=settings.voice_behind_footage_enabled,
             speech_occurrence=settings.speech_occurrence_question_enabled,
             client_protocol=planned.client_protocol,
-            creator_request=_creator_messages(events),
+            creator_request=creator_request,
         ),
     )
     if resolution.question is not None:

@@ -2148,7 +2148,7 @@ def _text_design(
         clip_paths=clip_paths,
     ):
         return None
-    _, request = found
+    requirement, request = found
     default = research_text_design(None, f"{request.request_quote}\n{cap.creator_request}")
     return UnresolvedChoice(
         kind=CONFLICT_TEXT_DESIGN,
@@ -2166,7 +2166,9 @@ def _text_design(
             tr="Yazılar hangi görünümde olsun?",
         ),
         options=_text_design_options(default),
-        input_digest=_digest(CONFLICT_TEXT_DESIGN, request.topic, request.request_quote),
+        # The research ask's own id: the brief keeps it while the ask is reworded (an answer
+        # tap reaches the brief extractor as a message), so the pick is not asked again.
+        input_digest=_digest(CONFLICT_TEXT_DESIGN, requirement.id),
     )
 
 
