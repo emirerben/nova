@@ -1,0 +1,88 @@
+name: exp-slide-autoscroll
+on:
+  push:
+    branches: [codex/exp-slide-autoscroll]
+permissions:
+  contents: read
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [main, fix]
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: brew install xcodegen
+      - name: Use main's auto-scroll in the main arm
+        if: matrix.arm == 'main'
+        run: |
+          git checkout origin/main -- src/apps/ios/Kria/Core/DragSelect.swift src/apps/ios/Kria/Features/DragSelectScrollView.swift src/apps/ios/Tests/KriaTests/DragSelectTests.swift
+          git status --short
+      - name: Print the count the UI test reads
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("src/apps/ios/Tests/KriaUITests/CreationUITests.swift")
+          s = p.read_text()
+          old = '        XCTAssertGreaterThan(count, 8, "auto-scroll kept selecting as rows passed under the finger: \\(count)")'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, '        print("SLIDE-COUNT \\(count)")\n' + old))
+          PY
+          git diff --stat
+      - name: Build
+        run: |
+          set -euo pipefail
+          bash scripts/ios/generate-project.sh
+          cd src/apps/ios
+          SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 ../../../scripts/exp-select-sim.py)
+          echo "SIM=$SIM" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIM" || true
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$SIM" build-for-testing > build.log 2>&1 || { tail -60 build.log; exit 1; }
+          tail -3 build.log
+      - name: Unit tests of the slide-select logic
+        run: |
+          set -uo pipefail
+          cd src/apps/ios
+          status=0
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$SIM" -parallel-testing-enabled NO \
+            -only-testing:KriaTests/DragSelectTests test-without-building > unit.log 2>&1 || status=$?
+          echo "xcodebuild exit $status"
+          grep -E "Test Case .*DragSelectTests.*(passed|failed)|error:" unit.log | sed -E "s/^.*Test Case '-\[KriaTests\.//" | cut -c1-200
+      - name: Bottom-edge UI test, 15 times, no retries
+        run: |
+          set -uo pipefail
+          cd src/apps/ios
+          status=0
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$SIM" -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 \
+            -only-testing:KriaUITests/CreationUITests/testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls \
+            -only-testing:KriaUITests/CreationUITests/testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsCircleAndTapToWatch \
+            -test-iterations 15 test-without-building > idle.log 2>&1 || status=$?
+          echo "xcodebuild exit $status"
+          bash ../../../scripts/exp-slide-summary.sh idle.log
+          echo "across-tiles test: passed $(grep -c "testClipPickerSlideAcrossTiles.*\]' passed" idle.log || true), failed $(grep -c "testClipPickerSlideAcrossTiles.*\]' failed" idle.log || true)"
+      - name: Bottom-edge UI test, 10 times, with 6 busy processes
+        run: |
+          set -uo pipefail
+          cd src/apps/ios
+          pids=()
+          for i in $(seq 6); do yes > /dev/null & pids+=($!); done
+          status=0
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$SIM" -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 \
+            -only-testing:KriaUITests/CreationUITests/testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls \
+            -test-iterations 10 test-without-building > load.log 2>&1 || status=$?
+          kill "${pids[@]}" 2>/dev/null || true
+          echo "xcodebuild exit $status"
+          bash ../../../scripts/exp-slide-summary.sh load.log
