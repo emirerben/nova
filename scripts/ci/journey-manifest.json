@@ -3964,7 +3964,7 @@
     {
       "id": "kri-1585-informative-text",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py tests/pipeline/test_kri1580_kyoto_research_copy.py tests/pipeline/test_kri1583_readability.py tests/kria/test_kri1583_intent_review_legibility.py",
+      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py tests/pipeline/test_kri1580_kyoto_research_copy.py tests/pipeline/test_kri1583_readability.py tests/kria/test_kri1583_intent_review_legibility.py tests/kria/test_kri1582_design_picker.py",
       "paths": [
         "src/apps/api/tests/fixtures/kri1585_kyoto/plan.json",
         "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows.json",
@@ -3984,7 +3984,10 @@
         "src/apps/api/tests/pipeline/test_kri1583_readability.py",
         "src/apps/api/tests/kria/test_kri1583_intent_review_legibility.py",
         "src/apps/api/app/pipeline/phone_title_legibility.py",
-        "src/apps/api/tests/fixtures/agent_evals/intent_review/golden/illegible_text_control.json"
+        "src/apps/api/tests/fixtures/agent_evals/intent_review/golden/illegible_text_control.json",
+        "src/apps/api/app/kria/text_design_ask.py",
+        "src/apps/api/tests/kria/test_kri1582_design_picker.py",
+        "src/apps/ios/Tests/Fixtures/KRI1582DesignPicker.json"
       ]
     },
     {

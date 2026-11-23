@@ -31,6 +31,8 @@ struct ChoiceQuestionCard: View {
     var isTyping = false
     /// False for a reply that asks the clips too: Kria's decision then goes with the clips question.
     var allowsDecide = true
+    /// KRI-1582: whose clips a version 2 preview is drawn over (the chat's project).
+    var projectID: UUID? = nil
 
     var body: some View {
         switch mode {
@@ -41,6 +43,14 @@ struct ChoiceQuestionCard: View {
             .accessibilityIdentifier("choice-card-answered")
         case .superseded:
             KriaSupersededLine().accessibilityIdentifier("choice-card-superseded")
+        case .active(let isSending, let submit) where question.hasPreviews && heldKey == nil:
+            DesignPreviewStrip(question: question, projectID: projectID, isSending: isSending, isLocked: isTyping,
+                               typeMyOwn: question.allowFreeText ? typeMyOwn : nil, allowsDecide: allowsDecide) { option, message in
+                submit(question.submission(for: option), message)
+            }
+            .padding(.top, 2)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("choice-card")
         case .active(let isSending, let submit):
             VStack(alignment: .leading, spacing: 8) {
                 KriaAnswerStack(
