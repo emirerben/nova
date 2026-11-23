@@ -1,0 +1,74 @@
+diff --git a/src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift b/src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift
+index c68467d845..04b92aaf81 100644
+--- a/src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift
++++ b/src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift
+@@ -40,7 +40,8 @@ import UIKit
+             DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in await gate.clean() }, completionBarrier: { _ in }, finishRequested: { await gate.requested() })
+         })
+         var coordinators: [DeviceRenderCoordinator] = []
+-        let sessions = DeviceRenderSessions(fetch: { _, _ in await remote.status() }, factory: { _, _ in
++        let readGate = ReproReadGate()
++        let sessions = DeviceRenderSessions(fetch: { _, _ in await readGate.pass(); return await remote.status() }, factory: { _, _ in
+             let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: RetrySources(), publisher: RetryPublisher(), backgroundExecution: background)
+             coordinators.append(coordinator)
+             return coordinator
+@@ -50,6 +51,7 @@ import UIKit
+             return try Self.ack(second.identity)
+         }, reportDecline: { _, identity, reason, _ in
+             await remote.recordStop(identity, reason: reason, accepted: !reportFails)
++            if stopBeforeAcknowledgement { await readGate.arm() }
+             reported?.fulfill()
+             if reportFails { throw URLError(.notConnectedToInternet) }
+         }, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+@@ -90,6 +92,7 @@ import UIKit
+             await sessions.resumeParked()
+             for coordinator in coordinators { await coordinator.waitUntilIdle() }
+             let afterPoll = await exporter.calls
++            print("REPRO afterPoll=\(afterPoll) heldReads=\(await readGate.heldCount)")
+             XCTAssertEqual(coordinators.count, 1, "A later automatic poll must not restart the acknowledged retry after Stop")
+             XCTAssertEqual(afterPoll, 1)
+             XCTAssertEqual(scheduler.submissions, 0)
+@@ -99,6 +102,7 @@ import UIKit
+             await sessions.reconcile(key, capabilities: capabilities)
+             for coordinator in coordinators { await coordinator.waitUntilIdle() }
+             let afterStaleReads = await exporter.calls
++            print("REPRO afterStaleReads=\(afterStaleReads) heldReads=\(await readGate.heldCount)")
+             XCTAssertEqual(afterStaleReads, 1, "A stale r1 read must not erase the pause for r2")
+             if publishAfterStop {
+                 await remote.publish()
+@@ -109,11 +113,19 @@ import UIKit
+                 await sessions.reconcile(key, capabilities: capabilities, retry: true)
+                 for coordinator in coordinators { await coordinator.waitUntilIdle() }
+                 let afterRelink = await exporter.calls
++            print("REPRO afterRelink=\(afterRelink) heldReads=\(await readGate.heldCount)")
+                 XCTAssertEqual(afterRelink, 1)
+                 await sessions.resumeFromUser(key)
+                 for coordinator in coordinators { await coordinator.waitUntilIdle() }
+                 let resumed = await exporter.calls
+                 XCTAssertEqual(resumed, 2, "Only typed explicit Resume may release this stopped generation")
++                let heldReads = await readGate.heldCount
++                print("REPRO heldReads=\(heldReads) resumedAtAssert=\(resumed) coordinators=\(coordinators.count) paused=\(sessions.isPausedByCreator(key))")
++                await readGate.release()
++                var later = resumed
++                for _ in 0..<2000 where later < 2 { try await Task.sleep(for: .milliseconds(5)); later = await exporter.calls }
++                for coordinator in coordinators { await coordinator.waitUntilIdle() }
++                print("REPRO afterRelease exports=\(later) coordinators=\(coordinators.count) paused=\(sessions.isPausedByCreator(key)) phase=\(String(describing: sessions.presentations[key]?.phase))")
+             }
+         }
+         await sessions.stopAll()
+@@ -537,6 +549,15 @@ private final class ExpirationCounter: @unchecked Sendable {
+     func increment() { lock.withLock { value += 1 } }
+ }
+ 
++private actor ReproReadGate {
++    private var armed = false
++    private var holding: CheckedContinuation<Void, Never>?
++    private(set) var heldCount = 0
++    func arm() { armed = true }
++    func pass() async { guard armed else { return }; armed = false; heldCount += 1; await withCheckedContinuation { holding = $0 } }
++    func release() { holding?.resume(); holding = nil }
++}
++
+ private actor RetryCleanupGate {
+     private var requests = 0
+     private var stopObserved = false
