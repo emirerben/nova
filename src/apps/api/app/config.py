@@ -257,6 +257,18 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker + light).
     phone_voiceover_reaction_beats_enabled: bool = True
+    # KRI-1598: named sound cues ("a whoosh when I say Barcelona") on a phone montage-family
+    # edit WITH a recorded voiceover, sound only. Takes effect only while
+    # `phone_rollout.phone_voiceover_reaction_beats_supported()` holds (the same grounding and
+    # KRI-281 lanes the Voiceover beats use): the manifest then advertises
+    # `reaction_beats:sound_only`, the Main Creator is taught sound-only beats for that edit, the
+    # repair keeps a beat's sound and leaves its picture / the closing shot out with a notice,
+    # and `_run_phone_voiceover_montage_job` grounds the cues against the voice into the
+    # sound-effect lane (`phone_beat_receipt` on the variant). False (default): byte-identical
+    # -- no manifest key, no prompt section, beats stripped with today's notice, no grounding.
+    # Apply: `fly secrets set PHONE_VOICEOVER_MONTAGE_SOUND_CUES_ENABLED=true --app nova-video`
+    # + `fly machine restart <id>` (api + worker); rollback with `=false` the same way.
+    phone_voiceover_montage_sound_cues_enabled: bool = False
     # Exact-timed small cards: "show the menu photo as a small card at 3 seconds for 2
     # seconds" / "put the receipt in the corner during the second clip" on a
     # phone-rendered Montage (guided / unified montage, montage-family voiceover) or

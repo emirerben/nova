@@ -2735,6 +2735,21 @@
    "app/kria/text_design_ask.py",
    "One line on every clip, as if you were telling it",
    "Her klipte sanki sen anlatıyormuşsun gibi bir satır"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Photos and stickers can't pop up on your words in this edit yet, only sounds",
+   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, sadece ses"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Photos and stickers can't pop up on your words in this edit yet; only the sounds you named will play.",
+   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor; sadece söylediğin sesler çalacak."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll play it when I hear those words in your voiceover",
+   "Seslendirmende o sözleri duyduğumda çalarım"
   ]
  ],
  "retired": [

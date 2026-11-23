@@ -1643,6 +1643,28 @@ need the KRI-297 track in `replace_editor_lanes` first. Tests:
 Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false --app
 nova-video` + `fly machine restart <id>` (api + worker + light).
 
+**Sound cues on a montage with a recorded voiceover (KRI-1598).** "A whoosh when I
+say Barcelona" on a montage-family edit with a recorded voiceover
+(`_run_phone_voiceover_montage_job`, archetype `voiceover`). Sound only: photos,
+stickers and the closing shot stay unavailable there. Gate
+`phone_rollout.phone_voiceover_montage_sound_cues_supported()` =
+`PHONE_VOICEOVER_MONTAGE_SOUND_CUES_ENABLED` (default false) + the Voiceover beats
+gate above. While it holds, the manifest adds `reaction_beats:sound_only`
+(`reaction_beats` itself stays `phone_talking_only`, so nothing reads it as "photos
+work here"), the Main Creator gets `_MONTAGE_SOUND_CUES_PROMPT_SECTION`, and the
+repair keeps each beat's sound, takes its picture off and drops picture-only beats
+and `closing_media` with one notice. The worker transcribes the voice once, seeded
+with the cue words (the general `sfx_ask` reuses those words and leaves the cues'
+moments alone), keeps only words before the compiler's voice cap (the voice plays
+from frame 0, so its clock is the montage clock), grounds the cues with
+`_phone_narrated_reaction_lanes`, and puts cue and chosen sounds in one
+`replace_editor_lanes` call beside any timed cards. A compile refusal demotes both
+receipts; `phone_beat_receipt` lands on the variant and the brief judge quotes its
+times. Tests: `tests/tasks/test_kri1598_montage_sound_cues.py`,
+`tests/services/test_kri1598_montage_sound_cues_plan.py`. Enable / rollback:
+`fly secrets set PHONE_VOICEOVER_MONTAGE_SOUND_CUES_ENABLED=true|false --app
+nova-video` + `fly machine restart <id>` (api + worker).
+
 **Chat edits the picture cards (KRI-661).** A phone Talking edit offers the `overlay`
 op family to the copilot once its draft base carries the cards
 (`kria_editor_ops.project_editor_draft` derives `media_overlays` from the pinned recipe for a

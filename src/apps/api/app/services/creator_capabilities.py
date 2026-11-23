@@ -92,6 +92,7 @@ from app.services.phone_rollout import (
     phone_timed_cards_supported,
     phone_timed_video_cards_supported,
     phone_user_song_supported,
+    phone_voiceover_montage_sound_cues_supported,
     phone_voiceover_reaction_beats_supported,
     speaker_background_color_supported,
     speaker_background_supported,
@@ -111,6 +112,16 @@ CAPABILITY_AUTOMATIC_CUT = "automatic_cut"
 # KRI-178: name/word-triggered photo/sticker + sound reaction beats on a
 # phone-rendered `subtitled` (Talking) edit.
 CAPABILITY_REACTION_BEATS = "reaction_beats"
+# KRI-1598: the same beats, sound only, on a phone montage-family edit WITH a recorded voiceover
+# (`phone_rollout.phone_voiceover_montage_sound_cues_supported()`). `reaction_beats` itself stays
+# unavailable there, so every reader that takes it to mean "a photo can pop up on a word" is
+# unchanged. Present in `capabilities` ONLY while open, so a flag-off manifest's dict and hashes
+# stay byte-identical. Turkish twin of the notice: `app.kria.strategy_policy._KNOWN_TR`.
+CAPABILITY_SOUND_CUES = "reaction_beats:sound_only"
+SOUND_CUES_PICTURES_LEFT_OUT_NOTICE = (
+    "Photos and stickers can't pop up on your words in this edit yet; only the sounds you "
+    "named will play."
+)
 # KRI-183: VIDEO Visuals eligible as (muted, trimmed) picture-in-picture
 # cards on a phone-rendered `subtitled` (Talking) edit -- a sibling signal
 # to `media_overlays` (KRI-176), which covers photo cards only. Only ever
@@ -1011,6 +1022,20 @@ def resolve_creator_manifest(
             "phone_talking_only",
             "reaction beats are only available on an iPhone talking-to-camera edit",
         )
+        # KRI-1598: the voiceover montage writer plays the beats' sounds only. Added only while
+        # open, so a closed gate leaves the dict and both hashes as they were.
+        if (
+            phone_source_media_ids is not None
+            and capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO) is not None
+            and capabilities[CAPABILITY_PHONE_SOURCE_AUDIO].available
+            and normalized_format in GUIDED_EDIT_FORMATS
+            and has_voiceover
+            and capabilities.get(
+                f"phone_format:{normalized_format}", _unavailable("x", "x")
+            ).available
+            and phone_voiceover_montage_sound_cues_supported()
+        ):
+            capabilities[CAPABILITY_SOUND_CUES] = _available()
     if getattr(settings, "phone_timed_cards_enabled", False):
         phone_on = (
             phone_source_media_ids is not None
@@ -1238,6 +1263,53 @@ def _resolve_user_song(
     )
 
 
+def sound_cues_apply(manifest: ResolvedCreatorManifest, strategy: object) -> bool:
+    """KRI-1598: does this strategy go to the voiceover montage writer with sound cues open?
+
+    The manifest advertises `reaction_beats:sound_only`, and the strategy stays a montage-family
+    edit outside the guided-voiceover contract (that plan is rendered by the guided writer,
+    which never reads beats)."""
+    capability = manifest.capabilities.get(CAPABILITY_SOUND_CUES)
+    return bool(
+        capability is not None
+        and capability.available
+        and getattr(strategy, "edit_format", None) in GUIDED_EDIT_FORMATS
+        and getattr(strategy, "execution_contract", None) != "guided_voiceover_v1"
+    )
+
+
+def _repair_sound_only_beats(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """KRI-1598: the beats as the voiceover montage writer plays them -- each one's sound at its
+    words, nothing on screen. A beat keeps its sound (resolved against the catalog like any beat)
+    with its picture taken off; a picture-only or title beat, and the closing shot, are left out.
+    Anything left out is told once (`SOUND_CUES_PICTURES_LEFT_OUT_NOTICE`), never silently."""
+    beats = []
+    pictures_left_out = strategy.closing_media is not None
+    for beat in strategy.reaction_beats or []:
+        if beat.anchor == "title" or beat.sound is None:
+            pictures_left_out = True
+            continue
+        if beat.visual_id is not None or beat.following_clip_id is not None:
+            pictures_left_out = True
+        resolved = resolve_creator_sfx_catalog_ref(manifest, beat.sound)
+        beats.append(
+            beat.model_copy(
+                update={
+                    "visual_id": None,
+                    "display_mode": "pip",
+                    "following_clip_id": None,
+                    "sound": resolved.catalog_id if resolved is not None else beat.sound,
+                }
+            )
+        )
+    return (
+        strategy.model_copy(update={"reaction_beats": beats or None, "closing_media": None}),
+        [SOUND_CUES_PICTURES_LEFT_OUT_NOTICE] if pictures_left_out else [],
+    )
+
+
 def _repair_creator_reaction_beats(
     manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
 ) -> tuple[CreativeStrategy, list[str]]:
@@ -1266,6 +1338,10 @@ def _repair_creator_reaction_beats(
 
     notices: list[str] = []
     reaction_beats_cap = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    if (reaction_beats_cap is None or not reaction_beats_cap.available) and sound_cues_apply(
+        manifest, strategy
+    ):
+        return _repair_sound_only_beats(manifest, strategy)
     if reaction_beats_cap is None or not reaction_beats_cap.available:
         notices.append(
             "Sound and photo pop-ins timed to your words aren't available for this "
@@ -2689,6 +2765,8 @@ __all__ = [
     "CAPABILITY_GUIDED_STORY",
     "CAPABILITY_NATIVE_RENDER",
     "CAPABILITY_REACTION_BEATS",
+    "CAPABILITY_SOUND_CUES",
+    "SOUND_CUES_PICTURES_LEFT_OUT_NOTICE",
     "CAPABILITY_SELECT_READY_VARIANT",
     "ENDING_CLIP_NOTICES",
     "CAPABILITY_SET_ITEM_INTENT",
@@ -2720,6 +2798,7 @@ __all__ = [
     "canonical_pool_media_id",
     "SPEAKER_BACKGROUND_STATE_KEY",
     "repair_creator_reaction_beats",
+    "sound_cues_apply",
     "resolve_creator_image_media_ref",
     "resolve_creator_visual_video_media_ref",
     "resolve_creator_manifest",
