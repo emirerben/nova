@@ -371,8 +371,8 @@ _KNOWN_TR: dict[str, str] = {
         "Senin için seçilen ses efektleri bu düzenleme için henüz yok; koymadım."
     ),
     SOUND_CUES_PICTURES_LEFT_OUT_NOTICE: (
-        "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor; sadece "
-        "söylediğin sesler çalacak."
+        "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, o yüzden "
+        "koymadım; sözlerine göre ses yine çalabilir."
     ),
 }
 _SHAPE_NAMES_TR = {"Day vlog": "Günlük vlog", "Single-hero": "Tek kahraman"}

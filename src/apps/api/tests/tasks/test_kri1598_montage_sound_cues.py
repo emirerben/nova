@@ -269,7 +269,7 @@ def test_the_finished_video_is_judged_with_the_cue_time_on_the_montage_clock(mon
     facts = plan_facts_from_phone_variant(variant)
     [beat] = facts.reaction_beats
     assert beat.trigger == "Barcelona" and beat.sound and beat.at_s == pytest.approx(3.0)
-    assert facts.beats_sound_only is True
+    assert facts.beats_sound_only is True and facts.reaction_beats_available is False
 
     req = BriefRequirement(
         id="r1",

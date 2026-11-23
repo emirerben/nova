@@ -762,8 +762,9 @@ creator's own words such as \"whoosh\"/\"ding\""}. Every beat on this edit needs
 and nothing else on screen: leave out `visual_id`, `display_mode`, `following_clip_id` and
 `closing_media`. Photos and stickers cannot pop up on the words of this edit; when the creator
 asks for one, keep any sound they asked for and say plainly in `summary` that the picture is
-not available on this edit yet. Keep `edit_format` as it is. A general "add sound effects where
-they fit" with no named words is never a beat.
+not available on this edit yet. Never set `licensed_sfx` for a sound tied to the voiceover's
+words: the beat's `sound` plays it. Keep `edit_format` as it is. A general "add sound effects
+where they fit" with no named words is never a beat.
 """.strip("\n")
 
 

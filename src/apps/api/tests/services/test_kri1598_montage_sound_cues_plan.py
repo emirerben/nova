@@ -195,7 +195,8 @@ def test_a_draft_sound_cue_waits_for_the_voice_never_reads_not_available(monkeyp
     facts, receipt = _judge(
         monkeypatch, _strategy(reaction_beats=[WHOOSH]), 'Play a whoosh when I say "Barcelona"'
     )
-    assert facts.reaction_beats_available is True and facts.beats_sound_only is True
+    # Pictures stay unavailable on this edit; the beat check judges the sounds.
+    assert facts.reaction_beats_available is False and facts.beats_sound_only is True
     assert receipt.status == "partial"
     assert receipt.reason == "I'll play it when I hear those words in your voiceover"
 
@@ -210,3 +211,66 @@ def test_a_draft_photo_at_a_word_says_this_edit_cannot_show_it(monkeypatch):
     assert receipt.status == "not_possible"
     assert "can't pop up on your words in this edit yet, only sounds" in receipt.reason
     assert "couldn't find" not in receipt.reason
+
+
+# ------------------------------------------------------------------ review follow-ups
+
+_UNRELATED_ASKS = [
+    # KRI-688: an ending CLIP, never a closing photo, on an edit with no picture at the end.
+    BriefRequirement(id="r1", kind="select", scope="global", description="End on the sunset clip"),
+    BriefRequirement(id="r1", kind="style", scope="global", description="End with the beach shot"),
+    # KRI-1322: a picture above the title, which this edit can never show.
+    BriefRequirement(
+        id="r1",
+        kind="text",
+        scope="title",
+        description="Title Barcelona days with the map logo above it",
+        literal="map",
+    ),
+]
+
+
+@pytest.mark.parametrize("beats", [None, [WHOOSH]], ids=["no-cue", "with-cue"])
+@pytest.mark.parametrize("req", _UNRELATED_ASKS, ids=["end-clip", "end-shot", "title-picture"])
+def test_opening_sound_cues_changes_no_other_verdict(monkeypatch, req, beats):
+    """Negative control: with the flag on, an ask that is not a sound cue reads exactly as it
+    does with the flag off (pictures stay unavailable on this edit)."""
+    monkeypatch.setattr("app.config.settings.title_look_enabled", True)
+    strategy = _strategy(reaction_beats=beats).model_dump(mode="json", exclude_none=True)
+    shut = plan_facts_from_strategy(strategy, manifest=_manifest(monkeypatch, flag=False))
+    opened = plan_facts_from_strategy(strategy, manifest=_manifest(monkeypatch))
+    assert opened.reaction_beats_available is False
+    assert check_requirement(req, opened) == check_requirement(req, shut)
+
+
+def test_a_closing_photo_ask_says_this_edit_cannot_show_it(monkeypatch):
+    _facts, receipt = _judge(
+        monkeypatch,
+        _strategy(reaction_beats=[WHOOSH], closing_media={"visual_id": "asset-map"}),
+        "End on my map photo",
+    )
+    assert "can't pop up on your words in this edit yet, only sounds" in receipt.reason
+    assert "couldn't find" not in receipt.reason.casefold()
+
+
+def test_a_named_effect_beside_a_cue_is_answered_by_the_cue_not_refused(monkeypatch):
+    """The model may also set `licensed_sfx` for "a whoosh when I say Barcelona"; this edit has
+    no general effect lane, so the cue plays it and the general effect is left out with the
+    named-moment line (repair (d), as on Talking), never a refusal."""
+    strategy = _strategy(
+        reaction_beats=[WHOOSH],
+        licensed_sfx={"effect_id": "sfx-whoosh"},
+        optional_treatments=["sfx"],
+    )
+    plan = capabilities.compile_strategy_to_plan(_manifest(monkeypatch), strategy)
+
+    assert plan.strategy.licensed_sfx is None
+    assert [b.sound for b in plan.strategy.reaction_beats] == ["sfx-whoosh"]
+    assert any("placed at the moments you named" in n for n in plan.notices)
+    assert not any("Sound effects aren't available" in n for n in plan.notices)
+
+
+def test_without_a_cue_a_named_effect_keeps_todays_answer(monkeypatch):
+    strategy = _strategy(licensed_sfx={"effect_id": "sfx-whoosh"})
+    with pytest.raises(capabilities.CreatorSfxUnavailableError):
+        capabilities.compile_strategy_to_plan(_manifest(monkeypatch), strategy)

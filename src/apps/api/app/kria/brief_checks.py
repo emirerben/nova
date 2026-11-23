@@ -734,8 +734,9 @@ class PlanFacts:
     reaction_beats_available: bool | None = None
     reaction_beats: tuple[BeatFact, ...] | None = None
     # KRI-1598: the beats on this edit play sound only (a phone montage with a recorded
-    # voiceover, `reaction_beats:sound_only`): a photo or sticker asked at a word is "not
-    # available here", never "couldn't find the photo" or "no pop-in".
+    # voiceover, `reaction_beats:sound_only`): the beat check judges the sounds, and a photo,
+    # sticker or closing shot is "not available here", never "couldn't find the photo".
+    # `reaction_beats_available` stays False there (no picture can show).
     beats_sound_only: bool = False
     # Triggers of beats approval drops because their photo/sticker didn't resolve.
     dropped_beat_triggers: tuple[str, ...] = ()
@@ -1081,8 +1082,9 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     except ValueError:
         return {"reaction_beats_available": available}
     # KRI-1598: a voiceover montage plays the beats' sounds (the repair keeps only those).
+    # `reaction_beats_available` stays False there: no picture can pop up, end or sit above
+    # the title on this edit, and the closing-shot and title-picture checks read it that way.
     sound_only = not available and sound_cues_apply(manifest, parsed)
-    available = available or sound_only
     repaired, _notices = repair_creator_reaction_beats(manifest, parsed)
     # A beat the creator named but the beats repair dropped (its photo didn't resolve).
     kept_ids = {beat.beat_id for beat in repaired.reaction_beats or []}
@@ -3311,6 +3313,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     )
     if archetype == "voiceover" and changes:
         changes["beats_sound_only"] = True
+        changes["reaction_beats_available"] = False  # sounds only: no picture on this edit
     measured = _finite_number(variant.get("measured_export_duration_s"))
     if (
         measured is not None
@@ -9888,7 +9891,7 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
         # verdict below ("No pop-in for ..."); every other problem of the row is still said.
         unsaid_names = _unsaid_cue_names(req, facts) or []
         unsaid = _unsaid_sentence(unsaid_names) if unsaid_names else None
-        if not facts.reaction_beats_available:
+        if not facts.reaction_beats_available and not facts.beats_sound_only:
             problems.append(
                 say(
                     en="Photo and sound pop-ins timed to your words aren't available for this "
@@ -10076,7 +10079,10 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
                         problems.append(_display_problem(asked_display, [b.trigger for b in wrong]))
     if wants_closing:
         if facts.closing_visual_id is None:
-            if facts.closing_requested:
+            if facts.beats_sound_only:
+                # KRI-1598: the closing shot is a picture, which this edit cannot show.
+                problems.append(_sound_only_picture_problem())
+            elif facts.closing_requested:
                 problems.append(
                     say(
                         en="I couldn't find the closing photo you named",

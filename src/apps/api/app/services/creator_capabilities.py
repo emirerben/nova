@@ -119,8 +119,8 @@ CAPABILITY_REACTION_BEATS = "reaction_beats"
 # stay byte-identical. Turkish twin of the notice: `app.kria.strategy_policy._KNOWN_TR`.
 CAPABILITY_SOUND_CUES = "reaction_beats:sound_only"
 SOUND_CUES_PICTURES_LEFT_OUT_NOTICE = (
-    "Photos and stickers can't pop up on your words in this edit yet; only the sounds you "
-    "named will play."
+    "Photos and stickers can't pop up on your words in this edit yet, so I left them out; "
+    "sounds can still play on your words."
 )
 # KRI-183: VIDEO Visuals eligible as (muted, trimmed) picture-in-picture
 # cards on a phone-rendered `subtitled` (Talking) edit -- a sibling signal
@@ -1278,6 +1278,15 @@ def sound_cues_apply(manifest: ResolvedCreatorManifest, strategy: object) -> boo
     )
 
 
+def _plays_sound_cues(manifest: ResolvedCreatorManifest, strategy: object) -> bool:
+    """KRI-1598: this voiceover montage keeps at least one named sound cue, so the sound the
+    creator tied to a moment is answered by the cue (repair (d) and the "sfx" treatment notice
+    treat it as the Talking beats lane)."""
+    return sound_cues_apply(manifest, strategy) and any(
+        getattr(beat, "sound", None) for beat in getattr(strategy, "reaction_beats", None) or ()
+    )
+
+
 def _repair_sound_only_beats(
     manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
 ) -> tuple[CreativeStrategy, list[str]]:
@@ -2281,7 +2290,9 @@ def _dropped_treatment_notices(strategy: Any, manifest: Any) -> list[str]:
         )
         if capability.available or treatment not in DROPPED_TREATMENT_NOTICES:
             continue
-        if treatment == "sfx" and (beats_available or sfx_ask_available):
+        if treatment == "sfx" and (
+            beats_available or sfx_ask_available or _plays_sound_cues(manifest, strategy)
+        ):
             continue
         out.append(DROPPED_TREATMENT_NOTICES[treatment])
     return out
@@ -2398,7 +2409,9 @@ def compile_strategy_to_plan(
         )
         if not sound_effects.available:
             reaction_beats_cap = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
-            if reaction_beats_cap is not None and reaction_beats_cap.available:
+            if (
+                reaction_beats_cap is not None and reaction_beats_cap.available
+            ) or _plays_sound_cues(manifest, strategy):
                 # KRI-178 repair (d): the beats lane places sound at the exact
                 # moments the creator named -- drop the unavailable general
                 # sound-effect treatment instead of failing the whole strategy.

@@ -2743,8 +2743,8 @@
   ],
   [
    "app/kria/strategy_policy.py",
-   "Photos and stickers can't pop up on your words in this edit yet; only the sounds you named will play.",
-   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor; sadece söylediğin sesler çalacak."
+   "Photos and stickers can't pop up on your words in this edit yet, so I left them out; sounds can still play on your words.",
+   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, o yüzden koymadım; sözlerine göre ses yine çalabilir."
   ],
   [
    "app/kria/brief_checks.py",
