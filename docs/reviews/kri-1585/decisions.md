@@ -267,3 +267,10 @@ Data shape. A hook or research row on a stamped job gets its level's colour (`te
 Not done in PR5:
 
 - Sampling still reads at most 4 sources per generation. 5.3 covers an unmeasured row with the shadow, but sampling informative windows first would let it measure instead.
+
+## PR6: KRI-1582 design picker (2026-11-23)
+
+Data shape. The picker is a `choice_question` of kind and conflict `text_design`, options `A1`, `A2`, `A3`, `B1` (the agent's default recommended). A build at protocol 56 (`TEXT_DESIGN_PICKER_PROTOCOL`) gets `version: 2`, and each option carries `preview = {media_id, media_kind, at_s, time_s, text_layers: [PortableTextLayer], fonts: {font asset id: bundled file}}`. A 55 build gets the same question as `version: 1`, text only. The app answers with the unchanged `choice_selection {question_id, option_key}`. The server records it in `strategy.choice_answers` (`kind: text_design`, `option: <design>`), and the unified montage planner copies it to `EditProposalSnapshot.text_design`, which research writes for and the render draws.
+
+| # | Decision | Why | Evidence |
+|---|---|---|---|
