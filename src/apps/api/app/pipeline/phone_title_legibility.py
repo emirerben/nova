@@ -221,7 +221,7 @@ def settle_informative_text(
     elif scrimmed or (DESIGN_ID_KEY in source and row.get("shadow_enabled") is True):
         treatment = "design"
     elif row.get("shadow_enabled") is True:
-        treatment = "preference"
+        treatment = "preference" if wanted.get("shadow_enabled") is True else "design"
     elif not settings.title_legibility_enabled:
         treatment = "disabled"
     else:
