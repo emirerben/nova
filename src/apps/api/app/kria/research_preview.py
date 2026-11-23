@@ -60,7 +60,7 @@ from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.reply_language import say
 from app.schemas.research import PreparedResearch
-from app.services.researched_text import ResearchRequest
+from app.services.researched_text import ResearchRequest, approval_text_designs
 
 log = structlog.get_logger()
 
@@ -146,6 +146,9 @@ def basis_digest(
         "length_plan": dict(media_snapshot).get("length_plan"),
         "analysis": dict(analysis) if analysis is not None else None,
     }
+    if approval_text_designs():
+        # KRI-1580: research for a design is written in another shape, so a flip re-researches.
+        payload["informative_text_designs"] = True
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()
     ).hexdigest()
@@ -362,8 +365,10 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
     )
     from app.services.researched_text import (  # noqa: PLC0415
         ResearchUnavailable,
+        prepared_evidence_facts,
         prepared_layers,
         prepared_research_texts,
+        research_text_design,
         run_researched_revision,
         write_research_layers,
     )
@@ -414,12 +419,24 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
         text_requirements=inputs.brief.live(),
         beat_windows=execution["beat_windows"],
     )
+    # KRI-1580: read when the research is written; the approved result keeps its shape after.
+    text_design = (
+        research_text_design(
+            snapshot.text_design, f"{request.request_quote}\n{inputs.creator_request}"
+        )
+        if approval_text_designs()
+        else None
+    )
     if research_needs_text_layers(inputs.brief.live()):
         # Words shown a piece at a time or a translated layer: footage explanations cannot be
         # either, so the creator approves the reviewed text layers the render will shape.
         try:
             written, evidence = write_research_layers(
-                request, utterance=inputs.creator_request, snapshot=model_snapshot, ctx=ctx
+                request,
+                utterance=inputs.creator_request,
+                snapshot=model_snapshot,
+                ctx=ctx,
+                text_design=text_design,
             )
         except ResearchUnavailable as exc:
             return _failed(request, requirement.id, basis, str(exc))
@@ -451,6 +468,7 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
             layers=prepared_layers(written.layers, evidence, slots),
             retrieved_at=evidence.retrieved_at,
             search_entry_html=evidence.search_entry_html,
+            evidence_facts=evidence.facts if text_design is not None else [],
         )
     try:
         output = run_researched_revision(
@@ -459,6 +477,7 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
             snapshot=model_snapshot,
             ctx=ctx,
             handled_elsewhere=_handled_elsewhere(inputs.brief),
+            text_design=text_design,
         )
     except ResearchUnavailable as exc:
         return _failed(request, requirement.id, basis, str(exc))
@@ -499,6 +518,7 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
         retrieved_at=str(first.get("retrieved_at") or ""),
         search_entry_html=str(first.get("search_entry_html") or ""),
         limitations=limitations.strip()[:1000],
+        evidence_facts=prepared_evidence_facts(output.ops),
     )
 
 

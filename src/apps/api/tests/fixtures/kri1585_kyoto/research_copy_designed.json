@@ -1,0 +1,131 @@
+{
+ "_source": "KRI-1580. Writer answers in the designed shape for the Kyoto windows, authored from the approved teardown copy (round 1, B1 and A2 stills). Two teardown names are swapped for the ones the cited facts state: 'Sagano Romantik Treni' (in no fact) and 'Hozukyo Vadisi' (fact-6 says Geçidi). Not a model recording: the live re-record stage captures the real writer answer for this input. The hook cites fact-1 beside fact-6, because fact-1 is the one that says Kyoto and fact-6 the one that says 25 dakika.",
+ "B1": {
+  "hook": {
+   "text": "Kyoto'nun en güzel 25 dakikası",
+   "evidence_ids": [
+    "fact-1",
+    "fact-6"
+   ]
+  },
+  "captions": [
+   {
+    "window_id": "window-0",
+    "text": "Saga'dan Kameoka'ya, 7,3 km'lik bir yol",
+    "evidence_ids": [
+     "fact-6"
+    ],
+    "visual_quote": "map of a train route with photos"
+   },
+   {
+    "window_id": "window-1",
+    "text": "İşte trenimiz, beş vagonlu retro bir tren",
+    "evidence_ids": [
+     "fact-11",
+     "fact-12"
+    ],
+    "visual_quote": "red and yellow train A small red"
+   },
+   {
+    "window_id": "window-2",
+    "text": "Ahşap banklı retro vagonlara biniyoruz",
+    "evidence_ids": [
+     "fact-11"
+    ],
+    "visual_quote": "people on a train The video show"
+   },
+   {
+    "window_id": "window-3",
+    "text": "Ray, Hozukyo Geçidi boyunca kıvrılıyor",
+    "evidence_ids": [
+     "fact-6"
+    ],
+    "visual_quote": "river and forested landscape fro"
+   },
+   {
+    "window_id": "window-4",
+    "text": "Manzara mevsime göre değişiyor",
+    "evidence_ids": [
+     "fact-8"
+    ],
+    "visual_quote": "people on a train viewing scener"
+   },
+   {
+    "window_id": "window-5",
+    "text": "Hozukyo Geçidi'nin tam ortasındayız",
+    "evidence_ids": [
+     "fact-6"
+    ],
+    "visual_quote": "scenic landscape from a train Th"
+   },
+   {
+    "window_id": "window-6",
+    "text": "İlkbaharda kiraz, sonbaharda bu kızıl yapraklar",
+    "evidence_ids": [
+     "fact-8"
+    ],
+    "visual_quote": "autumn mountain river landscape"
+   }
+  ],
+  "limitations": "",
+  "unmet_requests": []
+ },
+ "A2": {
+  "hook": {
+   "text": "Kyoto'nun en güzel 25 dakikası",
+   "evidence_ids": [
+    "fact-1",
+    "fact-6"
+   ]
+  },
+  "captions": [
+   {
+    "window_id": "window-0",
+    "heading": "7,3 km",
+    "text": "Saga'dan Kameoka'ya, yaklaşık 25 dakika",
+    "evidence_ids": [
+     "fact-6"
+    ],
+    "visual_quote": "map of a train route with photos"
+   },
+   {
+    "window_id": "window-1",
+    "heading": "Beş vagon",
+    "text": "Biri tamamen açık, dördünün pencereleri açılıyor",
+    "evidence_ids": [
+     "fact-12"
+    ],
+    "visual_quote": "red and yellow train A small red"
+   },
+   {
+    "window_id": "window-2",
+    "heading": "Retro vagonlar",
+    "text": "Ahşap banklar, eski usul tasarım",
+    "evidence_ids": [
+     "fact-11"
+    ],
+    "visual_quote": "people on a train The video show"
+   },
+   {
+    "window_id": "window-5",
+    "heading": "Hozukyo Geçidi",
+    "text": "Ray, nehrin kıyısı boyunca kıvrılıyor",
+    "evidence_ids": [
+     "fact-6"
+    ],
+    "visual_quote": "scenic landscape from a train Th"
+   },
+   {
+    "window_id": "window-6",
+    "heading": "Mevsimden mevsime",
+    "text": "İlkbaharda kiraz çiçekleri, sonbaharda kızıl yapraklar",
+    "evidence_ids": [
+     "fact-8"
+    ],
+    "visual_quote": "autumn mountain river landscape"
+   }
+  ],
+  "limitations": "",
+  "unmet_requests": []
+ }
+}

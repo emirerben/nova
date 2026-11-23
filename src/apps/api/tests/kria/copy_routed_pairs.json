@@ -2615,6 +2615,11 @@
    "app/kria/strategy_policy.py",
    "I'll play your song quietly under your voice.",
    "Şarkını sesinin altında kısık çalacağım."
+  ],
+  [
+   "app/services/researched_text.py",
+   "No sourced line for {count} of the clips.",
+   "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı."
   ]
  ],
  "retired": [
