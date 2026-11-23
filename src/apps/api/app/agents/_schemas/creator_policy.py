@@ -320,6 +320,21 @@ USER_SONG_LIPSYNC_CARD_NOTICE = (
 USER_SONG_LIPSYNC_SHAPE_NOTICE = (
     "A lip-sync edit follows your song, so I'm not using a day-vlog or single-hero shape."
 )
+# KRI-1578: on a Talking edit the creator's song is a bed under her voice, never the soundtrack.
+USER_SONG_TALKING_LIPSYNC_CODE = "user_song_lipsync_talking"
+USER_SONG_TALKING_LIPSYNC_MESSAGE = (
+    "Lip-sync needs a Lip-sync video: on a Talking video your song plays quietly under your "
+    "voice. Should I play it under your voice instead?"
+)
+USER_SONG_TALKING_NOTICE = "I'll play your song quietly under your voice."
+
+
+def require_talking_song_background(strategy: CreativeStrategy) -> None:
+    """A Talking edit plays the creator's song under her voice; lip-sync to it is refused."""
+    if strategy.song_sync == "lipsync":
+        raise UserSongUnavailableError(
+            USER_SONG_TALKING_LIPSYNC_MESSAGE, code=USER_SONG_TALKING_LIPSYNC_CODE
+        )
 
 
 def require_user_song(manifest: ResolvedCreatorManifest) -> None:
@@ -373,6 +388,10 @@ def effective_render_program(
         # KRI-374: refuse before any render-program inference so a strategy that
         # can never render (cloud path, no song, a voiceover contract) fails here.
         require_user_song(manifest)
+        if strategy_format == "subtitled":
+            # KRI-1578: the song plays under the voice; the Talking writer renders it natively.
+            require_talking_song_background(strategy)
+            user_song_requested = False
     montage_audio_requires_guided = bool(
         strategy.montage_audio is not None
         and (
@@ -1047,6 +1066,18 @@ def repair_creator_user_song(
         ), []
 
     require_user_song(manifest)
+    if coerce_edit_format(strategy.edit_format) == "subtitled":
+        # KRI-1578: a Talking edit's soundtrack is her voice; the Talking writer lays her own
+        # song under it from the upload, so the dispatched strategy is the plain Talking one.
+        require_talking_song_background(strategy)
+        return strategy.model_copy(
+            update={
+                "audio_strategy": "original_audio",
+                "song_sync": None,
+                "resolved_song_takes": None,
+                "song_captions": None,
+            }
+        ), [USER_SONG_TALKING_NOTICE]
     notices: list[str] = []
     update: dict[str, Any] = {}
     sync = strategy.song_sync

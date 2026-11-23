@@ -103,13 +103,15 @@ def approval_text_policy(strategy: dict) -> dict | None:
     if not settings.phone_text_styling_enabled:
         return None
     from app.pipeline.informative_text import stamp_policy
+    from app.services.client_protocol import current_client_protocol
 
     return stamp_policy(
         {
             "version": PHONE_TEXT_STYLE_VERSION,
             "preferences": {"all_text": {}},
             "requested": requested_style(strategy or {}, ""),
-        }
+        },
+        client_protocol=current_client_protocol(),
     )
 
 
@@ -164,8 +166,12 @@ def stamp_phone_text_style(job) -> None:
     if ask is not None:
         stamped["caption_ask"] = ask.as_dict()
     from app.pipeline.informative_text import stamp_policy
+    from app.services.phone_rollout import stamped_client_protocol
 
-    current[PHONE_TEXT_STYLE_FIELD] = stamp_policy(stamped)
+    current[PHONE_TEXT_STYLE_FIELD] = stamp_policy(
+        stamped,
+        client_protocol=stamped_client_protocol(candidates.get("creator_client_protocol")),
+    )
     job.assembly_plan = current
 
 
@@ -220,7 +226,7 @@ def style_rows(
         return copy.deepcopy(rows)
     if policy.get("version") != PHONE_TEXT_STYLE_VERSION:
         raise ValueError("This text styling version is not supported")
-    from app.pipeline.informative_text import policy_enabled
+    from app.pipeline.informative_text import policy_enabled, shapes_enabled
 
     return resolve_phone_text_style(
         rows,
@@ -231,6 +237,7 @@ def style_rows(
         excluded_boxes=excluded_boxes,
         background_frames=background_frames,
         informative=policy_enabled(policy),
+        shapes=shapes_enabled(policy),
     )
 
 
@@ -461,12 +468,19 @@ def register_generation_footage(clip_metas) -> None:
 
 @contextmanager
 def phone_text_policy_scope(policy: dict | None):
-    from app.pipeline.informative_text import informative_text_scope, policy_enabled
+    from app.pipeline.informative_text import (
+        informative_text_scope,
+        policy_enabled,
+        shapes_enabled,
+    )
     from app.pipeline.phone_text_style import phone_text_measurement_scope
 
     token = _POLICY.set(copy.deepcopy(policy))
     try:
-        with phone_text_measurement_scope(), informative_text_scope(policy_enabled(policy)):
+        with (
+            phone_text_measurement_scope(),
+            informative_text_scope(policy_enabled(policy), shapes=shapes_enabled(policy)),
+        ):
             yield
     finally:
         _POLICY.reset(token)

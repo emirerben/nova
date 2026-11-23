@@ -5756,13 +5756,15 @@ async def action_thread(
             delete_prefix = derivative_item_prefix(owner_id=owner_id, item_id=item.id)
         if removed.get("role") == "song" and getattr(item, "song_gcs_path", None) == media_path:
             # Clears the song columns (and, in the facade, its cached analysis and
-            # alignment); a "song" soundtrack falls back to Kria's own choice.
+            # alignment); a "song" soundtrack falls back to Kria's own choice, a Talking
+            # one to the voice it always plays (KRI-1578).
+            fallback_mode = "original" if item.edit_format == "subtitled" else "kria"
             mutation_kwargs.update(
                 song_gcs_path=None,
                 song_generation=None,
                 song_duration_s=None,
                 song_filename=None,
-                audio_mode="kria" if item.audio_mode == "song" else item.audio_mode,
+                audio_mode=fallback_mode if item.audio_mode == "song" else item.audio_mode,
             )
         mutation = mutate_plan_item_media(
             item,
@@ -6654,6 +6656,23 @@ async def upload_urls(
                         reason="song_unavailable",
                         thread_id=str(thread.id),
                     )
+                from app.services.phone_rollout import (  # noqa: PLC0415
+                    phone_user_song_supported,
+                    talking_music_supported,
+                )
+
+                if getattr(item, "edit_format", None) == "subtitled" and not (
+                    talking_music_supported() and phone_user_song_supported()
+                ):
+                    # KRI-1578: a Talking video plays her song only on the Talking song lane and
+                    # an app build that ducks it under her voice; never take one that stays silent.
+                    _reject_media(
+                        "creation_thread.upload_urls.rejected",
+                        404,
+                        "Your own song can't play under a Talking video yet",
+                        reason="song_unavailable",
+                        thread_id=str(thread.id),
+                    )
                 if item is not None and getattr(item, "song_gcs_path", None):
                     _reject_media(
                         "creation_thread.upload_urls.rejected",
@@ -7502,7 +7521,9 @@ async def attach_media(
             song_duration_s=song_source["duration_s"],
             song_filename=song_source["filename"],
         )
-        if "audio_mode" not in mutation_kwargs:
+        # KRI-1578: a Talking item keeps its `original` policy (the speech fingerprint its
+        # cleanup consent is bound to); its song plays under the voice from the upload alone.
+        if "audio_mode" not in mutation_kwargs and item.edit_format != "subtitled":
             mutation_kwargs["audio_mode"] = "song"
     mutation = mutate_plan_item_media(
         item,

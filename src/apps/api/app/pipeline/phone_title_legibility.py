@@ -10,6 +10,12 @@ A line under 4.5:1 gets the outline the numbered list labels already carry (`str
 `stroke_width` row fields, so the phone and the editor draw it with no new protocol), in the
 ink that reads on its fill. A line she styled herself (colour or outline) is left alone.
 `TITLE_LEGIBILITY_ENABLED=false` returns the rows untouched.
+
+KRI-1583 (informative text, every phone writer): on a job stamped for informative designs the
+resolver calls `settle_informative_text` for each hook and research row instead of picking a
+fill per row. Each level keeps one colour for the whole video (hook white, heading #FFE7A0,
+detail white). A row under 4.5:1 keeps that colour and gains the designs' soft shadow (an A2
+pair already carries its scrim). Her colour or shadow always wins.
 """
 
 from __future__ import annotations
@@ -119,3 +125,118 @@ def title_legibility_pass(
         log.warning("phone_title_legibility.failed", error=str(exc)[:200])
         return rows, None
     return out, {"version": TITLE_LEGIBILITY_VERSION, "frames": len(frames), "lines": lines}
+
+
+INFORMATIVE_LEGIBILITY_VERSION = 1
+# Receipt on each informative row of a stamped job: its level, measured contrast and treatment.
+LEGIBILITY_PARAM = "legibility"
+# Fields the soft shadow writes on a job whose build predates `textDesigns` (protocol 55): the
+# blur and offset would mark the layer for design paint, which such a build cannot decode.
+_PLAIN_SHADOW_FIELDS = ("shadow_enabled", "shadow_color", "shadow_opacity")
+
+
+def informative_level(row: Mapping[str, Any]) -> str:
+    """``hook``, ``heading`` or ``detail`` for an informative row. A one-line-per-clip guide
+    line is a detail. Read from the design layout when it ran, else from the writer's tag."""
+    from app.pipeline.informative_text import HOOK_ROLE  # noqa: PLC0415
+    from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM  # noqa: PLC0415
+
+    source = row.get("source_params") or {}
+    if source.get("phone_text_role") == HOOK_ROLE:
+        return "hook"
+    research = source.get("research")
+    tag = research.get("design") if isinstance(research, dict) else None
+    if (isinstance(tag, dict) and tag.get("level") == "heading") or (
+        (source.get(STACK_LAYOUT_PARAM) or {}).get("heading_level") == 2
+    ):
+        return "heading"
+    if isinstance(tag, dict) and tag.get("level") == "hook":
+        return "hook"
+    return "detail"
+
+
+def _level_color(level: str) -> str:
+    from app.pipeline import text_designs  # noqa: PLC0415
+
+    return {
+        "hook": text_designs.HOOK_COLOR,
+        "heading": text_designs.HEADING_COLOR,
+        "detail": text_designs.DETAIL_COLOR,
+    }[level]
+
+
+def _shadow_values(*, shapes: bool) -> dict[str, Any]:
+    from app.pipeline.text_designs import SHADOW  # noqa: PLC0415
+
+    return dict(SHADOW) if shapes else {k: SHADOW[k] for k in _PLAIN_SHADOW_FIELDS}
+
+
+def settle_informative_text(
+    row: dict,
+    frames: Sequence[Mapping[str, Any]],
+    *,
+    wanted: Mapping[str, Any],
+    asked: Mapping[str, Any],
+    canvas: Any,
+    shapes: bool,
+    scrimmed: bool,
+) -> None:
+    """Give one informative row its level's colour and, when the footage under it reads below
+    4.5:1, the soft shadow. In place.
+
+    ``frames`` are the resolver's background samples overlapping the row (108x192 grey).
+    ``wanted`` is the role's saved and asked rule, ``asked`` this turn's ask alone. A colour in
+    either is hers. A shadow is hers only when she set it on the row or asked this turn: a
+    saved "no shadow" is a preference, the tier a design's shadow already outranks
+    (`informative_text`), and an unreadable row needs the shadow. ``scrimmed``: the row's
+    pair carries a scrim. A row no frame covers is treated as unreadable, since nothing shows
+    it is not.
+    """
+    from app.pipeline.informative_text import (  # noqa: PLC0415
+        DESIGN_ID_KEY,
+        authored_fields,
+        creator_fields,
+    )
+    from app.pipeline.phone_text_background import HEIGHT, WIDTH  # noqa: PLC0415
+    from app.pipeline.phone_text_style import measure_box  # noqa: PLC0415
+
+    authored, hers = authored_fields(row), creator_fields(row)
+    source = dict(row.get("source_params") or {})
+    if (source.get(LEGIBILITY_PARAM) or {}).get("treatment") == "shadow":
+        for field in _shadow_values(shapes=True):
+            if field not in authored and field != "shadow_enabled":
+                row.pop(field, None)
+    level = informative_level(row)
+    if "color" not in wanted and "color" not in authored:
+        row["color"] = _level_color(level)
+    under = [
+        legibility.GreyFrame(f["pixels"], WIDTH, HEIGHT, float(f["start_s"]), float(f["end_s"]))
+        for f in frames
+    ]
+    contrast = legibility.worst_contrast(str(row["color"]), measure_box(row, canvas), under)
+    if contrast is not None and contrast >= legibility.MIN_CONTRAST:
+        treatment = "none"
+    elif "shadow_enabled" in hers or "shadow_enabled" in asked:
+        treatment = "creator"
+    elif scrimmed or (DESIGN_ID_KEY in source and row.get("shadow_enabled") is True):
+        treatment = "design"
+    elif row.get("shadow_enabled") is True:
+        treatment = "preference" if wanted.get("shadow_enabled") is True else "design"
+    elif not settings.title_legibility_enabled:
+        treatment = "disabled"
+    else:
+        for field, value in _shadow_values(shapes=shapes).items():
+            if field not in authored:
+                row[field] = value
+        if "shadow_color" not in authored:
+            # A black shadow under her black text is no help: the ink reads against her fill.
+            row["shadow_color"] = legibility.readable_ink(str(row["color"]))
+        treatment = "shadow"
+    source[LEGIBILITY_PARAM] = {
+        "version": INFORMATIVE_LEGIBILITY_VERSION,
+        "level": level,
+        "contrast": None if contrast is None else round(contrast, 2),
+        "frames": len(under),
+        "treatment": treatment,
+    }
+    row["source_params"] = source

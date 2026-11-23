@@ -2442,7 +2442,7 @@ private struct CreationWorkspaceView: View {
             upload: { openAttachments(launch: .source($0), origin: .composerTray) },
             addScript: selectedFormat == .talkingToCamera ? { openAttachments(launch: .recordWithScript) } : nil,
             addVoiceover: selectedFormat == .narrated ? { openAttachments(launch: .voiceover) } : nil,
-            addSong: capabilities?.songUploadEnabled == true && selectedFormat?.runsAsMontage == true ? { openAttachments(launch: .step(.song)) } : nil,
+            addSong: capabilities?.songAttachAvailable(for: selectedFormat) == true ? { openAttachments(launch: .step(.song)) } : nil,
             addOverlays: capabilities?.visualsEnabled == true && selectedFormat?.usesVisualPool == false ? { openAttachments(launch: .step(.overlays)) } : nil,
             manageClips: { openAttachments() }
         )

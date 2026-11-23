@@ -4027,3 +4027,61 @@ def test_designed_text_animations_settle_as_fast_as_pop(phase, effect, tmp_path)
     for renderer in [0, 1]:
         assert np.array_equal(frames[0][renderer], frames[1][renderer]), (effect, renderer)
         assert not np.array_equal(frames[2][renderer], frames[1][renderer]), (effect, renderer)
+
+
+def _rgba(overlay: dict, renderer: str) -> np.ndarray:
+    """One frame of ``overlay`` as RGBA through the Skia burn or the Pillow path."""
+    import io
+
+    if renderer == "skia":
+        img = tos._draw_frame(overlay, 1.0, 2.0)
+        return np.asarray(Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA"))
+    from app.pipeline.text_overlay import render_overlays_at_time
+
+    with tempfile.TemporaryDirectory(prefix="pillow_parity_") as d:
+        out = os.path.join(d, "p.png")
+        render_overlays_at_time([overlay], 2.0, 1.0, out)
+        return np.asarray(Image.open(out).convert("RGBA"))
+
+
+@pytest.mark.parametrize("renderer", ["skia", "pillow"])
+def test_both_renderers_honor_scrim_and_shadow_blur(renderer):
+    """KRI-1581: ``scrim`` and ``shadow_blur``/``shadow_offset_y`` reach the burn dict from every
+    designed row, so both renderers must draw them (the #296 class: a field one renderer drops).
+
+    The scrim is clear above ``top_frac`` and holds ``opacity`` over the canvas bottom. A wider
+    blur spreads the shadow farther below the glyphs, and a larger drop moves it down."""
+    base = {
+        "text": "HELLO WORLD",
+        "effect": "none",
+        "text_size_px": 60,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.30,
+        "text_anchor": "center",
+        "text_color": "#FFFFFF",
+        "shadow_color": "#000000",
+        "shadow_opacity": 0.55,
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    scrimmed = _rgba({**base, "scrim": {"top_frac": 0.48, "opacity": 0.6}}, renderer)
+    height = scrimmed.shape[0]
+    assert scrimmed[int(height * 0.40), 10, 3] == 0
+    assert abs(int(scrimmed[height - 1, 10, 3]) - 153) <= 2
+    assert int(scrimmed[int(height * (0.48 + 0.52 * 0.3)), 10, 3]) in range(60, 100)
+    assert _rgba(base, renderer)[height - 1, 10, 3] == 0
+
+    def shadow_reach(frame: np.ndarray) -> int:
+        """Rows of non-trivial shadow alpha below the glyphs' own last row."""
+        column = frame[:, 300:780, 3].max(axis=1)
+        glyph_rows = np.nonzero(column >= 250)[0]
+        below = column[glyph_rows.max() + 1 :]
+        return int(np.argmax(below < 8)) if (below < 8).any() else len(below)
+
+    tight = shadow_reach(_rgba({**base, "shadow_blur": 4.0, "shadow_offset_y": 3.0}, renderer))
+    soft = shadow_reach(_rgba({**base, "shadow_blur": 14.0, "shadow_offset_y": 3.0}, renderer))
+    dropped = shadow_reach(_rgba({**base, "shadow_blur": 14.0, "shadow_offset_y": 12.0}, renderer))
+    # Measured reaches (tight, soft, dropped): Skia 9/19/28 on Linux and 10/21/30 on macOS,
+    # Pillow 9/21/30 on both.
+    assert soft > tight + 6, (renderer, tight, soft)
+    assert dropped > soft + 5, (renderer, soft, dropped)

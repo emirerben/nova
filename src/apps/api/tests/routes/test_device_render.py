@@ -977,6 +977,31 @@ def test_song_download_rejects_replaced_or_removed_songs(fixture, monkeypatch, m
     assert signer.call_count == int(mutation in {"removed", "unsignable"})
 
 
+def test_a_talking_items_song_is_granted_while_its_audio_policy_stays_original(
+    fixture, monkeypatch
+):
+    """KRI-1578: a Talking item keeps `original` (the speech fingerprint its cleanup consent is
+    bound to), and its uploaded song still reaches the iPhone; a replaced one still fails closed."""
+    asset, item, signer = song_recipe(fixture, monkeypatch)
+    item.audio_mode = "original"
+    item.edit_format = "subtitled"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(item.song_gcs_path, generation="42")
+    item.song_generation = 43
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+
+
+def test_a_montage_items_song_out_of_song_mode_is_not_granted(fixture, monkeypatch):
+    asset, item, signer = song_recipe(fixture, monkeypatch)
+    item.audio_mode = "original"
+    item.edit_format = "montage"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    signer.assert_not_called()
+
+
 def test_a_voiceover_item_cannot_be_used_to_fetch_a_song_asset(fixture, monkeypatch):
     """The two private-audio kinds do not share a grant: a song asset needs the
     item to be in ``song`` mode even when a voiceover with the same generation exists."""
@@ -2069,6 +2094,100 @@ def test_the_declining_build_that_renders_the_recipe_now_may_retry(fixture, monk
 
     assert response.status_code == 200, response.text
     assert response.json()["identity"]["recipe_revision"] == 2
+
+
+# ---- KRI-1581: designed text (`scrim`, `srgb_blend`) needs protocol 55 ----------------------
+# Failure modes this guards (written before the code):
+#  1. A build below 55 reads a recipe the worker pinned with designed text and gets a 200: its
+#     engine refuses `scrim` / `srgbBlend` / `textDesigns` and the render fails as outdated.
+#  2. Its decline is recorded as a renderer gap, so after the creator updates Kria the edit
+#     waits on a tap instead of resuming on its own.
+#  3. Only a scrim is gated: a hook or B1 line carries `srgb_blend` alone and slips through.
+#  4. The 55 build itself is refused, or the re-pin drops the design paint.
+
+
+def _designed_text_recipe(fixture, monkeypatch, row_id):
+    """The v2 fixture plus one Kyoto A2 row compiled as a worker pins it (gate open, no app
+    request), so its layer carries the design paint."""
+    import json
+
+    from app.agents._schemas.text_element import TextElement
+    from app.kria.recipes import AssetFingerprint, MediaAsset
+    from app.kria.recipes_v2 import EditRecipeV2
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+    from app.services.client_protocol import clear_request_context
+    from tests.pipeline.test_kri1581_text_shapes import _design_rows, _resolve, _with_gate
+
+    _with_gate(monkeypatch)
+    clear_request_context()
+    row = next(row for row in _resolve(_design_rows("A2")) if row["id"] == row_id)
+    (overlay,) = build_overlays_from_text_elements(
+        [TextElement.model_validate({**row, "start_s": 0.2, "end_s": 1.8})],
+        video_duration_s=2,
+        independent_box_alignment=True,
+    )
+    layer, font = compile_text_overlay(overlay, layer_id="text-0", canvas=PORTRAIT)
+    document = json.loads(
+        (Path(__file__).parents[1] / "fixtures/kria_edit_recipe_v2.json").read_text()
+    )
+    document["assets"].append(
+        MediaAsset(
+            id=font.id,
+            relative_path=font.id,
+            fingerprint=AssetFingerprint(
+                hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
+            ),
+        ).model_dump(mode="json")
+    )
+    document["asset_manifest"]["assets"].append(font.model_dump(mode="json"))
+    document["text_layers"] = [layer.model_dump(mode="json")]
+    recipe = EditRecipeV2.model_validate(document)
+    assert "textDesigns" in recipe.required_capabilities
+    fixture.request = make_device_request(
+        job_id=fixture.job.id, variant_id="first", revision=2, recipe=recipe
+    )
+    pin_device_request(fixture.job, fixture.request, base_generation="approved")
+    return layer.model_dump(mode="json")
+
+
+@pytest.mark.parametrize(
+    "row_id", ["kri1585-fact-0-heading", "kri1585-hook"], ids=["scrim", "srgb_blend-only"]
+)
+def test_a_build_below_the_designs_protocol_is_told_to_update_and_resumes_after(
+    fixture, monkeypatch, row_id
+):
+    from app.services.client_protocol import INFORMATIVE_TEXT_DESIGNS_PROTOCOL
+
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+    pinned = _designed_text_recipe(fixture, monkeypatch, row_id)
+    assert pinned["srgb_blend"] is True
+    assert ("scrim" in pinned) is (row_id != "kri1585-hook")
+    old = str(INFORMATIVE_TEXT_DESIGNS_PROTOCOL - 1)
+
+    refused = _get(fixture, old)
+
+    assert refused.status_code == 426, refused.text
+    detail = refused.json()["detail"]
+    assert (detail["code"], detail["feature"], detail["minimum_client_protocol"]) == (
+        "client_update_required",
+        "text_designs",
+        INFORMATIVE_TEXT_DESIGNS_PROTOCOL,
+    )
+    assert routes.READER_PROTOCOL_FIELD not in device_record(fixture.job, "first")
+    assert _decline_current(fixture, old).status_code == 200
+    assert device_record(fixture.job, "first")[routes.DECLINED_GAP_FIELD] == "floor"
+    assert _get(fixture, old).status_code == 426
+    assert device_status(fixture.job, "first").request.identity.recipe_revision == 2
+
+    resumed = _get(fixture, str(INFORMATIVE_TEXT_DESIGNS_PROTOCOL))
+
+    assert resumed.status_code == 200, resumed.text
+    payload = resumed.json()
+    assert payload["phase"] == "awaiting_device"
+    assert payload["request"]["identity"]["recipe_revision"] == 3
+    assert payload["request"]["recipe"]["text_layers"] == [pinned]
 
 
 def _text_check(status="failed", visible=True, at=11.89):

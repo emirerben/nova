@@ -53,22 +53,16 @@ jobs:
     name: Structural evals (PR guardrail)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # Slowest green run 10.9 min (uncached pip install took 10.5); typical ~2.
+    # Slowest green run 10.9 min, of which 10.5 the uncached unlocked
+    # `pip install` that the locked install below replaced (KRI-1551).
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install API dependencies
-        working-directory: src/apps/api
-        run: pip install -e ".[dev]"
-      - name: Leave one OpenCV distribution
-        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
+      # The API's locked install, as in ci.yml: about 10 s, nothing cached.
+      - uses: ./.github/actions/api-env
 
       - name: Install renderer libraries
         run: sudo bash scripts/ci/apt-install.sh libegl1 libgl1
@@ -110,15 +104,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install API dependencies
-        working-directory: src/apps/api
-        run: pip install -e ".[dev]"
-      - name: Leave one OpenCV distribution
-        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
+      # The same locked install as the structural job above.
+      - uses: ./.github/actions/api-env
 
       - name: Validate paid eval reason against the selected ref
         shell: bash

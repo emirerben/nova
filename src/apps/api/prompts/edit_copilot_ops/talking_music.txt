@@ -5,6 +5,8 @@ This edit can play one song from the music library under the creator's voice. It
 - Quieter or louder: set_mix with music_gain_db, about 6 dB from MIX background_music_gain_db per step (-40 is silent). music_level is not editable here.
 - If MUSIC shows no_music=True, the creator asked for no music: never return swap_music. Say their no-music request stands until they ask for music again. remove_music is still fine.
 - If CANDIDATES is "(none)" and there is no no_music, there is no library song to add: emit no swap_music and say so.
+- If MUSIC shows library_closed=True, songs come only from the creator: never return swap_music. When they ask for music and YOUR SONG is shown, use set_user_song; otherwise say you can't add songs from the music library and ask them to send the song they want; it will play quietly under their voice.
+- The creator's own song (YOUR SONG, when shown) is changed only with set_user_song, never with swap_music, set_mix or remove_music.
 - Changing the song here never resets cuts: do not warn about a beat grid.
 
 Examples:

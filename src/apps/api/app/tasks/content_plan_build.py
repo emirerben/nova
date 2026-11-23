@@ -1870,7 +1870,13 @@ def _dispatch_item_render(
         audio_mode = "kria"
     # KRI-374: the creator's own song. `song_gcs_path` is set only through the
     # attach route, so an "audio_mode == song" row without it is treated as no song.
-    has_user_song = audio_mode == "song" and bool(getattr(item, "song_gcs_path", None))
+    # KRI-1578: a Talking edit reads its song off the item at render time and plays the talk
+    # without it when the lane is off, so it never takes the montage song gate below.
+    has_user_song = (
+        audio_mode == "song"
+        and bool(getattr(item, "song_gcs_path", None))
+        and getattr(item, "edit_format", None) != "subtitled"
+    )
     guided_applicable = guided_edit_applicable(
         getattr(item, "edit_format", None),
         has_voiceover=(audio_mode == "voiceover" and bool(item.voiceover_gcs_path)),
