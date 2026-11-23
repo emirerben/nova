@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.105.0] - 2026-11-23
+
+### Changed
+- KRI-1582: informative text design picker with on-phone previews (KRI-1585 PR6) (#2492) <!-- release-pr: 2492 -->
+
 ## [0.89.104.0] - 2026-11-23
 
 ### Changed
