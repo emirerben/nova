@@ -1566,14 +1566,20 @@ _UNORDERED_TR_ALIASES = (
 
 
 def _placed_sequence(strategy: Mapping[str, Any]) -> bool:
-    """Did the server already place the creator's described sequence ("start with X")?"""
+    """Did the server already place the creator's described sequence ("start with X")?
+
+    Read through the one row reader the render contract's own "placed" check uses
+    (`clip_order_sequence.sequence_rows` with ``seated=True``, KRI-1594): a row an earlier turn
+    already seated was placed (it only seats nothing now), and a basis order (``order_by``:
+    filming time, route) is not a described sequence, so neither side counts it.
+    """
+    from app.services.clip_order_sequence import sequence_rows  # noqa: PLC0415
 
     return any(
-        isinstance(i, Mapping)
-        and i.get("op") == "order"
-        and i.get("status", "resolved") == "resolved"
-        and i.get("assignments")
-        for i in strategy.get("resolved_clip_intents") or []
+        status == "resolved" and members
+        for _position, _name, members, status in sequence_rows(
+            strategy.get("resolved_clip_intents"), seated=True
+        )
     )
 
 

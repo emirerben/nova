@@ -142,6 +142,26 @@ def card_order(card: Mapping[str, Any] | None) -> list[str]:
     return [str(c["media_id"]) for c in (card or {}).get("cards", ())]
 
 
+def _card_groups(card: Mapping[str, Any] | None) -> dict[str, str]:
+    return {
+        str(c["media_id"]): str(c["group"]) for c in (card or {}).get("cards", ()) if c.get("group")
+    }
+
+
+def known_group_words(
+    events: Iterable[tuple[str, Mapping[str, Any] | None]],
+    resolved_intents: object = None,
+) -> dict[str, str]:
+    """media id -> the creator's own words for its group, as every clip name reads them (KRI-1594).
+
+    The group words the newest card carried (a drag or a later message never loses a name the
+    creator already saw), then those of ``resolved_intents`` (the draft being made or the newest
+    strategy), which win. The card, the planner's order line and listing, and the reorder receipt
+    all name clips through this, so the creator sees one name for one clip everywhere.
+    """
+    return {**_card_groups(last_card(events)), **ledger.group_words_by_clip(resolved_intents)}
+
+
 def latest_event_is_a_drag(events: Sequence[tuple[str, Mapping[str, Any] | None]]) -> bool:
     """Whether the thread's newest assistant event is a drag's own: a second drag right after it
     is the same gesture, so it coalesces into one undo step (`LedgerEntry.coalesce`)."""
@@ -258,12 +278,7 @@ def build_card(
     order = [m for m in state.order if only is None or m in only]
     before = card_order(previous)
     moved = set(ledger.moved_ids(before, order)) if before else set()
-    carried = {
-        str(c["media_id"]): str(c["group"])
-        for c in (previous or {}).get("cards", ())
-        if c.get("group")
-    }
-    words = {**carried, **(groups or {})}
+    words = {**_card_groups(previous), **(groups or {})}
     carried_source = {
         str(c["media_id"]): str(c["source"])
         for c in (previous or {}).get("cards", ())
