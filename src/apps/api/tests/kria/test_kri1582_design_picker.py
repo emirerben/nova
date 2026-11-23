@@ -283,7 +283,9 @@ async def test_a_tapped_design_reaches_the_snapshot_research_writes_for(monkeypa
     strategy = _strategy(picked)
     assert text_design_answer(strategy) == "A2"
     [answer] = strategy["choice_answers"]
-    assert answer["kind"] == CONFLICT_TEXT_DESIGN and answer["requirement_ids"] == ["r1"]
+    assert answer["kind"] == CONFLICT_TEXT_DESIGN and answer["option"] == "A2"
+    # The design styles the research ask; it does not answer it.
+    assert answer["requirement_ids"] == []
 
     clips = [
         UnifiedClip(

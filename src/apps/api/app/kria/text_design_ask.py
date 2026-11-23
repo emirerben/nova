@@ -34,7 +34,7 @@ _PREVIEW_WINDOW_S = (0.0, 4.0)
 _PREVIEW_TIME_S = 2.0
 # How far into her clip the frame is taken.
 _FRAME_SHARE = 0.4
-# Hooks the research writer writes are at most 80 characters (`ResearchedHook.text`).
+# Past this her topic reads as a sentence, not a title, so the sample title stands in.
 _HOOK_MAX_CHARS = 48
 # The four previews ride one chat event; past this the question goes out as text-only cards.
 MAX_PREVIEWS_BYTES = 96 * 1024

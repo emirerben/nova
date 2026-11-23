@@ -43,8 +43,8 @@ struct ChoiceQuestionCard: View {
             KriaSupersededLine().accessibilityIdentifier("choice-card-superseded")
         case .active(let isSending, let submit) where question.hasPreviews && heldKey == nil:
             DesignPreviewStrip(question: question, projectID: projectID, isSending: isSending, isLocked: isTyping,
-                               typeMyOwn: question.allowFreeText ? typeMyOwn : nil, allowsDecide: allowsDecide) { option in
-                submit(question.submission(for: option), question.message(for: option))
+                               typeMyOwn: question.allowFreeText ? typeMyOwn : nil, allowsDecide: allowsDecide) { option, message in
+                submit(question.submission(for: option), message)
             }
             .padding(.top, 2)
             .accessibilityElement(children: .contain)

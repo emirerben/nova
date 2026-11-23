@@ -2148,13 +2148,15 @@ def _text_design(
         clip_paths=clip_paths,
     ):
         return None
-    requirement, request = found
+    _, request = found
     default = research_text_design(None, f"{request.request_quote}\n{cap.creator_request}")
     return UnresolvedChoice(
         kind=CONFLICT_TEXT_DESIGN,
         conflict_id=CONFLICT_TEXT_DESIGN,
         field_path="text_design",
-        requirement_ids=(str(requirement.id),),
+        # The look of the facts, not the research ask itself: a delegated pick must not mark
+        # the ask as delegated (`approval_readiness`).
+        requirement_ids=(),
         intro=say(
             en="I'll add the sourced facts as on-screen text.",
             tr="Kaynaklı bilgileri ekrana yazı olarak ekleyeceğim.",

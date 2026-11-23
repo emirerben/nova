@@ -69,7 +69,8 @@ struct DesignPreviewStrip: View {
     var isLocked = false
     var typeMyOwn: (() -> Void)?
     var allowsDecide = true
-    let submit: (ChoiceQuestion.Option) -> Void
+    /// The tapped option and the message that goes with it, as `ChoiceQuestionCard` sends them.
+    let submit: (ChoiceQuestion.Option, String) -> Void
 
     @State private var tappedKey: String?
 
@@ -83,7 +84,7 @@ struct DesignPreviewStrip: View {
                         DesignPreviewTile(option: option, projectID: projectID,
                                           isSending: isSending && tappedKey == option.key) {
                             tappedKey = option.key
-                            submit(option)
+                            submit(option, question.message(for: option))
                         }
                         .disabled(isSending || isLocked)
                     }
@@ -91,7 +92,7 @@ struct DesignPreviewStrip: View {
             }
             .accessibilityIdentifier("design-preview-strip")
             KriaAnswerStack(options: [], isSending: isSending, isLocked: isLocked, typeMyOwn: typeMyOwn,
-                            decide: decideOption.map { option in { tappedKey = option.key; submit(option) } }) { _ in }
+                            decide: decideOption.map { option in { tappedKey = option.key; submit(option, "Let Kria decide") } }) { _ in }
         }
     }
 
