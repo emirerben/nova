@@ -17,7 +17,7 @@
   ],
   "phone_mp4_sha256": "d5d78d141a62863eba62674ce36e9828baf8cac92e14a2bf56052ab86b8dbd7b",
   "frame_png_sha256": "f08e31a786070fbe0254db5b751046caaa89afa4627b31abdd4d21357971e940",
-  "frame_reads": "HOZUKYO GEÇIDI"
+  "frame_read_by_eye": "HOZUKYO GEÇIDI"
  },
  "after": {
   "a1_layers": [
@@ -35,6 +35,6 @@
   ],
   "phone_mp4_sha256": "0c98d47f741bc8c6e014806afe1efba7704d84c8fb2a069efb4337136b01a3ce",
   "frame_png_sha256": "2473cc0e4b65b0d201e484ab654a4f6e6b0e0714ebbe45daca7089771300b75a",
-  "frame_reads": "HOZUKYO GEÇİDİ"
+  "frame_read_by_eye": "HOZUKYO GEÇİDİ"
  }
 }

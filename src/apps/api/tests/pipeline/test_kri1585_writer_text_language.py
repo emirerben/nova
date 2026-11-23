@@ -12,6 +12,9 @@ Ways this can fail, written before the code:
    (`pinned_research_operations`), so the approved render loses it.
 3. Designed text layers (a translated or word-sequence ask) keep no language.
 4. A legacy (no design) row or approval gains the key, so flag-off dumps and digests move.
+5. Her chat language overrides the copy's: an English answer to a Turkish ask gets "tr", and
+   "first" is capped "FİRST".
+6. The editor Save drops the field or the research metadata it rides on.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from app.schemas.research import (
 )
 from app.services.client_protocol import INFORMATIVE_TEXT_DESIGNS_PROTOCOL, set_client_protocol
 from app.services.researched_text import (
+    copy_language,
     layer_operations,
     pinned_layer_operations,
     pinned_research_operations,
@@ -153,3 +157,63 @@ def test_designed_text_layers_carry_their_language_and_legacy_layers_do_not():
     )
     snapshot = {"slots": slots, "total_duration_s": 60.0}
     assert pinned_layer_operations(approved, snapshot) == designed
+
+
+def test_the_answer_decides_the_language_before_her_request():
+    english = [
+        "Kyoto's 25-minute train ride",
+        "7.3 KM LINE",
+        "The ride starts at Torokko Saga Station.",
+        "HOZUKYO GORGE",
+        "Our route runs right along this gorge.",
+    ]
+    assert copy_language(english, kyoto._request()) == "en"
+
+
+def test_a_save_keeps_the_writer_rows_language(monkeypatch):
+    """The writer's A1 rows through `prepare_editor_commit` (the iPhone Save), with a wording
+    edit to one heading."""
+    import copy
+
+    import app.routes.generative_jobs as gj
+    from app.pipeline.informative_text import POLICY_KEY, SHAPES_KEY
+    from app.services.phone_text_styling import PHONE_TEXT_STYLE_FIELD
+    from tests.routes.test_editor_commit import _arm, _narrated_guided_job
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(settings, "informative_text_designs_enabled", True)
+    monkeypatch.setattr(gj, "_TEXT_ELEMENTS_ENABLED", True)
+    _ops, rows = _a1_writer_rows(monkeypatch)
+    designed = [row for row in rows if row["end_s"] <= 25]
+    job = _narrated_guided_job()
+    job.assembly_plan["guided_story_execution_plan"]["text_elements"].extend(
+        copy.deepcopy(designed)
+    )
+    variant = job.assembly_plan["variants"][0]
+    variant["text_elements"].extend(copy.deepcopy(designed))
+    variant[PHONE_TEXT_STYLE_FIELD] = {
+        "version": 1,
+        "preferences": {},
+        "requested": {},
+        POLICY_KEY: True,
+        SHAPES_KEY: True,
+    }
+    revision = gj._guided_v2_revision(job, variant)
+    elements = copy.deepcopy(revision["text_elements"])
+    ids = {row["id"] for row in designed}
+    heading = next(row for row in elements if row["id"] in ids and kyoto._level(row) == "heading")
+    heading["text"] = "Hozukyo Geçidi boyunca"
+    gj.prepare_editor_commit(
+        job,
+        variant["variant_id"],
+        gj.EditorCommitRequest(
+            base_generation=revision["base_generation"],
+            guided_revision_number=1,
+            text_elements=elements,
+        ),
+    )
+    saved = [row for row in job.assembly_plan["variants"][0]["text_elements"] if row["id"] in ids]
+    assert len(saved) == len(designed)
+    assert {row.get("text_language") for row in saved} == {"tr"}
+    assert {row["source_params"]["research"].get("text_language") for row in saved} == {"tr"}
