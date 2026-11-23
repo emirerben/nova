@@ -2976,6 +2976,11 @@ def plan_unified_montage(
     )
 
     snapshot_kwargs: dict[str, Any] = {}
+    from app.services.choice_questions import text_design_answer  # noqa: PLC0415
+
+    if (picked_design := text_design_answer(strategy)) is not None:
+        # KRI-1582: her pick, which research writes for and the render draws.
+        snapshot_kwargs["text_design"] = picked_design
     if closing:
         snapshot_kwargs["closing_title"] = closing
     if pins:
