@@ -1545,21 +1545,20 @@ def order_paths_by_resolved_intents(
     or duplicated.
     """
 
+    from app.services.clip_order_sequence import seats_now  # noqa: PLC0415
+
     if not isinstance(resolved_intents, list) or not clip_paths:
         return clip_paths, 0
     known = set(clip_paths)
     claimed: set[str] = set()
     buckets: dict[str, list[str]] = {"first": [], "mid": [], "last": []}
     for intent in resolved_intents:
-        if not isinstance(intent, dict) or intent.get("op") != "order":
+        # The one rule of which rows place clips now (KRI-1594): an already seated row does not.
+        if not isinstance(intent, dict) or not seats_now(intent):
             continue
-        if intent.get("order_by") or intent.get("status", "resolved") != "resolved":
-            continue
-        if intent.get("already_seated"):
+        if intent.get("status", "resolved") != "resolved":
             continue
         position = intent.get("position")
-        if position not in (None, "first", "last"):
-            continue
         members: set[str] = set()
         for assignment in intent.get("assignments") or []:
             if not isinstance(assignment, dict):

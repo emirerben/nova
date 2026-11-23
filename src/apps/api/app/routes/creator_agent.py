@@ -144,6 +144,7 @@ from app.services.clip_order_ledger import (
     CREATOR_ACTORS,
     clip_order_ledger_on,
     fold_clip_order,
+    ledger_events_clause,
 )
 from app.services.content_plan_persona import load_owned_plan_persona
 from app.services.creative_copy_decisions import (
@@ -1653,18 +1654,27 @@ async def _ledger_keeps_creator_order(db: AsyncSession, item: PlanItem, creator_
     order in any of its chats (`clip_order_ledger`)."""
     rows = (
         await db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            select(
+                CreationThreadEvent.thread_id, CreationThreadEvent.role, CreationThreadEvent.payload
+            )
             .join(CreationThread, CreationThread.id == CreationThreadEvent.thread_id)
             .where(
                 CreationThread.creator_id == creator_id,
                 CreationThread.active_plan_item_id == item.id,
-                CreationThreadEvent.role == "assistant",
+                ledger_events_clause(),
             )
             .order_by(CreationThreadEvent.thread_id, CreationThreadEvent.sequence)
         )
     ).all()
-    entries = fold_clip_order((role, payload) for role, payload in rows)
-    return any(entry.actor in CREATOR_ACTORS for entry in entries)
+    # Each chat is its own history: a reset or an undo in one never takes back another's entries.
+    by_thread: dict[Any, list[tuple[str, Any]]] = {}
+    for thread_id, role, payload in rows:
+        by_thread.setdefault(thread_id, []).append((role, payload))
+    return any(
+        entry.actor in CREATOR_ACTORS
+        for events in by_thread.values()
+        for entry in fold_clip_order(events)
+    )
 
 
 async def _previous_creator_clip_order(
