@@ -1398,6 +1398,12 @@ def prepared_layers(
     return out
 
 
+def _layer_language(layer: PreparedResearchLayer) -> str | None:
+    from app.pipeline.caption_language import detect_text_language  # noqa: PLC0415
+
+    return _language_code(layer.language) or detect_text_language(layer.text)
+
+
 def layer_operations(
     layers: list[PreparedResearchLayer],
     slots: list[dict],
@@ -1427,6 +1433,12 @@ def layer_operations(
                 "facts": [fact.model_dump() for fact in layer.facts],
                 "retrieved_at": retrieved_at,
                 "search_entry_html": search_entry_html,
+                # A designed layer only: legacy layers keep their recorded shape.
+                **(
+                    {"text_language": language}
+                    if evidence_facts and (language := _layer_language(layer))
+                    else {}
+                ),
                 # One copy, on the first layer, as on design rows.
                 **(
                     {"evidence_facts": [fact.model_dump() for fact in evidence_facts]}
@@ -1600,6 +1612,28 @@ def _check_identity(caption: Any, request: str, visible_text: list[str]) -> None
         raise ResearchUnavailable("A label or creator identification is needed for this artifact")
 
 
+_LANGUAGE_CODE = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z]{2,8})?")
+
+
+def _language_code(value: str | None) -> str | None:
+    """A BCP 47-style code, lower-cased; a model's free-text name ("Türkçe") is not one."""
+    value = (value or "").strip()
+    return value.lower() if _LANGUAGE_CODE.fullmatch(value) else None
+
+
+def copy_language(texts: list[str], request: str) -> str | None:
+    """The language a design's copy is written in, for its rows' ``text_language``: A1's caps
+    follow it ("Geçidi" -> "GEÇİDİ"). One per answer: a lone heading is too short to detect."""
+    from app.kria.reply_language import current_reply_language  # noqa: PLC0415
+    from app.pipeline.caption_language import detect_text_language  # noqa: PLC0415
+
+    return (
+        detect_text_language(" ".join(texts))
+        or detect_text_language(request)
+        or _language_code(current_reply_language())
+    )
+
+
 def designed_operations(
     written: DesignedCopyOutput,
     evidence: ResearchEvidence,
@@ -1620,6 +1654,13 @@ def designed_operations(
     facts = {fact.id: fact for fact in evidence.facts}
     available = {row["id"]: row for row in design_windows(snapshot, text_design)}
     hook_window, _facts_start = design_opening(snapshot)
+    language = copy_language(
+        [
+            *([written.hook.text] if written.hook else []),
+            *(part for caption in written.captions for part in (caption.heading, caption.text)),
+        ],
+        request,
+    )
     windows: list[tuple[float, float]] = []
     additions: list[dict] = []
     remove_indexes: set[int] = set()
@@ -1654,6 +1695,7 @@ def designed_operations(
                 "retrieved_at": evidence.retrieved_at,
                 "search_entry_html": evidence.search_entry_html,
                 "design": tag.model_dump(),
+                **({"text_language": language} if language else {}),
             },
             look=look,
             min_window_s=_GUIDE_MIN_WINDOW_S if guide else _MIN_WINDOW_S,
@@ -1971,6 +2013,7 @@ def prepared_research_texts(ops: list[dict]) -> list[PreparedResearchText]:
                 sources=research["sources"],
                 facts=research["facts"],
                 design=research.get("design"),
+                text_language=research.get("text_language"),
             )
         )
     return texts
@@ -2050,6 +2093,7 @@ def pinned_research_operations(prepared: PreparedResearch, snapshot: dict) -> li
                         "retrieved_at": prepared.retrieved_at,
                         "search_entry_html": prepared.search_entry_html,
                         **({"design": design.model_dump()} if design is not None else {}),
+                        **({"text_language": row.text_language} if row.text_language else {}),
                     },
                     min_window_s=_GUIDE_MIN_WINDOW_S
                     if design is not None and design.id == "B1"
