@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.106.0] - 2026-11-23
+
+### Changed
+- fix(kria): the clip-order history takes back what undo, a removed message and a restarted request take back; every reader asks one rule (KRI-1594) (#2483) <!-- release-pr: 2483 -->
+
 ## [0.89.105.0] - 2026-11-23
 
 ### Changed
