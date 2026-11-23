@@ -26,9 +26,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels the older run. Scheduled and manual
+# runs on main are never cancelled (KRI-1551).
 concurrency:
   group: request-following-regressions-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   offline:
@@ -58,14 +60,10 @@ jobs:
       NOVA_EVAL_MODE: replay
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        working-directory: src/apps/api
-        run: pip install -e '.[dev]'
-      - name: Leave one OpenCV distribution
-        run: python scripts/ci/opencv-install.py --only opencv-contrib-python
+      # The API's locked install, as in ci.yml: about 10 s and nothing cached
+      # (KRI-1551). The unlocked `pip install` it replaced had no cache and
+      # downloaded CUDA torch on every run.
+      - uses: ./.github/actions/api-env
       - name: Install renderer libraries
         run: |
           sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
