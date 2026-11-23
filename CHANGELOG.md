@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.102.0] - 2026-11-23
+
+### Changed
+- KRI-1583: one text colour per level, shadow under low contrast, intent review legibility (KRI-1585 PR5) (#2489) <!-- release-pr: 2489 -->
+
 ## [0.89.101.0] - 2026-11-23
 
 ### Changed
