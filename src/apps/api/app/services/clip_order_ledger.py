@@ -114,25 +114,105 @@ def _ids(value: object) -> tuple[str, ...] | None:
     return tuple(dict.fromkeys(value))
 
 
+# ── taking entries back (KRI-1594) ─────────────────────────────────────────────────────────────
+#
+# A retraction rides the ledger rows of an event, as a row with this actor. `LedgerEntry.
+# from_payload` rejects it (the actor is not in ACTORS), so a reader that only replays entries
+# skips it, and only `fold_clip_order` acts on it.
+RETRACT = "retract"
+
+
+def retract_turns_row(turn_ids: Iterable[str]) -> dict[str, Any]:
+    """A ledger row that takes back every entry the turns ``turn_ids`` wrote, wherever they are
+    (a message the creator removed or stopped: its work never counts)."""
+    return {"actor": RETRACT, "turn_ids": sorted({str(turn) for turn in turn_ids if turn})}
+
+
+def reset_row() -> dict[str, Any]:
+    """A ledger row that takes back every entry written BEFORE it: the creator restarted their
+    request ("start fresh", or a new request after "Change my request") before any render, so the
+    order the old words set goes with them and the clips are back in the order they were added."""
+    return {"actor": RETRACT, "all": True}
+
+
+def ledger_events_clause() -> Any:
+    """The thread events the ledger is folded from: the assistant events (entries, draft
+    checkpoints) and the system ``turn_cancelled`` events (a removed or stopped message's
+    retraction). Every reader of the order selects these rows, so they all fold the same history.
+    """
+    from sqlalchemy import or_  # noqa: PLC0415
+
+    from app.models import CreationThreadEvent  # noqa: PLC0415
+
+    return or_(
+        CreationThreadEvent.role == "assistant",
+        CreationThreadEvent.event_type == "turn_cancelled",
+    )
+
+
+def _retracted_turns(events: Sequence[tuple[str, Mapping[str, Any] | None]]) -> frozenset[str]:
+    out: set[str] = set()
+    for role, payload in events:
+        if role not in {"assistant", "system"} or not isinstance(payload, Mapping):
+            continue
+        for raw in payload.get(LEDGER_KEY) or ():
+            if isinstance(raw, Mapping) and raw.get("actor") == RETRACT:
+                out.update(str(turn) for turn in raw.get("turn_ids") or () if turn)
+    return frozenset(out)
+
+
 def fold_clip_order(
     events: Iterable[tuple[str, Mapping[str, Any] | None]],
 ) -> tuple[LedgerEntry, ...]:
-    """The ledger entries the thread's assistant events carry, in event order.
+    """The ledger entries the thread's events carry, in event order, minus the ones taken back.
 
-    ``events`` are ``(role, payload)`` in chronological order. A payload row that is not a
-    well-formed entry is skipped, never raised on: the ledger describes a creator's thread and
-    must not be able to break it.
+    ``events`` are ``(role, payload)`` in chronological order (`ledger_events_clause`). A payload
+    row that is not a well-formed entry is skipped, never raised on: the ledger describes a
+    creator's thread and must not be able to break it. Taken back (KRI-1594):
+
+    * the entries of a turn a ``retract`` row names (`retract_turns_row`), wherever they are;
+    * every entry before a reset row (`reset_row`);
+    * on a draft undo (an event that names the draft it restored, ``restored_from_draft_id``), the
+      ledger goes back to what it was the moment that draft was last the newest one: the undone
+      draft's own entries, and anything after them, leave with it. Undoing the undo restores the
+      draft that was undone, and its entries with it. A restored draft with no event on record
+      (the baseline revision under a first editor update) goes back to what the ledger was just
+      before the undone draft's own event.
     """
+    rows = [(role, payload) for role, payload in events]
+    retracted = _retracted_turns(rows)
     entries: list[LedgerEntry] = []
-    for role, payload in events:
+    head: str | None = None
+    # The entries in force just before each draft's event, and when it stopped being the newest.
+    made_at: dict[str, tuple[LedgerEntry, ...]] = {}
+    left_at: dict[str, tuple[LedgerEntry, ...]] = {}
+    for role, payload in rows:
         if role != "assistant" or not isinstance(payload, Mapping):
             continue
-        rows = payload.get(LEDGER_KEY)
-        if not isinstance(rows, list):
+        draft = payload.get("draft_id") if "draft_revision" in payload else None
+        if isinstance(draft, str) and draft and draft != head:
+            restored = payload.get("restored_from_draft_id")
+            if head is not None:
+                left_at[head] = tuple(entries)
+            # Restoring the draft that is still the newest one (the undone draft had no event of
+            # its own, such as one the app saved) leaves the ledger as it is.
+            if isinstance(restored, str) and restored and restored != head:
+                if restored in left_at:
+                    entries = list(left_at[restored])
+                elif head is not None and head in made_at:
+                    entries = list(made_at[head])
+            made_at.setdefault(draft, tuple(entries))
+            head = draft
+        raw_rows = payload.get(LEDGER_KEY)
+        if not isinstance(raw_rows, list):
             continue
-        for raw in rows:
+        for raw in raw_rows:
+            if isinstance(raw, Mapping) and raw.get("actor") == RETRACT:
+                if raw.get("all") is True:
+                    entries = []
+                continue
             entry = LedgerEntry.from_payload(raw)
-            if entry is not None:
+            if entry is not None and entry.turn_id not in retracted:
                 entries.append(entry)
     return tuple(entries[-MAX_ENTRIES:])
 
@@ -507,8 +587,12 @@ def labels_for(
 
     ``rows`` are the clip assignments (the upload note and the clip's own record). The number in
     a fallback name is the clip's place in ``order``: "Clip 2" is the second clip that plays.
+    A name that is exactly ANY clip's media id, file name or file stem (KRI-1594: a note the
+    creator typed as "IMG_0412" or pasted an id into, whatever its shape) is never a name.
     """
-    by_id = {str(row.get("media_id")): row for row in rows if isinstance(row, Mapping)}
+    rows = [row for row in rows if isinstance(row, Mapping)]
+    by_id = {str(row.get("media_id")): row for row in rows}
+    project_tokens = _id_tokens([*order, *(token for row in rows for token in _row_tokens(row))])
     out: dict[str, str] = {}
     for position, media_id in enumerate(order, start=1):
         row = by_id.get(media_id) or {}
@@ -526,7 +610,9 @@ def labels_for(
         ]
 
         def clean(value: object, banned: list[str] = banned) -> object:
-            text = str(value or "").casefold()
+            text = " ".join(str(value or "").casefold().split())
+            if text in project_tokens:
+                return None
             return None if any(token.rsplit(".", 1)[0] in text for token in banned) else value
 
         out[media_id] = clip_label(
@@ -546,6 +632,27 @@ def labels_for(
         else f"{label} ({position})"
         for position, (media_id, label) in enumerate(out.items(), start=1)
     }
+
+
+def _row_tokens(row: Mapping[str, Any]) -> list[str]:
+    """A clip row's own identifiers: its media id, file names and storage path."""
+    out: list[str] = []
+    for key in ("media_id", "source_filename", "filename", "gcs_path"):
+        value = row.get(key)
+        if isinstance(value, str) and value:
+            out.append(value.rsplit("/", 1)[-1] if key == "gcs_path" else value)
+    return out
+
+
+def _id_tokens(values: Iterable[str]) -> frozenset[str]:
+    """Each identifier casefolded, whole and without its extension."""
+    out: set[str] = set()
+    for value in values:
+        text = " ".join(str(value or "").casefold().split())
+        if text:
+            out.add(text)
+            out.add(text.rsplit(".", 1)[0])
+    return frozenset(out)
 
 
 def ordered_by_ids(items: Sequence[Any], ids: Sequence[str], key: Any = str) -> list[Any]:
@@ -683,6 +790,12 @@ class TurnClipOrder:
     labels: Mapping[str, str]
     # What the creator did by hand since the ledger last spoke (a drag, a manual timeline edit).
     observed: LedgerEntry | None = None
+    # The creator's own words for each clip's group (`known_group_words`): the names `labels`
+    # was built with, kept so a receipt written later in the turn names clips the same way.
+    groups: Mapping[str, str] = field(default_factory=dict)
+    # Why this turn restarts the creator's request, noted while it plans (`note_restarted`).
+    # Mutable on purpose: planning runs below the context this object was set in.
+    restarted: list[str] = field(default_factory=list, compare=False)
 
 
 # The clip order the turn being planned reads. Set once by the planner (`plan_live_turn`), read by
@@ -690,6 +803,33 @@ class TurnClipOrder:
 turn_clip_order: contextvars.ContextVar[TurnClipOrder | None] = contextvars.ContextVar(
     "kria_turn_clip_order", default=None
 )
+
+RESTART_STARTS_FRESH = "starts_fresh"
+RESTART_CHANGE_REQUEST = "change_request"
+
+
+def note_restarted(reason: str) -> None:
+    """The turn being planned restarts the creator's request (KRI-1594): the extraction step typed
+    ``starts_fresh``, or the message is the new request after a "Change my request" tap. No-op
+    outside a planned turn and with the flag off (no turn order is set then)."""
+    turn = turn_clip_order.get()
+    if turn is not None and reason not in turn.restarted:
+        turn.restarted.append(reason)
+
+
+def restarts_order(turn: TurnClipOrder) -> bool:
+    """Whether this turn resets the order: it restarts the request and no video exists yet (once
+    one does, the timeline is the order and the editor owns it)."""
+    return bool(turn.restarted) and not turn.rendered
+
+
+def planning_state(turn: TurnClipOrder) -> ClipOrderState:
+    """The order this turn plans on: what the ledger says, or, when the turn restarts the request
+    before a render (`restarts_order`), the order the clips were added (the reset row this turn
+    writes takes the older entries back for every later reader)."""
+    if not restarts_order(turn):
+        return turn.state
+    return current_clip_order(attachment_ids=turn.attachment_ids)
 
 
 # ── what the Main Creator is shown ───────────────────────────────────────────────────────────
@@ -744,7 +884,8 @@ def prompt_view(
     keep their place after them); ``item_context`` gains the one line from `order_line`. The
     hashed manifest is NOT reordered here: its hash is the approval fence.
     """
-    if turn is None or not turn.state.entries:
+    # A request restarted before a render (KRI-1594) has no entries left: the prompt is as plain.
+    if turn is None or not planning_state(turn).entries:
         return None
     sorted_media = ordered_by_ids(
         [dict(row) for row in media_context],

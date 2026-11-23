@@ -238,6 +238,11 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "I'll put the clips you named first or last as you asked, and check it in the finished video",
+   "Adını verdiğin klipleri istediğin gibi başa ya da sona koyacağım ve bitmiş videoda kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "I'll show it on the {word} you picked, at {clock} in your take; if I can't find that one, it won't appear",
    "{v1}{word} anında, çekiminin {clock} noktasında gösteririm; o anı bulamazsam yazı çıkmaz"
   ],
@@ -270,6 +275,11 @@
    "app/kria/brief_checks.py",
    "Pop-ins on {joined}",
    "{join_parts_tr}{tail_tr} çıkıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Some pauses or lines were cut from your voiceover, so it doesn't play whole.",
+   "Seslendirmenden bazı duraklamalar ya da cümleler kesildi, o yüzden tamamı oynamıyor."
   ],
   [
    "app/kria/brief_checks.py",
@@ -460,6 +470,11 @@
    "app/kria/brief_checks.py",
    "You're full screen in your own take for the first {seconds} s, then {corner_0}.",
    "{v2}, sonra {corner_1}sın."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your whole voiceover plays and the pictures are cut to it",
+   "Seslendirmenin tamamı oynar, görüntüler ona göre kesilir"
   ],
   [
    "app/kria/brief_checks.py",
@@ -1843,6 +1858,11 @@
   ],
   [
    "app/tasks/kria_runtime.py",
+   "- Done anyway: {what}",
+   "- Yine de yapıldı: {what}"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
    "Balanced pacing",
    "Tempo: Dengeli"
   ],
@@ -2355,6 +2375,26 @@
    "app/kria/pending_visuals.py",
    "some of your Visuals",
    "bazı görsellerin"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "{shots} shots in {total:.1f} s, about one every {average:.1f} s; the longest is {longest:.1f} s",
+   "{total:.1f} sn içinde {shots} çekim, ortalama {average:.1f} sn'de bir; en uzunu {longest:.1f} sn"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "{shots} shots in {total:.1f} s, about one every {average:.1f} s, not every {asked:.1f} s; the longest is {longest:.1f} s",
+   "{total:.1f} sn içinde {shots} çekim, ortalama {average:.1f} sn'de bir, {asked:.1f} sn'de bir değil; en uzunu {longest:.1f} sn"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "When you say {v1}, the clip you named is on screen ({step_start_s:.1f}–{step_end_s:.1f} s)",
+   "{v1} dediğinde söylediğin klip ekranda ({step_start_s:.1f}–{step_end_s:.1f} sn)"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "When you say {v1}, another clip is on screen ({step_start_s:.1f}–{step_end_s:.1f} s); the clip you named plays at {shown_at} s",
+   "{v1} dediğinde ekranda başka bir klip var ({step_start_s:.1f}–{step_end_s:.1f} sn); söylediğin klip {shown_at} sn arasında oynuyor"
   ],
   [
    "app/kria/brief_checks.py",
