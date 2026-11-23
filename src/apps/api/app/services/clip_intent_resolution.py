@@ -521,13 +521,29 @@ async def _run_resolver_shards(
     """Run shards concurrently (bounded). A shard whose outcome is unknown (the
     provider timed out) is NOT blindly re-sent: it is split in half and each half
     re-asked once -- read-only, ~2x smaller work, bounded extra spend."""
+    from app.services.turn_checkpoint import checkpointed  # noqa: PLC0415
+
     gate = asyncio.Semaphore(_RESOLVER_MAX_CONCURRENCY)
 
     async def call(shard: ClipRequestResolverInput) -> ClipRequestResolverOutput:
         async with gate:
             started = time.monotonic()
             try:
-                return await asyncio.to_thread(agent.run, shard, ctx=ctx)
+                # Tahini (2026-11-17): a continued run re-asked the same shard with a
+                # byte-identical input and the model dropped a match it had made twice,
+                # which turned a found clip into a clip question. A continued run reuses
+                # the earlier run's answer for the same shard input (a changed input is a
+                # new key), like the planner calls in this turn.
+                async def _ask() -> ClipRequestResolverOutput:
+                    return await asyncio.to_thread(agent.run, shard, ctx=ctx)
+
+                return await checkpointed(
+                    "clip_request_resolver",
+                    agent_cls=type(agent),
+                    agent_input=shard,
+                    output_cls=ClipRequestResolverOutput,
+                    call=_ask,
+                )
             except BaseException as exc:
                 stats.failed_error_types.append(type(exc).__name__)
                 raise
@@ -865,6 +881,28 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
 # Leverkusen M2: the asks a confident match settles although checks on other clips were
 # unsure. An allowlist, so an ask added later (one that hides footage) never settles by default.
 _FOUND_SETTLES_OPS = frozenset({"group", "order", "include", "label", "caption"})
+# Tahini: rows that may pre-tick the last clip no other described clip claimed.
+_LAST_CLIP_LEFT_OPS = frozenset({"include", "order"})
+
+
+def _claimed_by_described_clips(
+    resolved: list[ResolvedClipIntent], clips: list[IntentClip]
+) -> frozenset[str]:
+    """Clips a resolved include/order intent picked out, for the last-clip-left pre-tick.
+
+    An intent that kept every clip of its kind ("use every uploaded file") says nothing
+    about which clip is which, so it claims none.
+    """
+    claimed: set[str] = set()
+    for intent in resolved:
+        if intent.op not in _LAST_CLIP_LEFT_OPS:
+            continue
+        kept = {a.media_id for a in intent.assignments}
+        of_kind = {c.media_id for c in clips if intent.accepts_source_kind(c.kind)}
+        if not kept or (of_kind and of_kind <= kept):
+            continue
+        claimed |= kept
+    return frozenset(claimed)
 
 
 def _found_rows_text(labels: list[str]) -> str:
@@ -1092,6 +1130,7 @@ def _build_clip_question(
     clips: list[IntentClip],
     creator_words: Mapping[str, str] | None = None,
     records_by_id: Mapping[str, ClipUnderstanding] | None = None,
+    claimed_elsewhere: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
     """One picker row per TAPPABLE unresolved attribute, or None when none can be tapped.
 
@@ -1110,6 +1149,9 @@ def _build_clip_question(
     (an un-ticked clip leaves the edit) or not one of ``_FOUND_SETTLES_OPS``.
     KRI-779: in a project with one video, a photo is offered only while it could still
     answer the intent (``_live_photo_ids``); with several videos nothing is narrowed.
+    Tahini: an include/order row with nothing found and no near miss pre-ticks the one
+    clip of its kind that no resolved intent claims (``claimed_elsewhere``), when exactly
+    one is left. A suggestion only, like every pre-tick.
     """
     creator_work = [w for w in creator_work if picker_eligible(w.intent)]
     if not creator_work:
@@ -1141,6 +1183,22 @@ def _build_clip_question(
                 c.media_id in found or not narrow_photos or c.kind != "image" or c.media_id in live
             )
         ]
+        if (
+            claimed_elsewhere
+            and not found
+            and not near_misses
+            and work.intent.op in _LAST_CLIP_LEFT_OPS
+            and not work.intent.exclusive
+        ):
+            # A clip another open row already found is that row's, not this one's.
+            found_by_others = {
+                a.media_id for other in creator_work if other is not work for a in other.kept
+            }
+            unclaimed = [
+                m for m in candidates if m not in claimed_elsewhere and m not in found_by_others
+            ]
+            if len(unclaimed) == 1:
+                near_misses = set(unclaimed)
         categories.append(
             {
                 "key": intent_key(work.intent),
@@ -2563,7 +2621,11 @@ async def resolve_clip_intents_for_turn(
         and settings.kria_clip_selection_questions_enabled
     ):
         clip_question = _build_clip_question(
-            creator_work, clips, creator_words, records_by_id=records_by_id
+            creator_work,
+            clips,
+            creator_words,
+            records_by_id=records_by_id,
+            claimed_elsewhere=_claimed_by_described_clips(resolved_intents, clips),
         )
         if clip_question is not None:
             # Leverkusen M2: a row that already has its clips ticked never says "I couldn't

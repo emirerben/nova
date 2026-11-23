@@ -48,6 +48,16 @@ def ends_sentence(token: str) -> bool:
     return bool(_GREEK_QUESTION_RE.search(token)) and _has_greek_letter(token)
 
 
+# A spoken list's item number as whisper writes it ("2.", "3)", "(4)", "10:"): digits only, so
+# it reads no words (Tahini run: "2." and "3." each became a caption of their own).
+_LIST_NUMBER_RE = re.compile(r"^\(?\d{1,2}[.):]$")  # kri667: caption token shape, no meaning
+
+
+def is_list_number(token: str) -> bool:
+    """True when the caption word ``token`` is only a list item's number ("2.", "3)")."""
+    return bool(_LIST_NUMBER_RE.match(token.strip()))
+
+
 def text_ends_sentence(text: str) -> bool:
     """:func:`ends_sentence` for the last word of ``text``."""
     words = str(text or "").split()
@@ -275,6 +285,7 @@ def build_plain_cues(
     *,
     attach_words: bool = False,
     budget: CueBudget | None = None,
+    join_list_numbers: bool = False,
 ) -> list[dict]:
     """Group words into editable plain-caption cues — the source of truth for the
     on-video caption editor — splitting at SENTENCE boundaries.
@@ -287,6 +298,11 @@ def build_plain_cues(
     ``budget`` (phone Talking, KRI-632): size cues by characters and on-screen time
     (:class:`CueBudget`) instead of the 14-word cap. ``None`` (default) keeps the
     word cap — the cloud burn is byte-identical.
+
+    ``join_list_numbers`` (phone narrated, Tahini run): a list item's number that opens a
+    sentence ("2." in "2. The topping.") does not end it, so it is shown with the words it
+    numbers instead of alone. Only a sentence's FIRST word: "Bu 3." mid-sentence splits as
+    before. Off (default): byte-identical.
 
     Each cue is ``{"text", "start_s", "end_s"}`` with RAW (un-sanitized) display text
     and times shifted by ``offset_s``. A new cue starts at every sentence end (terminal
@@ -350,7 +366,9 @@ def build_plain_cues(
 
     for w in words:
         sentence.append(w)
-        if ends_sentence(w.text):
+        if ends_sentence(w.text) and not (
+            join_list_numbers and len(sentence) == 1 and is_list_number(w.text)
+        ):
             _emit()
     _emit()
     return cues
@@ -1645,77 +1663,142 @@ def split_cues_by_words(cues: list[dict], max_words: int) -> list[dict]:
         if len(tokens) <= max_words:
             out.append(cue)
             continue
-        start = float(cue.get("start_s", 0.0))
-        end = float(cue.get("end_s", start))
         chunks = [tokens[i : i + max_words] for i in range(0, len(tokens), max_words)]
-        # A cue too short for 0.05 s per group keeps fewer, longer groups.
-        while len(chunks) > 1 and (end - start) < _MIN_SPLIT_CUE_S * len(chunks):
-            chunks[-2] = chunks[-2] + chunks[-1]
-            chunks.pop()
-        words = cue.get("words")
-        aligned = (
-            isinstance(words, list)
-            and len(words) == len(tokens)
+        out.extend(_split_cue(cue, tokens, chunks))
+    return out
+
+
+def _split_cue(cue: dict, tokens: list[str], chunks: list[list[str]]) -> list[dict]:
+    """``cue`` cut into ``chunks`` (consecutive runs of its text ``tokens``), timed and keyed as
+    `split_cues_by_words` documents."""
+    out: list[dict] = []
+    start = float(cue.get("start_s", 0.0))
+    end = float(cue.get("end_s", start))
+    # A cue too short for 0.05 s per group keeps fewer, longer groups.
+    while len(chunks) > 1 and (end - start) < _MIN_SPLIT_CUE_S * len(chunks):
+        chunks[-2] = chunks[-2] + chunks[-1]
+        chunks.pop()
+    words = cue.get("words")
+    aligned = (
+        isinstance(words, list)
+        and len(words) == len(tokens)
+        and all(
+            isinstance(w, dict)
             and all(
-                isinstance(w, dict)
-                and all(
-                    isinstance(w.get(key), int | float) and not isinstance(w.get(key), bool)
-                    for key in ("start_s", "end_s")
-                )
-                for w in words
+                isinstance(w.get(key), int | float) and not isinstance(w.get(key), bool)
+                for key in ("start_s", "end_s")
             )
-            and [str(w.get("text", "")).strip() for w in words] == tokens
+            for w in words
         )
-        offsets = [0]
-        for chunk in chunks:
-            offsets.append(offsets[-1] + len(chunk))
-        starts: list[float] = [start]
-        for k in range(1, len(chunks)):
-            if aligned:
-                try:
-                    starts.append(float(words[offsets[k]]["start_s"]))
-                except (KeyError, TypeError, ValueError):
-                    starts.append(starts[-1])
-            else:
-                before = sum(len(t) for t in tokens[: offsets[k]]) + offsets[k]
-                total = sum(len(t) for t in tokens) + len(tokens)
-                starts.append(start + (end - start) * before / max(1, total))
-        # Ordered, at least 0.05 s each, ending inside the cue.
-        for k in range(1, len(starts)):
-            starts[k] = max(starts[k], starts[k - 1] + _MIN_SPLIT_CUE_S)
-        for k in range(len(starts) - 1, 0, -1):
-            starts[k] = min(starts[k], end - _MIN_SPLIT_CUE_S * (len(starts) - k))
-        bounds = [*starts, end]
-        base_id = cue.get("id")
-        for k, chunk in enumerate(chunks):
-            group_start, group_end = round(bounds[k], 3), round(bounds[k + 1], 3)
-            piece = {key: value for key, value in cue.items() if key != "words"}
-            piece["text"] = " ".join(chunk)
-            piece["start_s"] = group_start
-            piece["end_s"] = group_end
-            if isinstance(base_id, str) and k > 0:
-                piece["id"] = f"{base_id}-{k}"
-            if aligned:
-                piece["words"] = [
+        and [str(w.get("text", "")).strip() for w in words] == tokens
+    )
+    offsets = [0]
+    for chunk in chunks:
+        offsets.append(offsets[-1] + len(chunk))
+    starts: list[float] = [start]
+    for k in range(1, len(chunks)):
+        if aligned:
+            try:
+                starts.append(float(words[offsets[k]]["start_s"]))
+            except (KeyError, TypeError, ValueError):
+                starts.append(starts[-1])
+        else:
+            before = sum(len(t) for t in tokens[: offsets[k]]) + offsets[k]
+            total = sum(len(t) for t in tokens) + len(tokens)
+            starts.append(start + (end - start) * before / max(1, total))
+    # Ordered, at least 0.05 s each, ending inside the cue.
+    for k in range(1, len(starts)):
+        starts[k] = max(starts[k], starts[k - 1] + _MIN_SPLIT_CUE_S)
+    for k in range(len(starts) - 1, 0, -1):
+        starts[k] = min(starts[k], end - _MIN_SPLIT_CUE_S * (len(starts) - k))
+    bounds = [*starts, end]
+    base_id = cue.get("id")
+    for k, chunk in enumerate(chunks):
+        group_start, group_end = round(bounds[k], 3), round(bounds[k + 1], 3)
+        piece = {key: value for key, value in cue.items() if key != "words"}
+        piece["text"] = " ".join(chunk)
+        piece["start_s"] = group_start
+        piece["end_s"] = group_end
+        if isinstance(base_id, str) and k > 0:
+            piece["id"] = f"{base_id}-{k}"
+        if aligned:
+            piece["words"] = [
+                {
+                    **words[i],
+                    "start_s": min(max(float(words[i]["start_s"]), group_start), group_end),
+                    "end_s": min(max(float(words[i]["end_s"]), group_start), group_end),
+                }
+                for i in range(offsets[k], offsets[k + 1])
+            ]
+        elif "words" in cue:
+            spread, cursor = [], group_start
+            share = (group_end - group_start) / len(chunk)
+            for token in chunk:
+                spread.append(
                     {
-                        **words[i],
-                        "start_s": min(max(float(words[i]["start_s"]), group_start), group_end),
-                        "end_s": min(max(float(words[i]["end_s"]), group_start), group_end),
+                        "text": token,
+                        "start_s": round(cursor, 3),
+                        "end_s": round(cursor + share, 3),
                     }
-                    for i in range(offsets[k], offsets[k + 1])
-                ]
-            elif "words" in cue:
-                spread, cursor = [], group_start
-                share = (group_end - group_start) / len(chunk)
-                for token in chunk:
-                    spread.append(
-                        {
-                            "text": token,
-                            "start_s": round(cursor, 3),
-                            "end_s": round(cursor + share, 3),
-                        }
+                )
+                cursor += share
+            piece["words"] = spread
+        out.append(piece)
+    return out
+
+
+def split_cues_by_budget(cues: list[dict], budget: CueBudget) -> list[dict]:
+    """Cut every cue that holds more than ``budget`` into the fewest, evenly sized blocks that
+    fit it (`_split_sentence_by_budget`: the word, character and time caps, breaks at a clause
+    end or a spoken pause, no 1-2 word orphans), timed and keyed as `split_cues_by_words`.
+
+    Phone narrated (Tahini run): the captions' text passes (correction, the sentence re-split,
+    the creator's spellings) read whole sentences, so a name keeps its sentence case; this cuts
+    the finished sentences into what the screen shows. A cue's own ``words`` time the cut when
+    they still spell its text; otherwise its tokens are spread over the cue by length. A cue
+    that already fits is returned unchanged (the same dict).
+    """
+    out: list[dict] = []
+    for cue in cues:
+        tokens = str(cue.get("text", "")).strip().split()
+        if len(tokens) < 2:
+            out.append(cue)
+            continue
+        start = float(cue.get("start_s", 0.0))
+        end = max(start, float(cue.get("end_s", start)))
+        words = cue.get("words")
+        try:
+            timed = (
+                [
+                    Word(
+                        text=token,
+                        start_s=float(word["start_s"]),
+                        end_s=float(word["end_s"]),
+                        confidence=1.0,
                     )
-                    cursor += share
-                piece["words"] = spread
-            out.append(piece)
+                    for token, word in zip(tokens, words, strict=True)
+                ]
+                if isinstance(words, list)
+                and [str(w.get("text", "")).strip() for w in words] == tokens
+                else None
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            timed = None
+        if timed is None:
+            total = sum(len(t) + 1 for t in tokens)
+            timed, before = [], 0
+            for token in tokens:
+                share = (end - start) * (len(token) + 1) / total
+                at = start + (end - start) * before / total
+                timed.append(Word(text=token, start_s=at, end_s=at + share, confidence=1.0))
+                before += len(token) + 1
+        groups = _split_sentence_by_budget(timed, budget)
+        if len(groups) < 2:
+            out.append(cue)
+            continue
+        chunks, cursor = [], 0
+        for group in groups:
+            chunks.append(tokens[cursor : cursor + len(group)])
+            cursor += len(group)
+        out.extend(_split_cue(cue, tokens, chunks))
     return out
