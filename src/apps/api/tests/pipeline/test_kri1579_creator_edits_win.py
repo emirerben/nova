@@ -307,7 +307,7 @@ def test_a_chat_add_text_makes_only_the_style_she_named_hers(monkeypatch):
 
 
 def test_every_design_level_is_a_drawable_text_row():
-    """The registry names registry fonts and valid row values, and matches the Phase 0 targets."""
+    """The registry names registry fonts and valid row values, and matches the fixture targets."""
     from app.agents._schemas.text_element import _ALLOWED_FONTS, TextElement
     from app.pipeline.text_designs import TEXT_DESIGNS
 

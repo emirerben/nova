@@ -71,6 +71,9 @@ _COPY_STYLE_KEYS = (
     "stroke_color",
     "shadow_color",
     "shadow_opacity",
+    # KRI-1581: a copied bar keeps the design's soft shadow. Never its scrim: two would stack.
+    "shadow_blur",
+    "shadow_offset_y",
 )
 
 
