@@ -41,6 +41,7 @@ from app.services.phone_speaker_background import (
     pin_background_for_commit,
 )
 from app.services.phone_subtitled_editor import is_phone_subtitled_editor_variant
+from app.services.researched_text import chat_text_design
 from app.services.talking_music import UploadedSongRead, uploaded_song
 
 log = structlog.get_logger()
@@ -737,6 +738,9 @@ async def execute_copilot_edit(
         ),
         job_id=job_id,
         compile_check=editor_compile_check(job, variant),
+        text_design=chat_text_design(
+            variant, body.message, job_policy=(job.assembly_plan or {}).get("phone_text_style")
+        ),
     )
     rejections = list(getattr(response, "rejection_reasons", None) or []) if honest else []
     unmet = list(getattr(response, "unmet_requests", None) or []) if honest else []

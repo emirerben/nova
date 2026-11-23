@@ -140,6 +140,11 @@
       "file": "tests/pipeline/test_kri1585_kyoto_fixture.py",
       "reason": "needs footage frames: python scripts/kri1585_kyoto_fixture.py cache",
       "why": "Creator footage never enters git or CI; the frames come from a gitignored local cache fetched from production (KRI-1585 Phase 0)."
+    },
+    {
+      "file": "tests/pipeline/test_kri1583_readability.py",
+      "reason": "needs footage frames: python scripts/kri1585_kyoto_fixture.py cache",
+      "why": "Creator footage never enters git or CI; the Kyoto proof reads the gitignored local frame cache. The same claims run on synthetic frames in this file."
     }
   ]
 }

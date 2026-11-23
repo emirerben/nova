@@ -308,6 +308,66 @@ class WorkflowTests(unittest.TestCase):
             r"if: steps\.gate\.outputs\.eligible == 'true' && steps\.gate\.outputs\.requires_api_deploy == 'true'",
         )
 
+    def _jobs(self):
+        """The `gate` and `release` job blocks (KRI-1551)."""
+        _, jobs = self.text.split("\njobs:\n", 1)
+        gate = re.search(r"(?ms)^  gate:\n(?P<body>.*?)(?=^  [a-z][\w-]*:\n|\Z)", jobs)
+        release = re.search(
+            r"(?ms)^  release:\n(?P<body>.*?)(?=^  [a-z][\w-]*:\n|\Z)", jobs
+        )
+        self.assertIsNotNone(gate, "missing gate job")
+        self.assertIsNotNone(release, "missing release job")
+        assert gate is not None and release is not None
+        return gate.group("body"), release.group("body")
+
+    def test_the_gate_and_deploy_wait_run_on_linux_before_any_mac(self):
+        """KRI-1551. Ways the split can go wrong, written first:
+
+        1. The eligibility decision or the deploy wait stays on the Mac.
+        2. The Linux job can read TestFlight secrets or the protected
+           environment (it needs neither).
+        3. `eligible` is not exported, so `release` never runs and releases
+           stop silently.
+        4. `release` can start without a successful gate (always(),
+           !cancelled(), failure()), which would also make an unstarted
+           `release` ambiguous to upload_provenance.py.
+        5. A release step still reads `steps.gate`, which is empty in the Mac
+           job, so the step is skipped.
+        6. `release` is renamed or loses the step names upload_provenance.py
+           reads, and provenance blocks every later release.
+        7. The gate's timeout cuts the 120-poll deploy wait short.
+        """
+        gate, release = self._jobs()
+        self.assertRegex(gate, r"(?m)^    runs-on: ubuntu-latest$")
+        self.assertIn("id: gate", gate)
+        self.assertIn("Wait for a production API deploy that contains this commit", gate)
+        self.assertNotIn("macos", gate)
+        self.assertNotIn("environment:", gate)
+        self.assertNotIn("secrets.", gate)
+        self.assertRegex(
+            gate, r"(?m)^    outputs:\n      eligible: \$\{\{ steps\.gate\.outputs\.eligible \}\}$"
+        )
+        self.assertIn("for attempt in $(seq 1 120)", gate)
+        timeout = int(re.search(r"(?m)^    timeout-minutes: (\d+)$", gate).group(1))
+        self.assertGreaterEqual(timeout, 90)
+
+        self.assertRegex(release, r"(?m)^    needs: gate$")
+        condition = re.search(r"(?m)^    if: (.*)$", release).group(1)
+        self.assertEqual(
+            condition,
+            "github.ref == 'refs/heads/main' && needs.gate.outputs.eligible == 'true'",
+        )
+        self.assertRegex(release, r"(?m)^    runs-on: macos-15$")
+        self.assertRegex(release, r"(?m)^    environment: testflight-production$")
+        self.assertNotIn("steps.gate", release)
+        for step in (
+            "- uses: actions/checkout@v4",
+            "- name: Archive signed Release IPA",
+            "- name: Upload and distribute to external TestFlight",
+        ):
+            self.assertIn(step, release)
+        self.assertNotIn("Archive signed Release IPA", gate)
+
     def test_release_uses_protected_environment_and_never_echoes_secrets(self):
         self.assertRegex(self.text, r"(?m)^\s*environment\s*:\s*testflight-production\s*$")
         # Secret values may be passed to actions/scripts, but not interpolated

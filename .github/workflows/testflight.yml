@@ -22,11 +22,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  # Decides whether this commit is released and waits for its API deploy on
+  # Linux, so a Mac is allocated only for a release that will build (KRI-1551).
+  # From 2026-11-12 to 11-23, 33 of 60 runs took a Mac (104 Mac-minutes) only
+  # to decide there was nothing to release.
+  # It holds no environment and reads no secret. scripts/ios/upload_provenance.py
+  # names this job: a `release` job that never started is no upload only when
+  # this job did not succeed in the same attempt.
+  gate:
     if: github.ref == 'refs/heads/main'
-    runs-on: macos-15
-    timeout-minutes: 120
-    environment: testflight-production
+    runs-on: ubuntu-latest
+    # The deploy wait polls 120 times, 30 s apart, with up to 30 comparisons
+    # per poll: 60 to about 90 minutes before it gives up.
+    timeout-minutes: 100
+    outputs:
+      eligible: ${{ steps.gate.outputs.eligible }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,8 +133,24 @@ jobs:
           echo "::error::no Fly Deploy containing $HEAD_SHA completed before TestFlight distribution"
           exit 1
 
+  # Only `release` uploads; scripts/ios/upload_provenance.py reads its checkout
+  # and upload logs by this job name and these step names.
+  release:
+    needs: gate
+    if: github.ref == 'refs/heads/main' && needs.gate.outputs.eligible == 'true'
+    runs-on: macos-15
+    # Archive and upload took 26 to 28 minutes (2026-11-22). The 120 it had
+    # before also covered the deploy wait, which now runs in `gate`.
+    timeout-minutes: 90
+    environment: testflight-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Validate release configuration
-        if: steps.gate.outputs.eligible == 'true'
         env:
           KRIA_DEVELOPMENT_TEAM: ${{ vars.KRIA_DEVELOPMENT_TEAM }}
           KRIA_PROVISIONING_PROFILE_SPECIFIER: ${{ vars.KRIA_PROVISIONING_PROFILE_SPECIFIER }}
@@ -177,17 +203,14 @@ jobs:
           done
 
       - name: Configure Xcode
-        if: steps.gate.outputs.eligible == 'true'
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
       - name: Install XcodeGen
-        if: steps.gate.outputs.eligible == 'true'
         run: brew install xcodegen
 
       - name: Install distribution signing assets
-        if: steps.gate.outputs.eligible == 'true'
         env:
           IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
           IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
@@ -211,7 +234,6 @@ jobs:
           cp "$profile" "$HOME/Library/MobileDevice/Provisioning Profiles/kria-app-store.mobileprovision"
 
       - name: Install pinned TestFlight client
-        if: steps.gate.outputs.eligible == 'true'
         run: |
           set -euo pipefail
           gem install bundler:2.7.2 --no-document
@@ -219,7 +241,6 @@ jobs:
           bundle _2.7.2_ install --gemfile fastlane/Gemfile --jobs 4 --retry 3
 
       - name: Archive signed Release IPA
-        if: steps.gate.outputs.eligible == 'true'
         env:
           KRIA_DEVELOPMENT_TEAM: ${{ vars.KRIA_DEVELOPMENT_TEAM }}
           KRIA_PROVISIONING_PROFILE_SPECIFIER: ${{ vars.KRIA_PROVISIONING_PROFILE_SPECIFIER }}
@@ -237,7 +258,6 @@ jobs:
           echo "KRIA_IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
 
       - name: Upload and distribute to external TestFlight
-        if: steps.gate.outputs.eligible == 'true'
         env:
           KRIA_DEVELOPMENT_TEAM: ${{ vars.KRIA_DEVELOPMENT_TEAM }}
           KRIA_TESTFLIGHT_GROUP: ${{ vars.KRIA_TESTFLIGHT_GROUP }}

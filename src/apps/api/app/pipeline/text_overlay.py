@@ -2576,6 +2576,43 @@ def wrap_and_measure(
     return (lines, widest)
 
 
+def scrim_stops(scrim: dict, alpha: float = 1.0) -> list[tuple[float, float]]:
+    """``(position, opacity)`` stops of a KRI-1581 scrim, top (0) to the canvas bottom (1)."""
+    from app.agents._schemas.text_element import TextScrim  # noqa: PLC0415
+
+    peak = min(1.0, max(0.0, float(scrim["opacity"]))) * alpha
+    return [(0.0, 0.0), (TextScrim.SCRIM_RAMP_FRAC, peak), (1.0, peak)]
+
+
+def scrim_alpha_mask(scrim: dict, size: tuple[int, int]):
+    """The scrim's own full-strength alpha at ``size``, one value per row."""
+    import numpy as np  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+
+    width, height = size
+    top = float(scrim["top_frac"]) * height
+    stops = scrim_stops(scrim)
+    rows = np.zeros(height, dtype=np.float64)
+    band = np.arange(height) >= top
+    position = (np.arange(height)[band] - top) / max(1.0, height - top)
+    rows[band] = np.interp(position, [p for p, _a in stops], [a for _p, a in stops])
+    column = np.ceil(rows * 255).astype(np.uint8)[:, None]
+    return Image.fromarray(np.repeat(column, width, axis=1), mode="L")
+
+
+def _pillow_scrim(scrim: dict):
+    """A KRI-1581 scrim as a full-canvas RGBA layer (the Skia twin is ``_draw_scrim``)."""
+    import numpy as np  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
+
+    alpha = np.asarray(scrim_alpha_mask(scrim, (CANVAS_W, CANVAS_H)))
+    rgb = _hex_to_rgba(scrim.get("color") or "#000000")[:3]
+    pixels = np.zeros((CANVAS_H, CANVAS_W, 4), dtype=np.uint8)
+    pixels[..., :3] = rgb
+    pixels[..., 3] = alpha
+    return Image.fromarray(pixels, mode="RGBA")
+
+
 def _authored_pillow_paint(overlay: dict) -> dict:
     """Explicit editor paint overrides; omitted fields retain legacy pixels."""
     paint: dict = {"wrap_lines": overlay.get("wrap_lines", True)}
@@ -2586,6 +2623,12 @@ def _authored_pillow_paint(overlay: dict) -> dict:
         opacity = overlay.get("shadow_opacity")
         alpha = 160 if opacity is None else round(255 * min(1, max(0, float(opacity))))
         paint["shadow_color"] = (*rgb, alpha)
+    if overlay.get("shadow_blur") is not None:
+        paint["shadow_blur"] = float(overlay["shadow_blur"])
+    if overlay.get("shadow_offset_y") is not None:
+        paint["shadow_offset_y"] = float(overlay["shadow_offset_y"])
+    if isinstance(overlay.get("scrim"), dict):
+        paint["scrim"] = overlay["scrim"]
     if overlay.get("background_color"):
         paint["background_color"] = _hex_to_rgba(overlay["background_color"])
     if overlay.get("rotation_deg") is not None:
@@ -2870,6 +2913,9 @@ def _draw_text_png(
     wrap_lines: bool = True,
     letter_spacing: float | None = None,
     line_spacing: float | None = None,
+    shadow_blur: float | None = None,
+    shadow_offset_y: float | None = None,
+    scrim: dict | None = None,
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
@@ -2903,6 +2949,8 @@ def _draw_text_png(
     from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    if scrim is not None:
+        img.alpha_composite(_pillow_scrim(scrim))
     draw = ImageDraw.Draw(img)
     if letter_spacing:
         draw = _SpacedDraw(draw, letter_spacing)
@@ -3049,6 +3097,7 @@ def _draw_text_png(
         block_top = int(CANVAS_H * y_frac - block_h / 2)
 
     # Soft gaussian shadow layer (drawn once, all lines).
+    shadow_drop = 6 if shadow_offset_y is None else shadow_offset_y
     shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow_layer)
     fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
@@ -3167,12 +3216,12 @@ def _draw_text_png(
         if use_baseline_anchor:
             y = block_top + font_ascent + i * line_step
             text_anchor_arg = "ls"
-            shadow_xy = (x, y + 6)
+            shadow_xy = (x, y + shadow_drop)
             fg_xy = (x, y)
         else:
             y = block_top + i * line_step
             text_anchor_arg = None  # PIL default
-            shadow_xy = (x, y + 6)
+            shadow_xy = (x, y + shadow_drop)
             fg_xy = (x, y)
         if background_color is not None:
             background_bounds.append(
@@ -3223,7 +3272,9 @@ def _draw_text_png(
             (left - 8, top - 4, right + 8, bottom + 4), radius=4, fill=background_color
         )
     if shadow_enabled:
-        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+        shadow_layer = shadow_layer.filter(
+            ImageFilter.GaussianBlur(radius=12 if shadow_blur is None else shadow_blur)
+        )
         img = Image.alpha_composite(img, shadow_layer)
     img = Image.alpha_composite(img, fg_layer)
 
@@ -3469,6 +3520,8 @@ def _draw_spans_png(
 
     # 6. Render
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    if isinstance(overlay.get("scrim"), dict):
+        img.alpha_composite(_pillow_scrim(overlay["scrim"]))
     shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow_layer)
     fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
@@ -3488,7 +3541,7 @@ def _draw_spans_png(
             # Shadow
             if overlay.get("shadow_enabled") is not False:
                 shadow_draw.text(
-                    (x, draw_y + 6),
+                    (x, draw_y + _finite_float(overlay.get("shadow_offset_y"), 6.0)),
                     sd["paint_text"],
                     font=sd["font"],
                     fill=_hex_to_rgba(overlay.get("shadow_color", "#000000"))[:3]
@@ -3512,7 +3565,9 @@ def _draw_spans_png(
         cur_y += int(lm["max_h"] * _SPAN_LINE_SPACING)
 
     # Apply shadow blur
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    shadow_layer = shadow_layer.filter(
+        ImageFilter.GaussianBlur(radius=_finite_float(overlay.get("shadow_blur"), 12.0))
+    )
     img = Image.alpha_composite(img, shadow_layer)
     img = Image.alpha_composite(img, fg_layer)
     img.save(png_path, "PNG")

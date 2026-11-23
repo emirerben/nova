@@ -374,9 +374,11 @@ def _sfx_ask_open(
 
     Each writer's own gate (`sfx_capability.*_sfx_limit`, the answer its worker reads) decides:
     Talking, Voiceover (`narrated*` with its voiceover) and a guided-format montage with a
-    recorded voiceover. A montage without a voiceover has no writer for it yet.
+    recorded voiceover, and (no speech, so the clips' moments are the evidence) a guided-format
+    montage without one.
     """
     from app.services.sfx_capability import (  # noqa: PLC0415
+        guided_sfx_limit,
         subtitled_sfx_limit,
         voiceover_sfx_limit,
     )
@@ -388,8 +390,8 @@ def _sfx_ask_open(
         return subtitled_sfx_limit() is None
     if is_phone_voiceover:
         return voiceover_sfx_limit() is None
-    if has_voiceover and normalized_format in GUIDED_EDIT_FORMATS:
-        return voiceover_sfx_limit() is None
+    if normalized_format in GUIDED_EDIT_FORMATS:
+        return (voiceover_sfx_limit() if has_voiceover else guided_sfx_limit()) is None
     return False
 
 

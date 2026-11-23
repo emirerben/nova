@@ -32,7 +32,9 @@ def measure_text_block(row: dict, *, width: float | None = None) -> dict:
     width = row_canvas(row).width if width is None else width
     # KRI-781: measure exactly what the burn draws (apply_text_case, Turkish-aware),
     # never str.title() ("Don'T" was measured while "Don't" was drawn).
-    text = apply_text_case(str(row.get("text") or ""), row.get("text_case"))
+    text = apply_text_case(
+        str(row.get("text") or ""), row.get("text_case"), row.get("text_language")
+    )
     face = renderer._resolve_typeface_for_overlay(row).typeface
     size = float(
         row.get("size_px")
@@ -60,9 +62,11 @@ def measure_text_block(row: dict, *, width: float | None = None) -> dict:
     legacy_width = max(
         renderer._measure_line(font, line, spacing * size, shape_text=False) for line in lines
     )
+    # KRI-1581: a designed row is drawn shaped everywhere, so it is fitted to its shaped width.
+    shaped_only = ((row.get("source_params") or {}).get(STACK_LAYOUT_PARAM) or {}).get("shaped")
     return {
         "height": float(block["block_h"]),
-        "width": max(max(block["widths"]), legacy_width),
+        "width": max(block["widths"]) if shaped_only else max(max(block["widths"]), legacy_width),
         "lines": lines,
     }
 

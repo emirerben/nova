@@ -163,7 +163,11 @@ class ClassificationTests(unittest.TestCase):
             "scripts/ci/select-tests.py": ALL,
             "scripts/ci/test_select_tests.py": set(),
             "Dockerfile": ALL,
-            "Makefile": ALL,
+            "Makefile": {"api"},
+            "scripts/kria/score_route.py": {"api"},
+            "scripts/dev/test-db.sh": {"api"},
+            ".github/PULL_REQUEST_TEMPLATE.md": set(),
+            ".gitignore": ALL,
             "assets/fonts/font.ttf": ALL,
             "new-runtime/README.md": ALL,
             "docs/runbooks/ci.md": set(),
@@ -276,6 +280,8 @@ class ClassificationTests(unittest.TestCase):
             "scripts/ci/select-tests.py",
             "scripts/ci/journey-manifest.json",
             "brand-new/tool.py",
+            # Decides which untracked files the iPhone build cache counts.
+            ".gitignore",
         ):
             self.assertTrue(ci.native_input(path), path)
         for path in (
@@ -292,6 +298,11 @@ class ClassificationTests(unittest.TestCase):
             "docs/runbooks/change-based-ci.md",
             # API tests read it; nothing on the iPhone side does.
             ".env.example",
+            # The same for these (KRI-1551), and PR evidence owns the template.
+            "Makefile",
+            "scripts/kria/score_route.py",
+            "scripts/dev/test-db.sh",
+            ".github/PULL_REQUEST_TEMPLATE.md",
         ):
             self.assertFalse(ci.native_input(path), path)
 
@@ -355,6 +366,217 @@ class ClassificationTests(unittest.TestCase):
             ci, "git", side_effect=subprocess.CalledProcessError(1, "git")
         ):
             self.assertEqual(ci.selection("pull_request", "bad", "bad")[0], ALL)
+
+
+REPO = SCRIPT.parents[2]
+_ROOT_READ = re.compile(r"(?<![\w./-])(Makefile|scripts/[\w./-]*[\w-])")
+
+
+def api_test_reads_at_the_root(root):
+    """Repo-root paths an API test names: literals and `base / "a" / "b"` joins.
+
+    Over-inclusive on purpose (a docstring mention counts as a read): it is used
+    to show that a root is still read, never that a path is not.
+    """
+    found = {}
+    for source in (root / "src/apps/api/tests").rglob("*.py"):
+        text = source.read_text()
+        named = set(_ROOT_READ.findall(text))
+        tree = ast.parse(text)
+        inner = {
+            id(node.left)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+        }
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+                continue
+            if id(node) in inner:
+                continue  # only the outermost join of a chain
+            parts, cursor = [], node
+            while isinstance(cursor, ast.BinOp) and isinstance(cursor.op, ast.Div):
+                if isinstance(cursor.right, ast.Constant) and isinstance(
+                    cursor.right.value, str
+                ):
+                    parts.insert(0, cursor.right.value)
+                cursor = cursor.left
+            named.add("/".join(seg for part in parts for seg in part.split("/") if seg))
+        for path in named:
+            found.setdefault(path, source.relative_to(root).as_posix())
+    return found
+
+
+def load_script(relative, name):
+    spec = importlib.util.spec_from_file_location(name, REPO / relative)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class RootPathTests(unittest.TestCase):
+    """KRI-1551: root paths that used to select every suite because the
+    selector did not know them.
+
+    Written before the rules. The ways a narrower selection could let a PR
+    break something it no longer runs:
+
+    1. An API test reads the file (scorecards and scripts loaded by path, the
+       Makefile targets the incident loader checks) and the API suite is not
+       selected.
+    2. A CI job other than the API suite runs it: a workflow step or composite
+       action calls `make` or a script under scripts/kria/ or scripts/dev/, or
+       a CI script does.
+    3. The iPhone build or its tests read it, so it needs a Mac. Swift and
+       project files under src/apps/ios are scanned by
+       test_every_repo_path_the_iphone_tree_names_is_a_declared_native_input;
+       scripts/ios and the workflows are scanned here.
+    4. A prefix without its trailing slash also matches a sibling
+       (`scripts/kria-tools/`), which would then skip suites it needs.
+    5. A suite reads the PR template, although only `PR evidence` (which runs on
+       every PR whatever the selection) should.
+    6. `.gitignore` is narrowed, although it decides which untracked files the
+       iPhone build cache fingerprints (and so the UI phase's receipt) and which
+       files ruff lints.
+    7. CI_MAC_SELECTION=full no longer restores the old selection for them.
+    8. No API test reads a root any more, and its API-only rule goes stale.
+    """
+
+    API_ONLY = ("Makefile", "scripts/kria/", "scripts/dev/")
+    TEMPLATE = ".github/PULL_REQUEST_TEMPLATE.md"
+
+    def test_files_api_tests_read_select_the_api_suite_and_no_mac(self):
+        reads = api_test_reads_at_the_root(REPO)
+        for root in self.API_ONLY:
+            with self.subTest(root=root):
+                readers = sorted(
+                    path
+                    for path in reads
+                    if path == root or (root.endswith("/") and path.startswith(root))
+                )
+                self.assertTrue(readers, f"No API test reads {root} any more")
+        # The readers this rule was written for (2026-11-23).
+        for path in (
+            "Makefile",
+            "scripts/kria/score_29_ekim.py",
+            "scripts/dev/scan_intro_slop.py",
+            "scripts/dev/clone_plan_item.py",
+        ):
+            self.assertIn(path, reads)
+        for path in (
+            "Makefile",
+            "scripts/kria/score_route.py",
+            "scripts/kria/route_replays/speech_excerpt.py",
+            "scripts/kria/run-offline-export-bench.sh",
+            "scripts/dev/test-db.sh",
+            "scripts/dev/kri720/measure.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(ci.affected(path), {"api"})
+                self.assertFalse(ci.native_input(path))
+        # Neighbours that merely share the leading characters keep their rules.
+        for path in (
+            "scripts/kria-tools/run.py",
+            "scripts/devtools.sh",
+            "Makefile.local",
+            "src/apps/ios/Makefile",
+        ):
+            with self.subTest(path=path):
+                self.assertNotEqual(ci.affected(path), {"api"})
+
+    def test_no_ci_job_but_the_api_suite_runs_them(self):
+        uses = re.compile(
+            r"(?:^|[\s;&|(`])(make\s+[\w-]+)|(?<![\w/])(scripts/(?:kria|dev)/|Makefile)"
+        )
+        found = set()
+        github = REPO / ".github"
+        for path in sorted(
+            [*github.glob("workflows/*.yml"), *github.glob("actions/*/action.yml")]
+        ):
+            for line in path.read_text().splitlines():
+                if line.strip().startswith("#"):
+                    continue
+                for match in uses.finditer(line):
+                    found.add((path.name, " ".join(filter(None, match.groups()))))
+        self.assertEqual(
+            found,
+            {
+                # Its own trigger (src/apps/api/**, Dockerfile, the local-render
+                # compose file), not this selector: a Makefile-only PR never
+                # started it, before or after KRI-1551.
+                ("verify-overlays.yml", "make verify-overlays"),
+            },
+            "A workflow now runs the Makefile or a script under scripts/kria/ or "
+            "scripts/dev/. Select the suite that job belongs to in affected().",
+        )
+
+        # The scripts CI jobs run: a `make` call, or a path under these roots.
+        calls = {".py": re.compile(r"""["']make["']"""), ".sh": re.compile(r"^\s*make\s")}
+        named = re.compile(r"(?<![\w/.])(?:scripts/(?:kria|dev)/|Makefile\b)")
+        callers = set()
+        for path in sorted(
+            path
+            for folder in ("scripts/ci", "scripts/ios")
+            for suffix in calls
+            for path in (REPO / folder).glob(f"*{suffix}")
+            if not path.name.startswith("test_")
+        ):
+            for line in path.read_text().splitlines():
+                if line.strip().startswith("#"):
+                    continue
+                if calls[path.suffix].search(line) or named.search(line):
+                    callers.add(path.relative_to(REPO).as_posix())
+        self.assertEqual(
+            callers,
+            {
+                # The registry check reads them for test names; the ci-selftests
+                # job runs it on every PR, whatever the selection.
+                "scripts/ci/journey_registry.py",
+                # These rules.
+                "scripts/ci/select-tests.py",
+            },
+        )
+
+    def test_the_pr_template_is_read_only_by_the_check_every_pr_runs(self):
+        self.assertEqual(ci.affected(self.TEMPLATE), set())
+        self.assertFalse(ci.native_input(self.TEMPLATE))
+        evidence = load_script("scripts/ci/pr-evidence.py", "pr_evidence_policy")
+        self.assertIn(self.TEMPLATE, evidence.POLICY_PATHS)
+        trigger = (REPO / ".github/workflows/pr-evidence.yml").read_text()
+        self.assertNotIn("paths", trigger.split("\njobs:", 1)[0])
+        readers = subprocess.run(
+            ["git", "grep", "-l", "-i", "-I", "pull_request_template", "--", "."]
+            + [":!*.md", ":!scripts/ci/"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(readers.returncode, 1, readers.stdout + readers.stderr)
+
+    def test_gitignore_still_selects_the_mac_and_its_ui_phase(self):
+        """The real file ignores src/apps/ios/.derived-data/ and the project.
+
+        cache-inputs.py lists untracked iPhone inputs with git's ignore rules, so
+        un-ignoring a build folder makes its output an input: the UI phase then
+        sees its receipt's fingerprint change. ruff also skips ignored files.
+        """
+        cache = load_script("scripts/ios/cache-inputs.py", "cache_inputs_policy")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q", tmp], check=True)
+            for relative in (
+                "src/apps/ios/Kria/View.swift",
+                "src/apps/ios/.derived-data/Build/App.o",
+            ):
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text(relative)
+            (root / ".gitignore").write_text("src/apps/ios/.derived-data/\n")
+            ignored = {relative for relative, _ in cache.inputs(root)}
+            (root / ".gitignore").write_text("")
+            unignored = {relative for relative, _ in cache.inputs(root)}
+        self.assertIn("src/apps/ios/Kria/View.swift", ignored)
+        self.assertEqual(unignored - ignored, {"src/apps/ios/.derived-data/Build/App.o"})
+        self.assertTrue(ci.native_input(".gitignore"))
+        self.assertLessEqual({"api", "ios", "ios_ui"}, ci.affected(".gitignore"))
 
 
 class JourneyApiTestsTests(unittest.TestCase):
@@ -1972,6 +2194,55 @@ class GitDiffTests(GitRepoCase):
             {"api": "true", "ios": "false", "ios_ui": "false", "shared_motion": "false"},
         )
         self.assertEqual(outputs["native_validation"], "false")
+
+    def change_only(self, path):
+        """A PR whose diff is this one path; the last run's outputs stay out."""
+        for leftover in ("output", "summary"):
+            Path(leftover).unlink(missing_ok=True)
+        self.base = self.git("rev-parse", "HEAD")
+        self.write(path, f"changed {path} on top of {self.base}")
+        return self.commit()
+
+    def test_files_only_api_tests_read_select_the_api_suite_and_no_mac(self):
+        """KRI-1551: each of these selected every suite and a Mac before."""
+        for path in ("Makefile", "scripts/kria/score_new.py", "scripts/dev/tool.sh"):
+            with self.subTest(path=path):
+                lines, _ = self.run_selector(self.change_only(path))
+                outputs = dict(line.split("=", 1) for line in lines)
+                self.assertEqual(
+                    {suite: outputs[suite] for suite in ALL},
+                    {
+                        "api": "true",
+                        "ios": "false",
+                        "ios_ui": "false",
+                        "shared_motion": "false",
+                    },
+                )
+                self.assertEqual(outputs["ios_native"], "false")
+                self.assertEqual(outputs["native_validation"], "false")
+
+    def test_a_pr_template_edit_starts_no_suite(self):
+        self.write(".github/PULL_REQUEST_TEMPLATE.md", "- [ ] new checkbox")
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual({outputs[suite] for suite in ALL}, {"false"})
+        self.assertEqual(outputs["native_validation"], "false")
+
+    def test_the_rollback_variable_also_undoes_kri_1551_narrowing(self):
+        for path in ("Makefile", "scripts/dev/tool.sh", ".github/PULL_REQUEST_TEMPLATE.md"):
+            with self.subTest(path=path):
+                head = self.change_only(path)
+                lines, _ = self.run_selector(head, CI_MAC_SELECTION="full")
+                outputs = dict(line.split("=", 1) for line in lines)
+                self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+                self.assertEqual(outputs["native_validation"], "true")
+
+    def test_a_gitignore_edit_still_runs_everything_and_a_mac(self):
+        self.write(".gitignore", "src/apps/ios/.derived-data/\n")
+        lines, _ = self.run_selector(self.commit())
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual({outputs[suite] for suite in ALL}, {"true"})
+        self.assertEqual(outputs["native_validation"], "true")
 
     def test_native_inputs_fail_closed_without_a_readable_pr_diff(self):
         self.assertTrue(ci.native_inputs_changed("push", "", ""))

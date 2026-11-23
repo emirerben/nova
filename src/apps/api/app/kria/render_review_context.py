@@ -98,6 +98,9 @@ class RenderReviewPacket(FrozenModel):
         Literal["provider_observation", "direct_frame", "actual_render_bytes"], ...
     ]
     review_model_received_visual_input: Literal[False] = False
+    # KRI-1583: the job is stamped for informative text designs; omitted otherwise, so an
+    # unstamped packet and its digest are unchanged.
+    text_legibility: bool = Field(default=False, exclude_if=lambda value: not value)
     packet_digest: str
 
 
@@ -312,6 +315,8 @@ def build_render_review_context(
             evidence_coverage=sorted({o.source for o in observations}),
             review_model_received_visual_input=False,
         )
+        if _stamped_for_informative_text(j, variant):
+            data["text_legibility"] = True
         return CaptureResult(
             status="ready",
             packet=RenderReviewPacket(**data, packet_digest=canonical_digest(data)),
@@ -321,6 +326,16 @@ def build_render_review_context(
             status="unavailable",
             reason=str(exc) if type(exc) is ValueError else "capture_inputs_missing_or_malformed",
         )
+
+
+def _stamped_for_informative_text(job, variant: dict) -> bool:
+    """The variant's phone text policy, else the job's, as a Save reads it."""
+    from app.pipeline.informative_text import policy_enabled
+    from app.services.phone_text_styling import PHONE_TEXT_STYLE_FIELD
+
+    return policy_enabled(
+        variant.get(PHONE_TEXT_STYLE_FIELD) or (job.assembly_plan or {}).get(PHONE_TEXT_STYLE_FIELD)
+    )
 
 
 def load_review_rows(db, execution_id: uuid.UUID, *, locked: bool = False) -> ReviewRows:

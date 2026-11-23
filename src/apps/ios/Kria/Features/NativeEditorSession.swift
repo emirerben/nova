@@ -4793,7 +4793,7 @@ enum EditorOpenIntent { case warm, open }
             guard let asset = request.recipe.assets.first(where: { $0.id == songBed.assetID }) else {
                 throw MediaEngineError.missingAsset(NativeEditorSongBed.trackID)
             }
-            let url = try await authorized.resolveSong()
+            let url = try await authorized.resolveSong(assetID: songBed.assetID)
             result.song = (ResolvedEditorSource(clipIndex: -1, mediaID: songBed.assetID, asset: try await measured(url, asset), url: url), songBed)
         }
         guard sequence == sourcePreviewSequence, !Task.isCancelled,
@@ -9173,6 +9173,9 @@ enum EditorOpenIntent { case warm, open }
 
     // MARK: Original (camera) audio
 
+    /// A Talking edit's song is a bed under the speaker's own voice (KRI-1578): it never replaces the camera audio.
+    var songPlaysUnderVoice: Bool { document.editFormat == "subtitled" }
+
     /// The server advertises the control (`original_audio`): phone-rendered guided edits, including
     /// the creator's song videos. Absent on every other variant, where the Sounds tab shows nothing.
     var hasOriginalAudioControl: Bool { document.capabilities["original_audio"] != nil }
@@ -9188,7 +9191,7 @@ enum EditorOpenIntent { case warm, open }
         if !userSongRemoved, let value = document.mix["original_level"]?.numberValue, value.isFinite {
             return min(max(0, value), 1)
         }
-        if songPlays { return 0 }
+        if songPlays && !songPlaysUnderVoice { return 0 }
         return sourceAudioPreserved ? 1 : 0
     }
 

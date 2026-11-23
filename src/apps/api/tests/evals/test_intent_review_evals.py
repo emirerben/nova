@@ -90,6 +90,18 @@ def test_golden_fixture_passes_the_agent_contract(
 
 
 @pytest.mark.parametrize("fixture_path", GOLDEN, ids=_IDS)
+def test_a_replay_records_the_prompt_version_it_sent(fixture_path: Path) -> None:
+    """A legibility review sends v4; its run record must not say v3."""
+    from structlog.testing import capture_logs
+
+    fixture = load_fixture(fixture_path)
+    with capture_logs() as logs:
+        run_eval(fixture)
+    (run,) = [e for e in logs if e["event"] == "agent_run"]
+    assert run["prompt_version"] == fixture.prompt_version
+
+
+@pytest.mark.parametrize("fixture_path", GOLDEN, ids=_IDS)
 @pytest.mark.parametrize("tier", ["review", "repair"])
 def test_golden_fixture_is_judged_as_expected_by_the_server(fixture_path: Path, tier: str) -> None:
     fixture = load_fixture(fixture_path)

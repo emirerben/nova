@@ -25,6 +25,9 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | API tests and the Linux mobile-contract job; no Mac unless an iPhone input also changed (see "When a PR gets a Mac") |
 | `scripts/ci/journey-manifest.json`, when the edit only adds or changes journey rows | API tests, plus the journeys whose rows changed; iOS build and unit tests (and a Mac) only when a changed row is native. Any other manifest edit selects all suites and every journey |
 | `.env.example` | API tests and API lint (API tests read it) |
+| `Makefile`, `scripts/kria/**`, `scripts/dev/**` | API tests and API lint: API tests load these scripts by path, and the incident loader checks `make` targets against the Makefile; no other CI job runs them (KRI-1551) |
+| `.github/PULL_REQUEST_TEMPLATE.md` | No heavyweight suites: only `PR evidence` reads it, and that check runs on every PR (KRI-1551) |
+| `.gitignore` | All suites: it decides which untracked files the iPhone build cache counts as inputs, and which files ruff lints |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |
 | `docs/**`, `plans/**`, `agents/**`, listed root documentation, `VERSION` | No heavyweight suites |
 | Root `package.json` / `package-lock.json` changing only release versions | No heavyweight suites |
@@ -463,6 +466,24 @@ download is faster than a cache restore of that size.
   test stopped running, an outcome changed, a test newly reaches the 60 s
   timeout, or more samples per run sit above 45 s.
 
+### The Actions cache (KRI-1551)
+
+The repository's Actions cache holds 10 GB; above that GitHub evicts the
+entries used least recently. A pull request's cache entries are visible to that
+pull request only, so only `main` should write anything large.
+
+- `Docker Build Check` (`docker-build.yml`) runs on pull requests and on pushes
+  to `main` with the same paths. Only the `main` run writes the BuildKit layer
+  cache; pull requests restore it and write nothing. Before, every pull request
+  stored its own 1.37 GB copy: on 2026-11-23 five of them held 116 entries,
+  6.9 GB of the 9.5 GB in use. A pull request opened before the first `main`
+  run builds cold, as each one used to.
+- `agent-evals.yml` and `request-following-regressions.yml` use the locked
+  install above, which needs no cache. A newer push to a pull request cancels
+  the older request-following run; scheduled and manual runs are never
+  cancelled.
+- Check usage with `gh api "repos/{owner}/{repo}/actions/cache/usage"`.
+
 ### API lint and format
 
 `python3 scripts/ci/api-lint.py` runs `ruff check` and `ruff format --check` on
@@ -554,7 +575,8 @@ Linux push CI is not affected.
 (Settings, Variables, or `gh variable set CI_MAC_SELECTION --body full`). On
 the next run every pull request selects what it did before KRI-1534: a Mac
 whenever `ios` or a native journey is selected, everything for a
-journey-manifest edit, and everything for `.env.example`. No code change is
+journey-manifest edit, and everything for `.env.example`, the `Makefile`,
+`scripts/kria/`, `scripts/dev/` and the PR template. No code change is
 needed. Delete the variable to return to the rules.
 
 The list is exact where it can be: the app tree, the scripts that drive it,

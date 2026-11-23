@@ -55,6 +55,12 @@ IOS_NATIVE_INPUTS = (
 # at run time. Its subdirectories hold API-only fixtures.
 IOS_NATIVE_FIXTURE_DIR = "src/apps/api/tests/fixtures/"
 
+# Repo-root files and folders that only API tests read (KRI-1551). Files match
+# exactly and folders keep their slash, so `Makefile.local` or
+# `scripts/kria-tools/` still select everything.
+API_TEST_ROOT_FILES = ("Makefile",)
+API_TEST_ROOT_FOLDERS = ("scripts/kria/", "scripts/dev/")
+
 # This is deliberately independent from the broad suite selector.  KRI-559 is
 # a cross-runtime proof: the saved creation transport must survive the API
 # compiler, persisted-draft boundary, and the actual iPhone exporter.
@@ -187,7 +193,8 @@ def selection_rollback():
 
     One switch restores what pull requests selected before: a Mac whenever
     `ios` or a native journey is selected, everything for a journey-manifest
-    edit, and everything for `.env.example`. No code change is needed.
+    edit, and everything for `.env.example` and the root paths KRI-1551
+    classified. No code change is needed.
     """
     return os.environ.get("CI_MAC_SELECTION", "") == "full"
 
@@ -482,6 +489,16 @@ def affected(path):
     # API tests read the documented flags; nothing on the iPhone side does.
     if path == ".env.example" and not selection_rollback():
         return {"api"}
+    # Only API tests read these (KRI-1551): scorecards and tools loaded by path,
+    # and the incident loader checks `make` targets against the Makefile. No
+    # other CI job runs them; RootPathTests in test_select_tests.py checks both.
+    if (
+        path in API_TEST_ROOT_FILES or path.startswith(API_TEST_ROOT_FOLDERS)
+    ) and not selection_rollback():
+        return {"api"}
+    # Only `PR evidence` reads it, and that check runs on every PR.
+    if path == ".github/PULL_REQUEST_TEMPLATE.md" and not selection_rollback():
+        return set()
     if path.startswith(("docs/", "plans/", "agents/")) or path in (
         "README.md",
         "AGENTS.md",
@@ -494,6 +511,9 @@ def affected(path):
         return set()
     # Shared packages, dependencies, assets, CI policy, and unknown paths fail open
     # to full testing. New directories cannot silently bypass regression coverage.
+    # `.gitignore` stays here on purpose: it decides which untracked files the
+    # iPhone build cache counts as inputs (scripts/ios/cache-inputs.py), and so
+    # the UI phase's receipt, and which files ruff lints.
     return set(SUITES)
 
 
