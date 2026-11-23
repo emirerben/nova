@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.97.0] - 2026-11-23
+
+### Changed
+- KRI-1580: research copy in the chosen design, hook title first, grounded headings (KRI-1585 PR2) (#2473) <!-- release-pr: 2473 -->
+
 ## [0.89.96.0] - 2026-11-23
 
 ### Changed
