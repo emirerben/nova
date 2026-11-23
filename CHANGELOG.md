@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.107.0] - 2026-11-23
+
+### Fixed
+- fix(kria): Tahini recipe run — Voiceover cuts at the asked pace and ends on the fork, no needless holds, short captions, readable title, no lost clip match (KRI-1529, KRI-1530) (#2382) <!-- release-pr: 2382 -->
+
 ## [0.89.106.0] - 2026-11-23
 
 ### Changed
