@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.99.0] - 2026-11-23
+
+### Changed
+- fix(testflight): a release the platform cut off before upload no longer blocks every later release (KRI-1597) (#2488) <!-- release-pr: 2488 -->
+
 ## [0.89.98.0] - 2026-11-23
 
 ### Changed
