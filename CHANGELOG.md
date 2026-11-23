@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.108.0] - 2026-11-23
+
+### Changed
+- KRI-1585: writer rows carry the copy's language so A1 caps are Turkish (acceptance fixes) (#2494) <!-- release-pr: 2494 -->
+
 ## [0.89.107.0] - 2026-11-23
 
 ### Fixed
