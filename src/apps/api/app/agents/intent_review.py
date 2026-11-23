@@ -9,6 +9,8 @@ call through the dispatcher is refused instead of letting a model judge a video 
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import json
 from typing import ClassVar
 
@@ -116,6 +118,18 @@ class IntentReviewAgent(Agent[IntentReviewInput, IntentReviewOutput]):
     Input = IntentReviewInput
     Output = IntentReviewOutput
     max_output_tokens: ClassVar[int | None] = MAX_OUTPUT_TOKENS
+
+    def run(self, input, *, ctx=None):  # noqa: A002, ANN001, ANN201
+        # The run record names the prompt this catalog was sent, not the class default.
+        try:
+            version = prompt_version_for(self._validate_input(input).catalog)
+        except Exception:  # noqa: BLE001 - the base run owns the private invalid-input error
+            version = self.spec.prompt_version
+        if version == self.spec.prompt_version:
+            return super().run(input, ctx=ctx)
+        sent = copy.copy(self)
+        sent.spec = dataclasses.replace(self.spec, prompt_version=version)
+        return Agent.run(sent, input, ctx=ctx)
 
     def media_uri(self, input: IntentReviewInput) -> str | None:  # noqa: A002
         return FRAMES_REQUIRED

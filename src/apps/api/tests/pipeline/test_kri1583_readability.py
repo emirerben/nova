@@ -292,3 +292,48 @@ def test_kyoto_replay_gives_one_colour_and_shadows_the_roof_and_pole_row():
     assert _legibility(roof)["frames"] > 0
     assert _legibility(roof)["contrast"] < 4.5
     assert _draws_a_shadow(roof)
+
+
+@pytest.mark.parametrize("shapes", [False, True])
+def test_a_dark_colour_she_chose_gets_a_shadow_that_reads_against_it(shapes):
+    """11. The shadow is black whatever the fill, so her black text over dark footage gets a
+    shadow that does nothing, while the receipt says it was handled."""
+    edited = _rows()
+    edited[0]["color"] = "#000000"
+    edited[0]["source_params"][CREATOR_FIELDS_KEY] = ["color"]
+    (row, *_) = _restyle(edited, [_flat(20)], stamped=True, shapes=shapes)
+    assert row["color"] == "#000000"
+    assert _legibility(row)["treatment"] == "shadow"
+    assert row["shadow_color"] == "#FFFFFF"
+    assert _draws_a_shadow(row)
+
+    saved = _policy(stamped=True, shapes=shapes)
+    saved["preferences"]["all_text"]["color"] = "#111111"
+    selected = _load("plan.json")["variant"][PHONE_TEXT_STYLE_FIELD]["selected_fonts"]
+    with phone_text_policy_scope(saved):
+        styled = style_rows(_rows(), saved, selected_fonts=selected, background_frames=[_flat(20)])
+    for row in styled:
+        assert row["color"] == "#111111"
+        assert row["shadow_color"] == "#FFFFFF"
+
+    (white, *_) = _restyle(_rows(), [_flat(235)], stamped=True, shapes=shapes)
+    assert white["shadow_color"] == SHADOW["shadow_color"]
+
+
+def test_a_second_pass_over_the_same_footage_keeps_the_shadow_it_added():
+    """12. The shadow this pass wrote is read back as someone else's on the next pass."""
+    first = _restyle(_rows(), [_flat(235)], stamped=True, shapes=True)
+    again = _restyle(first, [_flat(235)], stamped=True, shapes=True)
+    assert again == first
+
+
+def test_a_saved_shadow_is_receipted_as_hers_not_a_designs():
+    """13. A saved "shadow on" is labelled a design's although the job has no design."""
+    saved = _policy(stamped=True)
+    saved["preferences"]["all_text"]["shadow_enabled"] = True
+    selected = _load("plan.json")["variant"][PHONE_TEXT_STYLE_FIELD]["selected_fonts"]
+    with phone_text_policy_scope(saved):
+        styled = style_rows(_rows(), saved, selected_fonts=selected, background_frames=[_flat(235)])
+    for row in styled:
+        assert row["shadow_enabled"] is True
+        assert _legibility(row)["treatment"] == "preference"

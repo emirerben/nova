@@ -192,7 +192,11 @@ def settle_informative_text(
     pair carries a scrim. A row no frame covers is treated as unreadable, since nothing shows
     it is not.
     """
-    from app.pipeline.informative_text import authored_fields, creator_fields  # noqa: PLC0415
+    from app.pipeline.informative_text import (  # noqa: PLC0415
+        DESIGN_ID_KEY,
+        authored_fields,
+        creator_fields,
+    )
     from app.pipeline.phone_text_background import HEIGHT, WIDTH  # noqa: PLC0415
     from app.pipeline.phone_text_style import measure_box  # noqa: PLC0415
 
@@ -214,14 +218,19 @@ def settle_informative_text(
         treatment = "none"
     elif "shadow_enabled" in hers or "shadow_enabled" in asked:
         treatment = "creator"
-    elif scrimmed or row.get("shadow_enabled") is True:
+    elif scrimmed or (DESIGN_ID_KEY in source and row.get("shadow_enabled") is True):
         treatment = "design"
+    elif row.get("shadow_enabled") is True:
+        treatment = "preference"
     elif not settings.title_legibility_enabled:
         treatment = "disabled"
     else:
         for field, value in _shadow_values(shapes=shapes).items():
             if field not in authored:
                 row[field] = value
+        if "shadow_color" not in authored:
+            # A black shadow under her black text is no help: the ink reads against her fill.
+            row["shadow_color"] = legibility.readable_ink(str(row["color"]))
         treatment = "shadow"
     source[LEGIBILITY_PARAM] = {
         "version": INFORMATIVE_LEGIBILITY_VERSION,
