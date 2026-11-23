@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.100.0] - 2026-11-23
+
+### Changed
+- test(ios): count the scaler's real buffers, not object addresses (KRI-1599) (#2490) <!-- release-pr: 2490 -->
+
 ## [0.89.99.0] - 2026-11-23
 
 ### Changed
