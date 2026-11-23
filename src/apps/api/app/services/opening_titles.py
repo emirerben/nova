@@ -16,6 +16,12 @@ How this can go wrong, and what stops it:
 * the model invents a fact: every number and every name in a title must be in the sentences it
   cites (`check_title`), else the title is dropped. A title that shares no content word with
   its sentences is dropped too, so a line about something else cannot borrow a real timestamp;
+* a bare invented name opens the title ("Paris changed my plans" over a line that never says
+  Paris), where sentence case capitalises every first word: that word must be a small word, a
+  word of the cited line, or a word she says in lower case somewhere in her talk
+  (`_invents_a_name`);
+* German capitalises every noun: there a capital marks a name only at the start of the title
+  or after a preposition or conjunction ("in Berlin"), so "Pläne" for "geplant" is not a name;
 * the cited sentence does not exist, or the stretch is long: dropped (``bad_span``);
 * a title too long for two seconds, with quotation marks, in the other language, or bait
   ("wait for it", prompt-injection residue from the transcript): dropped;
@@ -76,6 +82,20 @@ _FILLER = frozenset(
         "bir ve ile bu su o da de ki mi mu ne cok daha ama icin gibi kadar sonra once ben sen "
         "biz siz onlar benim senin bunu sunu onu var yok degil her hic en"
     ).split()
+)
+# German small words a title may open with, and the words after which a capital is a name
+# rather than a noun ("in Berlin", "mit Zara"); both folded like `loose_words`.
+_GERMAN_SMALL = frozenset(
+    (
+        "der die das den dem des ein eine einen einem einer eines kein keine mein meine meinen "
+        "meinem meiner dein deine sein seine ihr ihre unser unsere euer eure dieser diese dieses "
+        "jeder jede jedes alle viele ich du er sie es wir mich mir dich dir uns und oder aber "
+        "nicht ist war sind hat habe hatte wie was wer warum wann wo zu zum zur im am vom ins "
+        "beim so noch nur auch schon dann mit fur uber von bei aus nach in an auf als dass"
+    ).split()
+)
+_GERMAN_BEFORE_NAME = frozenset(
+    "in nach aus mit von bei uber fur gegen ohne um durch bis seit ab und oder wie als".split()
 )
 _TERMINAL = re.compile(r"[.!?…:]$")
 _NAME_SUFFIX = re.compile(r"\w['’]\w")
@@ -196,10 +216,10 @@ def check_title(
     mine = loose_words(text)
     if any(any(ch.isdigit() for ch in word) and word not in said for word in mine):
         return None, "number_not_said"
-    if any(name not in said for name in _names(text)):
-        return None, "name_not_said"
     if not _anchored(mine, said):
         return None, "not_about_that_line"
+    if _invents_a_name(text, said, sentences, language=language):
+        return None, "name_not_said"
     from app.services.suggestions.kinds.hook import is_bait, wrong_language  # noqa: PLC0415
 
     if is_bait(text):
@@ -214,34 +234,58 @@ def _has_quote(text: str) -> bool:
     return any(ch in _QUOTE_CHARS for ch in text)
 
 
-def _names(text: str) -> list[str]:
-    """The folded words a title writes as names.
+def _invents_a_name(
+    text: str, said: set[str], talk: Sequence[TalkSentence], *, language: str
+) -> bool:
+    """The title writes a name its cited sentences (``said``) do not say.
 
     Titles are asked for in sentence case, so a capital past the first word is a name ("Paris",
-    "Zara"). The first word is a name only when it reads as one anyway: an apostrophe suffix
-    ("Paris'te", "Zara's") or all capitals ("NASA"). English "I" is not a name. A first word
-    that is a bare name ("Zara sells beige") is not caught here; the anchor rule and her tap
-    are what stand behind it.
+    "Zara"), and so is any word marked as one: an apostrophe suffix ("Paris'te", "Zara's") or all
+    capitals ("NASA"); such a name must be a word of the cited sentences. The first word (and the
+    first after a colon or full stop) is capitalised anyway, so it passes only as a small word, a
+    word of the cited sentences in any form (same 4-letter stem: "Burnt" for "burned"), or a word
+    she says in lower case somewhere in her talk; else it is taken for an invented name. German
+    capitalises every noun, so past the first word a capital is a name only after a preposition
+    or conjunction ("in Berlin"). English "I" is not a name.
     """
-    names: list[str] = []
+    german = language.lower().startswith("de")
+    small = _GERMAN_SMALL if german else _FILLER
+    stems = {word[:4] for word in said if len(word) >= 3}
+    lower_case: set[str] | None = None
+    previous = ""
     starts_sentence = True
     for raw in text.split():
         core = raw.strip("([{-–—,;")
-        if not core or not core[0].isupper() or core in {"I", "I'm", "I’m"}:
-            starts_sentence = bool(_TERMINAL.search(raw))
-            continue
-        letters = [ch for ch in core if ch.isalpha()]
-        reads_as_name = (
-            not starts_sentence
-            or bool(_NAME_SUFFIX.search(core))
-            or (len(letters) >= 2 and all(ch.isupper() for ch in letters))
-        )
-        if reads_as_name:
-            folded = loose_words(core)
-            if folded:
-                names.append(folded[0])
+        folded = loose_words(core)
+        word = folded[0] if folded else ""
+        if word and core[0].isupper() and core not in {"I", "I'm", "I’m"}:
+            letters = [ch for ch in core if ch.isalpha()]
+            marked = bool(_NAME_SUFFIX.search(core)) or (
+                len(letters) >= 2 and all(ch.isupper() for ch in letters)
+            )
+            if marked or (not starts_sentence and (not german or previous in _GERMAN_BEFORE_NAME)):
+                if word not in said:
+                    return True
+            elif starts_sentence and word not in small and word not in said:
+                if len(word) < 3 or word[:4] not in stems:
+                    if lower_case is None:
+                        lower_case = _lower_case_words(talk)
+                    if word not in lower_case:
+                        return True
+        previous = folded[-1] if folded else ""
         starts_sentence = bool(_TERMINAL.search(raw))
-    return names
+    return False
+
+
+def _lower_case_words(talk: Sequence[TalkSentence]) -> set[str]:
+    """The folded words she says written in lower case: ordinary words, never names."""
+    words: set[str] = set()
+    for sentence in talk:
+        for raw in sentence.text.split():
+            core = raw.strip("([{-–—,;.!?…:\"'“”„«»")
+            if core and core[0].islower():
+                words.update(loose_words(core)[:1])
+    return words
 
 
 def _anchored(mine: Sequence[str], said: set[str]) -> bool:

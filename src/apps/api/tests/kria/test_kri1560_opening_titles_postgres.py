@@ -407,6 +407,89 @@ def test_the_check_drops_what_she_did_not_say() -> None:
     assert reason("Siyah is not for you", 1) == "language"
 
 
+def _reasons(talk: list[str], language: str):  # noqa: ANN202
+    sentences = opening_titles.talk_sentences(
+        [
+            (
+                "take-1",
+                {
+                    "speech": {
+                        "has_speech": True,
+                        "segments": [
+                            {"start_s": 2.0 * i, "end_s": 2.0 * i + 1.8, "text": line}
+                            for i, line in enumerate(talk)
+                        ],
+                    }
+                },
+            )
+        ]
+    )
+
+    def reason(text: str, first: int) -> str | None:
+        idea = opening_titles.TitleIdea(text=text, first=first, last=first)
+        return opening_titles.check_title(idea, sentences, language=language)[1]
+
+    return reason
+
+
+def test_a_bare_name_opening_a_title_must_be_in_her_line() -> None:
+    """Tadic's hold on #2455: a title may not open with a name her cited line never says.
+
+    Ways this check can fail, each pinned below:
+    * a bare invented name as the first word passes because the first word of a sentence-case
+      title is always capitalised ("Paris changed my plans", "Zara bej satıyor");
+    * a name she says in ANOTHER sentence passes for this one;
+    * the fix over-reaches and drops an ordinary first word: one from her line in another form
+      ("Changed" for "changed", "Burnt" for "burned"), a small word ("My", "Why", "Bu"), or a
+      word she says in lower case elsewhere in her talk.
+    """
+    english = _reasons(
+        [
+            "My plans changed completely this year.",
+            "I burned the first cake and nobody noticed.",
+            "We moved to Paris in the spring.",
+            "Honestly, lessons like that stay with you.",
+        ],
+        "en",
+    )
+    assert english("Paris changed my plans", 1) == "name_not_said"
+    assert english("Paris changed my plans", 3) is None
+    assert english("Changed plans, changed year", 1) is None
+    assert english("My plans changed overnight", 1) is None
+    assert english("Why my plans changed", 1) is None
+    assert english("Burnt cake, nobody noticed", 2) is None
+    assert english("Lessons from a burned cake", 2) is None
+
+    turkish = _reasons(
+        ["Bej her şeye uyuyor.", "Zara'da her sezon bej var."],
+        "tr",
+    )
+    assert turkish("Zara bej satıyor", 1) == "name_not_said"
+    assert turkish("Bej her şeye uyuyor mu", 1) is None
+    assert turkish("Bu bej her şeye uyuyor", 1) is None
+
+
+def test_german_capitalised_nouns_are_not_taken_for_names() -> None:
+    """German writes every noun with a capital, so a capital is no sign of a name there.
+
+    A paraphrased noun the line does not literally say ("Pläne" for "geplant") passes; a name
+    the line never says still fails, at the start of the title or after a preposition.
+    """
+    german = _reasons(
+        [
+            "Ich hatte für den Montag so viel geplant, und dann ist alles ausgefallen.",
+            "Am Abend waren wir dann noch in München.",
+        ],
+        "de",
+    )
+    assert german("Zu viele Pläne für einen Montag", 1) is None
+    assert german("Mein Montag voller Pläne", 1) is None
+    assert german("Der Montag, an dem alles ausfiel", 1) is None
+    assert german("Berlin hat meinen Montag ruiniert", 1) == "name_not_said"
+    assert german("Ein Montag in Berlin", 1) == "name_not_said"
+    assert german("Ein Abend in München", 2) is None
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("language", "talk", "answer", "titles", "no_title", "says"),
