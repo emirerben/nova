@@ -1039,12 +1039,16 @@ def build_overlays_from_text_elements(
                 "stroke_color",
                 "shadow_color",
                 "shadow_opacity",
+                "shadow_blur",
+                "shadow_offset_y",
                 "background_color",
                 "editor_preset",
             ):
                 value = getattr(elem, field, None)
                 if value is not None:
                     overlay[field] = value
+            if elem.scrim is not None:
+                overlay["scrim"] = elem.scrim.model_dump()
             if elem.animation_phases is not None:
                 overlay["animation_phases"] = elem.animation_phases.model_dump()
                 # Explicit phases replace the legacy single-effect schedule.
@@ -1060,11 +1064,16 @@ def build_overlays_from_text_elements(
 
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
-        elem_text = apply_text_case(elem.text, elem.text_case)
+        elem_text = apply_text_case(elem.text, elem.text_case, elem.text_language)
         elem_word_timings = elem.word_timings
         if elem.text_case and elem.text_case != "none" and elem_word_timings:
             elem_word_timings = [
-                {**wt, "text": apply_text_case(str(wt.get("text", "")), elem.text_case)}
+                {
+                    **wt,
+                    "text": apply_text_case(
+                        str(wt.get("text", "")), elem.text_case, elem.text_language
+                    ),
+                }
                 for wt in elem_word_timings
             ]
 

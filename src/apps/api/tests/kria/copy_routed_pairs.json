@@ -2617,6 +2617,11 @@
    "Şarkını sesinin altında kısık çalacağım."
   ],
   [
+   "app/services/researched_text.py",
+   "No sourced line for {count} of the clips.",
+   "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı."
+  ],
+  [
    "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"

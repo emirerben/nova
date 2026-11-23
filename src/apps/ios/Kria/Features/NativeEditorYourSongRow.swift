@@ -37,7 +37,8 @@ struct NativeEditorYourSongRow: View {
                 start(controls)
                 if controls.canRemove { removeButton }
             }
-            Label(NativeEditorYourSong.helperCopy, systemImage: "speaker.slash")
+            Label(session.songPlaysUnderVoice ? NativeEditorYourSong.underVoiceHelperCopy : NativeEditorYourSong.helperCopy,
+                  systemImage: session.songPlaysUnderVoice ? "waveform" : "speaker.slash")
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("native-editor-your-song-note")
@@ -110,7 +111,8 @@ struct NativeEditorYourSongRow: View {
         .buttonStyle(KriaSecondaryButtonStyle())
         .foregroundStyle(KriaColor.failureText)
         .accessibilityIdentifier("native-editor-your-song-remove")
-        .accessibilityHint("Your camera audio plays instead. You can undo this before saving.")
+        .accessibilityHint(session.songPlaysUnderVoice ? Text("Your voice plays on its own. You can undo this before saving.")
+                                                       : Text("Your camera audio plays instead. You can undo this before saving."))
     }
 }
 

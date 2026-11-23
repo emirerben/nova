@@ -27,7 +27,7 @@ import pytest
 
 from app.agents._runtime import ModelClient, ModelInvocation
 from app.pipeline.informative_text import POLICY_KEY, apply_design_values
-from app.pipeline.text_designs import design_level_values
+from app.pipeline.text_designs import TEXT_DESIGNS, design_level_values
 from app.services import phone_text_styling as styling
 
 pytestmark = pytest.mark.journey("kri-1585-informative-text")
@@ -148,6 +148,10 @@ def test_one_owner_sees_font_traits_footage_mood_and_ranked_favourites(monkeypat
     assert decision["mood"] == sent["mood"]
 
 
+# The B1 guide line's face, from the design registry (KRI-1581 set it from the mock-ups).
+_B1_FONT = TEXT_DESIGNS["B1"].detail.font_family
+
+
 def test_kyoto_b1_design_font_bypasses_the_agent(monkeypatch):
     rows = [apply_design_values(row, design_level_values("B1", "detail"), "B1") for row in _rows()]
     styled, prompts, events = _generate(
@@ -155,9 +159,9 @@ def test_kyoto_b1_design_font_bypasses_the_agent(monkeypatch):
     )
 
     assert prompts == []
-    assert {row["font_family"] for row in styled} == {"Inter Medium"}
+    assert {row["font_family"] for row in styled} == {_B1_FONT}
     (decision,) = [data for event, data in events if event == "font_decision"]
-    assert decision["roles"]["research"] == {"fonts": ["Inter Medium"], "source": "design"}
+    assert decision["roles"]["research"] == {"fonts": [_B1_FONT], "source": "design"}
 
 
 def test_a_creator_font_on_every_row_is_hers_not_the_agents(monkeypatch):
@@ -404,9 +408,9 @@ def test_a_design_font_is_traced_as_the_design_over_a_saved_rule(monkeypatch):
     )
 
     assert prompts == []
-    assert {row["font_family"] for row in styled} == {"Inter Medium"}
+    assert {row["font_family"] for row in styled} == {_B1_FONT}
     (decision,) = [data for event, data in events if event == "font_decision"]
-    assert decision["roles"]["research"] == {"fonts": ["Inter Medium"], "source": "design"}
+    assert decision["roles"]["research"] == {"fonts": [_B1_FONT], "source": "design"}
 
 
 # Round-2 failure modes, written before the fix:

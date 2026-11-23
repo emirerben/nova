@@ -891,6 +891,7 @@
     "No recording for {names_join_none_for}, so the one before stays on.": "{names_join_none_for} için kayıt yok, o yüzden öncekisi ekranda kalıyor.",
     "No sound effects": "Ses efekti yok",
     "No sound effects, as asked.": "İstediğin gibi ses efekti yok.",
+    "No sourced line for {count} of the clips.": "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı.",
     "No title, as asked.": "İstediğin gibi başlık yok.",
     "No two clips in the edit come from the same video file": "Düzenlemedeki hiçbir klip aynı video dosyasından gelmiyor",
     "No, something's wrong": "Hayır, bir şey yanlış",

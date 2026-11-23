@@ -1,0 +1,137 @@
+{
+  "head": "7145a83be50c1c8d56456b70d26d241c161694c2",
+  "design": "A2",
+  "test_run_id": "kri1580-research-copy-7145a83b-a2-r1",
+  "prompt_fingerprints": {
+    "writer": "rc-def013c0f7f1",
+    "review": "rr-def013c0f7f1",
+    "layers": "rl-3ba89612f211"
+  },
+  "outcome": "accepted",
+  "unmet_requests": [],
+  "ledger": {
+    "calls": [
+      {
+        "status": "settled",
+        "settled_cost_usd": 0.072558
+      },
+      {
+        "status": "settled",
+        "settled_cost_usd": 0.02083
+      }
+    ],
+    "settled_total_usd": 0.093388
+  },
+  "calls": [
+    {
+      "kind": "writer",
+      "prompt_version": "rc-def013c0f7f1",
+      "prompt_sha256": "8e90f73c419547a2f564463c91aa8047fbe5dcd8872900321c0bf1aa2606baaf",
+      "correction": "",
+      "text_design": "A2",
+      "reservation_estimate_usd": 0.403472,
+      "window_ids": [
+        "window-0",
+        "window-1",
+        "window-2",
+        "window-3",
+        "window-4",
+        "window-5",
+        "window-6"
+      ],
+      "max_captions": 5,
+      "raw_text": "{\n  \"hook\": {\n    \"text\": \"İşte Kyoto'daki 25 dakikalık tren yolculuğu\",\n    \"evidence_ids\": [\n      \"fact-1\",\n      \"fact-6\"\n    ]\n  },\n  \"captions\": [\n    {\n      \"window_id\": \"window-0\",\n      \"heading\": \"7.3 kilometrelik hat\",\n      \"text\": \"Yolculuk Torokko Saga İstasyonu'nda başlıyor.\",\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"visual_quote\": \"map of a train route with photos\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-1\",\n      \"heading\": \"Retro tasarım\",\n      \"text\": \"Trenin kapalı ve açık olmak üzere toplam beş vagonu var.\",\n      \"evidence_ids\": [\n        \"fact-11\",\n        \"fact-12\"\n      ],\n      \"visual_quote\": \"red and yellow train\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-2\",\n      \"heading\": \"Ahşap banklar\",\n      \"text\": \"İçerisi eski tarz ahşap banklarla donatılmış.\",\n      \"evidence_ids\": [\n        \"fact-11\"\n      ],\n      \"visual_quote\": \"people on a train\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-3\",\n      \"heading\": \"Hozukyo Geçidi\",\n      \"text\": \"Güzergahımız tam olarak bu geçit boyunca uzanıyor.\",\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"visual_quote\": \"river and forested landscape from train window\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-6\",\n      \"heading\": \"Sonbahar yaprakları\",\n      \"text\": \"İlkbaharda kiraz çiçekleri, şimdi ise sonbahar yaprakları görülebiliyor.\",\n      \"evidence_ids\": [\n        \"fact-8\"\n      ],\n      \"visual_quote\": \"autumn mountain river landscape\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    }\n  ],\n  \"limitations\": \"\",\n  \"unmet_requests\": []\n}",
+      "model_calls": 1,
+      "model_used": "gemini-3.1-pro-preview",
+      "output": {
+        "hook": {
+          "text": "İşte Kyoto'daki 25 dakikalık tren yolculuğu",
+          "evidence_ids": [
+            "fact-1",
+            "fact-6"
+          ]
+        },
+        "captions": [
+          {
+            "window_id": "window-0",
+            "heading": "7.3 kilometrelik hat",
+            "text": "Yolculuk Torokko Saga İstasyonu'nda başlıyor.",
+            "evidence_ids": [
+              "fact-6"
+            ],
+            "visual_quote": "map of a train route with photos",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-1",
+            "heading": "Retro tasarım",
+            "text": "Trenin kapalı ve açık olmak üzere toplam beş vagonu var.",
+            "evidence_ids": [
+              "fact-11",
+              "fact-12"
+            ],
+            "visual_quote": "red and yellow train",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-2",
+            "heading": "Ahşap banklar",
+            "text": "İçerisi eski tarz ahşap banklarla donatılmış.",
+            "evidence_ids": [
+              "fact-11"
+            ],
+            "visual_quote": "people on a train",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-3",
+            "heading": "Hozukyo Geçidi",
+            "text": "Güzergahımız tam olarak bu geçit boyunca uzanıyor.",
+            "evidence_ids": [
+              "fact-6"
+            ],
+            "visual_quote": "river and forested landscape from train window",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-6",
+            "heading": "Sonbahar yaprakları",
+            "text": "İlkbaharda kiraz çiçekleri, şimdi ise sonbahar yaprakları görülebiliyor.",
+            "evidence_ids": [
+              "fact-8"
+            ],
+            "visual_quote": "autumn mountain river landscape",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          }
+        ],
+        "limitations": "",
+        "unmet_requests": []
+      }
+    },
+    {
+      "kind": "review",
+      "prompt_version": "rr-def013c0f7f1",
+      "prompt_sha256": "131fd8c2865a16f3923b1982367d70a8d30dfcb04c08bb9394016e19a5670c51",
+      "correction": null,
+      "text_design": "A2",
+      "reservation_estimate_usd": 0.107966,
+      "raw_text": "{\n  \"approved\": true,\n  \"reason\": \"The captions are well-supported by the provided facts. The hook accurately combines Kyoto and the 25-minute duration. The station name, train details, and seasonal foliage descriptions all directly align with the cited evidence and match the visual context perfectly.\"\n}",
+      "model_calls": 1,
+      "model_used": "gemini-3.1-pro-preview",
+      "output": {
+        "approved": true,
+        "reason": "The captions are well-supported by the provided facts. The hook accurately combines Kyoto and the 25-minute duration. The station name, train details, and seasonal foliage descriptions all directly align with the cited evidence and match the visual context perfectly."
+      }
+    }
+  ]
+}
