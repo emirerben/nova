@@ -96,6 +96,33 @@ def _legibility(row: dict) -> dict:
     return row["source_params"][LEGIBILITY_PARAM]
 
 
+def _layer(row: dict):
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    (overlay,) = build_overlays_from_text_elements(
+        [TextElement.model_validate(row)], video_duration_s=61.6, independent_box_alignment=True
+    )
+    return compile_text_overlay(overlay, layer_id=f"text-{row['id']}", canvas=PORTRAIT)[0]
+
+
+def _blur_layers(value) -> int:
+    """Blur layers (shadow passes) anywhere in a compiled layer."""
+    if isinstance(value, dict):
+        return len(value.get("blur_layers") or []) + sum(map(_blur_layers, value.values()))
+    if isinstance(value, list):
+        return sum(map(_blur_layers, value))
+    return 0
+
+
+def _draws_a_shadow(row: dict) -> bool:
+    """The phone layer of ``row`` carries more blur passes than the same row unshadowed."""
+    bare = copy.deepcopy(row) | {"shadow_enabled": False}
+    return _blur_layers(_layer(row).model_dump()) > _blur_layers(_layer(bare).model_dump())
+
+
 def _flag_off_restyle() -> str:
     frames = [*_under_rows([235, 20, 128]), _flat(235, 0.0, 2.0)]
     out = {
@@ -130,20 +157,13 @@ def test_one_colour_and_a_shadow_only_where_the_footage_swallows_the_row():
 
 
 def test_a_build_below_the_designs_protocol_gets_a_shadow_it_can_decode():
-    from app.agents._schemas.text_element import TextElement
-    from app.pipeline.canvas import PORTRAIT
-    from app.pipeline.generative_overlays import build_overlays_from_text_elements
-    from app.pipeline.portable_text_layout import compile_text_overlay
-
     (row, *_) = _restyle(_rows(), [_flat(235)], stamped=True)
     assert "shadow_blur" not in row and "shadow_offset_y" not in row
     assert row["shadow_color"] == SHADOW["shadow_color"]
     assert row["shadow_opacity"] == SHADOW["shadow_opacity"]
-    (overlay,) = build_overlays_from_text_elements(
-        [TextElement.model_validate(row)], video_duration_s=61.6, independent_box_alignment=True
-    )
-    layer = compile_text_overlay(overlay, layer_id="text-0", canvas=PORTRAIT)[0]
+    layer = _layer(row)
     assert layer.scrim is None and not layer.srgb_blend
+    assert _draws_a_shadow(row)
 
     (designed, *_) = _restyle(_rows(), [_flat(235)], stamped=True, shapes=True)
     assert designed["shadow_blur"] == SHADOW["shadow_blur"]
@@ -233,12 +253,21 @@ def test_a_designed_row_keeps_its_own_look(design):
         assert row["shadow_enabled"] is True
 
 
-def test_captions_and_pins_keep_their_own_fill():
-    caption = copy.deepcopy(_rows()[0])
-    caption.update(id="caption-0", source_params={"source": "caption_cue"})
-    stamped = _restyle([caption], [_flat(235)], stamped=True)
-    plain = _restyle([caption], [_flat(235)], stamped=False)
+@pytest.mark.parametrize(
+    ("row_id", "source_params"),
+    [
+        ("caption-0", {"source": "caption_cue"}),
+        ("pin-0", {}),
+        ("title-0", {}),
+    ],
+)
+def test_captions_pins_and_titles_keep_their_own_fill(row_id, source_params):
+    row = copy.deepcopy(_rows()[0])
+    row.update(id=row_id, source_params=source_params)
+    stamped = _restyle([row], [_flat(235)], stamped=True)
+    plain = _restyle([row], [_flat(235)], stamped=False)
     assert stamped == plain
+    assert LEGIBILITY_PARAM not in stamped[0]["source_params"]
 
 
 @pytest.mark.skipif(
@@ -262,3 +291,4 @@ def test_kyoto_replay_gives_one_colour_and_shadows_the_roof_and_pole_row():
     assert _legibility(roof)["treatment"] == "shadow"
     assert _legibility(roof)["frames"] > 0
     assert _legibility(roof)["contrast"] < 4.5
+    assert _draws_a_shadow(roof)

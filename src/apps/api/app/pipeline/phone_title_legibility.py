@@ -186,9 +186,9 @@ def settle_informative_text(
 
     ``frames`` are the resolver's background samples overlapping the row (108x192 grey).
     ``wanted`` is the role's saved and asked rule, ``asked`` this turn's ask alone. A colour in
-    either is hers. A shadow is hers only when she set it on the row or asked this turn: the
-    saved "no shadow" is the account default, which the Text preferences screen stores with
-    every save, and a design's shadow outranks saved preferences too. ``scrimmed``: the row's
+    either is hers. A shadow is hers only when she set it on the row or asked this turn: a
+    saved "no shadow" is a preference, the tier a design's shadow already outranks
+    (`informative_text`), and an unreadable row needs the shadow. ``scrimmed``: the row's
     pair carries a scrim. A row no frame covers is treated as unreadable, since nothing shows
     it is not.
     """
