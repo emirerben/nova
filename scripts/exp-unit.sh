@@ -15,7 +15,7 @@ repeat=(); [ "$iterations" -gt 1 ] && repeat=(-test-iterations "$iterations")
 pids=()
 if [ "$busy" -gt 0 ]; then for i in $(seq "$busy"); do yes > /dev/null & pids+=($!); done; fi
 status=0
-xcodebuild "${common[@]}" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 300 "${only[@]}" "${repeat[@]}" test-without-building > "$label.log" 2>&1 || status=$?
+xcodebuild "${common[@]}" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 120 -maximum-test-execution-time-allowance 300 "${only[@]}" ${repeat[@]+"${repeat[@]}"} test-without-building > "$label.log" 2>&1 || status=$?
 if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi
 [ "$status" -eq 64 ] && tail -5 "$label.log"
 echo "[$label] xcodebuild exit $status; test runs passed $(grep -c "\]' passed" "$label.log" || true), failed $(grep -c "\]' failed" "$label.log" || true)"
