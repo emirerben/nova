@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.101.0] - 2026-11-23
+
+### Changed
+- fix(kria): researched captions are no longer refused by a capitalised-word name check before approval (#2491) <!-- release-pr: 2491 -->
+
 ## [0.89.100.0] - 2026-11-23
 
 ### Changed
