@@ -1,0 +1,68 @@
+name: exp-ui-races
+on:
+  push:
+    branches: [codex/exp-song-order]
+permissions:
+  contents: read
+env:
+  SONG: SongOrderUITests/testTimelineFillsAnEmptySpotFromTheTrayAndSendsPlacements
+  USE: CameraRollCollectionUITests/testUseKeepsGoingAfterTheSheetCloses
+  UNDO: CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas
+  RANGE: SongRangeQuestionUITests/testUnderFiveSecondsDisablesUseThisPartAndSaysWhy
+jobs:
+  compare:
+    runs-on: macos-15
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: brew install xcodegen
+      - name: Project and simulator
+        run: |
+          set -euo pipefail
+          bash scripts/ios/generate-project.sh
+          SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 scripts/exp-select-sim.py)
+          echo "SIM=$SIM" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIM" || true
+      - name: Fixes, 15 times each, idle
+        run: |
+          /usr/bin/python3 scripts/exp-patch.py fix
+          bash scripts/exp-run.sh fix-idle 15 0 "$SONG" "$USE" "$UNDO" "$RANGE"
+      - name: Fixes, 15 times each, with 6 busy processes
+        run: bash scripts/exp-run.sh fix-busy 15 6 "$SONG" "$USE" "$UNDO" "$RANGE"
+      - name: Red control, a format card that never accepts taps (range test must fail at the card, every time)
+        run: |
+          /usr/bin/python3 scripts/exp-patch.py control-format
+          bash scripts/exp-run.sh control-format 2 0 "$RANGE"
+          git checkout HEAD -- src/apps/ios/Kria
+      - name: Red control, picture reported 1 s ahead (song test must fail its in-step check every time)
+        run: |
+          /usr/bin/python3 scripts/exp-patch.py control-video
+          bash scripts/exp-run.sh control-video 3 0 "$SONG"
+          git checkout HEAD -- src/apps/ios/Kria
+      - name: Red control, chip and picture 1 s ahead of the transport (song test must fail its playhead check every time)
+        run: |
+          /usr/bin/python3 scripts/exp-patch.py control-label
+          bash scripts/exp-run.sh control-label 3 0 "$SONG"
+          git checkout HEAD -- src/apps/ios/Kria
+      - name: Red control, the restore overtakes the delete (Undo test must fail every time)
+        run: |
+          /usr/bin/python3 scripts/exp-patch.py control-undo
+          bash scripts/exp-run.sh control-undo 3 0 "$UNDO"
+          git checkout HEAD -- src/apps/ios/Kria
+      - name: Red control, a closed sheet loses the result (Use test must fail every time)
+        run: |
+          /usr/bin/python3 scripts/exp-patch.py control-use
+          bash scripts/exp-run.sh control-use 3 0 "$USE"
+          git checkout HEAD -- src/apps/ios/Kria
+      - name: Main's tests and fixture, 15 times each, idle
+        run: |
+          git checkout origin/main -- src/apps/ios/Tests/KriaUITests src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift
+          /usr/bin/python3 scripts/exp-patch.py main
+          bash scripts/exp-run.sh main-idle 15 0 "$SONG" "$USE" "$UNDO" "$RANGE"
+      - name: Main's tests and fixture, 15 times each, with 6 busy processes
+        run: bash scripts/exp-run.sh main-busy 15 6 "$SONG" "$USE" "$UNDO" "$RANGE"
