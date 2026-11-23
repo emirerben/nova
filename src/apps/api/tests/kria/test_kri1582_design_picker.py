@@ -65,7 +65,8 @@ _KYOTO = _FIXTURES / "kri1585_kyoto"
 _IOS_FIXTURE = Path(__file__).resolve().parents[3] / "ios/Tests/Fixtures/KRI1582DesignPicker.json"
 _ASK = "Bu Kyoto'daki Toroko treni tren hakkında bilgilendirici alt yazı istiyorum"
 _INFO_ASK = "Bu Kyoto'daki Toroko treni hakkında bilgilendirici yazılar istiyorum"
-_EDITED_HEADING = "#7DD3FC"
+# The editor palette's blue swatch: the colour the XCUITest picks for a heading.
+_EDITED_HEADING = "#9BCAFF"
 
 
 def _research_ask(quote: str = _ASK, *, rid: str = "r1", **extra) -> BriefRequirement:  # noqa: ANN003
@@ -513,19 +514,27 @@ def test_her_heading_colour_saved_after_the_pick_sticks_through_a_restyle(monkey
     layer, _font = compile_text_overlay(overlays[0], layer_id="text-0", canvas=PORTRAIT)
     fill = layer.runs[0].fill
     assert (round(fill.red * 255), round(fill.green * 255), round(fill.blue * 255)) == (
-        0x7D,
-        0xD3,
-        0xFC,
+        0x9B,
+        0xCA,
+        0xFF,
     )
 
 
 # -- 10. the iOS UI fixture is what the server sends ------------------------------------------
 
 
-def _ios_question(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """The design question as the gate builds it for the app's fixture project: one fixture clip
-    on the phone, an English chat, a subtitle ask."""
-    from app.services.choice_questions import build_choice_question, collect_conflicts
+def _ios_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """What `DesignPickerUITestFixture` serves, all from the server's own code: the design question
+    as the gate builds it for the app's fixture project (one fixture clip on the phone, an English
+    chat, a subtitle ask) with its plain text, and each design's rows as the resolver draws them on
+    the editor fixture's 6 s timeline (a hook, then a heading over its detail, or a guide line)."""
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.phone_text_style import resolve_phone_text_style
+    from app.services.choice_questions import (
+        build_choice_question,
+        choice_question_text,
+        collect_conflicts,
+    )
 
     monkeypatch.setattr(type(settings), "phone_rendering_for", lambda _s, _i: True)
     snapshot = {
@@ -561,18 +570,59 @@ def _ios_question(monkeypatch: pytest.MonkeyPatch) -> dict:
             for c in collect_conflicts(strategy, brief, snapshot, capability)
             if c.kind == CONFLICT_TEXT_DESIGN
         ]
-        question = build_choice_question(choice.candidate(), question_id="design-q-fixture")
-        return with_design_previews(
-            question,
+        candidate = choice.candidate()
+        question = with_design_previews(
+            build_choice_question(candidate, question_id="design-q-fixture"),
             brief=brief,
             media_snapshot=snapshot,
             client_protocol=TEXT_DESIGN_PICKER_PROTOCOL,
         )
+        text = choice_question_text(candidate)
 
+    def rows(design: str) -> list[dict]:
+        def row(row_id: str, words: str, start: float, end: float, level: str) -> dict:
+            pair = {"pair": 0} if level in ("heading", "detail") else {}
+            tag = {"id": design, "level": level, **pair}
+            source = {"text_design": design, "research": {"design": tag}}
+            if level == "hook":
+                source["phone_text_role"] = "hook"
+            return {
+                "id": row_id,
+                "text": words,
+                "start_s": start,
+                "end_s": end,
+                "role": "generative_intro",
+                "effect": "static",
+                "position": "middle",
+                "text_language": "en",
+                "source_params": source,
+            }
 
-def _shape(question: dict) -> dict:
-    """What the app reads, without the floats Skia lays out differently on macOS and Linux."""
+        written = [row("design-hook", "The Lisbon tram", 0.0, 2.0, "hook")]
+        if TEXT_DESIGNS[design].mode == "running_guide":
+            written.append(row("design-line", "Tram 28 climbs the old town", 2.5, 6.0, "line"))
+        else:
+            written += [
+                row("design-heading", "Tram 28", 2.5, 6.0, "heading"),
+                row(
+                    "design-detail", "It climbs through the old town since 1914", 2.5, 6.0, "detail"
+                ),
+            ]
+        written = [TextElement.model_validate(r).model_dump(mode="json") for r in written]
+        return resolve_phone_text_style(written, informative=True, shapes=True)
+
     return {
+        "question": question,
+        "text": text,
+        "editor_rows": {design: rows(design) for design in TEXT_DESIGNS},
+    }
+
+
+def _shape(fixture: dict) -> dict:
+    """What the app reads, without the floats Skia lays out differently on macOS and Linux."""
+    question = fixture["question"]
+    return {
+        "text": fixture["text"],
         "version": question["version"],
         "conflict": question["conflict"],
         "options": [
@@ -593,11 +643,20 @@ def _shape(question: dict) -> dict:
             }
             for option in question["options"]
         ],
+        "editor_rows": {
+            design: [
+                {key: row.get(key) for key in ("id", "text", "font_family", "color", "scrim")}
+                for row in rows
+            ]
+            for design, rows in fixture["editor_rows"].items()
+        },
     }
 
 
-def test_the_ios_ui_fixture_is_the_question_the_server_sends(monkeypatch, designs_on):
-    fresh = _ios_question(monkeypatch)
+def test_the_ios_ui_fixture_is_what_the_server_sends(monkeypatch, designs_on):
+    fresh = _ios_fixture(monkeypatch)
+    heading = next(r for r in fresh["editor_rows"]["A2"] if r["id"] == "design-heading")
+    assert heading["color"] == HEADING_COLOR and _EDITED_HEADING != HEADING_COLOR
     if _IOS_FIXTURE.exists() and not _regenerate():
         stored = json.loads(_IOS_FIXTURE.read_text())
         assert _shape(stored) == _shape(fresh), (

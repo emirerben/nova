@@ -343,7 +343,8 @@ struct ChatMessageRow: View {
             ChoiceQuestionCard(question: question, mode: choiceQuestionMode,
                                heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote,
                                changeHeld: questionBatch?.choice != nil ? changeHeldChoice : nil,
-                               typeMyOwn: answerOwn, isTyping: isAnsweringOwn, allowsDecide: questionBatch == nil)
+                               typeMyOwn: answerOwn, isTyping: isAnsweringOwn, allowsDecide: questionBatch == nil,
+                               projectID: projectID)
                 .id(question.questionID)
         }
     }

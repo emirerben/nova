@@ -1,727 +1,1679 @@
 {
- "version": 2,
- "question_id": "design-q-fixture",
- "conflict": "text_design",
- "options": [
-  {
-   "key": "A1",
-   "label": "Editorial serif",
-   "recommended": false,
-   "description": "A serif title, then small capitals over a serif line for each fact.",
-   "aliases": [
-    "A1"
-   ],
-   "preview": {
-    "media_id": "fixture-clip",
-    "media_kind": "video",
-    "at_s": 3.2,
-    "time_s": 2.0,
-    "text_layers": [
-     {
-      "id": "preview-0",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 540.0,
-      "anchor_y": 806.4,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "The Lisbon tram",
-        "font_asset_id": "font-Literata-SemiBold.ttf",
-        "font_size": 92.0,
-        "x": 170.80401611328125,
-        "baseline_y": 846.6841796875,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     },
-     {
-      "id": "preview-1",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 75.60000000000001,
-      "anchor_y": 1129.58592,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "A FACT'S HEADING",
-        "font_asset_id": "font-Inter-Bold.ttf",
-        "font_size": 32.0,
-        "x": 75.60000000000001,
-        "baseline_y": 1141.58592,
-        "letter_spacing": 4.48,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 0.9058823529411765,
-         "blue": 0.6274509803921569,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     },
-     {
-      "id": "preview-2",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 75.60000000000001,
-      "anchor_y": 1254.5855999999999,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "Its detail sits right under it, on",
-        "font_asset_id": "font-Literata-SemiBold.ttf",
-        "font_size": 54.0,
-        "x": 75.60000000000001,
-        "baseline_y": 1235.1437054687499,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       },
-       {
-        "text": "one short line",
-        "font_asset_id": "font-Literata-SemiBold.ttf",
-        "font_size": 54.0,
-        "x": 75.60000000000001,
-        "baseline_y": 1321.1437054687499,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     }
+ "question": {
+  "version": 2,
+  "question_id": "design-q-fixture",
+  "conflict": "text_design",
+  "options": [
+   {
+    "key": "A1",
+    "label": "Editorial serif",
+    "recommended": false,
+    "description": "A serif title, then small capitals over a serif line for each fact.",
+    "aliases": [
+     "A1"
     ],
-    "fonts": {
-     "font-Literata-SemiBold.ttf": "Literata-SemiBold.ttf",
-     "font-Inter-Bold.ttf": "Inter-Bold.ttf"
-    }
-   }
-  },
-  {
-   "key": "A2",
-   "label": "Bold on a soft shade",
-   "recommended": false,
-   "description": "A bold title, then a yellow heading over a small line, on a soft dark fade.",
-   "aliases": [
-    "A2"
-   ],
-   "preview": {
-    "media_id": "fixture-clip",
-    "media_kind": "video",
-    "at_s": 3.2,
-    "time_s": 2.0,
-    "text_layers": [
-     {
-      "id": "preview-0",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 540.0,
-      "anchor_y": 806.4,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "The Lisbon tram",
-        "font_asset_id": "font-SchibstedGrotesk-Bold.ttf",
-        "font_size": 100.0,
-        "x": 145.76171875,
-        "baseline_y": 842.55625,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     },
-     {
-      "id": "preview-1",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 75.60000000000001,
-      "anchor_y": 1245.2736,
-      "rotation_degrees": 0.0,
-      "scrim": {
-       "top": 921.5999999999999,
-       "height": 998.4000000000001,
-       "stops": [
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 3.2,
+     "time_s": 2.0,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 540.0,
+       "anchor_y": 806.4,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
         {
-         "position": 0.0,
-         "color": {
+         "text": "The Lisbon tram",
+         "font_asset_id": "font-Literata-SemiBold.ttf",
+         "font_size": 92.0,
+         "x": 170.80401611328125,
+         "baseline_y": 846.6841796875,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
           "red": 0.0,
           "green": 0.0,
           "blue": 0.0,
-          "alpha": 0.0
-         }
-        },
-        {
-         "position": 0.6,
-         "color": {
-          "red": 0.0,
-          "green": 0.0,
-          "blue": 0.0,
-          "alpha": 0.6
-         }
-        },
-        {
-         "position": 1.0,
-         "color": {
-          "red": 0.0,
-          "green": 0.0,
-          "blue": 0.0,
-          "alpha": 0.6
-         }
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
         }
-       ]
+       ],
+       "effect": "static"
       },
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "A fact's heading",
-        "font_asset_id": "font-SchibstedGrotesk-Bold.ttf",
-        "font_size": 66.0,
-        "x": 75.60000000000001,
-        "baseline_y": 1269.226725,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 0.9058823529411765,
-         "blue": 0.6274509803921569,
-         "alpha": 1.0
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 75.60000000000001,
+       "anchor_y": 1129.58592,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "A FACT'S HEADING",
+         "font_asset_id": "font-Inter-Bold.ttf",
+         "font_size": 32.0,
+         "x": 75.60000000000001,
+         "baseline_y": 1141.58592,
+         "letter_spacing": 4.48,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 0.9058823529411765,
+          "blue": 0.6274509803921569,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-2",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 75.60000000000001,
+       "anchor_y": 1254.5855999999999,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Its detail sits right under it, on",
+         "font_asset_id": "font-Literata-SemiBold.ttf",
+         "font_size": 54.0,
+         "x": 75.60000000000001,
+         "baseline_y": 1235.1437054687499,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
         },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     },
-     {
-      "id": "preview-2",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 75.60000000000001,
-      "anchor_y": 1317.2736,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "Its detail sits right under it, on one short line",
-        "font_asset_id": "font-Inter-Medium.ttf",
-        "font_size": 36.0,
-        "x": 75.60000000000001,
-        "baseline_y": 1330.6486,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
+        {
+         "text": "one short line",
+         "font_asset_id": "font-Literata-SemiBold.ttf",
+         "font_size": 54.0,
+         "x": 75.60000000000001,
+         "baseline_y": 1321.1437054687499,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-Literata-SemiBold.ttf": "Literata-SemiBold.ttf",
+      "font-Inter-Bold.ttf": "Inter-Bold.ttf"
      }
-    ],
-    "fonts": {
-     "font-SchibstedGrotesk-Bold.ttf": "SchibstedGrotesk-Bold.ttf",
-     "font-Inter-Medium.ttf": "Inter-Medium.ttf"
     }
-   }
-  },
-  {
-   "key": "A3",
-   "label": "Centred display serif",
-   "recommended": false,
-   "description": "A large serif title and headings, each with a small line under it, centred.",
-   "aliases": [
-    "A3"
-   ],
-   "preview": {
-    "media_id": "fixture-clip",
-    "media_kind": "video",
-    "at_s": 3.2,
-    "time_s": 2.0,
-    "text_layers": [
-     {
-      "id": "preview-0",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 540.0,
-      "anchor_y": 806.4,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "The Lisbon tram",
-        "font_asset_id": "font-InstrumentSerif-Regular.ttf",
-        "font_size": 132.0,
-        "x": 173.50201416015625,
-        "baseline_y": 851.5807250976562,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     },
-     {
-      "id": "preview-1",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 540.0,
-      "anchor_y": 1230.77376,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "A fact's heading",
-        "font_asset_id": "font-InstrumentSerif-Regular.ttf",
-        "font_size": 88.0,
-        "x": 305.25999450683594,
-        "baseline_y": 1260.8942433984375,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 0.9058823529411765,
-         "blue": 0.6274509803921569,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     },
-     {
-      "id": "preview-2",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 540.0,
-      "anchor_y": 1317.2736,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "Its detail sits right under it, on one short line",
-        "font_asset_id": "font-Inter-Medium.ttf",
-        "font_size": 36.0,
-        "x": 145.92446899414062,
-        "baseline_y": 1330.6486,
-        "letter_spacing": 0.72,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     }
+   },
+   {
+    "key": "A2",
+    "label": "Bold on a soft shade",
+    "recommended": false,
+    "description": "A bold title, then a yellow heading over a small line, on a soft dark fade.",
+    "aliases": [
+     "A2"
     ],
-    "fonts": {
-     "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf",
-     "font-Inter-Medium.ttf": "Inter-Medium.ttf"
-    }
-   }
-  },
-  {
-   "key": "B1",
-   "label": "Running guide",
-   "recommended": true,
-   "description": "A title, then one line on every clip, as if you were telling it.",
-   "aliases": [
-    "B1"
-   ],
-   "preview": {
-    "media_id": "fixture-clip",
-    "media_kind": "video",
-    "at_s": 3.2,
-    "time_s": 2.0,
-    "text_layers": [
-     {
-      "id": "preview-0",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 540.0,
-      "anchor_y": 806.4,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "The Lisbon tram",
-        "font_asset_id": "font-InstrumentSerif-Regular.ttf",
-        "font_size": 132.0,
-        "x": 173.50201416015625,
-        "baseline_y": 851.5807250976562,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 3.2,
+     "time_s": 2.0,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 540.0,
+       "anchor_y": 806.4,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "The Lisbon tram",
+         "font_asset_id": "font-SchibstedGrotesk-Bold.ttf",
+         "font_size": 100.0,
+         "x": 145.76171875,
+         "baseline_y": 842.55625,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 75.60000000000001,
+       "anchor_y": 1245.2736,
+       "rotation_degrees": 0.0,
+       "scrim": {
+        "top": 921.5999999999999,
+        "height": 998.4000000000001,
+        "stops": [
          {
-          "alpha_power": 1,
+          "position": 0.0,
           "color": {
            "red": 0.0,
            "green": 0.0,
            "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
-     },
-     {
-      "id": "preview-1",
-      "start": 0.0,
-      "end": 4.0,
-      "anchor_x": 540.0,
-      "anchor_y": 1254.04032,
-      "rotation_degrees": 0.0,
-      "srgb_blend": true,
-      "runs": [
-       {
-        "text": "One line on every clip, as if you",
-        "font_asset_id": "font-Inter-Bold.ttf",
-        "font_size": 50.0,
-        "x": 162.10693359375,
-        "baseline_y": 1238.97782,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
+           "alpha": 0.0
+          }
+         },
          {
-          "alpha_power": 1,
+          "position": 0.6,
           "color": {
            "red": 0.0,
            "green": 0.0,
            "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
+           "alpha": 0.6
+          }
+         },
+         {
+          "position": 1.0,
+          "color": {
+           "red": 0.0,
+           "green": 0.0,
+           "blue": 0.0,
+           "alpha": 0.6
+          }
          }
         ]
        },
-       {
-        "text": "were telling it",
-        "font_asset_id": "font-Inter-Bold.ttf",
-        "font_size": 50.0,
-        "x": 376.474609375,
-        "baseline_y": 1305.97782,
-        "letter_spacing": 0.0,
-        "shaped": true,
-        "fill": {
-         "red": 1.0,
-         "green": 1.0,
-         "blue": 1.0,
-         "alpha": 1.0
-        },
-        "stroke": {
-         "red": 0.0,
-         "green": 0.0,
-         "blue": 0.0,
-         "alpha": 0.9019607843137255
-        },
-        "stroke_width": 0.0,
-        "blur_layers": [
-         {
-          "alpha_power": 1,
-          "color": {
-           "red": 0.0,
-           "green": 0.0,
-           "blue": 0.0,
-           "alpha": 0.5490196078431373
-          },
-          "sigma": 14.0,
-          "dx": 0.0,
-          "dy": 3.0
-         }
-        ]
-       }
-      ],
-      "effect": "static"
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "A fact's heading",
+         "font_asset_id": "font-SchibstedGrotesk-Bold.ttf",
+         "font_size": 66.0,
+         "x": 75.60000000000001,
+         "baseline_y": 1269.226725,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 0.9058823529411765,
+          "blue": 0.6274509803921569,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-2",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 75.60000000000001,
+       "anchor_y": 1317.2736,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Its detail sits right under it, on one short line",
+         "font_asset_id": "font-Inter-Medium.ttf",
+         "font_size": 36.0,
+         "x": 75.60000000000001,
+         "baseline_y": 1330.6486,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-SchibstedGrotesk-Bold.ttf": "SchibstedGrotesk-Bold.ttf",
+      "font-Inter-Medium.ttf": "Inter-Medium.ttf"
      }
+    }
+   },
+   {
+    "key": "A3",
+    "label": "Centred display serif",
+    "recommended": false,
+    "description": "A large serif title and headings, each with a small line under it, centred.",
+    "aliases": [
+     "A3"
     ],
-    "fonts": {
-     "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf",
-     "font-Inter-Bold.ttf": "Inter-Bold.ttf"
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 3.2,
+     "time_s": 2.0,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 540.0,
+       "anchor_y": 806.4,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "The Lisbon tram",
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 132.0,
+         "x": 173.50201416015625,
+         "baseline_y": 851.5807250976562,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 540.0,
+       "anchor_y": 1230.77376,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "A fact's heading",
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 88.0,
+         "x": 305.25999450683594,
+         "baseline_y": 1260.8942433984375,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 0.9058823529411765,
+          "blue": 0.6274509803921569,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-2",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 540.0,
+       "anchor_y": 1317.2736,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Its detail sits right under it, on one short line",
+         "font_asset_id": "font-Inter-Medium.ttf",
+         "font_size": 36.0,
+         "x": 145.92446899414062,
+         "baseline_y": 1330.6486,
+         "letter_spacing": 0.72,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf",
+      "font-Inter-Medium.ttf": "Inter-Medium.ttf"
+     }
+    }
+   },
+   {
+    "key": "B1",
+    "label": "Running guide",
+    "recommended": true,
+    "description": "A title, then one line on every clip, as if you were telling it.",
+    "aliases": [
+     "B1"
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 3.2,
+     "time_s": 2.0,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 540.0,
+       "anchor_y": 806.4,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "The Lisbon tram",
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 132.0,
+         "x": 173.50201416015625,
+         "baseline_y": 851.5807250976562,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 4.0,
+       "anchor_x": 540.0,
+       "anchor_y": 1254.04032,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "One line on every clip, as if you",
+         "font_asset_id": "font-Inter-Bold.ttf",
+         "font_size": 50.0,
+         "x": 162.10693359375,
+         "baseline_y": 1238.97782,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        },
+        {
+         "text": "were telling it",
+         "font_asset_id": "font-Inter-Bold.ttf",
+         "font_size": 50.0,
+         "x": 376.474609375,
+         "baseline_y": 1305.97782,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0.0,
+          "green": 0.0,
+          "blue": 0.0,
+          "alpha": 0.9019607843137255
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 0.5490196078431373
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf",
+      "font-Inter-Bold.ttf": "Inter-Bold.ttf"
+     }
     }
    }
-  }
- ],
- "allow_free_text": true,
- "kind": "text_design",
- "input_digest": "8c8d66a7302eedba5e903d3e"
+  ],
+  "allow_free_text": true,
+  "kind": "text_design",
+  "input_digest": "8c8d66a7302eedba5e903d3e"
+ },
+ "text": "I'll add the sourced facts as on-screen text. Which look should the text have?\n1. Editorial serif\n2. Bold on a soft shade\n3. Centred display serif\n4. Running guide (recommended)\nTap an option, or tell me in your own words.",
+ "editor_rows": {
+  "A1": [
+   {
+    "id": "design-hook",
+    "text": "The Lisbon tram",
+    "start_s": 0.0,
+    "end_s": 2.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.42,
+    "rotation_deg": null,
+    "font_family": "Literata",
+    "size_px": 92,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "center",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.02,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A1",
+     "research": {
+      "design": {
+       "id": "A1",
+       "level": "hook"
+      }
+     },
+     "phone_text_role": "hook",
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "position",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px",
+      "x_frac",
+      "y_frac"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "hook",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0
+   },
+   {
+    "id": "design-heading",
+    "text": "TRAM 28",
+    "start_s": 2.5,
+    "end_s": 6.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.07,
+    "y_frac": 0.588326,
+    "rotation_deg": null,
+    "font_family": "Inter",
+    "size_px": 32,
+    "size_class": null,
+    "color": "#FFE7A0",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "left",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": "upper",
+    "letter_spacing": 0.14,
+    "line_spacing": 1.12,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A1",
+     "research": {
+      "design": {
+       "id": "A1",
+       "level": "heading",
+       "pair": 0
+      }
+     },
+     "text_stack_v1": {
+      "stack_id": "pair-0",
+      "heading_level": 2,
+      "corner": "bottom_left",
+      "bottom_frac": 0.696659,
+      "shaped": true,
+      "authored_text": "Tram 28",
+      "canvas_width": 1080,
+      "canvas_height": 1920,
+      "gap_before_px": 0
+     },
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "letter_spacing",
+      "line_spacing",
+      "max_width_frac",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px",
+      "text_case"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "heading",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0,
+    "wrap_lines": false
+   },
+   {
+    "id": "design-detail",
+    "text": "It climbs through the old town\nsince 1914",
+    "start_s": 2.5,
+    "end_s": 6.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.07,
+    "y_frac": 0.65343,
+    "rotation_deg": null,
+    "font_family": "Literata",
+    "size_px": 54,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "left",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.08,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A1",
+     "research": {
+      "design": {
+       "id": "A1",
+       "level": "detail",
+       "pair": 0
+      }
+     },
+     "text_stack_v1": {
+      "stack_id": "pair-0",
+      "heading_level": 3,
+      "corner": "bottom_left",
+      "bottom_frac": 0.696659,
+      "shaped": true,
+      "gap_before_px": 23.0,
+      "authored_text": "It climbs through the old town since 1914",
+      "canvas_width": 1080,
+      "canvas_height": 1920
+     },
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "detail",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0,
+    "wrap_lines": false
+   }
+  ],
+  "A2": [
+   {
+    "id": "design-hook",
+    "text": "The Lisbon tram",
+    "start_s": 0.0,
+    "end_s": 2.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.42,
+    "rotation_deg": null,
+    "font_family": "Schibsted Grotesk",
+    "size_px": 100,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "center",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.02,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A2",
+     "research": {
+      "design": {
+       "id": "A2",
+       "level": "hook"
+      }
+     },
+     "phone_text_role": "hook",
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "position",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px",
+      "x_frac",
+      "y_frac"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "hook",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0
+   },
+   {
+    "id": "design-heading",
+    "text": "Tram 28",
+    "start_s": 2.5,
+    "end_s": 6.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.07,
+    "y_frac": 0.64858,
+    "rotation_deg": null,
+    "font_family": "Schibsted Grotesk",
+    "size_px": 66,
+    "size_class": null,
+    "color": "#FFE7A0",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "left",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.0,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A2",
+     "research": {
+      "design": {
+       "id": "A2",
+       "level": "heading",
+       "pair": 0
+      }
+     },
+     "text_stack_v1": {
+      "stack_id": "pair-0",
+      "heading_level": 2,
+      "corner": "bottom_left",
+      "bottom_frac": 0.697278,
+      "shaped": true,
+      "authored_text": "Tram 28",
+      "canvas_width": 1080,
+      "canvas_height": 1920,
+      "gap_before_px": 0
+     },
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "scrim",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "heading",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0,
+    "scrim": {
+     "top_frac": 0.48,
+     "opacity": 0.6,
+     "color": "#000000"
+    },
+    "wrap_lines": false
+   },
+   {
+    "id": "design-detail",
+    "text": "It climbs through the old town since 1914",
+    "start_s": 2.5,
+    "end_s": 6.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.07,
+    "y_frac": 0.68608,
+    "rotation_deg": null,
+    "font_family": "Inter Medium",
+    "size_px": 36,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "left",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.12,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A2",
+     "research": {
+      "design": {
+       "id": "A2",
+       "level": "detail",
+       "pair": 0
+      }
+     },
+     "text_stack_v1": {
+      "stack_id": "pair-0",
+      "heading_level": 3,
+      "corner": "bottom_left",
+      "bottom_frac": 0.697278,
+      "shaped": true,
+      "gap_before_px": 10.0,
+      "authored_text": "It climbs through the old town since 1914",
+      "canvas_width": 1080,
+      "canvas_height": 1920
+     },
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "detail",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0,
+    "wrap_lines": false
+   }
+  ],
+  "A3": [
+   {
+    "id": "design-hook",
+    "text": "The Lisbon tram",
+    "start_s": 0.0,
+    "end_s": 2.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.42,
+    "rotation_deg": null,
+    "font_family": "Instrument Serif",
+    "size_px": 132,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "center",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.02,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A3",
+     "research": {
+      "design": {
+       "id": "A3",
+       "level": "hook"
+      }
+     },
+     "phone_text_role": "hook",
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "position",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px",
+      "x_frac",
+      "y_frac"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "hook",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0
+   },
+   {
+    "id": "design-heading",
+    "text": "Tram 28",
+    "start_s": 2.5,
+    "end_s": 6.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.641028,
+    "rotation_deg": null,
+    "font_family": "Instrument Serif",
+    "size_px": 88,
+    "size_class": null,
+    "color": "#FFE7A0",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "center",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.0,
+    "max_width_frac": 0.84,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A3",
+     "research": {
+      "design": {
+       "id": "A3",
+       "level": "heading",
+       "pair": 0
+      }
+     },
+     "text_stack_v1": {
+      "stack_id": "pair-0",
+      "heading_level": 2,
+      "corner": "bottom",
+      "bottom_frac": 0.697278,
+      "shaped": true,
+      "authored_text": "Tram 28",
+      "canvas_width": 1080,
+      "canvas_height": 1920,
+      "gap_before_px": 0
+     },
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "heading",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0,
+    "wrap_lines": false
+   },
+   {
+    "id": "design-detail",
+    "text": "It climbs through the old town since 1914",
+    "start_s": 2.5,
+    "end_s": 6.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.68608,
+    "rotation_deg": null,
+    "font_family": "Inter Medium",
+    "size_px": 36,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "center",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": 0.02,
+    "line_spacing": 1.12,
+    "max_width_frac": 0.84,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "A3",
+     "research": {
+      "design": {
+       "id": "A3",
+       "level": "detail",
+       "pair": 0
+      }
+     },
+     "text_stack_v1": {
+      "stack_id": "pair-0",
+      "heading_level": 3,
+      "corner": "bottom",
+      "bottom_frac": 0.697278,
+      "shaped": true,
+      "gap_before_px": 8.0,
+      "authored_text": "It climbs through the old town since 1914",
+      "canvas_width": 1080,
+      "canvas_height": 1920
+     },
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "letter_spacing",
+      "line_spacing",
+      "max_width_frac",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "detail",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0,
+    "wrap_lines": false
+   }
+  ],
+  "B1": [
+   {
+    "id": "design-hook",
+    "text": "The Lisbon tram",
+    "start_s": 0.0,
+    "end_s": 2.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.42,
+    "rotation_deg": null,
+    "font_family": "Instrument Serif",
+    "size_px": 132,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "center",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.02,
+    "max_width_frac": 0.8,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "B1",
+     "research": {
+      "design": {
+       "id": "B1",
+       "level": "hook"
+      }
+     },
+     "phone_text_role": "hook",
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "position",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px",
+      "x_frac",
+      "y_frac"
+     ],
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "hook",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0
+   },
+   {
+    "id": "design-line",
+    "text": "Tram 28 climbs the old town",
+    "start_s": 2.5,
+    "end_s": 6.0,
+    "role": "generative_intro",
+    "visual_block_id": null,
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.670594,
+    "rotation_deg": null,
+    "font_family": "Inter",
+    "size_px": 50,
+    "size_class": null,
+    "color": "#FFFFFF",
+    "highlight_color": null,
+    "stroke_width": 0,
+    "stroke_color": null,
+    "shadow_color": "#000000",
+    "shadow_opacity": 0.55,
+    "text_language": "en",
+    "background_color": null,
+    "editor_preset": null,
+    "animation_phases": null,
+    "shadow_enabled": true,
+    "shadow_style": null,
+    "glow_color": null,
+    "glow_strength": 0,
+    "alignment": "center",
+    "effect": "static",
+    "motion": null,
+    "theme_transition": null,
+    "text_case": null,
+    "letter_spacing": null,
+    "line_spacing": 1.12,
+    "max_width_frac": 0.82,
+    "fade_out_ms": null,
+    "reveal_s": null,
+    "z": null,
+    "word_timings": null,
+    "source_params": {
+     "text_design": "B1",
+     "research": {
+      "design": {
+       "id": "B1",
+       "level": "line"
+      }
+     },
+     "design_style_fields": [
+      "alignment",
+      "color",
+      "font_family",
+      "line_spacing",
+      "max_width_frac",
+      "shadow_blur",
+      "shadow_color",
+      "shadow_enabled",
+      "shadow_offset_y",
+      "shadow_opacity",
+      "size_px"
+     ],
+     "text_stack_v1": {
+      "stack_id": "design-line",
+      "corner": "bottom",
+      "bottom_frac": 0.686219,
+      "shaped": true,
+      "authored_text": "Tram 28 climbs the old town",
+      "canvas_width": 1080,
+      "canvas_height": 1920,
+      "gap_before_px": 0
+     },
+     "phone_text_style_version": 1,
+     "legibility": {
+      "version": 1,
+      "level": "detail",
+      "contrast": null,
+      "frames": 0,
+      "treatment": "design"
+     }
+    },
+    "removed": false,
+    "behind_subject": false,
+    "shadow_blur": 14.0,
+    "shadow_offset_y": 3.0,
+    "wrap_lines": false
+   }
+  ]
+ }
 }
