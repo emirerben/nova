@@ -238,6 +238,7 @@ from app.services.speech_cleanup import (
     reconcile_item_policy_change,
     renderer_enabled_for_item,
 )
+from app.services.talking_music import UploadedSongRead, uploaded_song
 from app.services.tiktok_style_observations import effective_persona_style
 from app.services.user_song_projection import user_song_for_variant
 from app.services.variant_generation_guard import (
@@ -8599,6 +8600,8 @@ async def _editor_commit_item(
         "background_music_track": selected_background_music_track,
         "plan_item_id": str(item.id),
         "visual_assets": visual_assets,
+        # KRI-1578: a phone Talking Save adds or re-pins the creator's own song from the item.
+        "uploaded_song": UploadedSongRead(uploaded_song(item)),
         # iOS commits only changed sections: a phone Talking Save that leaves
         # the sound lane untouched still persists its effects' real paths.
         "phone_sfx_catalog_paths": await _phone_subtitled_sfx_paths(

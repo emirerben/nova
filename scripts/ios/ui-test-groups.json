@@ -8,6 +8,7 @@
     "CameraRollBenchmarkUITests": "creation",
     "CameraRollCollectionUITests": "creation",
     "CameraRollStoriesUITests": "creation",
+    "ClipOrderUITests": "creation",
     "CreationUITests": "creation",
     "DeviceRenderUITests": "creation",
     "DrawingJourneyUITests": "editor",

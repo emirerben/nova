@@ -482,8 +482,10 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
 
     /// The creator's song for a native-editor reconstruction (KRI-374), pinned the same way as the narration:
     /// the recipe's music bed must name a `song` asset in the manifest, so a library music bed never resolves here.
-    func resolveSong() async throws -> URL {
-        try await resolvePinnedAudio(assetID: request.recipe.audio.musicAssetID, missing: "song") {
+    /// `assetID` names the song when it plays on a track instead of `audio.musicAssetID` (a Talking edit's
+    /// music-role track, KRI-1578).
+    func resolveSong(assetID: String? = nil) async throws -> URL {
+        try await resolvePinnedAudio(assetID: assetID ?? request.recipe.audio.musicAssetID, missing: "song") {
             if case .song = $0 { true } else { false }
         }
     }

@@ -1513,11 +1513,14 @@ def compose_creation_text(
     text_requirements: Sequence[BriefRequirement] | None = None,
     prepared_research: PreparedResearch | None = None,
     drops: list[TextDrop] | None = None,
+    informative_text_designs: bool | None = None,
 ) -> EditProposalSnapshot:
     """Compose the initial text lane, then make sure a requested animation is on it.
 
     ``drops`` collects what the text pass left out or did only in part (KRI-1376); the caller
     puts their notes on its own channel (the approval card, or the render's repair notes).
+    ``informative_text_designs`` (KRI-1580) is passed only before approval, where no job is
+    stamped yet; a render leaves it None and research follows the job's stamp.
     """
     look = _requested_look(text_requirements)
     composed, dropped = _compose_creation_text(
@@ -1528,6 +1531,7 @@ def compose_creation_text(
         text_requirements=text_requirements,
         prepared_research=prepared_research,
         research_look=look,
+        informative_text_designs=informative_text_designs,
     )
     if drops is not None:
         drops.extend(dropped)
@@ -1878,6 +1882,7 @@ def _compose_from_research(
     constraints: Mapping[str, str],
     text_requirements: Sequence[BriefRequirement] | None,
     ctx: RunContext | None,
+    informative_text_designs: bool | None = None,
 ) -> tuple[
     EditCopilotOutput,
     list[dict],
@@ -1908,6 +1913,7 @@ def _compose_from_research(
         layer_operations,
         pinned_layer_operations,
         prepared_layers,
+        stamped_text_design,
         write_research_layers,
     )
 
@@ -1924,8 +1930,17 @@ def _compose_from_research(
             layers = approved.layers
             first = pinned_layer_operations(approved, model_snapshot)
         else:
+            text_design = stamped_text_design(
+                snapshot.text_design,
+                f"{request.request_quote}\n{creator_request}",
+                before_approval=informative_text_designs,
+            )
             written, evidence = write_research_layers(
-                request, utterance=creator_request, snapshot=model_snapshot, ctx=ctx
+                request,
+                utterance=creator_request,
+                snapshot=model_snapshot,
+                ctx=ctx,
+                text_design=text_design,
             )
             if written.unmet_requests:
                 raise CreationTextCompositionError(
@@ -1937,6 +1952,7 @@ def _compose_from_research(
                 slots,
                 retrieved_at=evidence.retrieved_at,
                 search_entry_html=evidence.search_entry_html,
+                evidence_facts=evidence.facts if text_design is not None else None,
             )
     except NoUsableSources as exc:
         raise ResearchSourcesUnavailable(str(exc), reason="incomplete") from exc
@@ -2127,6 +2143,7 @@ def _compose_creation_text(
     text_requirements: Sequence[BriefRequirement] | None = None,
     prepared_research: PreparedResearch | None = None,
     research_look: Any = None,
+    informative_text_designs: bool | None = None,
 ) -> tuple[EditProposalSnapshot, list[TextDrop]]:
     """Compose the initial text lane of a planned draft, and what it left out (KRI-1376).
 
@@ -2346,6 +2363,7 @@ def _compose_creation_text(
                 constraints=constraints,
                 text_requirements=text_requirements,
                 ctx=ctx,
+                informative_text_designs=informative_text_designs,
             )
         except ResearchSourcesUnavailable as exc:
             # No qualifying source for the creator's topic: the rest of her approved text
@@ -2383,9 +2401,16 @@ def _compose_creation_text(
         from app.services.researched_text import (  # noqa: PLC0415
             ResearchUnavailable,
             run_researched_revision,
+            stamped_text_design,
+            uncovered_design_windows,
         )
 
         asked_research = output.research_request
+        text_design = stamped_text_design(
+            snapshot.text_design,
+            f"{asked_research.request_quote}\n{creator_request}",
+            before_approval=informative_text_designs,
+        )
         try:
             output = run_researched_revision(
                 asked_research,
@@ -2396,7 +2421,12 @@ def _compose_creation_text(
                 # composer's output (None unless they asked, so the ops stay byte-identical).
                 look=_research_entrance_patch(research_look),
                 handled_elsewhere=("animation",) if research_look else (),
+                text_design=text_design,
             )
+            bare = uncovered_design_windows(output.ops, model_snapshot) if text_design else []
+            # KRI-1580: a guide the writer could not source on every clip still renders its
+            # lines; one drop per bare clip, so the note counts them.
+            drops.extend(TextDrop(reason="bare_clip", action="shrunk") for _window in bare)
         except (ResearchUnavailable, TerminalSchemaError) as exc:
             # The creator approved this draft, so research that finds no usable source (or no
             # place to put it) renders the rest of the text and says so, instead of failing the

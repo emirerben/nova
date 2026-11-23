@@ -786,7 +786,7 @@ def test_empty_guided_add_source_get_index_roundtrip_uses_shared_catalog(monkeyp
 
 def _voiceover_music_recipe(mix: float):
     from app.kria.render_assets import RenderFingerprint
-    from app.pipeline.phone_recipe_shared import PhoneMusicBed
+    from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed
     from tests.pipeline.test_phone_voiceover_montage_plan import (
         _narration,
         compile_phone_voiceover_montage_plan,
@@ -799,9 +799,11 @@ def _voiceover_music_recipe(mix: float):
         voiceover_target_s=11.4, mix=mix, music_track_id="track1", music_start_s=10.0
     )
     music = PhoneMusicBed(
-        catalog_id="track1",
-        generation="7",
-        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        source=LibraryMusicSource(
+            catalog_id="track1",
+            generation="7",
+            fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        ),
         duration_s=120.0,
         start_s=10.0,
     )

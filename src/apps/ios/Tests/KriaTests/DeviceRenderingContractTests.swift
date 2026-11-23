@@ -196,6 +196,54 @@ final class DeviceRenderingContractTests: XCTestCase {
         XCTAssertEqual(bed.sourceDuration, 15)
     }
 
+    /// KRI-1578: a Talking edit's song is a music-role track with no `musicAssetID`. The editor must still find it
+    /// (by the creator-song asset it plays) and resolve it through the pinned-song grant; a music-role track that
+    /// plays a library asset is not a creator song.
+    func testTalkingSongOnAMusicRoleTrackIsFoundAndResolvedWithoutAMusicBedID() async throws {
+        defer { NativeEditorURLProtocol.handler = nil }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let bytes = Data([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45])
+        let source = root.appendingPathComponent("song.wav")
+        try bytes.write(to: source)
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: source)
+        let song = RenderAssetReference(id: "song-item", fingerprint: try RenderFingerprint(fingerprint), source: .song(planItemID: "item", generation: "3"))
+        let library = RenderAssetReference(id: "bed", fingerprint: try RenderFingerprint(fingerprint), source: .library(catalog: .music, catalogID: "t1", generation: "1"))
+        func recipe(_ reference: RenderAssetReference, role: TimelineTrackRole?) -> KriaMediaEngine.EditRecipe {
+            KriaMediaEngine.EditRecipe(
+                schemaVersion: 2, rendererVersion: "kria-ios-2",
+                assets: [MediaAsset(id: reference.id, relativePath: reference.id, fingerprint: fingerprint, duration: 200)],
+                tracks: [TimelineTrack(id: "music", kind: .audio, clips: [
+                    TimelineClip(id: "music-0", sourceAssetID: reference.id, sourceStart: 12, sourceDuration: 20, volume: 0.6),
+                ], role: role)],
+                audio: AudioMixRecipe(speechWindows: [SpeechWindow(start: 1, end: 2)], speechDuckGain: 0.25),
+                assetManifest: RenderAssetManifest(assets: [reference]))
+        }
+        let talking = recipe(song, role: .music)
+        let bed = try XCTUnwrap(NativeEditorSongBed(recipe: talking))
+        XCTAssertEqual(bed.assetID, song.id)
+        XCTAssertEqual(bed.sourceStart, 12)
+        XCTAssertEqual(bed.volume, 0.6)
+        XCTAssertNil(NativeEditorSongBed(recipe: recipe(library, role: .music)), "a library bed on a music track is not the creator's song")
+        XCTAssertNil(NativeEditorSongBed(recipe: recipe(song, role: nil)), "an unroled track that is not the montage `song` track is not a song bed")
+
+        let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "subtitled", recipeRevision: 1, recipeDigest: String(repeating: "a", count: 64))
+        NativeEditorURLProtocol.handler = { request in
+            if request.url?.host == "storage.test" { return (200, bytes) }
+            return (200, Data(#"{"asset_id":"song-item","download_url":"https://storage.test/song","expires_at":"2099-01-01T00:00:00Z"}"#.utf8))
+        }
+        let project = ProjectDirectory(root: root.appendingPathComponent("project"))
+        let resolver = AuthorizedDeviceSourceResolver(api: NativeEditorTestSupport.api(), request: DeviceRenderRequest(identity: identity, recipe: talking),
+            originals: SourceAssetStore(project: project),
+            library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory)),
+            downloadSession: NativeEditorTestSupport.session())
+        do { _ = try await resolver.resolveSong(); XCTFail("without a music bed id and no asset id there is nothing to resolve") }
+        catch MediaEngineError.missingAsset(let name) { XCTAssertEqual(name, "song") }
+        let resolved = try await resolver.resolveSong(assetID: bed.assetID)
+        XCTAssertEqual(try SHA256Fingerprinter().fingerprint(file: resolved), fingerprint)
+    }
+
     func testUploadAndCompleteUseBackendIdentityKeys() throws {
         let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: 7, recipeDigest: String(repeating: "a", count: 64))
         let attempt = UUID()

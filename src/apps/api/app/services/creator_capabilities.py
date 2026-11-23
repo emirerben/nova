@@ -98,6 +98,7 @@ from app.services.phone_rollout import (
     speaker_background_windows_supported,
     speaker_full_opening_planned_for,
     speaker_full_opening_planned_reason,
+    talking_music_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -373,9 +374,11 @@ def _sfx_ask_open(
 
     Each writer's own gate (`sfx_capability.*_sfx_limit`, the answer its worker reads) decides:
     Talking, Voiceover (`narrated*` with its voiceover) and a guided-format montage with a
-    recorded voiceover. A montage without a voiceover has no writer for it yet.
+    recorded voiceover, and (no speech, so the clips' moments are the evidence) a guided-format
+    montage without one.
     """
     from app.services.sfx_capability import (  # noqa: PLC0415
+        guided_sfx_limit,
         subtitled_sfx_limit,
         voiceover_sfx_limit,
     )
@@ -387,8 +390,8 @@ def _sfx_ask_open(
         return subtitled_sfx_limit() is None
     if is_phone_voiceover:
         return voiceover_sfx_limit() is None
-    if has_voiceover and normalized_format in GUIDED_EDIT_FORMATS:
-        return voiceover_sfx_limit() is None
+    if normalized_format in GUIDED_EDIT_FORMATS:
+        return (voiceover_sfx_limit() if has_voiceover else guided_sfx_limit()) is None
     return False
 
 
@@ -1188,8 +1191,9 @@ def _resolve_user_song(
     Writes ``capabilities[CAPABILITY_USER_SONG]`` only when a song is attached.
     Available only on a phone-rendered montage-family manifest with no recorded
     voiceover, while ``phone_user_song_supported()`` (kill switch + the two device
-    capabilities) holds. Everything is read via ``getattr`` so this works against
-    a PlanItem, a thread object or a test stub.
+    capabilities) holds; on a phone Talking manifest too while `talking_music_supported`
+    (KRI-1578: the song plays under the voice). Everything is read via ``getattr`` so this
+    works against a PlanItem, a thread object or a test stub.
     """
 
     if item is None or not getattr(item, "song_gcs_path", None):
@@ -1205,7 +1209,9 @@ def _resolve_user_song(
             "disabled_by_setting", "your own song is unavailable on this server right now"
         )
         return None
-    if normalized_format not in GUIDED_EDIT_FORMATS:
+    # KRI-1578: on a Talking edit the song plays under the voice, once that lane is rolled out.
+    talking = normalized_format == "subtitled" and talking_music_supported(require_client=False)
+    if normalized_format not in GUIDED_EDIT_FORMATS and not talking:
         capabilities[CAPABILITY_USER_SONG] = _unavailable(
             "unsupported_format", "your own song only works on montage edits"
         )
@@ -1216,7 +1222,7 @@ def _resolve_user_song(
         )
         return None
     guided = capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
-    if guided is None or not guided.available:
+    if not talking and (guided is None or not guided.available):
         capabilities[CAPABILITY_USER_SONG] = _unavailable(
             "no_media", "attach source media before using your own song"
         )

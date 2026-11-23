@@ -1746,6 +1746,12 @@ def _shot_text_placements(resolved_intents: object) -> dict[str, tuple[str, ...]
     return placements
 
 
+def _talking_song_lane() -> bool:
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    return talking_music_supported(require_client=False)
+
+
 def plan_facts_from_strategy(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1891,6 +1897,12 @@ def plan_facts_from_strategy(
         caption_style=str(caption_style) if caption_style else None,
         audio_strategy=str(audio_strategy) if audio_strategy else None,
         song_sync=str(strategy["song_sync"]) if strategy.get("song_sync") else None,
+        # KRI-1578: a Talking draft's song is the upload its manifest offers (no strategy field).
+        **(
+            {"user_song_attached": manifest.has_user_song}
+            if manifest is not None and manifest.edit_format == "subtitled" and _talking_song_lane()
+            else {}
+        ),
         speech_occurrence_answers=tuple(
             dict(a)
             for a in strategy.get("choice_answers") or []
@@ -3377,6 +3389,9 @@ def _rendered_music(variant: Mapping[str, Any]) -> bool:
     "reference_only"`, `song_reference`) is not in the file, so it is never music here."""
     if variant.get("smart_music_treatment") or variant.get("background_music_treatment"):
         return True
+    own_song = variant.get("talking_song")
+    if isinstance(own_song, Mapping) and own_song.get("removed") is not True:
+        return True  # KRI-1578: her own song under a phone Talking edit
     return bool(variant.get("music_track_id")) and variant.get("music_playback_mode") != (
         "reference_only"
     )
@@ -7451,7 +7466,9 @@ def _check_music_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
     A finished video is judged by its pinned recipe (`recipe_music`): met only when a song
     plays there, never because a treatment is stored. With the rollout closed a Talking video
     can't add one (the answer it gave before). Missing, it says why (the worker's
-    `talking_music` receipt), else that there is none. A draft promises the song.
+    `talking_music` receipt), else that there is none. A draft promises the creator's own
+    uploaded song (KRI-1578); with none uploaded it asks for it, unless the library lane
+    (``TALKING_LIBRARY_MUSIC_ENABLED``) may still pick one.
     """
     from app.services import talking_music  # noqa: PLC0415
     from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
@@ -7468,8 +7485,13 @@ def _check_music_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
             talking_music.EMPTY_LIBRARY: _MUSIC_EMPTY_LIBRARY,
             talking_music.NO_MATCH: _MUSIC_NO_MATCH,
             talking_music.SONG_UNAVAILABLE: _MUSIC_SONG_UNAVAILABLE,
+            talking_music.NO_UPLOAD: _MUSIC_SEND_SONG,
         }.get(str((facts.talking_music or {}).get("reason") or ""), _MUSIC_NOT_PLAYED)
         return _receipt(req, "not_possible", reason, stage="checked")
+    if facts.user_song_attached:
+        return _receipt(req, "partial", _MUSIC_PLAN_OWN_SONG)
+    if facts.user_song_attached is False and not talking_music.library_music_enabled():
+        return _receipt(req, "not_possible", _MUSIC_SEND_SONG)
     return _receipt(req, "partial", _MUSIC_PLAN)
 
 
@@ -7480,8 +7502,7 @@ def _sfx_placed(count: int) -> str:
 
 
 def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    """KRI-1561: "add sound effects where they fit" on a phone Talking, Voiceover or
-    montage-with-voiceover edit.
+    """KRI-1561: "add sound effects where they fit" on a phone Talking, Voiceover or montage edit.
 
     A finished video is judged by the worker's receipt (`sfx_choice`): met only when it placed
     effects (and says how many), else not possible with the REAL reason, the closed gate or the
@@ -7491,6 +7512,7 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     format has no way to judge it here (neutral, as before).
     """
     from app.services.sfx_capability import (  # noqa: PLC0415
+        guided_sfx_limit,
         limit_line,
         subtitled_sfx_limit,
         voiceover_sfx_limit,
@@ -7498,7 +7520,7 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
     choice = facts.sfx_choice
-    if facts.rendered_variant and choice is not None:
+    if (facts.rendered_variant or facts.rendered_montage) and choice is not None:
         placed = choice.get("placed")
         if isinstance(placed, list) and placed:
             return _receipt(req, "met", _sfx_placed(len(placed)), stage="checked")
@@ -7511,13 +7533,15 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
         limit = subtitled_sfx_limit()
     elif facts.phone_narrated:
         limit = voiceover_sfx_limit()
+    elif facts.phone_montage:
+        limit = guided_sfx_limit()
     else:
         return _receipt(req, "partial", _NO_CHECKER)
-    if facts.rendered_variant:
+    if facts.rendered_variant or facts.rendered_montage:
         return _receipt(req, "not_possible", _SFX_NOT_PLACED, stage="checked")
     if limit is not None:
         return _receipt(req, "not_possible", limit_line(limit), stage="checked")
-    return _receipt(req, "partial", _SFX_PLAN)
+    return _receipt(req, "partial", _SFX_PLAN_MONTAGE if facts.phone_montage else _SFX_PLAN)
 
 
 def _check_voice_only(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -7683,6 +7707,9 @@ _SONG_NOT_ATTACHED = "Add your song first and I'll use it."
 _SONG_NOT_USED = "This draft doesn't use your song."
 _SONG_IN_BACKGROUND = (
     "This draft plays your song in the background; your clips aren't matched to its words."
+)
+_SONG_TALKING_NO_LIPSYNC = (
+    "Lip-sync needs a Lip-sync video; on a Talking video your song plays quietly under your voice."
 )
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
@@ -7882,18 +7909,27 @@ _TALKING_NO_SPOKEN_TEXT = "A Talking video can't show text at a word you say yet
 _MUSIC_PLAN = "I'll pick a song from the music library and play it quietly under your voice"
 # KRI-1561: the sound effects the writer will choose, and the finished video with none.
 _SFX_PLAN = "I'll place sound effects where your speech and pauses call for them"
+# A montage has no speech: its effects land on the cuts between the clips.
+_SFX_PLAN_MONTAGE = "I'll place sound effects on the cuts where your clips change"
 _SFX_NOT_PLACED = "The finished video has no sound effects"
 _MUSIC_NOT_PLAYED = "The finished video has no music"
 _MUSIC_APP_TOO_OLD = "Your iPhone app is too old to play music under your voice; update it first"
 _MUSIC_EMPTY_LIBRARY = "The music library has no song I can add yet, so the video has no music"
 _MUSIC_NO_MATCH = "I couldn't pick a song from the music library, so the video has no music"
 _MUSIC_SONG_UNAVAILABLE = "The song I picked is no longer available, so the video has no music"
+# KRI-1578: the song is the creator's own upload; the library is closed to new songs.
+_MUSIC_PLAN_OWN_SONG = "I'll play your song quietly under your voice"
+_MUSIC_SEND_SONG = (
+    "I can't add songs from the music library. Send me the song you want and I'll play it "
+    "quietly under your voice"
+)
 _MUSIC_MISSING: tuple[str, ...] = (
     _MUSIC_NOT_PLAYED,
     _MUSIC_APP_TOO_OLD,
     _MUSIC_EMPTY_LIBRARY,
     _MUSIC_NO_MATCH,
     _MUSIC_SONG_UNAVAILABLE,
+    _MUSIC_SEND_SONG,
 )
 _TALKING_OPENING_CUT_PLAN = (
     "I'll start the video at that line if I find it in your take; if not, it opens at the start"
@@ -8012,6 +8048,9 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _MUSIC_PLAN,
     # KRI-1561: the sound effects the writer chooses for a general ask.
     _SFX_PLAN,
+    _SFX_PLAN_MONTAGE,
+    # KRI-1578: the creator's own song under the talk.
+    _MUSIC_PLAN_OWN_SONG,
     # KRI-1322: the picture above the opening title.
     _TITLE_PICTURE_PLAN,
     # KRI-1304 leftover: the zoom onto the recordings' text.
@@ -8349,7 +8388,18 @@ _REASON_TR: dict[str, str] = {
     _TALKING_NO_SPOKEN_TEXT: "Konuşmalı video söylediğin bir kelimede yazı gösteremiyor",
     _MUSIC_PLAN: "Müzik kütüphanesinden bir şarkı seçip sesinin altında kısık çalarım",
     _SFX_PLAN: "Ses efektlerini konuşmana ve duraklara göre uygun yerlere koyarım",
+    _SFX_PLAN_MONTAGE: "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım",
     _SFX_NOT_PLACED: "Bitmiş videoda ses efekti yok",
+    _MUSIC_PLAN_OWN_SONG: "Şarkını sesinin altında kısık çalarım",
+    _SONG_TALKING_NO_LIPSYNC: (
+        "Dudak senkronu için Lip-sync videosu gerekiyor; konuşmalı videoda şarkın sesinin "
+        "altında kısık çalar."
+    ),
+    # KRI-1578: the first sentence is `creator_song_rule.withheld_song_notice`'s.
+    _MUSIC_SEND_SONG: (
+        "Müzik kütüphanesinden şarkı ekleyemiyorum. İstediğin şarkıyı gönder, sesinin altında "
+        "kısık çalayım"
+    ),
     _MUSIC_NOT_PLAYED: "Bitmiş videoda müzik yok",
     _MUSIC_APP_TOO_OLD: (
         "iPhone uygulaman sesinin altında müzik çalmak için çok eski; önce güncelle"
@@ -16601,6 +16651,12 @@ def wants_lipsync(req: BriefRequirement) -> bool:
 def _check_lipsync(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if facts.user_song_attached is None:
         return _receipt(req, "partial", _NO_CHECKER)
+    if facts.phone_talking:
+        from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+        if talking_music_supported(require_client=False):
+            # KRI-1578: a Talking edit plays her song under her voice, never in sync with her.
+            return _receipt(req, "not_possible", _loc(_SONG_TALKING_NO_LIPSYNC))
     if not facts.user_song_attached:
         return _receipt(req, "not_possible", _loc(_SONG_NOT_ATTACHED))
     if facts.audio_strategy != "user_song":

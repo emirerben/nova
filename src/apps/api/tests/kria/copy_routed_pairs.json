@@ -2620,6 +2620,51 @@
    "app/services/clip_order_card.py",
    "Updated your clip order.",
    "Klip sıranı güncelledim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "you asked for no sound effects, so I won't add any",
+   "ses efekti istemediğini söylemiştin, o yüzden eklemiyorum"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I can't add songs from the music library. Send me the song you want and I'll play it quietly under your voice",
+   "Müzik kütüphanesinden şarkı ekleyemiyorum. İstediğin şarkıyı gönder, sesinin altında kısık çalayım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll play your song quietly under your voice",
+   "Şarkını sesinin altında kısık çalarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't add songs from the music library. Send me the song you want and I'll play it quietly under your voice",
+   "Müzik kütüphanesinden şarkı ekleyemiyorum. İstediğin şarkıyı gönder, sesinin altında kısık çalayım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Lip-sync needs a Lip-sync video; on a Talking video your song plays quietly under your voice.",
+   "Dudak senkronu için Lip-sync videosu gerekiyor; konuşmalı videoda şarkın sesinin altında kısık çalar."
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Lip-sync needs a Lip-sync video: on a Talking video your song plays quietly under your voice. Should I play it under your voice instead?",
+   "Dudak senkronu için Lip-sync videosu gerekiyor: konuşmalı videoda şarkın sesinin altında kısık çalar. Sesinin altında çalayım mı?"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "I'll play your song quietly under your voice.",
+   "Şarkını sesinin altında kısık çalacağım."
+  ],
+  [
+   "app/services/researched_text.py",
+   "No sourced line for {count} of the clips.",
+   "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll place sound effects on the cuts where your clips change",
+   "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım"
   ]
  ],
  "retired": [

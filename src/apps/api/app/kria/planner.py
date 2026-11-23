@@ -18,7 +18,7 @@ import time
 import unicodedata
 import uuid
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -2283,6 +2283,15 @@ class _EditorTarget:
     # KRI-1387: the editor compiler bound to a detached copy of this job and projected
     # variant, so the copilot turn finds refused ops before the draft compile does.
     compile_check: CompileCheck | None = None
+    # KRI-1580: the job's phone text policy, for a variant that carries no copy of its stamp.
+    job_text_policy: dict | None = None
+
+
+def _chat_text_design(target: _EditorTarget, message: str) -> str | None:
+    """KRI-1580: research a follow-up chat asks for is written in the job's design shape."""
+    from app.services.researched_text import chat_text_design  # noqa: PLC0415
+
+    return chat_text_design(target.variant, message, job_policy=target.job_text_policy)
 
 
 async def _copilot_clip_context(
@@ -2389,14 +2398,40 @@ async def _copilot_clip_context(
 
             # What the creator asked this turn (`_turn_brief`) decides, else the saved brief.
             turn_brief = _turn_brief.get()
+            from app.services.talking_music import library_music_enabled  # noqa: PLC0415
+
             if asks_no_music(turn_brief if turn_brief is not None else brief):
                 context["no_music"] = True
-            else:
+            elif library_music_enabled():
                 context["music_library"] = await _talking_song_rows(db)
+            else:
+                # KRI-1578: a new song is the creator's own upload; no library read.
+                context["music_library_closed"] = True
+            from app.services.talking_music import talking_song, uploaded_song  # noqa: PLC0415
+
+            upload = uploaded_song(item)
+            if (
+                not context.get("no_music")
+                and talking_song(variant) is None
+                and upload is not None
+                and upload.duration_s
+            ):
+                # Her upload is not on this edit yet: chat may put it under her voice.
+                context["uploaded_song"] = {"duration_s": round(upload.duration_s, 3)}
     except Exception:  # noqa: BLE001 - fail closed: no candidates => no swap_music
         log.warning(
             "kria_copilot_music_library_unavailable", thread_id=str(thread_id), exc_info=True
         )
+    try:
+        # KRI-1561: "no sound effects" holds through later chat edits until the creator withdraws
+        # it. What the creator said this turn (`_turn_brief`) decides, else the saved brief.
+        from app.kria.draft_sound_carry import asks_no_sound_effects  # noqa: PLC0415
+
+        sfx_turn_brief = _turn_brief.get()
+        if asks_no_sound_effects(sfx_turn_brief if sfx_turn_brief is not None else brief):
+            context["no_sound_effects"] = True
+    except Exception:  # noqa: BLE001 - fail closed: the effects stay as they are
+        log.warning("kria_copilot_no_sound_effects_unread", thread_id=str(thread_id), exc_info=True)
     try:
         # KRI-1117: the photos and videos a Talking edit's background can be. No query while
         # the lane is closed for this variant, so every other turn reads exactly what it read.
@@ -2662,6 +2697,19 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
 _turn_brief: contextvars.ContextVar[CreativeBrief | None] = contextvars.ContextVar(
     "kria_turn_brief", default=None
 )
+
+
+@contextmanager
+def _turn_brief_is(brief: CreativeBrief | None):  # noqa: ANN202
+    """KRI-1561: the copilot turn itself reads the brief WITH this turn's updates, not only the
+    routing step: "actually add music" (which withdraws a live "no music") used to be refused by
+    the copilot because it still saw the saved brief, so the creator had to ask twice."""
+    token = _turn_brief.set(brief)
+    try:
+        yield
+    finally:
+        _turn_brief.reset(token)
+
 
 # `time.monotonic()` by which the running turn must have planned (set by the turn task
 # from its soft time limit). None = no deadline known: only the settings cap applies.
@@ -2952,6 +3000,7 @@ async def _load_editor_target(
         snapshot=snapshot,
         conversation=conversation,
         variant=variant,
+        job_text_policy=copy.deepcopy((job.assembly_plan or {}).get("phone_text_style")),
         recovery_basis=recovery_basis,
         last_ready=(
             {
@@ -3113,6 +3162,7 @@ async def _plan_editor_revision(
         ),
         timeout_override_s=120.0,
         compile_check=target.compile_check,
+        text_design=_chat_text_design(target, user_message),
     )
     if (
         response.ops
@@ -3226,6 +3276,13 @@ class _CreatorInputs:
     # to this turn's brief reading (`render_unrecorded_request`). A delegation the reading
     # declares covers exactly these lines and the current message, nothing else.
     delegation_read_ids: tuple[str, ...] = ()
+
+
+async def _plan_editor_revision_with_brief(effective, *args, **kwargs):  # noqa: ANN001, ANN202
+    """`_plan_editor_revision` with this turn's brief updates folded into what chat may do
+    (KRI-1561): the copilot's snapshot flags (`no_music`, `no_sound_effects`) read `_turn_brief`."""
+    with _turn_brief_is(effective):
+        return await _plan_editor_revision(*args, **kwargs)
 
 
 async def _unrecorded_creator_lines(
@@ -7659,6 +7716,7 @@ async def _plan_scoped_turn(
                 ),
                 job_id=target.job_id,
                 compile_check=target.compile_check,
+                text_design=_chat_text_design(target, user_message),
             )
             kept, dropped = plan_review.filter_ops_to_scope(
                 list(response.ops), model_snapshot, model_scope
@@ -8500,7 +8558,8 @@ async def _plan_live_turn(
                 editor_plan = (
                     first_editor_result[0]
                     if first_editor_result is not None
-                    else await _plan_editor_revision(
+                    else await _plan_editor_revision_with_brief(
+                        effective,
                         db,
                         thread_id=thread_id,
                         item=await _refetch_item(db, item_id),
@@ -8865,7 +8924,8 @@ async def _plan_live_turn(
             editor_plan = first_editor_result[0]
         else:
             item = await _refetch_item(db, item_id)
-            editor_plan = await _plan_editor_revision(
+            editor_plan = await _plan_editor_revision_with_brief(
+                effective,
                 db,
                 thread_id=thread_id,
                 item=item,

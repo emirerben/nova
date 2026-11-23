@@ -215,6 +215,21 @@ async def test_attach_song_fills_song_columns_not_voiceover(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+async def test_attaching_a_song_to_a_talking_item_keeps_its_original_audio_policy(
+    monkeypatch,
+) -> None:
+    """KRI-1578: `audio_mode` is part of a Talking item's speech fingerprint (its cleanup
+    consent); the song plays under the voice from the upload alone."""
+    user, thread, item, _events = await _attach(
+        monkeypatch,
+        [MediaInput(media_id="song-1.m4a", kind="audio", role="song", filename="track.m4a")],
+        item=_item(id=uuid.uuid4(), edit_format="subtitled", audio_mode="original"),
+    )
+    assert item.song_gcs_path == _media_path(user.id, thread.id, "song-1.m4a")
+    assert item.audio_mode == "original"
+
+
+@pytest.mark.asyncio
 async def test_second_song_is_409_song_exists(monkeypatch) -> None:
     item = _item(song_gcs_path="users/u/creation-threads/t/old.m4a", song_generation=1)
     with pytest.raises(HTTPException) as exc:
@@ -309,7 +324,17 @@ async def test_a_clip_attached_while_a_song_exists_requests_alignment(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_removing_the_song_clears_columns_and_returns_to_kria(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("edit_format", "before", "after"),
+    [
+        ("montage", "song", "kria"),
+        ("subtitled", "song", "original"),
+        ("subtitled", "original", "original"),
+    ],
+)
+async def test_removing_the_song_clears_columns_and_returns_to_kria(
+    monkeypatch, edit_format, before, after
+) -> None:
     user_id = uuid.uuid4()
     thread_id = uuid.uuid4()
     song_path = _media_path(user_id, thread_id, "song-1.m4a")
@@ -321,7 +346,8 @@ async def test_removing_the_song_clears_columns_and_returns_to_kria(monkeypatch)
         song_filename="track.m4a",
         song_analysis={"status": "ready"},
         song_alignment={"takes": {}},
-        audio_mode="song",
+        audio_mode=before,
+        edit_format=edit_format,
     )
     thread = SimpleNamespace(
         id=thread_id,
@@ -371,7 +397,7 @@ async def test_removing_the_song_clears_columns_and_returns_to_kria(monkeypatch)
     assert item.song_filename is None
     assert item.song_analysis is None
     assert item.song_alignment is None
-    assert item.audio_mode == "kria"
+    assert item.audio_mode == after
     assert thread.state["media_count"] == 0
     # The object minted under this thread's exclusive prefix is deleted.
     assert song_path in deleted

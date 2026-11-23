@@ -722,24 +722,26 @@ def speaker_full_opening_taught(manifest: ResolvedCreatorManifest) -> bool:
 
 
 # KRI-1561: a general "add sound effects where they fit" ask on a phone Talking, Voiceover or
-# montage-with-voiceover edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest
-# advertises `sfx_ask` (the writer's own gate, `sfx_capability`); "" otherwise, so every other
-# prompt stays byte-identical.
+# montage (with or without a voiceover) edit. Appended to the `$reaction_beats_section` slot ONLY
+# when the manifest advertises `sfx_ask` (the writer's own gate, `sfx_capability`); "" otherwise,
+# so every other prompt stays byte-identical.
 _SFX_ASK_PROMPT_SECTION = """
 SOUND EFFECTS CHOSEN FOR THE EDIT (iPhone)
 When the creator asks for sound effects in general and names neither an effect nor a moment --
 "add sound effects where they fit", "put some sound effects in", "make it feel alive with sound
 design", "uygun yerlere ses efekti ekle", "biraz ses efekti koy" -- set `sfx_ask`:
 {"request_text": "the creator's own words for the ask, copied, in their language",
-"max_placements": 1-6, default 6, lower only when they ask for fewer ("just a couple")}. The
-server then chooses the moments from what is said and the pauses; never invent a time, an effect
-or a moment, and add no `licensed_sfx` and no reaction beat for this ask. A sound the creator ties
-to a spoken moment ("a whoosh when I say Mason Greenwood") is still a reaction beat, and a named
-catalogue effect on a montage is still `licensed_sfx`; set `sfx_ask` only for the general ask.
+"max_placements": 1-6, default 6, lower only when they ask for fewer ("just a couple")}.
+The server then chooses the moments from what is said, the pauses and what each clip shows;
+never invent a time, an effect or a moment, and add no `licensed_sfx` and no reaction beat for
+this ask. A sound the creator ties to a spoken moment ("a whoosh when I say Mason Greenwood") is
+still a reaction beat, and a named catalogue effect on a montage is still `licensed_sfx`; set
+`sfx_ask` only for the general ask.
 A request to have no sound effects, or to remove them, never sets `sfx_ask`. Say in `summary`
-that the effects are placed where the speech and pauses call for them. This section overrides any
-earlier line that says a bare "add sound effects" adds nothing, or only sounds tied to the moments
-the creator named: for the general ask, set `sfx_ask` and say that instead.
+that the effects are placed where the speech, the pauses and the cuts call for them.
+This section overrides any earlier line that says a bare "add sound effects" adds nothing, or
+only sounds tied to the moments the creator named: for the general ask, set `sfx_ask` and say
+that instead.
 """.strip("\n")
 
 
@@ -871,6 +873,20 @@ The creator picked the Lip-sync video type, which counts as asking to lip sync: 
 clearly ask for the song as music behind the edit (for example "just use it as background
 music", "keep it as the music bed"): their words win over the card. Always set `song_sync`
 explicitly.
+""".strip("\n")
+
+
+# KRI-1578: the song section on a phone Talking manifest (`edit_format == "subtitled"`), in place
+# of the montage one above; a manifest offers it only while the Talking song lane is rolled out.
+_USER_SONG_TALKING_PROMPT_SECTION = """
+UPLOADED SONG (iPhone Talking edit)
+The creator attached their own song; the manifest's `user_song` gives its `duration_s`. On a
+Talking edit it plays quietly under their voice for the whole video and drops lower while they
+speak: nothing in `strategy` places it. Keep `audio_strategy` "original_audio" and leave
+`song_sync` null, and never pick a catalog track. Lip-sync is not possible on a Talking edit: if
+the creator asks to lip sync or sing along, still keep the Talking edit and say in `summary`
+that lip-sync needs a Lip-sync video. Otherwise `summary` says in plain words that their song
+plays quietly under their voice.
 """.strip("\n")
 
 
@@ -1418,11 +1434,17 @@ _BRIEF_SFX_ASK_SENTENCE = (
 
 
 def sfx_ask_taught() -> bool:
-    """KRI-1561: can a phone Talking, Voiceover or montage-with-voiceover writer place effects for
-    a general ask right now? Closed, the brief section keeps the bytes it had before."""
-    from app.services.sfx_capability import subtitled_sfx_limit, voiceover_sfx_limit  # noqa: PLC0415
+    """KRI-1561: can a phone Talking, Voiceover or montage writer place effects for a general ask
+    right now? Closed, the brief section keeps the bytes it had before."""
+    from app.services.sfx_capability import (  # noqa: PLC0415
+        guided_sfx_limit,
+        subtitled_sfx_limit,
+        voiceover_sfx_limit,
+    )
 
-    return subtitled_sfx_limit() is None or voiceover_sfx_limit() is None
+    return (
+        subtitled_sfx_limit() is None or voiceover_sfx_limit() is None or guided_sfx_limit() is None
+    )
 
 
 def with_sfx_ask_brief(section: str) -> str:
@@ -1760,15 +1782,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             ),
             # KRI-374: "" (no usable song) adds no bytes; same line-suffix trick.
             user_song_section=(
-                "\n"
+                ""
+                if not input.capability_manifest.has_user_song
+                else "\n" + _USER_SONG_TALKING_PROMPT_SECTION
+                if input.capability_manifest.edit_format == "subtitled"
+                else "\n"
                 + _USER_SONG_PROMPT_SECTION
                 + (
                     "\n" + _USER_SONG_LIPSYNC_CARD_SECTION
                     if input.capability_manifest.chosen_format == "lipsync"
                     else ""
                 )
-                if input.capability_manifest.has_user_song
-                else ""
             ),
             # KRI-479: "" (no `phone_source_audio`) adds no bytes; same line-suffix trick.
             voice_mode_section=_camera_audio_mode_section(input.capability_manifest),
@@ -2142,7 +2166,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 # KRI-374: the creator-facing copy is a question for the creator;
                 # the retry needs the rule it broke.
                 self._schema_feedback = (
-                    'audio_strategy "user_song" needs a usable uploaded song on this '
+                    # KRI-1578: a Talking edit keeps its song under the voice.
+                    'a Talking edit never lip-syncs: keep audio_strategy "original_audio", '
+                    "song_sync null, and say in summary that lip-sync needs a Lip-sync video"
+                    if exc.code == "user_song_lipsync_talking"
+                    else 'audio_strategy "user_song" needs a usable uploaded song on this '
                     "manifest (manifest.user_song); choose another audio_strategy"
                 )
             elif isinstance(exc, ValueError):

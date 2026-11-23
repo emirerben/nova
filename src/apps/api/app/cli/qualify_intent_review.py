@@ -39,7 +39,7 @@ from sqlalchemy.engine import make_url
 
 from app.agents._openai_vision import VISION_MODEL, OpenAIVisionClient, VisionResult
 from app.agents._runtime import RunContext
-from app.agents.intent_review import PROMPT_VERSION
+from app.agents.intent_review import LEGIBILITY_PROMPT_VERSION, PROMPT_VERSION
 from app.config import settings
 from app.kria import intent_review_qualification as q
 from app.services import ai_cost_control as costs
@@ -861,7 +861,8 @@ def main(
         )
         print(f"INTENT_REVIEW_QUALIFICATION: {mode_name} ({allowance})")
         print(
-            f"MODEL: {VISION_MODEL}  PROMPT_VERSION: {PROMPT_VERSION}  "
+            f"MODEL: {VISION_MODEL}  PROMPT_VERSION: {PROMPT_VERSION} "
+            f"({LEGIBILITY_PROMPT_VERSION} for text_legibility cases)  "
             f"PRICE_VERSION: {costs.PRICE_VERSION}"
         )
         print(f"PREREG_DIGEST: {digest}")

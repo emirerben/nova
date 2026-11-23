@@ -89,6 +89,10 @@ class ReviewCatalog(_Model):
     requirements: list[IssuedRequirement]
     withheld: list[WithheldRequirement] = Field(default_factory=list)
     candidates: list[Candidate] = Field(default_factory=list)
+    # KRI-1583: the job is stamped for informative text designs, so the review may report text
+    # the picture swallows (`text_illegible`). Omitted when False: unstamped catalogs, their
+    # digests and their prompts stay what they were.
+    text_legibility: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @property
     def requirement_ids(self) -> list[str]:
@@ -140,9 +144,13 @@ def contains_loose_words(text: str, wanted: str) -> bool:
     return _contains_words(text, wanted, loose_text)
 
 
-def _seal(**parts: Any) -> ReviewCatalog:
-    body = {key: [item.model_dump(mode="json") for item in value] for key, value in parts.items()}
-    return ReviewCatalog(digest=canonical_digest(body), **parts)
+def _seal(*, text_legibility: bool = False, **parts: Any) -> ReviewCatalog:
+    body: dict[str, Any] = {
+        key: [item.model_dump(mode="json") for item in value] for key, value in parts.items()
+    }
+    if text_legibility:
+        body["text_legibility"] = True
+    return ReviewCatalog(digest=canonical_digest(body), text_legibility=text_legibility, **parts)
 
 
 def _label(requirement: BriefRequirement) -> str:
@@ -419,4 +427,5 @@ def build_review_catalog(
         requirements=issued,
         withheld=withheld,
         candidates=sorted(candidates, key=lambda c: (c.kind, c.element_ref)),
+        text_legibility=packet.get("text_legibility") is True,
     )

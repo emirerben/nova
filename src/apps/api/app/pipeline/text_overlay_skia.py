@@ -108,6 +108,8 @@ from app.pipeline.text_overlay import (
     _hex_to_rgba,
     _parse_gradient_spec,
     _validate_overlay,
+    scrim_alpha_mask,
+    scrim_stops,
 )
 from app.pipeline.text_wrap import balanced_word_wrap_indices
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
@@ -159,18 +161,27 @@ _HIGH_VISIBILITY_TEXT_SHADOW_LAYERS = (
 )
 
 
+_AUTHORED_PAINT_KEYS = (
+    "stroke_color",
+    "shadow_color",
+    "shadow_opacity",
+    "shadow_blur",
+    "shadow_offset_y",
+)
+
+
 def _text_shadow_style(overlay: dict) -> _TextShadowStyle:
     """Resolve the legacy toggle plus the editor's explicit shadow treatment."""
 
-    if any(
-        overlay.get(key) is not None for key in ("stroke_color", "shadow_color", "shadow_opacity")
-    ):
+    if any(overlay.get(key) is not None for key in _AUTHORED_PAINT_KEYS):
         opacity = min(1.0, max(0.0, _finite_float(overlay.get("shadow_opacity"), 160 / 255)))
         red, green, blue, _ = _hex_to_rgba(overlay.get("shadow_color") or "#000000")
+        sigma = max(0.0, _finite_float(overlay.get("shadow_blur"), 12.0))
+        drop = _finite_float(overlay.get("shadow_offset_y"), 6.0)
         shadows = (
             ()
             if overlay.get("shadow_enabled") is False or opacity == 0
-            else (_TextShadowLayer(round(255 * opacity), 12.0, 0.0, 6.0, red, green, blue),)
+            else (_TextShadowLayer(round(255 * opacity), sigma, 0.0, drop, red, green, blue),)
         )
         return _AuthoredTextPaint(shadows, overlay.get("stroke_color") or "#000000")
     if overlay.get("shadow_enabled") is False:
@@ -2116,6 +2127,24 @@ def _draw_handwriting_strokes(
     canvas.restore()
 
 
+def _draw_scrim(canvas: skia.Canvas, overlay: dict, render_canvas: Canvas, alpha: float) -> None:
+    scrim = overlay.get("scrim")
+    if not isinstance(scrim, dict) or alpha <= 0.0:
+        return
+    top = float(scrim["top_frac"]) * render_canvas.height
+    red, green, blue, _ = _hex_to_rgba(scrim.get("color") or "#000000")
+    stops = scrim_stops(scrim, alpha)
+    shader = skia.GradientShader.MakeLinear(
+        [skia.Point(0, top), skia.Point(0, render_canvas.height)],
+        [skia.ColorSetARGB(_clamp_byte(255 * a), red, green, blue) for _p, a in stops],
+        [p for p, _a in stops],
+    )
+    canvas.drawRect(
+        skia.Rect.MakeLTRB(0, top, render_canvas.width, render_canvas.height),
+        skia.Paint(Shader=shader),
+    )
+
+
 def _draw_centered_text(
     canvas: skia.Canvas,
     text: str,
@@ -2278,6 +2307,9 @@ def _draw_centered_text(
             alpha,
         )
 
+    # The scrim belongs to the frame, not the glyphs: it fades with the text but never moves,
+    # scales or turns with it.
+    _draw_scrim(canvas, overlay, render_canvas, alpha)
     canvas.save()
     # Center transform on anchor unless an effect supplies a different focal point.
     rotation_deg = _finite_float(overlay.get("rotation_deg"), 0.0)
@@ -3419,7 +3451,7 @@ def _draw_overlay_on_canvas(
                 _draw_centered_text(
                     surface.getCanvas(),
                     visible_text,
-                    {**overlay, "rotation_deg": 0},
+                    {**overlay, "rotation_deg": 0, "scrim": None},
                     render_canvas=render_canvas,
                     layout_text=full_text,
                     shape_text=bool(overlay.get("shape_text")),
@@ -3439,6 +3471,7 @@ def _draw_overlay_on_canvas(
                     alphaType=skia.AlphaType.kUnpremul_AlphaType,
                 )
                 cx, cy = _resolve_anchor(overlay, render_canvas)
+                _draw_scrim(canvas, overlay, render_canvas, state.alpha)
                 canvas.save()
                 canvas.translate(cx + state.x, cy + state.y)
                 canvas.rotate(_finite_float(overlay.get("rotation_deg"), 0))
@@ -4170,6 +4203,8 @@ def _with_masonry_layer_origin(
     # retain their exact sequence shape.
     if overlay.get("element_id"):
         sequence["element_id"] = str(overlay["element_id"])
+        if isinstance(overlay.get("scrim"), dict):
+            sequence["scrim"] = overlay["scrim"]
     origin = _masonry_layer_origin(overlay)
     if origin is not None:
         sequence["layer_origin_x_px"] = origin
@@ -4752,6 +4787,13 @@ def _sequence_alpha_evidence(
                 continue
             with Image.open(path).convert("RGBA") as image:
                 alpha = image.getchannel("A")
+                if isinstance(sequence.get("scrim"), dict):
+                    # The scrim reaches the bottom edge by design; the receipt is about the text.
+                    from PIL import ImageChops  # noqa: PLC0415
+
+                    alpha = ImageChops.subtract(
+                        alpha, scrim_alpha_mask(sequence["scrim"], image.size)
+                    )
                 sampled += 1
                 frame_peak = int(alpha.getextrema()[1])
                 peak_alpha = max(peak_alpha, frame_peak)

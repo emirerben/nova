@@ -20,6 +20,8 @@ from contextvars import ContextVar
 from typing import Any
 
 POLICY_KEY = "informative_text_designs"
+# KRI-1581: the job's approving app build draws the designs (`text_designs_planned_for`).
+SHAPES_KEY = "informative_text_shapes"
 CREATOR_FIELDS_KEY = "creator_style_fields"
 DESIGN_FIELDS_KEY = "design_style_fields"
 DESIGN_ID_KEY = "text_design"
@@ -38,8 +40,11 @@ STYLE_FIELDS = (
     "line_spacing",
     "max_width_frac",
     "position",
+    "scrim",
+    "shadow_blur",
     "shadow_color",
     "shadow_enabled",
+    "shadow_offset_y",
     "shadow_opacity",
     "size_px",
     "stroke_color",
@@ -50,32 +55,51 @@ STYLE_FIELDS = (
 )
 
 _ACTIVE: ContextVar[bool] = ContextVar("informative_text_designs", default=False)
+_SHAPES: ContextVar[bool] = ContextVar("informative_text_shapes", default=False)
 
 
 def policy_enabled(policy: object) -> bool:
     return isinstance(policy, dict) and policy.get(POLICY_KEY) is True
 
 
-def stamp_policy(policy: dict) -> dict:
-    """Add the stamp to a policy being created now, only when the flag is on."""
+def shapes_enabled(policy: object) -> bool:
+    return policy_enabled(policy) and isinstance(policy, dict) and policy.get(SHAPES_KEY) is True
+
+
+def stamp_policy(policy: dict, *, client_protocol: int | None = None) -> dict:
+    """Add the stamp to a policy being created now, only when the flag is on.
+
+    ``client_protocol`` is the approving app build. The designs themselves (KRI-1581) are
+    stamped only for a build that draws them; an older one keeps plain informative rows.
+    """
     from app.config import settings
 
     if settings.informative_text_designs_enabled:
         policy[POLICY_KEY] = True
+        from app.services.phone_rollout import text_designs_planned_for  # noqa: PLC0415
+
+        if text_designs_planned_for(client_protocol):
+            policy[SHAPES_KEY] = True
     return policy
 
 
 @contextmanager
-def informative_text_scope(enabled: bool) -> Iterator[None]:
+def informative_text_scope(enabled: bool, *, shapes: bool = False) -> Iterator[None]:
     token = _ACTIVE.set(bool(enabled))
+    shapes_token = _SHAPES.set(bool(enabled) and bool(shapes))
     try:
         yield
     finally:
+        _SHAPES.reset(shapes_token)
         _ACTIVE.reset(token)
 
 
 def informative_text_active() -> bool:
     return _ACTIVE.get()
+
+
+def informative_shapes_active() -> bool:
+    return _SHAPES.get()
 
 
 def informative_role(row: dict) -> str | None:
@@ -88,6 +112,10 @@ def informative_role(row: dict) -> str | None:
     if isinstance(source.get("research"), dict):
         return RESEARCH_ROLE
     return None
+
+
+def creator_fields(row: dict) -> set[str]:
+    return set((row.get("source_params") or {}).get(CREATOR_FIELDS_KEY) or [])
 
 
 def authored_fields(row: dict) -> set[str]:

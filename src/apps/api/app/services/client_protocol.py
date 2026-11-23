@@ -104,6 +104,12 @@ SPEECH_DUCK_PROTOCOL = 53
 
 CLIP_ORDER_CARD_PROTOCOL = 54
 
+# KRI-1581: the first build that decodes and draws a text layer's `scrim` and `srgb_blend`, and
+# whose editor reads a row's `shadow_blur`, `shadow_offset_y`, `scrim` and `text_language` (the
+# `textDesigns` capability). An older build would refuse the recipe, or redraw the design with the
+# standard shadow in its editor.
+INFORMATIVE_TEXT_DESIGNS_PROTOCOL = 55
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

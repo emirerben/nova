@@ -14,7 +14,13 @@ from functools import lru_cache
 from typing import Any
 
 from app.pipeline.canvas import PORTRAIT, Canvas
-from app.pipeline.informative_text import authored_fields, informative_role, informative_text_scope
+from app.pipeline.informative_text import (
+    authored_fields,
+    creator_fields,
+    informative_role,
+    informative_shapes_active,
+    informative_text_scope,
+)
 from app.schemas.phone_text_style import (
     CAPTION_PREFERRED_FONT,
     CURATED_PHONE_FONTS,
@@ -176,7 +182,9 @@ def drawable_family(family: str | None, texts, excluded=()) -> str | None:
 def displayed_text(row: dict) -> str:
     from app.agents._schemas.text_element import apply_text_case
 
-    return apply_text_case(str(row.get("text") or ""), row.get("text_case"))
+    return apply_text_case(
+        str(row.get("text") or ""), row.get("text_case"), row.get("text_language")
+    )
 
 
 def cursor_text(row: dict) -> str:
@@ -531,6 +539,31 @@ def _place_connected_stacks(rows, rules, obstacles_for, canvas, requested=None):
     return fitted
 
 
+def _designed_fact(row: dict) -> bool:
+    """KRI-1581: a research row in a chosen design is laid out with its pair as one block."""
+    from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM
+
+    return (
+        informative_shapes_active()
+        and text_role(row) == "research"
+        and bool((row.get("source_params") or {}).get(STACK_LAYOUT_PARAM))
+    )
+
+
+def _scrimmed_stacks(rows) -> set[str]:
+    """Stack ids whose block carries a scrim (KRI-1581 puts it on the pair's first row)."""
+    from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM
+
+    return {
+        str(stack["stack_id"])
+        for row in rows
+        if isinstance(row.get("scrim"), dict)
+        and (stack := (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM) or {}).get(
+            "stack_id"
+        )
+    }
+
+
 def _restore(rows, snapshot) -> None:
     for row, kept in zip(rows, snapshot, strict=True):
         row.clear()
@@ -575,7 +608,11 @@ def _lay_out_stacks(rows, rules, obstacles_for, canvas, wanted_for):
         if not authored_position:
             for row in members:
                 authored = authored_fields(row)
-                if "size_px" in authored:
+                # KRI-1581: a design's size is a default the block may shrink from to fit; only
+                # her own size stays fixed.
+                if "size_px" in authored and not (
+                    _designed_fact(row) and "size_px" not in creator_fields(row)
+                ):
                     row["source_params"][STACK_LAYOUT_PARAM]["explicit_size"] = True
                 row["text"] = row["source_params"][STACK_LAYOUT_PARAM].get(
                     "authored_text", row["text"]
@@ -587,7 +624,14 @@ def _lay_out_stacks(rows, rules, obstacles_for, canvas, wanted_for):
                     row["x_frac"] = min(float(row["x_frac"]), 0.82)
             before_layout = deepcopy(members)
             laid_out = False
-            for safe_top, safe_bottom in ((0.102, 0.78), (0.02, 0.98)):
+            # KRI-1581: a design anchors its facts' bottom edge; the usual bands stay the fallback.
+            anchored = [
+                float(row["source_params"][STACK_LAYOUT_PARAM]["bottom_frac"])
+                for row in members
+                if row["source_params"][STACK_LAYOUT_PARAM].get("bottom_frac") is not None
+            ]
+            bands = ((0.102, min(anchored)),) if anchored else ()
+            for safe_top, safe_bottom in (*bands, (0.102, 0.78), (0.02, 0.98)):
                 try:
                     layout_corner_stack(
                         members,
@@ -1128,16 +1172,17 @@ def resolve_phone_text_style(
     background_frames: list | None = None,
     canvas: Canvas = PORTRAIT,
     informative: bool | None = None,
+    shapes: bool | None = None,
 ) -> list[dict]:
     """Resolve each row's font, outline, shadow, colour and spot.
 
     A field a row records as creator- or design-authored (`informative_text.authored_fields`)
     keeps the row's value; every other field follows the saved preference, then this turn's
-    request, then the automatic pick. ``informative`` is the job's KRI-1585 stamp; None keeps
-    the scope the caller opened.
+    request, then the automatic pick. ``informative`` is the job's KRI-1585 stamp and ``shapes``
+    its KRI-1581 design stamp; None keeps the scope the caller opened.
     """
     if informative is not None:
-        with informative_text_scope(informative):
+        with informative_text_scope(informative, shapes=bool(shapes)):
             return resolve_phone_text_style(
                 rows,
                 preferences=preferences,
@@ -1159,6 +1204,10 @@ def resolve_phone_text_style(
                 canvas=canvas,
             )
     rows = deepcopy(rows)
+    if informative_shapes_active():
+        from app.pipeline.text_designs import apply_text_design
+
+        apply_text_design(rows)
     original_rows = deepcopy(rows)
     relaxed_before = len(_MEASUREMENTS.get().get("relaxed", []))
     preferences, requested, selected_fonts = (
@@ -1262,7 +1311,7 @@ def resolve_phone_text_style(
             ),
         ]
 
-    fixed = [row for row in rows if text_role(row) not in TITLE_LIKE_ROLES]
+    fixed = [row for row in rows if text_role(row) not in TITLE_LIKE_ROLES or _designed_fact(row)]
     fitted = _place_connected_stacks(fixed, rules, obstacles_for, canvas, requested)
     for row in fixed:
         if (row.get("source_params") or {}).get("text_stack_v1"):
@@ -1286,7 +1335,7 @@ def resolve_phone_text_style(
     placed: list[dict] = []
     for row in rows:
         role = text_role(row)
-        if role in TITLE_LIKE_ROLES:
+        if role in TITLE_LIKE_ROLES and not _designed_fact(row):
             occupied = [
                 Obstacle(animation_box(other, measure_box(other, canvas), canvas), "text")
                 for other in [*fixed, *placed]
@@ -1303,9 +1352,25 @@ def resolve_phone_text_style(
             placed.append(row)
     from app.pipeline.phone_text_background import automatic_fill
 
+    scrimmed = _scrimmed_stacks(rows)
     for row in rows:
         authored = authored_fields(row)
         frames = [frame for frame in background_frames or [] if _same_window(row, frame)]
+        if informative_role(row) is not None:
+            from app.pipeline.phone_title_legibility import settle_informative_text
+            from app.pipeline.text_stack_layout import STACK_LAYOUT_PARAM
+
+            stack = (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM) or {}
+            settle_informative_text(
+                row,
+                frames,
+                wanted=rules[text_role(row)],
+                asked=effective_text_rule({}, requested, text_role(row)),
+                canvas=canvas,
+                shapes=informative_shapes_active(),
+                scrimmed=isinstance(row.get("scrim"), dict) or stack.get("stack_id") in scrimmed,
+            )
+            continue
         if frames and "color" not in rules[text_role(row)] and "color" not in authored:
             row["color"], _score = automatic_fill(measure_box(row, canvas), frames)
     from app.services.pipeline_trace import record_pipeline_event
