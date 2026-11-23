@@ -131,6 +131,7 @@ from app.services.length_policy import (
 )
 from app.services.order_mode import order_mode, seeded_permutation, unstated_order_default_on
 from app.services.phone_noise_reduction import engine_noise_reduction_available
+from app.services.sfx_capability import FORMAT_LIMIT_LINES as _SFX_FORMAT_LIMIT_LINES
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
 
@@ -7448,6 +7449,10 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     Talking or Voiceover render with no receipt had no ask to serve. A draft promises the
     effects while the writer's gate is open and names the gate when it is not. Any other
     format has no way to judge it here (neutral, as before).
+
+    Only a worker writes the receipt, so one present is read on every writer (KRI-1598): the
+    montage with a voiceover and the speech-cut writers set neither rendered flag, and their
+    receipts were never read.
     """
     from app.services.sfx_capability import (  # noqa: PLC0415
         guided_sfx_limit,
@@ -7458,7 +7463,7 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
     choice = facts.sfx_choice
-    if (facts.rendered_variant or facts.rendered_montage) and choice is not None:
+    if choice is not None:
         placed = choice.get("placed")
         if isinstance(placed, list) and placed:
             return _receipt(req, "met", _sfx_placed(len(placed)), stage="checked")
@@ -8600,12 +8605,19 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     *_MUSIC_MISSING,
     # KRI-1561: that a finished video has no sound effects is the writer's, not a simpler plan.
     _SFX_NOT_PLACED,
+    # KRI-1598: why the chooser placed none (a closed gate, an old app, no catalogue, the footage)
+    # is the format's too (`sfx_capability.FORMAT_LIMIT_LINES`; "you asked for none" is not).
+    *(en for en, _tr in _SFX_FORMAT_LIMIT_LINES),
     _VOICEOVER_SPOKEN_TEXT_PLAN,
     # KRI-1465: that a Voiceover edit always captions is the format's, never a simpler plan.
     _NARRATED_CAPTIONS_PLAN,
     *_SB_FORMAT_LIMITS,
 )
-_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = reasons_in_every_language(_FORMAT_LIMIT_EN)
+_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
+    *reasons_in_every_language(_FORMAT_LIMIT_EN),
+    # Their Turkish is `limit_line`'s own `tr=` text, not a `_REASON_TR` twin.
+    *(tr for _en, tr in _SFX_FORMAT_LIMIT_LINES),
+)
 
 
 def is_format_limit(reason: str | None) -> bool:

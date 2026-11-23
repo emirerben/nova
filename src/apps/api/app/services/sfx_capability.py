@@ -88,46 +88,68 @@ def voiceover_sfx_limit() -> SfxLimit | None:
     )
 
 
+# The creator sentence for each limit, English and Turkish (German: `copy/de.json`, keyed by the
+# English). Module constants so the judge can register them (`brief_checks.is_format_limit`).
+FLAG_OFF_EN = "Sound effects are switched off right now, so none will be played"
+FLAG_OFF_TR = "Ses efektleri şu an kapalı, o yüzden hiçbiri çalmayacak"
+FEATURE_UNVERIFIED_EN = (
+    "This version of the app can't play sound effects yet, so none will be played"
+)
+FEATURE_UNVERIFIED_TR = (
+    "Uygulamanın bu sürümü henüz ses efekti çalamıyor, o yüzden hiçbiri çalmayacak"
+)
+FORMAT_UNSUPPORTED_EN = "I can't add sound effects on this video yet, so none will be played"
+FORMAT_UNSUPPORTED_TR = "Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak"
+EMPTY_CATALOG_EN = "There are no sound effects to choose from right now, so I added none"
+EMPTY_CATALOG_TR = "Şu an seçilebilecek ses efekti yok, o yüzden hiçbirini eklemedim"
+MULTI_SPEAKER_EN = "Sound effects need one speaker in the video, so I added none"
+MULTI_SPEAKER_TR = "Ses efektleri videoda tek konuşmacı gerektiriyor, o yüzden hiçbirini eklemedim"
+NO_TIMED_EVIDENCE_EN = (
+    "I couldn't find a spoken word or a clear moment to put sound effects on, so I added none"
+)
+NO_TIMED_EVIDENCE_TR = (
+    "Ses efektlerini koyacak bir söz ya da net bir an bulamadım, o yüzden hiçbirini eklemedim"
+)
+CREATOR_SAID_NO_EN = "You asked for no sound effects, so I added none"
+CREATOR_SAID_NO_TR = "Ses efekti istemedin, o yüzden hiçbirini eklemedim"
+NAMED_EFFECT_EN = "You named a sound effect, so I played that one and added no others"
+NAMED_EFFECT_TR = "Bir ses efekti söyledin, o yüzden onu çaldım ve başka efekt eklemedim"
+NOTHING_FIT_EN = "Nothing in this video clearly called for a sound effect, so I added none"
+NOTHING_FIT_TR = "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
+
+# KRI-1598: the limits that are the writer's, the app's or the footage's, never a simpler plan
+# the creator could choose instead, as (english, turkish). The judge registers them as format
+# limits, so a draft that cannot place effects says "Couldn't: <line>" and goes ahead instead of
+# being held behind "Should I make a simpler version?". `creator_said_no` is left out: it is the
+# creator's own choice, not a limit (the `_SB_NO_MEDIA` precedent in `brief_checks`).
+FORMAT_LIMIT_LINES: tuple[tuple[str, str], ...] = (
+    (FLAG_OFF_EN, FLAG_OFF_TR),
+    (FEATURE_UNVERIFIED_EN, FEATURE_UNVERIFIED_TR),
+    (FORMAT_UNSUPPORTED_EN, FORMAT_UNSUPPORTED_TR),
+    (EMPTY_CATALOG_EN, EMPTY_CATALOG_TR),
+    (MULTI_SPEAKER_EN, MULTI_SPEAKER_TR),
+    (NO_TIMED_EVIDENCE_EN, NO_TIMED_EVIDENCE_TR),
+    (NAMED_EFFECT_EN, NAMED_EFFECT_TR),
+    (NOTHING_FIT_EN, NOTHING_FIT_TR),
+)
+
+
 def limit_line(limit: SfxLimit) -> str:
     """The creator sentence for a limit, in the chat's language."""
     if limit is SfxLimit.flag_off:
-        return say(
-            en="Sound effects are switched off right now, so none will be played",
-            tr="Ses efektleri şu an kapalı, o yüzden hiçbiri çalmayacak",
-        )
+        return say(en=FLAG_OFF_EN, tr=FLAG_OFF_TR)
     if limit is SfxLimit.feature_unverified:
-        return say(
-            en="This version of the app can't play sound effects yet, so none will be played",
-            tr="Uygulamanın bu sürümü henüz ses efekti çalamıyor, o yüzden hiçbiri çalmayacak",
-        )
+        return say(en=FEATURE_UNVERIFIED_EN, tr=FEATURE_UNVERIFIED_TR)
     if limit is SfxLimit.format_unsupported:
-        return say(
-            en="I can't add sound effects on this video yet, so none will be played",
-            tr="Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak",
-        )
+        return say(en=FORMAT_UNSUPPORTED_EN, tr=FORMAT_UNSUPPORTED_TR)
     if limit is SfxLimit.empty_catalog:
-        return say(
-            en="There are no sound effects to choose from right now, so I added none",
-            tr="Şu an seçilebilecek ses efekti yok, o yüzden hiçbirini eklemedim",
-        )
+        return say(en=EMPTY_CATALOG_EN, tr=EMPTY_CATALOG_TR)
     if limit is SfxLimit.multi_speaker:
-        return say(
-            en="Sound effects need one speaker in the video, so I added none",
-            tr="Ses efektleri videoda tek konuşmacı gerektiriyor, o yüzden hiçbirini eklemedim",
-        )
+        return say(en=MULTI_SPEAKER_EN, tr=MULTI_SPEAKER_TR)
     if limit is SfxLimit.no_timed_evidence:
-        return say(
-            en="I couldn't find a spoken word or a clear moment to put sound effects on, "
-            "so I added none",
-            tr="Ses efektlerini koyacak bir söz ya da net bir an bulamadım, o yüzden "
-            "hiçbirini eklemedim",
-        )
+        return say(en=NO_TIMED_EVIDENCE_EN, tr=NO_TIMED_EVIDENCE_TR)
     if limit is SfxLimit.creator_said_no:
-        return say(
-            en="You asked for no sound effects, so I added none",
-            tr="Ses efekti istemedin, o yüzden hiçbirini eklemedim",
-        )
-    return say(
-        en="Nothing in this video clearly called for a sound effect, so I added none",
-        tr="Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim",
-    )
+        return say(en=CREATOR_SAID_NO_EN, tr=CREATOR_SAID_NO_TR)
+    if limit is SfxLimit.named_effect:
+        return say(en=NAMED_EFFECT_EN, tr=NAMED_EFFECT_TR)
+    return say(en=NOTHING_FIT_EN, tr=NOTHING_FIT_TR)
