@@ -153,6 +153,13 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "text, and every strategy/manifest/contract check still runs",
         frozenset({"readiness_reply", "assess_readiness", "assess_saved_document"}),
     ),
+    "kria/ask_ledger.py": (
+        "plan_time",
+        "KRI-1563 no-op reply wording: quotes each stated requirement back beside its "
+        "done/declined/your-call state, which code already decided; it runs on the draft "
+        "before any render and decides nothing",
+        frozenset({"no_op_reply"}),
+    ),
     "kria/editor_receipts.py": (
         "plan_time",
         "editor-turn receipt wording: quotes the turn's stated requirement back beside what "
