@@ -1167,7 +1167,7 @@ class Settings(BaseSettings):
     # set SPEAKER_SECTIONS_ENABLED=true --app nova-video` + restart (api + worker); rollback =
     # `...=false` + restart. Design: docs/reviews/kri-1558-section-layout-failure-modes.md.
     speaker_sections_enabled: bool = False
-    speaker_sections_min_client_protocol: int = 55
+    speaker_sections_min_client_protocol: int = 56
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on
@@ -1287,6 +1287,12 @@ class Settings(BaseSettings):
     # secret TALKING_MUSIC_ENABLED=true (api + worker) + restart. Rollback: the flag false +
     # restart; a later Save of a Talking edit then drops its bed.
     talking_music_enabled: bool = False
+    # KRI-1578: may a phone Talking edit get a song from the music LIBRARY (the matcher's pick for
+    # a first-request music ask, chat's add/swap candidates)? Default off: the creator's own
+    # uploaded song is the only new song, and a music ask without an upload is answered "send me
+    # the song". A library song already on a variant keeps playing either way. Apply: fly secret
+    # TALKING_LIBRARY_MUSIC_ENABLED=true (api + worker) + restart; rollback the flag false.
+    talking_library_music_enabled: bool = False
     # KRI-1384: chat "undo that" is offered only to app builds declaring
     # `X-Kria-Client-Protocol` >= this. An older editor keeps a staged chat lane that a newer
     # draft head puts back to the saved value, so its undo would say done and change nothing.

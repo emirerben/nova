@@ -415,6 +415,6 @@ import KriaMediaEngine
     }
 
     func testTheProtocolDeclaresTheSectionsBuild() {
-        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 55, "55 = plays layout sections and a split take as one shot")
+        XCTAssertGreaterThanOrEqual(KriaClientProtocolContract.version, 56, "56 = plays layout sections and a split take as one shot")
     }
 }

@@ -28,6 +28,7 @@ render ready (observer)
 | Transport | `agents/_openai_vision.py`, `services/bounded_media_review.py` | Frames as `input_image`, `store=False`, no retries, cost reserved before a frame leaves the process. The text adapter still rejects media. |
 | Catalog | `kria/intent_review_catalog.py` | Issues at most 12 requirements (audio is never issued) and the candidates a repair may use, each only when an authority other than the draft disagrees with the draft. |
 | Judgment | `kria/intent_review_disposition.py` | Any contract violation voids the whole review (`unavailable(invalid_output)`). Otherwise: repair, question, suggestion or no findings. |
+| Legibility (KRI-1583) | `render_review_context.py`, `agents/intent_review.py` | A job stamped for informative text designs marks its packet `text_legibility`. Only then does the prompt (`intent_review_v4`) and schema offer `text_illegible` for text, text-sequence and style asks; it has no repair candidate, so it is a suggestion. Unstamped reviews send v3 byte for byte. |
 | Repair | `kria/intent_review_repair.py`, `services/intent_review_repair_flow.py` | Compiled through the ordinary draft turn; `verify_intent_repair` refuses any change beyond the named fields. |
 | Wording | `kria/intent_review_copy.py` | Every sentence through `say(en=, tr=)`. The honesty key: no "checked" sentence without `visual_input_received`. |
 | Composition | `kria/intent_review_posts.py` | Pure: a stored review becomes the events the chat gets, or raises `UncheckedReview` and says nothing. |

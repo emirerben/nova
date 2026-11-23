@@ -2,7 +2,7 @@
 
 Real boundaries: the worker runs end to end on the subtitled harness (ingest, transcription
 and device pin faked), the real compiler builds the recipe. Only the two I/O edges are stood
-in: the persisted treatment read (`_persisted_music_treatment`) and the catalog pin.
+in: the persisted variant read (`_persisted_variant`) and the catalog pin.
 
 Failure modes: F2 a bed without a persisted treatment (KRI-20); F11 windows from the
 transcript, not the captions; F14 a render that forgets the speech windows or the creator's
@@ -53,7 +53,11 @@ def _run(monkeypatch, *, flag: bool, treatment: dict | None):
         "phone_render_verified_features",
         [*gb.settings.phone_render_verified_features, "musicBed", "speechDuck"],
     )
-    monkeypatch.setattr(gb, "_persisted_music_treatment", lambda **_: treatment)
+    monkeypatch.setattr(
+        gb,
+        "_persisted_variant",
+        lambda **_: {"smart_music_treatment": treatment} if treatment else None,
+    )
     monkeypatch.setattr(gb, "_pin_catalog_music", _pin)
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device"
@@ -105,7 +109,7 @@ def test_a_section_too_short_for_the_video_is_refused_never_cut_short(monkeypatc
         [*gb.settings.phone_render_verified_features, "musicBed", "speechDuck"],
     )
     short = {**TREATMENT, "section_start_s": 10.0, "section_end_s": 10.05}
-    monkeypatch.setattr(gb, "_persisted_music_treatment", lambda **_: short)
+    monkeypatch.setattr(gb, "_persisted_variant", lambda **_: {"smart_music_treatment": short})
     monkeypatch.setattr(gb, "_pin_catalog_music", _pin)
     gb._run_generative_job(str(job.id))
     assert job.status != "awaiting_device"

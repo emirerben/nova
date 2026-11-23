@@ -1048,8 +1048,11 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     if on_device and isinstance(caps.get("user_song"), dict):
         from app.agents.editor_ops_v2.user_song import song_state  # noqa: PLC0415
 
-        # KRI-1394: the creator's own song, where the editor's Sounds tab offers it.
-        if song_state(job, variant) is not None:
+        # KRI-1394: the creator's own song, where the editor's Sounds tab offers it. KRI-1578: on
+        # a Talking edit only for a sending build that ducks it under her voice (protocol 53).
+        if song_state(job, variant) is not None and (
+            not _talking_song_variant(variant) or talking_song_open(job, variant)
+        ):
             families.append("user_song")
     if talking_song_open(job, variant):
         families.extend(("music", "music_library"))
@@ -1061,19 +1064,23 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
 
 
 def talking_song_open(job: Any, variant: dict[str, Any]) -> bool:
-    """KRI-1562: may chat add, swap or remove the library song on this phone Talking edit?
+    """KRI-1562: may chat talk about the song on this phone Talking edit?
 
-    The editor capability its Save compiles (`background_music`, open only on a subtitled-path
-    Talking edit with the rollout on) and an app build that ducks the song under speech: a
-    chat turn's worker sees the sending build, never a request (`bind_sending_build`).
+    A subtitled-path Talking edit (its Save compiles the song) with the rollout on, and an app
+    build that ducks the song under speech: a chat turn's worker sees the sending build, never a
+    request (`bind_sending_build`). KRI-1578: open even while the library is closed to new
+    songs, so a music ask is answered "send me the song" (`library_closed`) instead of nothing.
     """
+    from app.routes.generative_jobs import (  # noqa: PLC0415
+        _phone_subtitled_editor_lanes_available,
+    )
     from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
 
     return bool(
         variant.get("render_destination") == "device"
         and is_phone_subtitled_editor_variant(variant)
         and variant.get("editor_timeline_mode") != "authored"
-        and _editor_capabilities(job, variant).get("background_music") is True
+        and _phone_subtitled_editor_lanes_available(job, variant)
         and talking_music_supported(require_client=True)
     )
 
@@ -1081,7 +1088,7 @@ def talking_song_open(job: Any, variant: dict[str, Any]) -> bool:
 def _talking_song_snapshot(variant: dict[str, Any], clip_context: dict[str, Any]) -> dict:
     """The MUSIC block of a phone Talking edit: its song (the stored treatment, never
     ``music_track_id``) and the library songs chat may pick, none while "no music" holds."""
-    from app.services.talking_music import CANDIDATE_LIMIT  # noqa: PLC0415
+    from app.services.talking_music import CANDIDATE_LIMIT, talking_song  # noqa: PLC0415
 
     treatment = variant.get("smart_music_treatment")
     current = treatment.get("track_id") if isinstance(treatment, dict) else None
@@ -1094,13 +1101,16 @@ def _talking_song_snapshot(variant: dict[str, Any], clip_context: dict[str, Any]
     )
     return {
         "swappable": bool(candidates),
-        "removable": current is not None,
+        # KRI-1578: "no music" also takes her own song off (`_op_remove_music`).
+        "removable": current is not None or talking_song(variant) is not None,
         "current_track_id": current,
         "current_track_title": next(
             (row.get("title") for row in candidates if row.get("id") == current), None
         ),
         "candidates": candidates,
         **({"no_music": True} if no_music else {}),
+        # KRI-1578: the planner read no library: a new song is the creator's upload.
+        **({"library_closed": True} if clip_context.get("music_library_closed") is True else {}),
     }
 
 
@@ -1338,7 +1348,7 @@ def background_sections_open(job: Any, variant: dict[str, Any]) -> bool:
     """May chat lay the speaker out per section (KRI-1558)?
 
     The windows lane is open AND the sections gate holds (flag, ``speakerSections`` verified, a
-    protocol 55 build: `speaker_sections_unavailable_reason`, same worker-side client rule). False
+    protocol 56 build: `speaker_sections_unavailable_reason`, same worker-side client rule). False
     adds nothing to the snapshot or the prompt, so a closed gate is byte-identical to before.
     """
     if not background_windows_open(job, variant):
@@ -2166,6 +2176,12 @@ def build_editor_snapshot(
             # via clip_context; empty => add_sfx fails closed in the parser.
             "catalog": list(clip_context.get("sfx_catalog") or []),
         }
+        if clip_context.get("no_sound_effects") is True:
+            # KRI-1561: the creator's "no sound effects" holds until they withdraw it: nothing to
+            # add from, so the copilot adds none (`add_sfx` is refused in the parser); the pins
+            # already placed can still be patched or removed.
+            snapshot["sfx"]["catalog"] = []
+            snapshot["sfx"]["no_sound_effects"] = True
     if "overlay" in snapshot["allowed_op_families"]:
         snapshot["overlays"] = _overlay_snapshot(
             variant,
@@ -2182,6 +2198,17 @@ def build_editor_snapshot(
         song = user_song_snapshot(job, variant, caps)
         if song is not None:
             snapshot["user_song"] = song
+    addable = (clip_context or {}).get("uploaded_song")
+    if (
+        isinstance(addable, dict)
+        and "music_library" in snapshot["allowed_op_families"]
+        and "user_song" not in snapshot
+    ):
+        from app.agents.editor_ops_v2.user_song import addable_song_snapshot  # noqa: PLC0415
+
+        # KRI-1578: her upload, not on this Talking edit yet; set_user_song puts it on.
+        snapshot["allowed_op_families"] = sorted({*snapshot["allowed_op_families"], "user_song"})
+        snapshot["user_song"] = addable_song_snapshot(addable)
     if "overlay" in families or "visual_media" in families:
         from app.agents.editor_ops_v2.layer_order import layer_order_snapshot  # noqa: PLC0415
 
@@ -3665,6 +3692,16 @@ def _talking_song_variant(variant: dict[str, Any]) -> bool:
 
 def _op_remove_music(state: _DraftState, op: dict[str, Any]) -> None:
     if _talking_song_variant(state.variant):
+        from app.services.talking_music import talking_song  # noqa: PLC0415
+
+        if talking_song(state.variant) is not None:
+            # KRI-1578: "no music" over her own song takes that song off, never just a library
+            # bed that is not playing.
+            state.user_song = {"removed": True}
+            state.changed.add("user_song")
+            state.summary = "Removed your song"
+            if not isinstance(state.variant.get("smart_music_treatment"), dict):
+                return
         state.background_track_id = None
         state.song_changed = True
     else:

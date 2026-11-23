@@ -153,6 +153,7 @@ from app.services.phone_text_styling import (
     generation_style_fields,
     generation_style_rows,
     phone_text_generation,
+    register_generation_footage,
 )
 from app.services.single_hero_policy import (
     _SINGLE_HERO_MAX_SUPPORTING_CLIPS,
@@ -5189,6 +5190,75 @@ def _run_phone_guided_job(
                     reason="compile_dropped",
                 )
                 timed_cards = ()
+    # KRI-1561: the creator's general sound-effect ask on a montage with no voiceover. The first
+    # compile fixed the real length; the effects are chosen from the clips' own moments (a montage
+    # has no speech), then the plan compiles once more with them. A refusal renders the plain
+    # compile and says so on the receipt, never a failed job. Kept off the canonical plan: only
+    # this variant's private plan carries the rows, so the approved plan stays as approved.
+    sfx_choice_receipt: dict | None = None
+    sfx_rows: list[dict] = []
+    if plan.narration is None and not plan.editor_sound_effects and not plan.licensed_sfx_intent:
+        from app.services.phone_sfx_choice import read_sfx_ask  # noqa: PLC0415
+
+        if read_sfx_ask(creator_strategy) is not None:
+            from app.pipeline.guided_story import validate_guided_snapshot  # noqa: PLC0415
+            from app.services.explicit_sfx import trusted_visual_moments  # noqa: PLC0415
+            from app.services.sfx_capability import guided_sfx_limit  # noqa: PLC0415
+
+            lane_drops: list[dict] = []
+            chosen, sfx_choice_receipt = _phone_choose_sound_effects(
+                job_id,
+                strategy=creator_strategy,
+                limit=guided_sfx_limit(),
+                words=None,
+                duration_s=float(recipe.duration),
+                taken_at_s=[],
+                lane_drops=lane_drops,
+                snapshot=snapshot,
+                moments=trusted_visual_moments(
+                    validate_guided_snapshot(guided)[2], list(raw_plan["story_timeline"])
+                ),
+            )
+            if chosen:
+                names = {row["id"]: row.get("name") for row in sfx_choice_receipt["placed"]}
+                sfx_rows = _guided_ask_sfx_rows(chosen, names)
+                trial_plan = GuidedStoryExecutionPlan.model_validate(
+                    {**raw_plan, "editor_sound_effects": sfx_rows}
+                )
+                try:
+                    with _worker_reply_language(snapshot):
+                        trial = compile_phone_guided_repaired(
+                            trial_plan,
+                            bindings,
+                            contract=contract,
+                            visuals=visuals,
+                            narration=narration_bed,
+                            song=song_bed,
+                            sound_effects=tuple(chosen),
+                            landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                            **(
+                                {"timed_cards": timed_cards, "allow_editor_media": True}
+                                if timed_cards
+                                else {}
+                            ),
+                        )
+                    validate_phone_pilot_recipe(trial.recipe, allow_editor_media=bool(timed_cards))
+                except (UnsupportedPhonePlan, ValueError) as exc:
+                    log.warning("phone_guided_sfx.compile_dropped", job_id=job_id, error=str(exc))
+                    from app.services.phone_sfx_choice import demote_receipt  # noqa: PLC0415
+
+                    sfx_choice_receipt = demote_receipt(
+                        sfx_choice_receipt, [row["id"] for row in sfx_rows]
+                    )
+                    sfx_rows = []
+                else:
+                    raw_plan, plan, compiled = (
+                        {**raw_plan, "editor_sound_effects": sfx_rows},
+                        trial_plan,
+                        trial,
+                    )
+                    recipe, repair_notes = compiled.recipe, list(compiled.notes)
+                    sound_effects = tuple(chosen)
     # KRI-942: the creator's "clip sound off / on" asks, built on the compiled clock like the
     # cards above. A candidate the compile, the pilot check or the contract's camera-audio
     # promise refuses steps down to the next; the last one is the plan as it was.
@@ -5284,7 +5354,7 @@ def _run_phone_guided_job(
     # and (KRI-1027) their vertical framing.
     repaired_plan_payload = (
         copy.deepcopy(raw_plan)
-        if current_phone_text_policy() or toggle_changed or framing_changed
+        if current_phone_text_policy() or toggle_changed or framing_changed or sfx_rows
         else None
     )
     if compiled.plan is not plan:
@@ -5373,6 +5443,11 @@ def _run_phone_guided_job(
             current["variants"][0]["sound_effects"] = copy.deepcopy(
                 raw_plan["editor_sound_effects"]
             )
+        if sfx_choice_receipt is not None:
+            from app.services.phone_sfx_choice import RECEIPT_FIELD as SFX_CHOICE_FIELD  # noqa: PLC0415
+
+            # KRI-1561: what the general sound-effect ask got on this montage, and why not.
+            current["variants"][0][SFX_CHOICE_FIELD] = sfx_choice_receipt
         if repair_notes:
             # Creator-visible (job projection -> render_notes): what Kria changed so
             # the plan could render on the phone (KRI-129: never a silent override).
@@ -5469,16 +5544,16 @@ def _resolve_phone_music_bed(decision: GenerativeVariantDecision) -> Any:
     needed). Raises `UnsupportedPhonePlan` when the track can no longer be
     published/served (`_pin_catalog_music`).
     """
-    from app.pipeline.phone_recipe_shared import PhoneMusicBed  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import LibraryMusicSource, PhoneMusicBed  # noqa: PLC0415
 
     track_id = decision.music_track_id
     if not track_id:
         return None
     asset, duration_s = _pin_catalog_music(track_id)
     return PhoneMusicBed(
-        catalog_id=track_id,
-        generation=asset.generation,
-        fingerprint=asset.fingerprint,
+        source=LibraryMusicSource(
+            catalog_id=track_id, generation=asset.generation, fingerprint=asset.fingerprint
+        ),
         duration_s=duration_s,
         start_s=float(decision.music_start_s or 0.0),
         # `_mix_template_audio`'s song-variant path uses `audio_gain=1.0`
@@ -5494,6 +5569,19 @@ def _talking_speech_source_windows(speakers: Sequence[tuple[Any, Sequence[Any]]]
     return {binding.media_id: speech_spans_from_words(words) for binding, words in speakers}
 
 
+@dataclass(frozen=True)
+class _TalkingMusic:
+    """What a phone Talking render plays under the talk, and what the variant keeps of it."""
+
+    bed: Any = None
+    # The library song the bed plays (`smart_music_treatment`), None for the creator's own.
+    treatment: dict[str, Any] | None = None
+    # The answer to a typed music ask (`talking_music.RECEIPT_FIELD`), None when none was asked.
+    receipt: dict[str, Any] | None = None
+    # The variant's `talking_song` (the creator's song choices, or her removal), None: no record.
+    song_record: dict[str, Any] | None = None
+
+
 def _talking_music_bed(
     job_id: str,
     *,
@@ -5501,14 +5589,16 @@ def _talking_music_bed(
     client_protocol: int | None,
     spoken_text: str,
     take_s: float,
-) -> tuple[Any, dict[str, Any] | None, dict[str, Any] | None]:
-    """KRI-1562: ``(PhoneMusicBed, treatment, receipt)`` for a phone Talking render.
+) -> _TalkingMusic:
+    """KRI-1562 / KRI-1578: the song under a phone Talking render.
 
-    The song comes from the creator: one already on the variant (chosen in the editor or in
-    chat), else, for the approved brief's typed music ask, the library song the matcher picks
-    for the talk (KRI-20: never unasked). A live "no music" in that brief plays none, whatever is
-    stored. ``receipt`` (`talking_music.RECEIPT_FIELD`) answers a music ask: whether a song plays,
-    or why not. A song that can no longer be served is dropped (traced), never failing the talk.
+    The creator's own uploaded song plays (`talking_music.talking_bed_choice`): with the choices
+    she made on this variant, from its start at the Talking level on a first render. Else a
+    library song already stored on the variant (chosen before KRI-1578). Else, for the approved
+    brief's typed music ask, the library song the matcher picks, only while
+    ``TALKING_LIBRARY_MUSIC_ENABLED``; closed, the ask is answered ``no_upload`` ("send me the
+    song"). KRI-20: never unasked. A live "no music" plays none, whatever is stored or uploaded.
+    A song that can no longer be served is dropped (traced), never failing the talk.
     """
     from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
     from app.kria.draft_sound_carry import asks_music, asks_no_music  # noqa: PLC0415
@@ -5522,21 +5612,60 @@ def _talking_music_bed(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     if not talking_music_supported(require_client=False):
-        return None, None, None
+        return _TalkingMusic()
     try:
         brief = BriefBinding.model_validate(snapshot.get("creator_brief_binding")).resolve()
     except (ValueError, TypeError):
         brief = None
+    stored = _persisted_variant(job_id=job_id, variant_id="subtitled") or {}
+    removed = (
+        {talking_music.TALKING_SONG_FIELD: {"removed": True}}
+        if talking_music.talking_song_removed(stored)
+        else {}
+    )
+    song_record = removed.get(talking_music.TALKING_SONG_FIELD)
     if asks_no_music(brief):
-        return None, None, None
+        return _TalkingMusic(song_record=song_record)
     ask = asks_music(brief)
 
-    def missing(reason: str) -> tuple[None, None, dict[str, Any] | None]:
+    def missing(reason: str, *, own_song: bool = False) -> _TalkingMusic:
+        # Her own song left out is recorded even unasked: she uploaded it for this edit.
         receipt = {"status": talking_music.NOT_PLAYED, "reason": reason}
-        return None, None, receipt if ask is not None else None
+        if own_song:
+            receipt["source"] = talking_music.SOURCE_CREATOR_SONG
+        return _TalkingMusic(
+            receipt=receipt if ask is not None or own_song else None, song_record=song_record
+        )
 
-    treatment = _persisted_music_treatment(job_id=job_id, variant_id="subtitled")
+    uploaded = _job_uploaded_song(job_id)
+    choice = talking_music.talking_bed_choice(stored, uploaded, no_music=False, adopt=True)
+    if choice.song is not None:
+        if not speech_duck_planned_for(client_protocol):
+            record_pipeline_event(
+                "phone",
+                "talking_music_dropped",
+                {"source": "creator_song", "reason": talking_music.APP_TOO_OLD},
+            )
+            return missing(talking_music.APP_TOO_OLD, own_song=True)
+        try:
+            bed = _creator_song_bed(choice.song, uploaded)
+        except (UnsupportedPhonePlan, ValueError, FileNotFoundError) as exc:
+            record_pipeline_event(
+                "phone",
+                "talking_music_dropped",
+                {"source": "creator_song", "reason": str(exc)[:200]},
+            )
+            return missing(talking_music.SONG_UNAVAILABLE, own_song=True)
+        receipt = {"status": talking_music.PLAYED, "source": talking_music.SOURCE_CREATOR_SONG}
+        return _TalkingMusic(
+            bed=bed,
+            receipt=receipt if ask is not None else None,
+            song_record=choice.song.model_dump(mode="json"),
+        )
+    treatment = dict(choice.treatment) if choice.treatment is not None else None
     if treatment is None and ask is not None:
+        if not talking_music.library_music_enabled():
+            return missing(talking_music.NO_UPLOAD)
         if not speech_duck_planned_for(client_protocol):
             return missing(talking_music.APP_TOO_OLD)
         try:
@@ -5549,7 +5678,7 @@ def _talking_music_bed(
         if treatment is None:
             return missing(reason)
     if treatment is None:
-        return None, None, None
+        return _TalkingMusic(song_record=song_record)
     try:
         bed = music_bed_from_treatment(treatment, _pin_catalog_music)
     except (UnsupportedPhonePlan, ValueError, KeyError, TypeError) as exc:
@@ -5560,7 +5689,69 @@ def _talking_music_bed(
         )
         return missing(talking_music.SONG_UNAVAILABLE)
     receipt = {"status": talking_music.PLAYED, "track_id": str(treatment.get("track_id"))}
-    return bed, treatment, receipt if ask is not None else None
+    return _TalkingMusic(
+        bed=bed,
+        treatment=treatment,
+        receipt=receipt if ask is not None else None,
+        song_record=song_record,
+    )
+
+
+def _job_uploaded_song(job_id: str) -> Any:
+    """KRI-1578: the song uploaded to this job's Talking plan item now
+    (`talking_music.uploaded_song`). A self-narrated item shares this writer but not the lane:
+    its manifest never offers the song, so neither does its render."""
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.services.talking_music import uploaded_song  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        item_id = getattr(job, "content_plan_item_id", None) if job is not None else None
+        item = db.get(PlanItem, item_id) if item_id is not None else None
+        if str(getattr(item, "edit_format", None) or "") != "subtitled":
+            return None
+        return uploaded_song(item)
+
+
+def _creator_song_bed(song: Any, uploaded: Any) -> Any:
+    """KRI-1578: pin and hash the uploaded generation, then play ``song``'s choices over it."""
+    from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+        CreatorSongSource,
+        music_bed_from_user_song,
+    )
+    from app.services.phone_voiceover import inspect_song_asset  # noqa: PLC0415
+    from app.services.talking_music import SPEECH_DUCK_DB  # noqa: PLC0415
+
+    asset = inspect_song_asset(
+        uploaded.gcs_path,
+        asset_id=f"song-{uploaded.plan_item_id}",
+        plan_item_id=uploaded.plan_item_id,
+        expected_generation=uploaded.generation,
+    )
+    source = CreatorSongSource(
+        plan_item_id=asset.plan_item_id, generation=asset.generation, fingerprint=asset.fingerprint
+    )
+    return music_bed_from_user_song(song, source, speech_duck_db=SPEECH_DUCK_DB)
+
+
+def _persisted_variant(*, job_id: str, variant_id: str) -> dict[str, Any] | None:
+    """This variant as an earlier run of the job stored it; None on a first render or any read
+    failure (a lost read must never block a render)."""
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            plan = (job.assembly_plan or {}) if job is not None else {}
+            existing = next(
+                (
+                    v
+                    for v in plan.get("variants") or []
+                    if isinstance(v, dict) and v.get("variant_id") == variant_id
+                ),
+                None,
+            )
+            return dict(existing) if existing is not None else None
+    except Exception:  # noqa: BLE001 - fail open, never block a render on this read
+        return None
 
 
 def _match_talking_song(
@@ -5767,6 +5958,46 @@ def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dic
         return []
 
 
+def _no_sound_effects_asked(snapshot: Any) -> bool:
+    """KRI-1561: does the approved brief hold a live "no sound effects"? It outranks a plan that
+    carries `sfx_ask` (a stale or approved plan, or a model that set it anyway): the creator's
+    "no effects" holds until they withdraw it, and the receipt says so."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.draft_sound_carry import asks_no_sound_effects  # noqa: PLC0415
+
+    try:
+        brief = BriefBinding.model_validate((snapshot or {}).get("creator_brief_binding")).resolve()
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return asks_no_sound_effects(brief)
+
+
+def _guided_ask_sfx_rows(resolved: list[Any], names: dict[str, Any]) -> list[dict]:
+    """KRI-1561: ``SoundEffectPlacement`` rows for chosen, resolved effects, so a guided plan
+    and the editor hold them like any placed effect. Time, level and identity are copied from the
+    resolved request unchanged: the phone compile matches bound assets to these rows by them."""
+    from app.models import SoundEffect  # noqa: PLC0415
+
+    rows: list[dict] = []
+    with _sync_session() as db:
+        for effect in resolved:
+            request = effect.request
+            row = db.get(SoundEffect, request.catalog_id)
+            rows.append(
+                {
+                    "id": request.id,
+                    "sound_effect_id": request.catalog_id,
+                    "src_gcs_path": str(row.audio_gcs_path),
+                    "at_s": request.at_s,
+                    "gain": request.volume,
+                    "duration_s": effect.duration_s,
+                    "label": names.get(request.id),
+                    "source": "ask",
+                }
+            )
+    return rows
+
+
 def _phone_choose_sound_effects(
     job_id: str,
     *,
@@ -5776,6 +6007,8 @@ def _phone_choose_sound_effects(
     duration_s: float,
     taken_at_s: list[float],
     lane_drops: list[dict],
+    snapshot: Any = None,
+    moments: Any = (),
 ) -> tuple[list[Any], dict | None]:
     """KRI-1561: resolved lane rows for the creator's general sound-effect ask, and the receipt.
 
@@ -5796,6 +6029,10 @@ def _phone_choose_sound_effects(
     ask = read_sfx_ask(strategy)
     if ask is None:
         return [], None
+    if _no_sound_effects_asked(snapshot):
+        from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+        limit = SfxLimit.creator_said_no
 
     def catalog() -> list[dict]:
         with _sync_session() as db:
@@ -5814,6 +6051,7 @@ def _phone_choose_sound_effects(
         catalog_loader=catalog,
         run_agent=run_agent,
         taken_at_s=taken_at_s,
+        moments=moments,
     )
     resolved: list[Any] = []
     dropped: list[str] = []
@@ -6326,6 +6564,7 @@ def _run_phone_voiceover_montage_job(
                         if element is not None:
                             element.id = f"voiceover-intro-{index}"
                             intro_rows.append(element.model_dump(mode="json", exclude_none=True))
+                register_generation_footage(clip_metas)
                 rows = generation_style_rows(
                     [*intro_rows, *pin_rows], canvas=canvas, job_id=job_id, mood=style_set_id
                 )
@@ -6387,11 +6626,16 @@ def _run_phone_voiceover_montage_job(
         )
         from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
         from app.services.sfx_capability import voiceover_sfx_limit  # noqa: PLC0415
+        from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
-        sfx_limit = voiceover_sfx_limit()
+        # KRI-1561: a live "no sound effects" outranks the ask, and costs no transcription.
+        sfx_limit = (
+            SfxLimit.creator_said_no if _no_sound_effects_asked(snapshot) else voiceover_sfx_limit()
+        )
         chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
             job_id,
             strategy=raw_creator_strategy,
+            snapshot=snapshot,
             limit=sfx_limit,
             words=(
                 _phone_montage_voice_words(job_id, decision.extras.get("voiceover_gcs_path"))
@@ -6472,7 +6716,7 @@ def _run_phone_voiceover_montage_job(
         }
         if voice_windows is not None:
             # KRI-1562: a later cut Save re-lays the bed's duck from these.
-            from app.pipeline.phone_recipe_shared import (  # noqa: PLC0415
+            from app.pipeline.phone_recipe_shared import (
                 speech_source_windows_json,
             )
 
@@ -11540,8 +11784,7 @@ def _run_phone_subtitled_job(
             # wherever a cut, an insert or Range later puts them. A song whose section can't cover
             # the video refuses the render with `music_section_too_short` (never shortened).
             speech_source_windows: dict[str, Any] | None = None
-            talking_music_treatment: dict[str, Any] | None = None
-            talking_music_receipt: dict[str, Any] | None = None
+            talking_music = _TalkingMusic()
             talking_music_compile: dict[str, Any] = {}
             if settings.talking_music_enabled:
                 speech_source_windows = _talking_speech_source_windows(
@@ -11561,7 +11804,7 @@ def _run_phone_subtitled_job(
                         ),
                     ]
                 )
-                talking_bed, talking_music_treatment, talking_music_receipt = _talking_music_bed(
+                talking_music = _talking_music_bed(
                     job_id,
                     snapshot=snapshot,
                     client_protocol=stamped_client_protocol(
@@ -11572,9 +11815,9 @@ def _run_phone_subtitled_job(
                     ),
                     take_s=float(binding.original.duration_s or 0.0),
                 )
-                if talking_bed is not None:
+                if talking_music.bed is not None:
                     talking_music_compile.update(
-                        music=talking_bed, speech_source_windows=speech_source_windows
+                        music=talking_music.bed, speech_source_windows=speech_source_windows
                     )
 
             # KRI-1015: the review says when the captions were translated -- the spoken language
@@ -13055,6 +13298,7 @@ def _run_phone_subtitled_job(
                     chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
                         job_id,
                         strategy=talking_strategy,
+                        snapshot=snapshot,
                         limit=SfxLimit.multi_speaker
                         if talking_lanes_skipped
                         else subtitled_sfx_limit(),
@@ -13775,12 +14019,17 @@ def _run_phone_subtitled_job(
         if speech_source_windows is not None:
             new_entry["speech_source_windows"] = speech_source_windows_json(speech_source_windows)
         if talking_music_compile:
-            # KRI-20: the creator's own choice, kept only when the recipe really plays it.
-            new_entry["smart_music_treatment"] = talking_music_treatment
-        if talking_music_receipt is not None:
+            # KRI-20: the creator's own choice, kept only when the recipe really plays it. Her
+            # own upload playing clears a library song: it no longer describes what plays.
+            new_entry["smart_music_treatment"] = talking_music.treatment
+        if talking_music.receipt is not None:
             from app.services.talking_music import RECEIPT_FIELD  # noqa: PLC0415
 
-            new_entry[RECEIPT_FIELD] = talking_music_receipt
+            new_entry[RECEIPT_FIELD] = talking_music.receipt
+        if talking_music.song_record is not None:
+            from app.services.talking_music import TALKING_SONG_FIELD  # noqa: PLC0415
+
+            new_entry[TALKING_SONG_FIELD] = talking_music.song_record
         if engine_noise_receipt is not None:
             new_entry["engine_noise_reduction"] = engine_noise_receipt
         if processed_audio_receipt is not None:
@@ -19281,6 +19530,7 @@ def _run_phone_narrated_job(
                 chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
                     job_id,
                     strategy=strategy,
+                    snapshot=snapshot,
                     limit=voiceover_sfx_limit(),
                     words=[
                         {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}

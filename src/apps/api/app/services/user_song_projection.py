@@ -73,15 +73,26 @@ def _current_plan(job: Any, raw_variant: dict[str, Any]) -> dict[str, Any] | Non
 def user_song_for_variant(
     job: Any, raw_variant: dict[str, Any], *, song_filename: str | None
 ) -> dict[str, Any] | None:
-    """``user_song`` for one variant, or None when its plan has no creator song."""
-    plan = _current_plan(job, raw_variant)
-    raw_song = plan.get("user_song") if plan else None
-    if not isinstance(raw_song, dict):
-        return None
-    try:
-        song = UserSongPlan.model_validate(raw_song)
-    except Exception:  # noqa: BLE001 -- a malformed pin must never fail a status read
-        return None
+    """``user_song`` for one variant, or None when its plan has no creator song.
+
+    A phone Talking variant has no plan: its song is the variant's own ``talking_song``
+    (KRI-1578), projected under the same key so the editor shows one Sounds row for both.
+    """
+    if raw_variant.get("resolved_archetype") == "subtitled":
+        from app.services.talking_music import talking_song  # noqa: PLC0415
+
+        song = talking_song(raw_variant)
+        if song is None:
+            return None
+    else:
+        plan = _current_plan(job, raw_variant)
+        raw_song = plan.get("user_song") if plan else None
+        if not isinstance(raw_song, dict):
+            return None
+        try:
+            song = UserSongPlan.model_validate(raw_song)
+        except Exception:  # noqa: BLE001 -- a malformed pin must never fail a status read
+            return None
     return UserSongOut(
         title=user_song_title(song_filename),
         mode=song.mode,

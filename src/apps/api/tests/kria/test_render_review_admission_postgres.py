@@ -341,22 +341,13 @@ async def test_missing_proof_advisory_unavailable_keeps_video(approved_publicati
         assert db.get(CreatorGenerationReview, rid).result is None
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "race", [None, "generation", "ownership", "binding", "recipe", "dispatch_settings"]
-)
-async def test_real_storage_frames_final_fence_and_duplicate_delivery(
-    approved_publication, monkeypatch, local_video, race
-):
+def _publish_device_video(case, local_video):
+    """The finished video as the phone published it: real bytes, a real proof."""
     import hashlib
 
     from app import storage
-    from app.models import CreatorGenerationReview
-    from app.services import render_review_evidence as evidence
-    from app.services.render_review_admission import admit_generation_review
-    from app.tasks.render_review import prepare_generation_review
 
-    claim, thread, job_id, _ = approved_publication
+    _, _, job_id, _ = case
     _, video, _ = local_video
     attempt_id = str(uuid.uuid4())
     with sync_session() as db:
@@ -389,6 +380,55 @@ async def test_real_storage_frames_final_fence_and_duplicate_delivery(
         assembly["variants"][0].update(render_generation_id=attempt_id, video_path=path)
         job.assembly_plan = assembly
         db.commit()
+    return sha
+
+
+@pytest.mark.asyncio
+async def test_a_decoder_that_cannot_start_ends_the_review_and_keeps_the_video(
+    approved_publication, monkeypatch, local_video
+):
+    from unittest.mock import Mock
+
+    from app.models import CreatorGenerationReview
+    from app.services import intent_review_flow
+    from app.tasks.render_review import prepare_generation_review
+    from tests.services.test_render_review_evidence import _starve_frames
+
+    job_id = approved_publication[2]
+    _publish_device_video(approved_publication, local_video)
+    rid = await admit_case(approved_publication, monkeypatch)
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        video_before = (job.status, copy.deepcopy(job.assembly_plan))
+    posted = Mock()
+    monkeypatch.setattr(intent_review_flow, "publish_intent_review", posted)
+    _starve_frames(monkeypatch, {"frame-1.jpg"})
+    result = await asyncio.to_thread(prepare_generation_review.run, str(rid))
+    assert result["status"] == "unavailable"
+    assert (await asyncio.to_thread(prepare_generation_review.run, str(rid)))["status"] == "ignored"
+    with sync_session() as db:
+        row = db.get(CreatorGenerationReview, rid)
+        assert (row.status, row.reason, row.result) == ("unavailable", "frame_decode_failed", None)
+        job = db.get(Job, job_id)
+        assert (job.status, job.assembly_plan) == video_before
+        assert job.status == "variants_ready"
+    posted.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "race", [None, "generation", "ownership", "binding", "recipe", "dispatch_settings"]
+)
+async def test_real_storage_frames_final_fence_and_duplicate_delivery(
+    approved_publication, monkeypatch, local_video, race
+):
+    from app.models import CreatorGenerationReview
+    from app.services import render_review_evidence as evidence
+    from app.services.render_review_admission import admit_generation_review
+    from app.tasks.render_review import prepare_generation_review
+
+    claim, thread, job_id, _ = approved_publication
+    sha = _publish_device_video(approved_publication, local_video)
     rid = await admit_case(approved_publication, monkeypatch)
     with sync_session() as db:
         assert (

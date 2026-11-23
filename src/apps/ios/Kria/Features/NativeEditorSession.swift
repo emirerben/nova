@@ -4797,7 +4797,7 @@ enum EditorOpenIntent { case warm, open }
             guard let asset = request.recipe.assets.first(where: { $0.id == songBed.assetID }) else {
                 throw MediaEngineError.missingAsset(NativeEditorSongBed.trackID)
             }
-            let url = try await authorized.resolveSong()
+            let url = try await authorized.resolveSong(assetID: songBed.assetID)
             result.song = (ResolvedEditorSource(clipIndex: -1, mediaID: songBed.assetID, asset: try await measured(url, asset), url: url), songBed)
         }
         guard sequence == sourcePreviewSequence, !Task.isCancelled,
@@ -7548,7 +7548,7 @@ enum EditorOpenIntent { case warm, open }
     // MARK: Speaker layout per section (KRI-1558)
 
     /// The section controls exist only while the server advertises `speaker_sections` (gate open, this build speaks
-    /// protocol 55) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
+    /// protocol 56) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
     /// and the speaker controls act on the whole-video frame exactly as before.
     var canEditSpeakerSections: Bool {
         canEditSpeakerBackgroundWindows && document.capabilities["speaker_sections"]?.editable == true
@@ -7565,7 +7565,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     /// Ticket step 5: with the section controls open and the timeline editable, a take cut into two or more speaker
-    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 55).
+    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 56).
     private var scopesSpeakerPieces: Bool {
         guard canEditSpeakerSections, canEditTimeline else { return false }
         return document.clips.filter { !$0.removed && $0.splitSectionID == nil && isFramableSpeakerPiece($0) }.count >= 2
@@ -9258,6 +9258,9 @@ enum EditorOpenIntent { case warm, open }
 
     // MARK: Original (camera) audio
 
+    /// A Talking edit's song is a bed under the speaker's own voice (KRI-1578): it never replaces the camera audio.
+    var songPlaysUnderVoice: Bool { document.editFormat == "subtitled" }
+
     /// The server advertises the control (`original_audio`): phone-rendered guided edits, including
     /// the creator's song videos. Absent on every other variant, where the Sounds tab shows nothing.
     var hasOriginalAudioControl: Bool { document.capabilities["original_audio"] != nil }
@@ -9273,7 +9276,7 @@ enum EditorOpenIntent { case warm, open }
         if !userSongRemoved, let value = document.mix["original_level"]?.numberValue, value.isFinite {
             return min(max(0, value), 1)
         }
-        if songPlays { return 0 }
+        if songPlays && !songPlaysUnderVoice { return 0 }
         return sourceAudioPreserved ? 1 : 0
     }
 

@@ -237,17 +237,29 @@ def check_content(ocr_text: str | None, spec_text: str) -> tuple[Verdict, float 
 # -- Bounding box + clipping --------------------------------------------------
 
 
-def text_bbox(frame: Image.Image, bg_hex: str | None = None) -> tuple[int, int, int, int] | None:
+def text_bbox(
+    frame: Image.Image, bg_hex: str | None = None, *, scrim: dict | None = None
+) -> tuple[int, int, int, int] | None:
     """Bounding box of the rendered text in a frame.
 
     Transparent source (``_draw_frame`` output, ``bg_hex is None``): the opaque
     pixels ARE the text — use ``getbbox()`` on the alpha, like the parity tests.
     Solid-background source (burned-frame extraction, ``bg_hex`` set): the text is
-    wherever the frame differs from the known background color.
+    wherever the frame differs from the known background color. A KRI-1581 ``scrim``
+    reaches the frame edges by design, so its own alpha is taken out first.
     """
+    from app.pipeline.text_overlay import _pillow_scrim, scrim_alpha_mask  # noqa: PLC0415
+
     if bg_hex is None:
-        return frame.convert("RGBA").getbbox()
+        if not isinstance(scrim, dict):
+            return frame.convert("RGBA").getbbox()
+        alpha = ImageChops.subtract(
+            frame.convert("RGBA").getchannel("A"), scrim_alpha_mask(scrim, frame.size)
+        )
+        return alpha.point(lambda p: 255 if p > 24 else 0).getbbox()
     bg = Image.new("RGB", frame.size, _hex_to_rgb(bg_hex))
+    if isinstance(scrim, dict):
+        bg = Image.alpha_composite(bg.convert("RGBA"), _pillow_scrim(scrim)).convert("RGB")
     diff = ImageChops.difference(frame.convert("RGB"), bg).convert("L")
     # Threshold out JPEG/encode noise so only real glyph pixels survive.
     mask = diff.point(lambda p: 255 if p > 24 else 0)
@@ -516,7 +528,7 @@ def verify_overlay(
         return res
 
     # 2. Clipping (primary, font-independent).
-    bbox = text_bbox(frame, bg_hex)
+    bbox = text_bbox(frame, bg_hex, scrim=overlay.get("scrim"))
     res.bbox = tuple(bbox) if bbox else None
     res.clipping, clip_reason = check_clipping(bbox, frame.width, frame.height)
     res.reasons.append(clip_reason)

@@ -117,6 +117,9 @@ enum NativeEditorRenderError: Error, Equatable {
         // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
         // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
         let creatorHearsCameraWithSong = hasExplicitOriginalGain && originalGain > 0
+        // A Talking edit's voice IS the camera audio, so a creator song never mutes it: the song is a music-role
+        // bed that ducks under the spoken windows, like the library bed below (KRI-1578).
+        let songUnderVoice = document.editFormat == "subtitled"
         func slot(for clip: EditorClip, index: Int) -> EditorTimelineSlot? {
             if let id = clip.slotID, let value = activeSlots.first(where: { $0.id == id }) { return value }
             return activeSlots.indices.contains(index) ? activeSlots[index] : nil
@@ -298,7 +301,7 @@ enum NativeEditorRenderError: Error, Equatable {
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: sourceStart, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
-                volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
+                volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong && !songUnderVoice ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
             if let raw = authoredSlot?.raw["speaker_frame_override"], raw != .null {
@@ -415,7 +418,10 @@ enum NativeEditorRenderError: Error, Equatable {
             // KRI-561: the creator may have stopped the music earlier (absolute song second `endS`).
             let natural = min(total, available - start)
             let creatorEndApplies = bed.endS.map { $0 - start < natural - 0.05 } ?? false
-            let length = creatorEndApplies ? max(0, (bed.endS ?? 0) - start) : natural
+            // A song under a Talking edit loops its window under the whole video, like a library bed (the server's
+            // `music_bed_from_user_song`): the window is start..creator end (or the song's end), repeated.
+            let loopSection = songUnderVoice ? max(0, min(bed.endS ?? available, available) - start) : 0
+            let length = songUnderVoice ? min(loopSection, total) : creatorEndApplies ? max(0, (bed.endS ?? 0) - start) : natural
             if length > 0 {
                 let id = Self.songTrackID
                 assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint, duration: available)
@@ -426,10 +432,28 @@ enum NativeEditorRenderError: Error, Equatable {
                 clip.audioFadeIn = bed.fadeIn.map { min($0, length / 2) }
                 // The server fades a creator-stopped song out over 1.5 s; a song that merely runs out keeps the
                 // recipe's own fade.
-                clip.audioFadeOut = creatorEndApplies
+                clip.audioFadeOut = creatorEndApplies && !songUnderVoice
                     ? min(NativeEditorSongBed.creatorEndFadeOut, length / 2)
                     : bed.fadeOut.map { min($0, length / 2) }
-                audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: [clip]))
+                var songClips = [clip]
+                if songUnderVoice, loopSection > 0.05 {
+                    // Consecutive pieces of the window, one per repeat; only the last may be cut short by the video's end.
+                    var cursor = length
+                    while total - cursor > 0.05 {
+                        let piece = min(loopSection, total - cursor)
+                        var repeated = TimelineClip(id: "\(id)-\(songClips.count)", sourceAssetID: id, sourceStart: start, sourceDuration: piece,
+                                                    timelineStart: cursor, volume: bed.volume)
+                        repeated.audioFadeIn = nil
+                        songClips.append(repeated)
+                        cursor += piece
+                    }
+                    songClips[0].audioFadeOut = nil
+                    songClips[songClips.count - 1].audioFadeOut = bed.fadeOut.map { min($0, songClips[songClips.count - 1].sourceDuration / 2) }
+                }
+                // The windows come from the cues the creator sees, as for the library bed below.
+                let windows = songUnderVoice ? Self.speechWindows(cues: document.captionCues, items: items, total: total) : []
+                speechWindows = windows
+                audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: songClips, role: windows.isEmpty ? nil : .music))
             } else {
                 // No song plays (its window is past the end of the file): the camera is not muted for nothing.
                 for index in video.indices { video[index].volume = cameraLevelWithoutSong[index] }
@@ -752,6 +776,10 @@ enum NativeEditorRenderError: Error, Equatable {
                 legacyEffect: [.typewriter, .streamIn, .smoothType, .inkReveal].contains(PortableTextLayer.Effect(rawValue: legacy) ?? .none) ? PortableTextLayer.Effect(rawValue: legacy)! : .none,
                 motion: explicitPhases ? nil : try Self.normalizedMotion(effect: legacy, raw: raw["motion"]))
             layout.behindSubject = behindSubject
+            let scrim = try textScrim(raw["scrim"], canvas: canvas)
+            let srgbBlend: Bool? = scrim != nil || raw["shadow_blur"]?.numberValue != nil ? true : nil
+            layout.scrim = PortableTextLayer.scrimSupported(effect: layout.effect) ? scrim : nil
+            layout.srgbBlend = srgbBlend
             if explicitPhases || ["typewriter", "stream-in", "smooth-type", "ink-reveal"].contains(legacy) {
                 text.append(layout)
             } else {
@@ -764,7 +792,9 @@ enum NativeEditorRenderError: Error, Equatable {
                     background: layout.background,
                     // `layout` was compiled as a plain effect; the real effect decides whether the arc survives.
                     bend: PortableTextLayer.bendSupported(effect: legacyEffect) ? layout.bend : nil,
-                    behindSubject: behindSubject))
+                    behindSubject: behindSubject,
+                    scrim: PortableTextLayer.scrimSupported(effect: legacyEffect) ? scrim : nil,
+                    srgbBlend: srgbBlend))
             }
         }
         if !document.captionCues.isEmpty && document.captionMeta["enabled"] != .bool(false) {
@@ -1309,7 +1339,7 @@ enum NativeEditorRenderError: Error, Equatable {
     }
 
     private static func displayText(_ element: EditorTextElement) -> String {
-        KriaTextCase.apply(element.text, element.raw["text_case"]?.stringValue)
+        KriaTextCase.apply(element.text, element.raw["text_case"]?.stringValue, language: element.raw["text_language"]?.stringValue)
     }
 
     static func projectSentenceCaptions(
@@ -1555,12 +1585,14 @@ enum NativeEditorRenderError: Error, Equatable {
         let raw = element.raw
         var shadows: [TextBlurLayer] = []
         if raw["shadow_enabled"] != .bool(false) {
-            if raw["shadow_style"]?.stringValue == "high_visibility" && ["stroke_color", "shadow_color", "shadow_opacity"].allSatisfy({ raw[$0] == nil || raw[$0] == .null }) {
+            if raw["shadow_style"]?.stringValue == "high_visibility" && ["stroke_color", "shadow_color", "shadow_opacity", "shadow_blur", "shadow_offset_y"].allSatisfy({ raw[$0] == nil || raw[$0] == .null }) {
                 shadows = [TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 115.0 / 255), sigma: 14, dx: 0, dy: 8),
                            TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 200.0 / 255), sigma: 3, dx: 0, dy: 2)]
             } else {
+                // KRI-1581: `shadow_blur` / `shadow_offset_y` mirror the cloud `_text_shadow_style` (12 / 6 unset).
                 shadows.append(TextBlurLayer(color: try ink(raw["shadow_color"], fallback: "#000000",
-                    alpha: ((raw["shadow_opacity"]?.numberValue ?? (160.0 / 255)) * 255).rounded(.toNearestOrEven) / 255), sigma: 12, dx: 0, dy: 6))
+                    alpha: ((raw["shadow_opacity"]?.numberValue ?? (160.0 / 255)) * 255).rounded(.toNearestOrEven) / 255),
+                    sigma: max(0, raw["shadow_blur"]?.numberValue ?? 12), dx: 0, dy: raw["shadow_offset_y"]?.numberValue ?? 6))
             }
         }
         if let strength = raw["glow_strength"]?.numberValue, strength > 0, let glow = raw["glow_color"]?.stringValue {
@@ -1739,6 +1771,24 @@ enum NativeEditorRenderError: Error, Equatable {
             if let url = fontURLs[name] { return url }
         }
         throw NativeEditorRenderError.missingFont(family)
+    }
+
+    /// KRI-1581: a row's `scrim` (`top_frac`, `opacity`, `color`) as the layer's gradient. Mirrors the cloud
+    /// `portable_text_layout._stamp_design_paint` and `text_overlay.scrim_stops`: transparent at the top, the peak
+    /// opacity at `scrimRampFraction` of the span, flat to the canvas bottom.
+    static let scrimRampFraction = 0.6
+    private func textScrim(_ value: JSONValue?, canvas: KriaMediaEngine.Canvas) throws -> TextScrim? {
+        guard let spec = value?.objectValue, let topFrac = spec["top_frac"]?.numberValue,
+              let opacity = spec["opacity"]?.numberValue, topFrac.isFinite, opacity.isFinite,
+              (0...0.95).contains(topFrac), opacity > 0, opacity <= 1 else { return nil }
+        let top = topFrac * Double(canvas.height)
+        let clear = try ink(spec["color"], fallback: "#000000", alpha: 0)
+        let peak = try ink(spec["color"], fallback: "#000000", alpha: opacity)
+        return TextScrim(top: top, height: Double(canvas.height) - top, stops: [
+            TextGradientStop(position: 0, color: clear),
+            TextGradientStop(position: Self.scrimRampFraction, color: peak),
+            TextGradientStop(position: 1, color: peak),
+        ])
     }
 
     private func ink(_ value: JSONValue?, fallback: String, alpha: Double = 1) throws -> TextInk {

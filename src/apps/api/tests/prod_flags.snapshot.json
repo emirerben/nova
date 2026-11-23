@@ -1465,7 +1465,7 @@
     },
     "speaker_sections_min_client_protocol": {
       "source": "default",
-      "value": 55
+      "value": 56
     },
     "speech_cleanup_budget_clamp_enabled": {
       "source": "default",
@@ -1590,6 +1590,10 @@
     "talking_head_route_follows_prompt_enabled": {
       "source": "default",
       "value": true
+    },
+    "talking_library_music_enabled": {
+      "source": "default",
+      "value": false
     },
     "talking_multi_clip_enabled": {
       "source": "default",

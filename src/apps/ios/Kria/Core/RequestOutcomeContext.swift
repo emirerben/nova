@@ -16,7 +16,7 @@ struct RequestOutcomeContext: Codable, Equatable, Sendable {
 
     static func forSubmission(events: [ThreadEvent], continuation: Bool,
                               choice: ChoiceSelectionSubmission? = nil) -> Self {
-        let users = events.filter { $0.role == "user" && $0.eventType == "user_message" }
+        let users = events.filter { $0.role == "user" && $0.eventType == "user_message" && !$0.isClipOrderDrag }
         let parent = users.last?.payload?["turn_id"]?.stringValue.flatMap(UUID.init(uuidString:))
         let relation: Relation
         if users.isEmpty {

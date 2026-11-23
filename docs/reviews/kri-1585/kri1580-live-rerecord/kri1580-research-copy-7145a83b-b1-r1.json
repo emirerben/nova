@@ -1,0 +1,160 @@
+{
+  "head": "7145a83be50c1c8d56456b70d26d241c161694c2",
+  "design": "B1",
+  "test_run_id": "kri1580-research-copy-7145a83b-b1-r1",
+  "prompt_fingerprints": {
+    "writer": "rc-def013c0f7f1",
+    "review": "rr-def013c0f7f1",
+    "layers": "rl-3ba89612f211"
+  },
+  "outcome": "accepted",
+  "unmet_requests": [],
+  "ledger": {
+    "calls": [
+      {
+        "status": "settled",
+        "settled_cost_usd": 0.080464
+      },
+      {
+        "status": "settled",
+        "settled_cost_usd": 0.01064
+      }
+    ],
+    "settled_total_usd": 0.091104
+  },
+  "calls": [
+    {
+      "kind": "writer",
+      "prompt_version": "rc-def013c0f7f1",
+      "prompt_sha256": "02042f988e15b60c61952f3b5c4fd6cfd14fdda66e6c15e22961bddffa3bdaec",
+      "correction": "",
+      "text_design": "B1",
+      "reservation_estimate_usd": 0.403374,
+      "window_ids": [
+        "window-0",
+        "window-1",
+        "window-2",
+        "window-3",
+        "window-4",
+        "window-5",
+        "window-6"
+      ],
+      "max_captions": 7,
+      "raw_text": "{\n  \"hook\": {\n    \"text\": \"Bu Kyoto'da 25 dakikalık bir tren yolculuğu\",\n    \"evidence_ids\": [\n      \"fact-1\",\n      \"fact-6\"\n    ]\n  },\n  \"captions\": [\n    {\n      \"window_id\": \"window-0\",\n      \"heading\": \"\",\n      \"text\": \"Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na yola çıkıyoruz.\",\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"visual_quote\": \"pointing at a map while explaining a train route\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-1\",\n      \"heading\": \"\",\n      \"text\": \"Bu hat ilk olarak 1899 yılında Kyoto ve Sonobe'yi bağlamak için açılmış.\",\n      \"evidence_ids\": [\n        \"fact-1\"\n      ],\n      \"visual_quote\": \"train arriving and passengers on platform\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-2\",\n      \"heading\": \"\",\n      \"text\": \"Vagonların içi eski tarz ahşap banklarla retro bir tasarıma sahip.\",\n      \"evidence_ids\": [\n        \"fact-11\"\n      ],\n      \"visual_quote\": \"boarding a train and sitting inside it\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-3\",\n      \"heading\": \"\",\n      \"text\": \"Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik bir güzergahtayız.\",\n      \"evidence_ids\": [\n        \"fact-6\"\n      ],\n      \"visual_quote\": \"traveling by train, viewing scenery\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-4\",\n      \"heading\": \"\",\n      \"text\": \"Pencereleri açılabilen dört vagon ve The Rich adında tamamen açık beşinci bir vagon var.\",\n      \"evidence_ids\": [\n        \"fact-12\"\n      ],\n      \"visual_quote\": \"riding a train, looking out the window, pointing at scenery, talking\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-5\",\n      \"heading\": \"\",\n      \"text\": \"Mevsimlere göre değişen bu manzarada ilkbaharda kiraz çiçekleri, yazın yeşil doğa var.\",\n      \"evidence_ids\": [\n        \"fact-8\"\n      ],\n      \"visual_quote\": \"traveling through a valley by train\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    },\n    {\n      \"window_id\": \"window-6\",\n      \"heading\": \"\",\n      \"text\": \"Bizim gibi sonbaharda geldiğinizde bu sonbahar yapraklarını görebilirsiniz.\",\n      \"evidence_ids\": [\n        \"fact-8\"\n      ],\n      \"visual_quote\": \"traveling through a scenic route\",\n      \"scope\": \"context\",\n      \"subject_name\": \"\",\n      \"identity_quote\": \"\"\n    }\n  ],\n  \"limitations\": \"Sadece sağlanan gerçekler kullanılmıştır. İstenilen ses kapatma işlemi başka bir adımda uygulanacağı için karşılanamayan isteklere eklenmemiştir.\",\n  \"unmet_requests\": []\n}",
+      "model_calls": 1,
+      "model_used": "gemini-3.1-pro-preview",
+      "output": {
+        "hook": {
+          "text": "Bu Kyoto'da 25 dakikalık bir tren yolculuğu",
+          "evidence_ids": [
+            "fact-1",
+            "fact-6"
+          ]
+        },
+        "captions": [
+          {
+            "window_id": "window-0",
+            "heading": "",
+            "text": "Torokko Saga İstasyonu'ndan Torokko Kameoka İstasyonu'na yola çıkıyoruz.",
+            "evidence_ids": [
+              "fact-6"
+            ],
+            "visual_quote": "pointing at a map while explaining a train route",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-1",
+            "heading": "",
+            "text": "Bu hat ilk olarak 1899 yılında Kyoto ve Sonobe'yi bağlamak için açılmış.",
+            "evidence_ids": [
+              "fact-1"
+            ],
+            "visual_quote": "train arriving and passengers on platform",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-2",
+            "heading": "",
+            "text": "Vagonların içi eski tarz ahşap banklarla retro bir tasarıma sahip.",
+            "evidence_ids": [
+              "fact-11"
+            ],
+            "visual_quote": "boarding a train and sitting inside it",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-3",
+            "heading": "",
+            "text": "Hozukyo Geçidi boyunca yaklaşık 7.3 kilometrelik bir güzergahtayız.",
+            "evidence_ids": [
+              "fact-6"
+            ],
+            "visual_quote": "traveling by train, viewing scenery",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-4",
+            "heading": "",
+            "text": "Pencereleri açılabilen dört vagon ve The Rich adında tamamen açık beşinci bir vagon var.",
+            "evidence_ids": [
+              "fact-12"
+            ],
+            "visual_quote": "riding a train, looking out the window, pointing at scenery, talking",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-5",
+            "heading": "",
+            "text": "Mevsimlere göre değişen bu manzarada ilkbaharda kiraz çiçekleri, yazın yeşil doğa var.",
+            "evidence_ids": [
+              "fact-8"
+            ],
+            "visual_quote": "traveling through a valley by train",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          },
+          {
+            "window_id": "window-6",
+            "heading": "",
+            "text": "Bizim gibi sonbaharda geldiğinizde bu sonbahar yapraklarını görebilirsiniz.",
+            "evidence_ids": [
+              "fact-8"
+            ],
+            "visual_quote": "traveling through a scenic route",
+            "scope": "context",
+            "subject_name": "",
+            "identity_quote": ""
+          }
+        ],
+        "limitations": "Sadece sağlanan gerçekler kullanılmıştır. İstenilen ses kapatma işlemi başka bir adımda uygulanacağı için karşılanamayan isteklere eklenmemiştir.",
+        "unmet_requests": []
+      }
+    },
+    {
+      "kind": "review",
+      "prompt_version": "rr-def013c0f7f1",
+      "prompt_sha256": "c6f5b496739e22cfe7fc09170ac7f702853c8f6b9705774ece7505ec5b5a5aca",
+      "correction": null,
+      "text_design": "B1",
+      "reservation_estimate_usd": 0.108512,
+      "raw_text": "{\n  \"approved\": true,\n  \"reason\": \"The proposed text correctly uses the provided facts and accurately reflects the visual context across all requested windows. The hook is supported by fact-1 and fact-6, and all captions align well with the cited facts and footage constraints. The missing request for muting the audio is correctly handled elsewhere as instructed.\"\n}",
+      "model_calls": 1,
+      "model_used": "gemini-3.1-pro-preview",
+      "output": {
+        "approved": true,
+        "reason": "The proposed text correctly uses the provided facts and accurately reflects the visual context across all requested windows. The hook is supported by fact-1 and fact-6, and all captions align well with the cited facts and footage constraints. The missing request for muting the audio is correctly handled elsewhere as instructed."
+      }
+    }
+  ]
+}

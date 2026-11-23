@@ -40,7 +40,7 @@ Qendresa item 18 (family ``background_focus``, open only while the snapshot says
   in is ``set_speaker_frame``'s.
 
 KRI-1558 (family ``speaker_sections``, open only while the snapshot says ``sections_available``:
-the windows gate AND the build that draws the speaker's layout per section, protocol 55). The
+the windows gate AND the build that draws the speaker's layout per section, protocol 56). The
 snapshot lists the take's SECTIONS (`talking_sections` over the caption words, output seconds) and
 the ``layout_windows`` in force. A layout is ``own`` (her own take, full screen), ``full`` (her
 cut-out full size over the picture), ``small`` (her cut-out small in a corner over the picture) or

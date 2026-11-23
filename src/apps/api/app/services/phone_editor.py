@@ -16,7 +16,7 @@ from app.config import settings
 from app.kria.clip_tilt_row import row_tilt_from_clip
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import LibraryRenderAsset
+from app.kria.render_assets import LibraryRenderAsset, SongRenderAsset
 from app.pipeline.editor_render_window import RenderWindowUnavailable
 from app.pipeline.guided_story import (
     USER_SONG_LIPSYNC_LOCKED,
@@ -50,6 +50,7 @@ from app.pipeline.phone_recipe_shared import (
     apply_landscape_fit,
     clip_tilt_zoom,
     music_bed_from_treatment,
+    music_bed_from_user_song,
     parse_speech_source_windows,
     timeline_end_s,
     with_color_moments,
@@ -117,6 +118,7 @@ from app.services.phone_rollout import (
     phone_talking_cutaway_sound_supported,
     phone_talking_range_supported,
     phone_timed_cards_supported,
+    phone_user_song_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
     recipe_has_freeze_frame,
@@ -131,6 +133,7 @@ from app.services.phone_rollout import (
     speech_duck_client_supported,
     talking_music_supported,
     text_bend_client_supported,
+    text_designs_update_detail,
     validate_phone_pilot_recipe,
 )
 from app.services.phone_sources import (
@@ -157,6 +160,15 @@ from app.services.phone_subtitled_editor import (
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
     source_pool_paths,
+)
+from app.services.talking_music import SPEECH_DUCK_DB as TALKING_SPEECH_DUCK_DB
+from app.services.talking_music import (
+    TALKING_SONG_FIELD,
+    TalkingBedChoice,
+    UploadedSong,
+    talking_bed_choice,
+    talking_song,
+    variant_plays_song,
 )
 
 log = structlog.get_logger()
@@ -622,6 +634,8 @@ def _compile_editor_commit(
     variant_id: str,
     prep: dict,
     sfx_catalog_paths: Mapping[str, str] | None,
+    *,
+    uploaded_song: Any | None = None,
 ) -> None:
     """Recompile the staged variant onto the device and pin it (raises on a refusal)."""
     previous = device_status(job, variant_id).request
@@ -662,6 +676,7 @@ def _compile_editor_commit(
             prep=prep,
             previous=previous,
             sfx_catalog_paths=sfx_catalog_paths or {},
+            uploaded_song=uploaded_song,
         )
     elif is_phone_narrated_editor_variant(variant):
         _compile_narrated_editor_commit(
@@ -821,8 +836,12 @@ def prepare_phone_editor_commit(
     sfx_catalog_paths: Mapping[str, str] | None = None,
     creator_brief_binding: dict | None = None,
     learning_sections: set[str] | None = None,
+    uploaded_song: Any | None = None,
 ) -> dict:
-    """``sfx_catalog_paths`` maps a sound-effect catalog id to its
+    """``uploaded_song`` (KRI-1578, a `talking_music.UploadedSongRead`) is what the caller read
+    off the plan item for a Talking song; kept out of the returned prep, which a chat Save stores.
+
+    ``sfx_catalog_paths`` maps a sound-effect catalog id to its
     `SoundEffect.audio_gcs_path` for the phone Talking effects a Save carries
     over without a known storage path (the caller's async catalog read,
     `generative_jobs._phone_subtitled_sfx_paths`; Save itself never queries)."""
@@ -962,7 +981,7 @@ def prepare_phone_editor_commit(
     )
     if (
         is_phone_subtitled_editor_variant(staged_row)
-        and isinstance(staged_row.get("smart_music_treatment"), dict)
+        and variant_plays_song(staged_row)
         and talking_music_supported(require_client=False)
         and not speech_duck_client_supported()
     ):
@@ -1100,7 +1119,9 @@ def prepare_phone_editor_commit(
         relaxed: list[dict[str, str]] = []
         while True:
             try:
-                _compile_editor_commit(job, staged, variant_id, prep, sfx_catalog_paths)
+                _compile_editor_commit(
+                    job, staged, variant_id, prep, sfx_catalog_paths, uploaded_song=uploaded_song
+                )
                 break
             except (TextPlacementError, AudioChoiceError) as exc:
                 # KRI-736: a MANUAL editor Save is the creator's own choice, so it wins over
@@ -1163,6 +1184,11 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    text_designs = text_designs_update_detail(device_status(staged, variant_id).request.recipe)
+    if text_designs is not None:
+        # KRI-1581: a Save that patches the pinned recipe (a Narrated caption edit) keeps the
+        # worker's designed layers as they are; this build cannot decode them.
+        raise HTTPException(426, detail=text_designs)
     if (
         getattr(device_status(staged, variant_id).request.recipe, "speaker_background", None)
         is not None
@@ -1621,6 +1647,7 @@ def _compile_subtitled_editor_commit(
     prep: dict,
     previous: Any,
     sfx_catalog_paths: Mapping[str, str],
+    uploaded_song: Any | None = None,
 ) -> None:
     """The `resolved_archetype == "subtitled"` counterpart of the guided-story
     branch above: recompile `compile_phone_subtitled_plan` from the committed
@@ -1648,6 +1675,12 @@ def _compile_subtitled_editor_commit(
         | (frozenset({"visual_blocks"}) if media_supported else frozenset())
         # KRI-1562: the staged `smart_music_treatment` (the route already wrote it) compiles.
         | (frozenset({"background_music"}) if talking_music else frozenset())
+        # KRI-1578: likewise her own song's staged `talking_song`.
+        | (
+            frozenset({"user_song"})
+            if talking_music and phone_user_song_supported()
+            else frozenset()
+        )
     )
     unsupported_sections = active_sections - allowed_sections
     if unsupported_sections:
@@ -1785,18 +1818,29 @@ def _compile_subtitled_editor_commit(
     # KRI-1562: the creator's song rides every Save (a caption or sound Save never drops it), on
     # the transcript's spoken windows, which a deleted caption line never moves. A "no music" in
     # the brief this Save is bound to takes off a song carried from before; one the creator picks
-    # in this very Save is their later choice and plays.
+    # in this very Save is their later choice and plays. KRI-1578: her own upload first
+    # (`talking_bed_choice`), re-pinned when she replaced it on the item since.
     drop_song = (
         talking_music
-        and "background_music" not in active_sections
-        and isinstance(variant.get("smart_music_treatment"), dict)
+        and not active_sections & {"background_music", "user_song"}
+        and variant_plays_song(variant)
         and _bound_brief_asks_no_music(assembly, prep.get("generation"), variant_id)
     )
+    uploaded = _save_uploaded_song(uploaded_song, variant, previous.recipe)
+    bed_choice = (
+        talking_bed_choice(variant, uploaded, no_music=drop_song, adopt=False)
+        if talking_music
+        else TalkingBedChoice()
+    )
     music = (
-        music_bed_from_treatment(
-            variant.get("smart_music_treatment"), _saved_music_pin(previous.recipe)
+        music_bed_from_user_song(
+            bed_choice.song,
+            _talking_song_source(previous.recipe, bed_choice.song, uploaded),
+            speech_duck_db=TALKING_SPEECH_DUCK_DB,
         )
-        if talking_music and not drop_song
+        if bed_choice.song is not None
+        else music_bed_from_treatment(bed_choice.treatment, _saved_music_pin(previous.recipe))
+        if bed_choice.treatment is not None
         else None
     )
     recipe = compile_phone_subtitled_plan(
@@ -1929,7 +1973,15 @@ def _compile_subtitled_editor_commit(
         row["duration_s"] = recipe.duration
         if drop_song:
             row["smart_music_treatment"] = None
-        if drop_song or "background_music" in active_sections:
+            if talking_song(row) is not None:
+                row[TALKING_SONG_FIELD] = {"removed": True}
+        elif bed_choice.song is not None:
+            # The choices this recipe plays, for the upload it pinned (a replaced song re-pins).
+            row[TALKING_SONG_FIELD] = bed_choice.song.model_dump(mode="json")
+        elif talking_music and uploaded is None and talking_song(row) is not None:
+            # Her song is no longer on the item: nothing is left for these choices to play.
+            row.pop(TALKING_SONG_FIELD, None)
+        if drop_song or active_sections & {"background_music", "user_song"}:
             # The worker's record of how the asked song turned out no longer describes this one.
             row.pop("talking_music", None)
         if caption_cues_overridden:
@@ -1977,6 +2029,61 @@ def _bound_brief_asks_no_music(
     except (ValueError, TypeError):
         return False
     return asks_no_music(brief)
+
+
+def _save_uploaded_song(read: Any, variant: dict, previous: Any) -> UploadedSong | None:
+    """KRI-1578: the item's uploaded song as this Save knows it. A caller that read the item
+    (`talking_music.UploadedSongRead`) says; one that did not leaves the song the pinned recipe
+    already plays standing in for it (kept as pinned, never re-pinned, never added)."""
+    if read is not None:
+        return read.song
+    stored = talking_song(variant)
+    if stored is None or _pinned_creator_song(previous, stored) is None:
+        return None
+    return UploadedSong(
+        plan_item_id=stored.plan_item_id,
+        gcs_path="",
+        generation=stored.generation,
+        duration_s=stored.duration_s,
+    )
+
+
+def _pinned_creator_song(previous: Any, song: Any) -> SongRenderAsset | None:
+    if not isinstance(previous, EditRecipeV2):
+        return None
+    return next(
+        (
+            asset
+            for asset in previous.asset_manifest.assets
+            if isinstance(asset, SongRenderAsset)
+            and asset.plan_item_id == song.plan_item_id
+            and asset.generation == str(song.generation)
+        ),
+        None,
+    )
+
+
+def _talking_song_source(previous: Any, song: Any, uploaded: UploadedSong | None) -> Any:
+    """KRI-1578: how a Save pins her song. The upload the pinned recipe already plays keeps its
+    receipt (Save never re-hashes it); a new or replaced upload is hashed once, like a newly
+    chosen library song (`_saved_music_pin`)."""
+    from app.pipeline.phone_recipe_shared import CreatorSongSource  # noqa: PLC0415
+
+    asset = _pinned_creator_song(previous, song)
+    if asset is None:
+        if uploaded is None or not uploaded.gcs_path or uploaded.generation != song.generation:
+            raise ValueError("your song changed since this edit was saved; add it again")
+        from app.services.phone_voiceover import inspect_song_asset  # noqa: PLC0415
+
+        asset = inspect_song_asset(
+            uploaded.gcs_path,
+            asset_id=f"song-{uploaded.plan_item_id}",
+            plan_item_id=uploaded.plan_item_id,
+            expected_generation=uploaded.generation,
+        )
+    return CreatorSongSource(
+        plan_item_id=asset.plan_item_id, generation=asset.generation, fingerprint=asset.fingerprint
+    )
 
 
 def _saved_music_pin(previous: Any) -> Callable[[str, str], tuple[Any, float | None]]:

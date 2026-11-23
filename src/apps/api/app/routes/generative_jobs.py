@@ -27,7 +27,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -7959,6 +7959,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     if (
         variant.get("editor_timeline_mode") == "authored"
         and variant.get("render_destination") == "device"
+        # KRI-1578: an authored Talking edit keeps her song as pinned but cannot Save its section.
+        and variant.get("resolved_archetype") != "subtitled"
     ):
         song = _variant_user_song(job, variant)
         if song is not None and settings.guided_story_editor_v2_enabled:
@@ -7975,6 +7977,8 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
                     "reason": None if background else "user_song_lipsync_locked",
                 },
             }
+    if (talking_song_controls := _talking_song_capability(variant)) is not None:
+        capabilities["user_song"] = talking_song_controls
     if "original_audio" not in capabilities:
         original_audio = _voiceover_original_audio_capability(variant)
         if original_audio is not None:
@@ -8310,15 +8314,121 @@ def _phone_talking_music_hidden(variant: dict) -> bool:
 
 
 def _phone_talking_music_available(variant: dict, *, subtitled_lanes: bool) -> bool:
-    """KRI-1562: does this device variant's Save compile the creator's song? Only a phone Talking
-    edit on the subtitled Save path (an authored one Saves through the authored compiler)."""
+    """KRI-1562: does this device variant's Save compile a library song? Only a phone Talking
+    edit on the subtitled Save path (an authored one Saves through the authored compiler).
+    KRI-1578: a new library song needs ``TALKING_LIBRARY_MUSIC_ENABLED``; closed, the control
+    stays only where a library song already plays, so it can still be re-levelled or removed."""
     from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+    from app.services.talking_music import library_music_enabled  # noqa: PLC0415
 
     return (
         subtitled_lanes
         and variant.get("editor_timeline_mode") != "authored"
         and talking_music_supported()
+        and (library_music_enabled() or isinstance(variant.get("smart_music_treatment"), dict))
     )
+
+
+def _talking_song_save_open(variant: dict) -> bool:
+    """KRI-1578: does this variant's Save compile the creator's own song under her voice? A phone
+    Talking edit on the subtitled Save path while the Talking song lane and the song lane are on.
+    The app build is judged by the Save itself (426 `speech_duck`)."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_user_song_supported,
+        talking_music_supported,
+    )
+
+    return bool(
+        variant.get("render_destination") == "device"
+        and is_phone_subtitled_editor_variant(variant)
+        and variant.get("editor_timeline_mode") != "authored"
+        and talking_music_supported(require_client=False)
+        and phone_user_song_supported()
+    )
+
+
+def _talking_song_capability(variant: dict) -> dict[str, dict[str, Any]] | None:
+    """KRI-1578: the editor's ``user_song`` controls on a phone Talking edit playing her song.
+
+    The same keys a montage song has; a Talking song is always background, so all are open."""
+    from app.services.talking_music import talking_song  # noqa: PLC0415
+
+    if not _talking_song_save_open(variant) or talking_song(variant) is None:
+        return None
+    from app.services.phone_rollout import talking_music_supported  # noqa: PLC0415
+
+    if not talking_music_supported():
+        return None
+    open_ = {"editable": True, "reason": None}
+    return {name: dict(open_) for name in ("volume", "window", "remove", "trim")}
+
+
+def _talking_song_edit(
+    variant: dict, edit: EditorCommitUserSong, uploaded: Any | None
+) -> dict[str, Any]:
+    """KRI-1578: the variant's ``talking_song`` after a Save's ``user_song`` section.
+
+    Her removal, or her choices for the song uploaded to the item now (``uploaded``, a
+    `talking_music.UploadedSongRead`): a song not on the edit yet, or taken off earlier, starts
+    from the defaults, so any section that is not a removal adds it. Same 422s as a montage song.
+    """
+    from app.schemas.user_song import UserSongPlan  # noqa: PLC0415
+    from app.services import talking_music  # noqa: PLC0415
+
+    if edit.removed:
+        return {"removed": True}
+    stored = {} if talking_music.talking_song_removed(variant) else variant
+    base = (
+        talking_music.talking_song_for(stored, uploaded.song, adopt=True)
+        if uploaded is not None
+        else talking_music.talking_song(stored)
+    )
+    if base is None:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "user_song_unavailable")
+    merged = _merged_user_song_edit(
+        {
+            "mode": base.mode,
+            "duration_s": base.duration_s,
+            "window_start_s": base.window_start_s,
+        },
+        None,
+        edit,
+    )
+    update = {key: merged[key] for key in ("volume", "window_start_s") if key in merged}
+    if edit.window_end_s is not None:
+        update["window_end_s"] = merged.get("window_end_s", base.duration_s)
+    try:
+        song = UserSongPlan.model_validate({**base.model_dump(), **update})
+    except ValueError as exc:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "user_song_window_out_of_range",
+            reason="That start and end leave none of your song to play.",
+        ) from exc
+    return song.model_dump(mode="json")
+
+
+def _require_talking_library_choice(variant: dict, bed: EditorCommitBackgroundMusic) -> None:
+    """KRI-1578: a phone Talking Save may keep, re-level or remove a library song it already has,
+    but a NEW library song needs ``TALKING_LIBRARY_MUSIC_ENABLED`` and no song of her own."""
+    from app.services import talking_music  # noqa: PLC0415
+
+    current = variant.get("smart_music_treatment")
+    current_id = current.get("track_id") if isinstance(current, dict) else None
+    if not bed.enabled or bed.track_id is None or str(bed.track_id) == str(current_id):
+        return
+    if not talking_music.library_music_enabled():
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "unsupported_phone_edit",
+            reason="Send the song you want and I'll play it under your voice.",
+        )
+    if talking_music.talking_song(variant) is not None:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "unsupported_phone_edit",
+            reason="Your own song plays under this video. Remove it first.",
+        )
 
 
 def _phone_authored_media_available(job: Job, variant: dict) -> bool:
@@ -11099,8 +11209,15 @@ def _merge_user_song_edit(
     payload: EditorCommitRequest,
 ) -> dict[str, Any]:
     """Fold a Save's ``user_song`` section into the revision's creator-song state."""
-    song = _variant_user_song(job, variant)
-    edit = payload.user_song
+    return _merged_user_song_edit(_variant_user_song(job, variant), saved, payload.user_song)
+
+
+def _merged_user_song_edit(
+    song: Mapping[str, Any] | None,
+    saved: dict[str, Any] | None,
+    edit: EditorCommitUserSong | None,
+) -> dict[str, Any]:
+    """``saved`` with ``edit`` folded in for the creator song ``song`` (its projection)."""
     if song is None or edit is None:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "user_song_unavailable")
     merged = dict(saved or {})
@@ -11452,9 +11569,13 @@ def require_guided_story_editor_commit(
                 if (segment.get("playback_rate") or 1) != (old.get("playback_rate") or 1):
                     raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, speed_reason)
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
-        if isinstance(variant, dict) and payload.user_song is not None:
-            # The creator's song only exists on a guided creator-song variant; never let
-            # the section reach another archetype as a render section.
+        if (
+            isinstance(variant, dict)
+            and payload.user_song is not None
+            and not _talking_song_save_open(variant)
+        ):
+            # The creator's song only exists on a guided creator-song variant or (KRI-1578) a
+            # phone Talking one; never let the section reach another archetype as a render section.
             raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "user_song_unavailable")
         return
     if variant.get("music_playback_mode") == "reference_only" and (
@@ -11599,6 +11720,7 @@ def prepare_editor_commit(
     speech_cut_owner: tuple[str, str] | None = None,
     phone_sfx_catalog_paths: dict[str, str] | None = None,
     creator_brief_binding: dict | None = None,
+    uploaded_song: Any | None = None,
 ) -> dict:
     """Stage native saves through the same validators, then pin a complete recipe.
 
@@ -11614,6 +11736,7 @@ def prepare_editor_commit(
         plan_item_id=plan_item_id,
         visual_assets=visual_assets,
         speech_cut_owner=speech_cut_owner,
+        uploaded_song=uploaded_song,
     )
     variant = _find_variant(job, variant_id)
     if variant is not None:
@@ -11698,6 +11821,7 @@ def prepare_editor_commit(
             sfx_catalog_paths=phone_sfx_catalog_paths,
             creator_brief_binding=creator_brief_binding,
             learning_sections=payload.model_fields_set,
+            uploaded_song=uploaded_song,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
 
@@ -12747,8 +12871,13 @@ def _prepare_editor_commit(
     plan_item_id: str | None = None,
     visual_assets: dict[str, dict] | None = None,
     speech_cut_owner: tuple[str, str] | None = None,
+    uploaded_song: Any | None = None,
 ) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
+
+    ``uploaded_song`` (KRI-1578, a `talking_music.UploadedSongRead`) is what the caller read
+    off the job's plan item: a phone Talking Save adds, keeps or re-pins the creator's own song
+    from it. None (not read) keeps the song the pinned recipe plays and adds none.
 
     Deliberately does NOT use `require_editable_variant`: saving during an
     in-flight render is the point — the E1 generation guard supersedes the old
@@ -13295,6 +13424,12 @@ def _prepare_editor_commit(
         music_window_video_duration_s = video_duration_s
 
     background_music_treatment: dict | None = None
+    talking_song_record: dict | None = None
+    if _talking_song_save_open(variant):
+        if payload.background_music is not None:
+            _require_talking_library_choice(variant, payload.background_music)
+        if payload.user_song is not None:
+            talking_song_record = _talking_song_edit(variant, payload.user_song, uploaded_song)
     if payload.background_music is not None:
         background_music_treatment = _resolve_background_music_treatment(
             payload.background_music,
@@ -14050,6 +14185,13 @@ def _prepare_editor_commit(
         if payload.background_music is not None:
             updated["smart_music_treatment"] = background_music_treatment
             updated["smart_audio_receipt"] = None
+        if talking_song_record is not None:
+            from app.services.talking_music import TALKING_SONG_FIELD  # noqa: PLC0415
+
+            updated[TALKING_SONG_FIELD] = talking_song_record
+            if talking_song_record.get("removed") is not True:
+                # Her own song is the one bed now: a library song never comes back from under it.
+                updated["smart_music_treatment"] = None
         if validated_lyrics is not None:
             if "enabled" in payload.lyrics.model_fields_set:
                 updated["lyrics_enabled"] = bool(validated_lyrics["enabled"])

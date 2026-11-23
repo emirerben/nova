@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.104.0] - 2026-11-23
+
+### Changed
+- ci(testflight): decide eligibility and wait for Fly on Linux, Mac only to build (KRI-1551) (#2482) <!-- release-pr: 2482 -->
+
+## [0.89.103.0] - 2026-11-23
+
+### Changed
+- ci: main seeds the Docker cache, locked installs, classify five root paths (KRI-1551) (#2479) <!-- release-pr: 2479 -->
+
+## [0.89.102.0] - 2026-11-23
+
+### Changed
+- KRI-1583: one text colour per level, shadow under low contrast, intent review legibility (KRI-1585 PR5) (#2489) <!-- release-pr: 2489 -->
+
+## [0.89.101.0] - 2026-11-23
+
+### Changed
+- fix(kria): researched captions are no longer refused by a capitalised-word name check before approval (#2491) <!-- release-pr: 2491 -->
+
+## [0.89.100.0] - 2026-11-23
+
+### Changed
+- test(ios): count the scaler's real buffers, not object addresses (KRI-1599) (#2490) <!-- release-pr: 2490 -->
+
+## [0.89.99.0] - 2026-11-23
+
+### Changed
+- fix(testflight): a release the platform cut off before upload no longer blocks every later release (KRI-1597) (#2488) <!-- release-pr: 2488 -->
+
+## [0.89.98.0] - 2026-11-23
+
+### Changed
+- feat(kria): a general sound-effect ask places effects on a montage with no voiceover (KRI-1561) (#2487) <!-- release-pr: 2487 -->
+
+## [0.89.97.0] - 2026-11-23
+
+### Changed
+- KRI-1580: research copy in the chosen design, hook title first, grounded headings (KRI-1585 PR2) (#2473) <!-- release-pr: 2473 -->
+
+## [0.89.96.0] - 2026-11-23
+
+### Changed
+- KRI-1581: informative text shapes: heading and detail pair, scrim, configurable shadow (#2474) <!-- release-pr: 2474 -->
+
+## [0.89.95.0] - 2026-11-23
+
+### Changed
+- feat(ios): add your own song on a Talking edit, ducked under your voice (#2468) <!-- release-pr: 2468 -->
+
+## [0.89.94.0] - 2026-11-22
+
+### Changed
+- feat(kria): play the creator's own uploaded song under a Talking edit (#2467) <!-- release-pr: 2467 -->
+
+## [0.89.93.0] - 2026-11-22
+
+### Changed
+- fix(review): a frame the decoder could not produce ends the review, never shrinks it (KRI-1534) (#2478) <!-- release-pr: 2478 -->
+
+## [0.89.92.0] - 2026-11-22
+
+### Changed
+- feat(kria): "no sound effects" holds through later chat edits and a stale plan (KRI-1561) (#2469) <!-- release-pr: 2469 -->
+
+## [0.89.91.0] - 2026-11-22
+
+### Changed
+- feat(ios): the draft shows the decided clip order as a strip you can reorder in a sheet, with a larger preview of each clip (KRI-1591) (#2476) <!-- release-pr: 2476 -->
+
+## [0.89.90.0] - 2026-11-22
+
+### Changed
+- KRI-1584: one font owner that sees font traits and the footage, favourites ranked (KRI-1585 PR4) (#2472) <!-- release-pr: 2472 -->
+
 ## [0.89.89.0] - 2026-11-22
 
 ### Changed

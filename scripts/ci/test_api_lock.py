@@ -17,7 +17,7 @@
   - a dependency that requires another OpenCV distribution by name
     (scenedetect requires `opencv-python`), unless pyproject.toml excludes it;
   - a place that installs with pip, which ignores that exclusion: the
-    production image and five workflows. Each installs once into a fresh
+    production image and three workflows. Each installs once into a fresh
     environment and must run `scripts/ci/opencv-install.py --only` afterwards;
   - the check after the locked install is dropped, so a wrong `cv2` is found
     by whichever test happens to need the missing function.
@@ -118,11 +118,13 @@ class ApiLockTests(unittest.TestCase):
             self.assertEqual(len(repairs), len(positions), path.name)
             for install, fix in zip(positions, repairs):
                 self.assertLess(install, fix, path.name)
-        # The pattern still finds them: the image and five workflows (one twice).
+        # The pattern still finds them: the image and three workflows
+        # (fly-deploy, ios, single-pass-parity). KRI-1551 moved
+        # agent-evals and request-following-regressions to the locked install.
         # Not the Makefile: a venv that lives on gets `opencv-python` back, on top,
         # from the next plain pip install, so repairing it once would only move
         # the problem. Local pip venvs keep their overlap, as before.
-        self.assertEqual(found, 7)
+        self.assertEqual(found, 4)
 
     def test_the_built_image_is_checked_for_one_opencv(self):
         build = (REPO / ".github/workflows/docker-build.yml").read_text()
