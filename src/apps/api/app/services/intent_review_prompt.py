@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.agents._schemas.intent_review import response_schema
-from app.agents.intent_review import PROMPT_VERSION, IntentReviewInput, render_review_prompt
+from app.agents.intent_review import IntentReviewInput, prompt_version_for, render_review_prompt
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument
 from app.kria.intent_review_catalog import FrameRef, build_review_catalog
@@ -74,7 +74,9 @@ def build_review(
         prompt=render_review_prompt(
             IntentReviewInput(original_request=packet["original_request"], catalog=catalog)
         ),
-        response_schema=response_schema(catalog.requirement_ids, catalog.frame_ids),
+        response_schema=response_schema(
+            catalog.requirement_ids, catalog.frame_ids, legibility=catalog.text_legibility
+        ),
         catalog=catalog.model_dump(mode="json"),
-        prompt_version=PROMPT_VERSION,
+        prompt_version=prompt_version_for(catalog),
     )

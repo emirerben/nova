@@ -2627,6 +2627,76 @@
    "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım"
   ],
   [
+   "app/services/choice_questions.py",
+   "I'll add the sourced facts as on-screen text.",
+   "Kaynaklı bilgileri ekrana yazı olarak ekleyeceğim."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Which look should the text have?",
+   "Yazılar hangi görünümde olsun?"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Editorial serif",
+   "Editoryal serif"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A serif title, then small capitals over a serif line for each fact.",
+   "Serif bir başlık, ardından her bilgi için serif bir satırın üstünde küçük büyük harfler."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Bold on a soft shade",
+   "Yumuşak gölgede kalın"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A bold title, then a yellow heading over a small line, on a soft dark fade.",
+   "Kalın bir başlık, ardından yumuşak bir karartmanın üstünde sarı başlık ve küçük bir satır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Centred display serif",
+   "Ortalanmış serif"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A large serif title and headings, each with a small line under it, centred.",
+   "Büyük serif başlık ve ara başlıklar, her birinin altında küçük bir satır, ortada."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Running guide",
+   "Akan anlatım"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A title, then one line on every clip, as if you were telling it.",
+   "Bir başlık, ardından her klipte sanki sen anlatıyormuşsun gibi bir satır."
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "Your opening title",
+   "Açılış başlığın"
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "A fact's heading",
+   "Bilginin başlığı"
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "Its detail sits right under it, on one short line",
+   "Ayrıntısı hemen altında, kısa bir satırda durur"
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "One line on every clip, as if you were telling it",
+   "Her klipte sanki sen anlatıyormuşsun gibi bir satır"
+  ],
+  [
    "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"

@@ -21,6 +21,17 @@ upload step, or Fastlane build-number skip does not establish a new upload.
 Failed distribution after a confirmed transfer still protects that source from
 being uploaded again. Every verified source must remain on current main.
 
+Since KRI-1551 the workflow has two jobs. `gate` runs on Linux: it decides
+whether the commit is released and waits for the Fly deploy, with no
+environment and no secrets. `release` runs on the Mac, `needs: gate`, and starts
+only when the gate reports `eligible=true`, so a run with nothing to release
+never takes a Mac (33 of 60 runs from 2026-11-12 to 11-23 did, about 3 minutes
+each). Provenance still reads only the `release` job's logs. A run cancelled
+while `gate` waited leaves `release` cancelled with no steps and no runner
+fields; it is excluded only when exactly one `gate` job in that attempt ended
+`cancelled`, `failure`, `skipped` or `timed_out`, because `release` cannot
+start without a successful gate.
+
 A cancelled job with no steps is excluded only when the raw Actions job record
 also explicitly reports zero runner and runner-group IDs and empty assignment
 names. Missing assignment fields stay unknown. This uses existing `actions: read`
@@ -30,6 +41,15 @@ An empty job summary is excluded only after the exact raw run/attempt record
 confirms a completed cancellation in this repository's main TestFlight workflow,
 and its attempt-specific raw job inventory explicitly reports zero total jobs
 and an empty list. Missing, mismatched or inconsistent records still block.
+
+A cancelled job whose upload step reported no result is excluded only when the
+raw Actions job record shows that step still pending with no start, end or
+result, and the archive step with no end or result. Actions keeps step records
+apart from the log, so this holds when the log was never stored: the move to
+the organization ended run 45030190568 that way, 35 seconds into its archive.
+An upload step in any other state, a repeated or missing step, or a job that is
+not completed and cancelled still blocks. Do not delete such a run to clear the
+gate.
 
 The gate checks the most recent 100 runs, including failed/cancelled runs and
 previous attempts of reruns (including its own), and

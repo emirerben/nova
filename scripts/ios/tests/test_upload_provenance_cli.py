@@ -53,8 +53,10 @@ class ProvenanceCLITests(unittest.TestCase):
         a = sys.argv
         if a[1] == 'api': print(json.dumps(f['raw_responses'][a[2]]))
         elif a[1:3] == ['run','list']: print(json.dumps(f['runs']))
-        elif '--log' in a: print(f['logs'][a[3]])
+        elif '--log' in a: print(f['logs'][a[3]]) if f['logs'][a[3]] is not None else sys.exit('log not found: 22')
+        elif f.get('cut_job') and a[3] == '2': print(json.dumps({'jobs':[f['cut_job']]}))
         elif f['jobless'] and a[3] == '2' and a[a.index('--attempt')+1] == str(f.get('empty_attempt',1)): print(json.dumps({'jobs':[]}))
+        elif f.get('run2_jobs') and a[3] == '2': print(json.dumps({'jobs': f['run2_jobs']}))
         elif f['unallocated'] and a[3] == '2': print(json.dumps({'jobs':[{'databaseId':22,'name':'release','conclusion':'cancelled','completedAt':'2','steps':[]}]}))
         else: print(json.dumps({'jobs': f.get('job_override') or [{'name':'release','conclusion': f.get('job_conclusion','success'),'completedAt':a[3], 'steps':f['steps']}]}))
         """)
@@ -123,6 +125,27 @@ class ProvenanceCLITests(unittest.TestCase):
                 ("no jobs rerun preserves upload", [old, head], head + " true"),
                 ("cancelled after transfer", [old, head], head + " true"),
                 ("ambiguous releases", [old], None),
+                # KRI-1551: `release` needs the Linux `gate` job. A run
+                # cancelled while the gate waited leaves `release` cancelled
+                # with no steps and null runner fields: no upload, but only
+                # when exactly one gate did not succeed in that attempt.
+                ("gate cancelled before the mac", [old, "unknown"], old + " false"),
+                ("gate failed before the mac", [old, "unknown"], old + " false"),
+                ("gate succeeded mac never started", [old, "unknown"], None),
+                ("gate missing mac never started", [old, "unknown"], None),
+                ("two gates mac never started", [old, "unknown"], None),
+                # Run 2 ended before its upload step started and its log was never
+                # stored (45030190568/1). Only complete step records prove no upload.
+                ("cut off before upload", [old, None], old + " false"),
+                ("cut off before the archive", [old, None], old + " false"),
+                ("cut off upload running", [old, None], None),
+                ("cut off upload has a start", [old, None], None),
+                ("cut off archive finished", [old, None], None),
+                ("cut off job failed", [old, None], None),
+                ("cut off job still running", [old, None], None),
+                ("cut off start time absent", [old, None], None),
+                ("cut off steps absent", [old, None], None),
+                ("cut off no prior upload", [old, None], None),
                 ("wrong job name", [old], None),
             ]:
                 data["runs"] = [
@@ -134,7 +157,10 @@ class ProvenanceCLITests(unittest.TestCase):
                     }
                     for i in range(1, len(sources) + 1)
                 ]
-                data["logs"] = {str(i): logs(sha) for i, sha in enumerate(sources, 1)}
+                data["logs"] = {
+                    str(i): None if sha is None else logs(sha)
+                    for i, sha in enumerate(sources, 1)
+                }
                 data["unallocated"] = name.startswith("unallocated")
                 data["raw_job"] = {
                     "status": "completed",
@@ -157,6 +183,97 @@ class ProvenanceCLITests(unittest.TestCase):
                     "cancelled" if name == "cancelled after transfer" else "success"
                 )
                 data["job_override"] = None
+                data["run2_jobs"] = None
+                gate_cases = {
+                    "gate cancelled before the mac": ["cancelled"],
+                    "gate failed before the mac": ["failure"],
+                    "gate succeeded mac never started": ["success"],
+                    "gate missing mac never started": [],
+                    "two gates mac never started": ["cancelled", "cancelled"],
+                }
+                if name in gate_cases:
+                    data["run2_jobs"] = [
+                        {"name": "gate", "conclusion": conclusion, "completedAt": "2", "steps": []}
+                        for conclusion in gate_cases[name]
+                    ] + [
+                        {
+                            "databaseId": 22,
+                            "name": "release",
+                            "conclusion": "cancelled",
+                            "completedAt": "2",
+                            "steps": [],
+                        }
+                    ]
+                    # What Actions reports for a job that never got a runner
+                    # because its run was cancelled (seen on run 45074551471).
+                    data["raw_job"] = {
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                        "runner_id": None,
+                        "runner_name": None,
+                        "runner_group_id": None,
+                        "runner_group_name": None,
+                        "steps": [],
+                    }
+                data["cut_job"] = None
+                if name.startswith("cut off"):
+                    # `gh run view --json jobs` reports an unfinished step with
+                    # an empty conclusion; the raw job record reports null.
+                    data["cut_job"] = {
+                        "databaseId": 22,
+                        "name": "release",
+                        "conclusion": "cancelled",
+                        "completedAt": "2",
+                        "steps": [
+                            {
+                                "name": "Archive signed Release IPA",
+                                "status": "in_progress",
+                                "conclusion": "",
+                            },
+                            {
+                                "name": "Upload and distribute to external TestFlight",
+                                "status": "pending",
+                                "conclusion": "",
+                            },
+                        ],
+                    }
+                    archive = {
+                        "name": "Archive signed Release IPA",
+                        "status": "in_progress",
+                        "conclusion": None,
+                        "started_at": "2026-11-22T14:02:07Z",
+                        "completed_at": None,
+                    }
+                    upload = {
+                        "name": "Upload and distribute to external TestFlight",
+                        "status": "pending",
+                        "conclusion": None,
+                        "started_at": None,
+                        "completed_at": None,
+                    }
+                    if name == "cut off before the archive":
+                        archive.update(status="pending", started_at=None)
+                    if name == "cut off upload running":
+                        upload["status"] = "in_progress"
+                    if name == "cut off upload has a start":
+                        upload["started_at"] = "2026-11-22T14:26:00Z"
+                    if name == "cut off archive finished":
+                        archive.update(status="completed", conclusion="success")
+                    if name == "cut off start time absent":
+                        del upload["started_at"]
+                    data["raw_job"] = {
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                        "steps": [archive, upload],
+                    }
+                    if name == "cut off job failed":
+                        data["raw_job"]["conclusion"] = "failure"
+                    if name == "cut off job still running":
+                        data["raw_job"]["status"] = "in_progress"
+                    if name == "cut off steps absent":
+                        del data["raw_job"]["steps"]
+                    if name == "cut off no prior upload":
+                        data["runs"] = data["runs"][1:]
                 if name == "ambiguous releases":
                     data["job_override"] = [{"name": "release"}, {"name": "release"}]
                 if name == "wrong job name":
@@ -220,6 +337,10 @@ class ProvenanceCLITests(unittest.TestCase):
                             else "missing or ambiguous release job"
                         )
                         self.assertIn(reason, result.stderr, name)
+                    if name == "cut off no prior upload":
+                        self.assertIn(
+                            "No verified upload in retained history", result.stderr, name
+                        )
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(), expected, name)

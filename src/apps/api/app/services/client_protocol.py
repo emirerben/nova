@@ -110,6 +110,11 @@ CLIP_ORDER_CARD_PROTOCOL = 54
 # standard shadow in its editor.
 INFORMATIVE_TEXT_DESIGNS_PROTOCOL = 55
 
+# KRI-1582: the first build that reads `choice_question` version 2, whose options carry a
+# `preview` it draws over the creator's own clip. A 55 build gets the design picker as
+# text-only cards.
+TEXT_DESIGN_PICKER_PROTOCOL = 56
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

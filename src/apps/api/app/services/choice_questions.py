@@ -987,6 +987,9 @@ CONFLICT_UNCLEAR_WORD = "unclear_word"
 OPT_UPDATE_FOOTAGE = "update_footage"
 # KRI-990: the no-footage way forward of a source-coverage question that can name the clips to drop.
 OPT_LEAVE_OUT_SOURCES = "leave_out_sources"
+# KRI-1582: which informative text design (A1, A2, A3, B1) sourced facts are written and drawn
+# in. Not a conflict: an optional look with a default, asked last and never at approval.
+CONFLICT_TEXT_DESIGN = "text_design"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order. The take lines come before any length question: the part
 # of the take they keep is what a length is judged against.
@@ -1005,6 +1008,7 @@ CONFLICT_PRIORITY = (
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_UNCLEAR_WORD,
+    CONFLICT_TEXT_DESIGN,
 )
 
 OPT_EXTEND = "extend"
@@ -1053,6 +1057,9 @@ class ChoiceCapability:
     # KRI-898: the app build that sent the message (stamped at submit). A freeze is only
     # asked about for a build that can play the hold; ``None`` = unknown, never asked.
     client_protocol: int | None = None
+    # KRI-1582: the creator's own messages, which the design default reads exactly as the
+    # research writer does ("alt yazı" anywhere in her request means a running guide).
+    creator_request: str = ""
 
 
 @dataclass(frozen=True)
@@ -2014,6 +2021,154 @@ def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
             ),
         ),
         input_digest=_digest(CONFLICT_TITLE_TEXT, ids),
+    )
+
+
+# ── Which informative text design (KRI-1582) ──────────────────────────────────
+
+TEXT_DESIGN_IDS = ("A1", "A2", "A3", "B1")
+
+
+def _text_design_options(default: str) -> tuple[ConflictOption, ...]:
+    """The four designs in the teardown's order, the agent's default recommended."""
+
+    return (
+        _option(
+            "A1",
+            label=("Editorial serif", "Editoryal serif"),
+            description=(
+                "A serif title, then small capitals over a serif line for each fact.",
+                "Serif bir başlık, ardından her bilgi için serif bir satırın üstünde küçük "
+                "büyük harfler.",
+            ),
+            recommended=default == "A1",
+            aliases=("A1",),
+        ),
+        _option(
+            "A2",
+            label=("Bold on a soft shade", "Yumuşak gölgede kalın"),
+            description=(
+                "A bold title, then a yellow heading over a small line, on a soft dark fade.",
+                "Kalın bir başlık, ardından yumuşak bir karartmanın üstünde sarı başlık ve "
+                "küçük bir satır.",
+            ),
+            recommended=default == "A2",
+            aliases=("A2",),
+        ),
+        _option(
+            "A3",
+            label=("Centred display serif", "Ortalanmış serif"),
+            description=(
+                "A large serif title and headings, each with a small line under it, centred.",
+                "Büyük serif başlık ve ara başlıklar, her birinin altında küçük bir satır, ortada.",
+            ),
+            recommended=default == "A3",
+            aliases=("A3",),
+        ),
+        _option(
+            "B1",
+            label=("Running guide", "Akan anlatım"),
+            description=(
+                "A title, then one line on every clip, as if you were telling it.",
+                "Bir başlık, ardından her klipte sanki sen anlatıyormuşsun gibi bir satır.",
+            ),
+            recommended=default == "B1",
+            aliases=("B1",),
+        ),
+    )
+
+
+def text_design_answer(strategy: Mapping[str, Any] | None) -> str | None:
+    """The design the creator picked (`choice_answers`, server-owned), or None."""
+
+    rows = (strategy or {}).get("choice_answers")
+    for row in rows if isinstance(rows, list) else ():
+        if (
+            isinstance(row, Mapping)
+            and row.get("kind") == CONFLICT_TEXT_DESIGN
+            and row.get("option") in TEXT_DESIGN_IDS
+        ):
+            return str(row["option"])
+    return None
+
+
+def _text_design(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    clip_paths: Sequence[Any] = (),
+) -> UnresolvedChoice | None:
+    """Which look the sourced facts get: asked once, before research writes them.
+
+    Asked only where the pick is drawn: the flag is on, the approval will stamp the job for
+    designs, the app build draws them, the draft renders through the unified phone montage
+    (the only route research is written for before approval) and the brief asks for
+    researched footage explanations. Research writes a different shape per design (heading and
+    detail, or one line per clip), so the pick must come before it. Unanswered, the agent's
+    default stands: the recommended option, the design research would write without a pick.
+    """
+
+    from app.services.phone_rollout import text_designs_planned_for  # noqa: PLC0415
+
+    if cap.creator_id is None or not text_designs_planned_for(cap.client_protocol):
+        return None
+    from app.services.researched_text import (  # noqa: PLC0415
+        approval_text_designs,
+        research_text_design,
+    )
+
+    if not approval_text_designs():
+        return None
+    from app.kria.research_preview import research_requirement  # noqa: PLC0415
+
+    found = research_requirement(brief)
+    if found is None:
+        return None
+    from app.services.creation_text_composition import (  # noqa: PLC0415
+        research_needs_text_layers,
+    )
+
+    if research_needs_text_layers(_live(brief)):
+        return None  # text layers are her own asked texts at her asked spots, not a design
+    audio = strategy.get("montage_audio")
+    if (
+        isinstance(audio, Mapping)
+        and audio.get("preserve_source_audio")
+        and audio.get("source_media_ids")
+    ):
+        return None  # the speech-excerpt lane cannot research before approval
+    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+
+    if not defers_to_unified_montage(
+        creator_id=cap.creator_id,
+        edit_format=strategy.get("edit_format") or "montage",
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return None
+    requirement, request = found
+    default = research_text_design(None, f"{request.request_quote}\n{cap.creator_request}")
+    return UnresolvedChoice(
+        kind=CONFLICT_TEXT_DESIGN,
+        conflict_id=CONFLICT_TEXT_DESIGN,
+        field_path="text_design",
+        # The look of the facts, not the research ask itself: a delegated pick must not mark
+        # the ask as delegated (`approval_readiness`).
+        requirement_ids=(),
+        intro=say(
+            en="I'll add the sourced facts as on-screen text.",
+            tr="Kaynaklı bilgileri ekrana yazı olarak ekleyeceğim.",
+        ),
+        reason=say(
+            en="Which look should the text have?",
+            tr="Yazılar hangi görünümde olsun?",
+        ),
+        options=_text_design_options(default),
+        # The research ask's own id: the brief keeps it while the ask is reworded (an answer
+        # tap reaches the brief extractor as a message), so the pick is not asked again.
+        input_digest=_digest(CONFLICT_TEXT_DESIGN, requirement.id),
     )
 
 
@@ -4476,6 +4631,7 @@ def collect_conflicts(
         _voice_vs_duration,
         functools.partial(_length_vs_natural, snapshot=media_snapshot),
         functools.partial(_unclear_word, snapshot=media_snapshot, clip_paths=clip_paths),
+        functools.partial(_text_design, clip_paths=clip_paths),
     ):
         result = detector(data, brief, rows, cap)
         if isinstance(result, list):
@@ -4511,7 +4667,8 @@ def open_conflicts(
     return [
         c
         for c in collect_conflicts(strategy, brief, media_snapshot, capability)
-        if c.conflict_id not in answered
+        # An unanswered text design is the agent's default, never a reason to hold approval.
+        if (c.kind != CONFLICT_TEXT_DESIGN and c.conflict_id not in answered)
         or (
             c.kind == CONFLICT_UNCLEAR_WORD
             and not any(
@@ -5253,10 +5410,10 @@ _WAITING_KINDS = _TIMING_KINDS | {CONFLICT_HOLDS_VS_LENGTH}
 
 
 def _ask_limit(choice: UnresolvedChoice) -> int:
-    """How many times this conflict may be asked: once for a length, else the question and
-    one re-ask."""
+    """How many times this conflict may be asked: once for a length or a text design (left
+    unanswered, its default stands), else the question and one re-ask."""
 
-    return 1 if choice.kind in _TIMING_KINDS else MAX_ASKS_PER_QUESTION
+    return 1 if choice.kind in _TIMING_KINDS | {CONFLICT_TEXT_DESIGN} else MAX_ASKS_PER_QUESTION
 
 
 def _reask_after_refusal(

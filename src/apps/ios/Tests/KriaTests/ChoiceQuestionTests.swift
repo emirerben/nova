@@ -38,7 +38,8 @@ final class ChoiceQuestionTests: XCTestCase {
     func testMalformedOrUnsupportedPayloadsYieldNoQuestion() {
         XCTAssertNil(ChoiceQuestion.parse(payload: nil))
         XCTAssertNil(ChoiceQuestion.parse(payload: [:]))
-        XCTAssertNil(ChoiceQuestion.parse(payload: payload(version: 2)), "newer version degrades to the text question")
+        XCTAssertNil(ChoiceQuestion.parse(payload: payload(version: 3)), "newer version degrades to the text question")
+        XCTAssertNotNil(ChoiceQuestion.parse(payload: payload(version: 2)), "version 2 is this build's own")
         XCTAssertNil(ChoiceQuestion.parse(payload: payload(questionID: "")))
         XCTAssertNil(ChoiceQuestion.parse(payload: payload(options: [])))
         XCTAssertNil(ChoiceQuestion.parse(payload: payload(options: [option("only", "One option")])), "one option is not a choice")
