@@ -2283,6 +2283,15 @@ class _EditorTarget:
     # KRI-1387: the editor compiler bound to a detached copy of this job and projected
     # variant, so the copilot turn finds refused ops before the draft compile does.
     compile_check: CompileCheck | None = None
+    # KRI-1580: the job's phone text policy, for a variant that carries no copy of its stamp.
+    job_text_policy: dict | None = None
+
+
+def _chat_text_design(target: _EditorTarget, message: str) -> str | None:
+    """KRI-1580: research a follow-up chat asks for is written in the job's design shape."""
+    from app.services.researched_text import chat_text_design  # noqa: PLC0415
+
+    return chat_text_design(target.variant, message, job_policy=target.job_text_policy)
 
 
 async def _copilot_clip_context(
@@ -2991,6 +3000,7 @@ async def _load_editor_target(
         snapshot=snapshot,
         conversation=conversation,
         variant=variant,
+        job_text_policy=copy.deepcopy((job.assembly_plan or {}).get("phone_text_style")),
         recovery_basis=recovery_basis,
         last_ready=(
             {
@@ -3152,6 +3162,7 @@ async def _plan_editor_revision(
         ),
         timeout_override_s=120.0,
         compile_check=target.compile_check,
+        text_design=_chat_text_design(target, user_message),
     )
     if (
         response.ops
@@ -7705,6 +7716,7 @@ async def _plan_scoped_turn(
                 ),
                 job_id=target.job_id,
                 compile_check=target.compile_check,
+                text_design=_chat_text_design(target, user_message),
             )
             kept, dropped = plan_review.filter_ops_to_scope(
                 list(response.ops), model_snapshot, model_scope

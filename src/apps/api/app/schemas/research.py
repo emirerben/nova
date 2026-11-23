@@ -88,6 +88,19 @@ class StoryResearch(BaseModel):
     review_current: bool = True
 
 
+class ResearchDesignTag(BaseModel):
+    """Which level of an informative text design a researched row is (KRI-1580).
+
+    ``hook`` opens the video; ``heading`` and ``detail`` are one Mode A fact, linked by
+    ``pair``; ``line`` is one Mode B (running guide) line. The renderer draws the levels.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    id: Literal["A1", "A2", "A3", "B1"]
+    level: Literal["hook", "heading", "detail", "line"]
+    pair: int | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class PreparedResearchText(BaseModel):
     """One sourced explanation the creator saw before approving (KRI-881)."""
 
@@ -98,6 +111,7 @@ class PreparedResearchText(BaseModel):
     end_s: float = Field(gt=0)
     sources: list[ResearchSource] = Field(min_length=1, max_length=16)
     facts: list[ResearchFact] = Field(min_length=1, max_length=5)
+    design: ResearchDesignTag | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ReviewedClip(BaseModel):
@@ -128,6 +142,11 @@ class PreparedResearchLayer(BaseModel):
     facts: list[ResearchFact] = Field(min_length=1, max_length=5)
 
 
+# The most sourced texts one approval holds: legacy's 12 explanations, and the rows a design
+# writes (its hook, then one row per guide line or two per heading and detail).
+MAX_PREPARED_TEXTS = 12
+
+
 class PreparedResearch(BaseModel):
     """Research done before approval and pinned to it (KRI-881).
 
@@ -144,7 +163,7 @@ class PreparedResearch(BaseModel):
     topic: str = Field(min_length=3, max_length=500)
     request_quote: str = Field(min_length=4, max_length=400)
     basis_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    texts: list[PreparedResearchText] = Field(default_factory=list, max_length=12)
+    texts: list[PreparedResearchText] = Field(default_factory=list, max_length=MAX_PREPARED_TEXTS)
     retrieved_at: str = ""
     # One copy of the provider's search attribution for every explanation (F12).
     search_entry_html: str = Field(default="", max_length=100000)
@@ -154,4 +173,9 @@ class PreparedResearch(BaseModel):
     # ask. Empty is omitted, so every earlier approved binding keeps its digest.
     layers: list[PreparedResearchLayer] = Field(
         default_factory=list, max_length=6, exclude_if=lambda value: not value
+    )
+    # KRI-1580: every fact the writer was given, not only the cited ones, so a review can audit
+    # the wording. Written only for an informative text design; omitted otherwise.
+    evidence_facts: list[ResearchFact] = Field(
+        default_factory=list, max_length=30, exclude_if=lambda value: not value
     )

@@ -3964,7 +3964,7 @@
     {
       "id": "kri-1585-informative-text",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py",
+      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py tests/pipeline/test_kri1580_kyoto_research_copy.py",
       "paths": [
         "src/apps/api/tests/fixtures/kri1585_kyoto/plan.json",
         "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows.json",
@@ -3974,6 +3974,8 @@
         "src/apps/api/tests/fixtures/kri1585_kyoto/expected_rows.json",
         "src/apps/api/tests/fixtures/kri1585_kyoto/designed_rows.json",
         "src/apps/api/tests/pipeline/test_kri1581_text_shapes.py",
+        "src/apps/api/tests/fixtures/kri1585_kyoto/research_copy_designed.json",
+        "src/apps/api/tests/pipeline/test_kri1580_kyoto_research_copy.py",
         "src/apps/api/tests/pipeline/test_kri1585_kyoto_fixture.py",
         "src/apps/api/tests/pipeline/test_kri1579_creator_edits_win.py",
         "src/apps/api/app/pipeline/informative_text.py",
