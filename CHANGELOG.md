@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.95.0] - 2026-11-23
+
+### Changed
+- feat(ios): add your own song on a Talking edit, ducked under your voice (#2468) <!-- release-pr: 2468 -->
+
 ## [0.89.94.0] - 2026-11-22
 
 ### Changed
