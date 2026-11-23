@@ -32,6 +32,10 @@ jobs:
         run: |
           /usr/bin/python3 scripts/exp-patch.py fix
           bash scripts/exp-run.sh fix-idle 15 0 "$SONG" "$USE" "$UNDO" "$RANGE"
+      - name: Phone-render unit class, 150 times idle and 150 times with 6 busy processes (KRI-1605)
+        run: |
+          bash scripts/exp-unit.sh unit-idle 150 0 DeviceRenderExecutionTests
+          bash scripts/exp-unit.sh unit-busy 150 6 DeviceRenderExecutionTests
       - name: Fixes, 15 times each, with 6 busy processes
         run: bash scripts/exp-run.sh fix-busy 15 6 "$SONG" "$USE" "$UNDO" "$RANGE"
       - name: Red control, a format card that never accepts taps (range test must fail at the card, every time)
