@@ -72,6 +72,10 @@ final class CameraRollCollectionUITests: XCTestCase {
     /// What the fixture server stored for each event, as "group|title|about" lines.
     private func serverEvents(_ app: XCUIApplication) -> XCUIElement { element(app, "camera-roll-fixture-server-events") }
 
+    /// The fixture server's held requests (`-collection-hold-…`): the value counts those waiting and those let go
+    /// ("1 held, 0 released"), a tap lets the waiting ones go.
+    private func heldRequests(_ app: XCUIApplication) -> XCUIElement { element(app, "camera-roll-fixture-release") }
+
     // MARK: Surface
 
     func testDrawerOpensTheCameraRollFullScreen() {
@@ -410,7 +414,9 @@ final class CameraRollCollectionUITests: XCTestCase {
     }
 
     func testUseKeepsGoingAfterTheSheetCloses() {
-        let app = launch(["-collection-mixed-states", "-collection-slow-use"])
+        // The server sits on the last step until this test lets it go. On a fixed delay the work finished, and the
+        // sheet left, before the second Close on a slow runner (KRI-1604).
+        let app = launch(["-collection-mixed-states", "-collection-hold-use"])
         openEvent(app, sunday)
         let use = element(app, "camera-roll-idea-use-\(ferryIdea)")
         scrollTo(use, in: app)
@@ -420,7 +426,13 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertTrue(wait(use, "label CONTAINS %@", "Show progress"), "The card says the idea is still being built")
         use.tap()
         XCTAssertTrue(element(app, "camera-roll-use-sheet").waitForExistence(timeout: 5), "The sheet reopens on the same work")
+        XCTAssertTrue(wait(element(app, "camera-roll-use-step-chat"), "value == %@", "In progress", timeout: 15), "The work went on behind the closed sheet")
         element(app, "camera-roll-use-close").tap()
+        let held = heldRequests(app)
+        XCTAssertTrue(wait(held, "value == %@", "1 held, 0 released"), "The last step is waiting on the server: \(held.value as? String ?? "nothing")")
+        XCTAssertFalse(element(app, "camera-roll-opened-chat").exists)
+        held.tap()
+        XCTAssertTrue(wait(held, "value == %@", "0 held, 1 released"), "The server answered the last step: \(held.value as? String ?? "nothing")")
         XCTAssertTrue(element(app, "camera-roll-opened-chat").waitForExistence(timeout: 20), "Closing the sheet never cancels the work")
     }
 
@@ -512,14 +524,21 @@ final class CameraRollCollectionUITests: XCTestCase {
     /// Undo can arrive while the server is still deleting the event. The restore must land after the delete, or the
     /// ideas are gone on the server while the phone still shows them.
     func testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas() {
-        let app = launch(["-collection-mixed-states", "-collection-slow-group-delete"])
+        // The server sits on the delete until this test lets it go. On a 1.5 s delay the Undo tap landed about 2 s
+        // in on a hosted Mac, after the delete had finished, and the test passed without its case (KRI-1604).
+        let app = launch(["-collection-mixed-states", "-collection-hold-group-delete"])
         openEvent(app, sunday)
         element(app, "camera-roll-event-menu-\(sunday)").tap()
         app.buttons["Delete event"].tap()
         element(app, "camera-roll-delete-event-confirm").tap()
         XCTAssertTrue(app.staticTexts["Event deleted"].waitForExistence(timeout: 5))
         element(app, "camera-roll-undo").tap()
-        // The server finishes deleting 1.5 s in; then the restore runs. Reading its ideas back shows which won.
+        // Nothing has been let go yet, so the delete was in flight when Undo was tapped.
+        let held = heldRequests(app)
+        XCTAssertTrue(wait(held, "value == %@", "1 held, 0 released"), "The delete is waiting on the server: \(held.value as? String ?? "nothing")")
+        held.tap()
+        XCTAssertTrue(wait(held, "value == %@", "0 held, 1 released"), "The server answered the delete: \(held.value as? String ?? "nothing")")
+        // The server has finished deleting; then the restore runs. Reading its ideas back shows which won.
         openEvent(app, sunday)
         element(app, "camera-roll-event-menu-\(sunday)").tap()
         app.buttons["Select and move items"].tap()

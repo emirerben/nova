@@ -9,10 +9,13 @@ import Foundation
 ///   `-collection-access-notices` the limited-access and access-removed notices (Paper A6)
 ///   `-collection-conflict`      saving the collection answers "this collection changed" until the creator opens the latest
 ///   `-collection-cache-miss`    finding ideas answers "new analysis is unavailable", which is not an edit conflict
-///   `-collection-slow-group-delete` deleting an event takes the server 1.5 s, so Undo can be tapped while it is in flight
+///   `-collection-hold-group-delete` deleting an event waits on the server until the test releases it, so Undo is
+///                               tapped while it is in flight
 ///   `-collection-legacy-server` a server from before event titles and about: its collection has no `events`, and
 ///                               a body that sends them is refused, as `extra="forbid"` refuses it
 ///   `-collection-slow-use`      every step of "Use this idea" takes the server 0.8 s, so its progress can be watched
+///   `-collection-hold-use`      handing the chat to the idea waits on the server until the test releases it, so the
+///                               sheet can be closed and reopened while the work is still going
 ///   `-collection-use-fails-once` handing the chat to the idea fails the first time, so Retry can be tapped
 ///   `-collection-chat-deleted`  the workspace refuses to open the idea's chat, as it does for a chat the creator deleted
 /// `-camera-roll-collection` hosts the surface on its own; `-camera-roll-surface-fixture` swaps the fixture in under
@@ -118,6 +121,18 @@ struct CameraRollSurfaceUITestHost: View {
                 return true
             })
             if opened { Text("Opened a chat").accessibilityIdentifier("camera-roll-opened-chat") }
+            if CameraRollSurfaceFixtureServer.shared.holdsRequests {
+                // The test's side of a held request: the value counts those waiting and those let go, a tap lets
+                // the waiting ones go.
+                SwiftUI.TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    Button { CameraRollSurfaceFixtureServer.shared.release() } label: {
+                        Text("Release").font(.system(size: 9)).frame(width: 88, height: 36).contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("camera-roll-fixture-release")
+                    .accessibilityValue(CameraRollSurfaceFixtureServer.shared.heldSummary)
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
         }
     }
 }
@@ -147,12 +162,17 @@ private final class CameraRollSurfaceURLProtocol: URLProtocol, @unchecked Sendab
     override func startLoading() {
         // A slow route applies its change when it answers, as a real server's would, so a request that overtook it
         // would show up as a wrong final state.
-        DispatchQueue.global().asyncAfter(deadline: .now() + Self.server.delay(for: request)) { [self] in
+        let answer: @Sendable () -> Void = { [self] in
             let (status, body) = Self.server.respond(request)
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
             client?.urlProtocolDidFinishLoading(self)
+        }
+        if Self.server.holds(request) {
+            Self.server.hold(answer)
+        } else {
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.server.delay(for: request), execute: answer)
         }
     }
     override func stopLoading() {}
@@ -187,7 +207,41 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
         if Self.has("-collection-slow-use"), path.contains("/creation-threads/") || path.hasSuffix("/select") || (request.httpMethod == "POST" && path.hasSuffix("/creation-threads")) {
             return 0.8
         }
-        return Self.has("-collection-slow-group-delete") && request.httpMethod == "DELETE" && path.hasSuffix("/groups") ? 1.5 : 0
+        return 0
+    }
+
+    // MARK: held requests
+
+    /// Answers the server is sitting on until the test releases them. A fixed delay made the test race the clock:
+    /// on a slow runner the work finished before the test's next tap, or the tap landed after the request it was
+    /// meant to overlap (KRI-1604).
+    private var held: [@Sendable () -> Void] = []
+    var holdsRequests: Bool { Self.has("-collection-hold-use") || Self.has("-collection-hold-group-delete") }
+    private var released = 0
+    /// "1 held, 0 released": what is waiting now and what the test has let go so far.
+    var heldSummary: String {
+        lock.lock(); defer { lock.unlock() }
+        return "\(held.count) held, \(released) released"
+    }
+
+    func holds(_ request: URLRequest) -> Bool {
+        let path = request.url?.path ?? ""
+        if Self.has("-collection-hold-use"), request.httpMethod == "POST", path.hasSuffix("/select") { return true }
+        return Self.has("-collection-hold-group-delete") && request.httpMethod == "DELETE" && path.hasSuffix("/groups")
+    }
+
+    func hold(_ answer: @escaping @Sendable () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        held.append(answer)
+    }
+
+    func release() {
+        lock.lock()
+        let answers = held
+        held = []
+        released += answers.count
+        lock.unlock()
+        for answer in answers { DispatchQueue.global().async(execute: answer) }
     }
 
     /// What another phone saved first: a renamed collection holding two of Sunday's items.
