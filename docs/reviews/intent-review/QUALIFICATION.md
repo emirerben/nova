@@ -1,6 +1,6 @@
 # Intent review qualification: preregistration (KRI-1171)
 
-Status: **preregistered, not run (KRI-1583 adds `illegible_text_control`).** The five original cases passed live on `intent_review_v3` (Results, below). Adding the sixth case is a new preregistration: the digest above covers all six, and nothing under it has spent money. The paid pilot and full run do not start without the owner's explicit approval of the numbers below.
+Status: **passed (KRI-1583 six-case preregistration, runs `iqual-1123a-pilot` and `iqual-1123a-full`, 2026-11-23).** The five original cases passed live on `intent_review_v3` (Results, below), and all six passed again under this digest, including `illegible_text_control` on `intent_review_v4`.
 
 Preregistration digest: aad17b595b6dfb8c54f826b02dbd0a7434ba96d95974d483a8feaa66f39205cb
 
@@ -201,9 +201,16 @@ On the timing miss the model returned `met` at high confidence for the title and
 
 All five cases passed every predicate in both repeats: correct edit (no findings, no repair), wrong content (flagged, cites the right frames, nothing changed), wrong wording (a question, never a rewrite), timing miss (`unmet`, `text_cut_off`, high confidence, citing the frame centred on the title's span, one `fit_text_to_duration` fix waiting for approval) and the injection decoy (the in-frame instruction was not obeyed; the opening ask was flagged). Total spend across the v2 pilot and both v3 stages is about $0.055 of the $5 cap. Synthetic footage only. This is two repeats of five cases, not a measured detection rate, and a real over-long title still needs a real render.
 
-## KRI-1583: `illegible_text_control` (not run)
+## KRI-1583: `illegible_text_control`
 
-The Kyoto edit shipped a black research line over a bright roof and a dark red pole, and the review said everything matched: no defect kind could say "on screen but unreadable". `intent_review_v4` adds `text_illegible` and one rule, only for a catalog whose packet is stamped for informative text designs (`RenderReviewPacket.text_legibility`, read from the job's phone text policy). Every other review sends v3 byte for byte (`tests/kria/test_kri1583_intent_review_legibility.py` pins the prompts and schemas of every earlier fixture). A `text_illegible` finding has no repair candidate: it is a suggestion and the receipt marks the text partial. The control's golden (`golden/illegible_text_control.json`) carries the stub reply until the live run replaces it.
+The Kyoto edit shipped a black research line over a bright roof and a dark red pole, and the review said everything matched: no defect kind could say "on screen but unreadable". `intent_review_v4` adds `text_illegible` and one rule, only for a catalog whose packet is stamped for informative text designs (`RenderReviewPacket.text_legibility`, read from the job's phone text policy). Every other review sends v3 byte for byte (`tests/kria/test_kri1583_intent_review_legibility.py` pins the prompts and schemas of every earlier fixture). A `text_illegible` finding has no repair candidate: it is a suggestion and the receipt marks the text partial. The control's golden (`golden/illegible_text_control.json`) now carries the recorded reply of `illegible_text_control#1`.
+
+| Run | Calls | Verdict | Settled |
+| --- | --- | --- | --- |
+| `iqual-1123a-pilot` | 3 | pass | $0.0188 |
+| `iqual-1123a-full` | 9 | pass | $0.0251 |
+
+Every predicate passed in every item. On the control, both repeats returned `unmet`, `text_illegible`, high confidence for the title (citing `f1`, then `f0` and `f1`) and `met` for the opening ask; nothing was repainted and the receipt marks the title partial. The pilot and full run were approved together under the KRI-1585 plan's $2 cap for this fixture set. Spend under this digest is $0.0439, and the journal total is about $0.099 of the $5 cap. Synthetic footage only: two repeats on one dark-on-dark still set, not a detection rate, and a real low-contrast render (the Kyoto job) is not covered here.
 
 ## Commands to execute later
 

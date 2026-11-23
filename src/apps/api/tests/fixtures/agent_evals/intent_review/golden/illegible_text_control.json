@@ -127,7 +127,8 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "raw_text": "hand_written_pending_live_qualification",
+    "raw_text": "live_recorded",
+    "recorded": {"run_id": "iqual-1123a-full", "item": "illegible_text_control#1", "model": "gpt-6.1-sol", "response_id": "resp_03fda2827efcf402016b040af8e31087d2b6d708d35bc619e7", "date": "2026-11-23"},
     "case": "KRI-1583 black on dark: the title is there as approved but drawn near-black on a dark strip, on a job stamped for informative text",
     "built_from": "app.kria.intent_review_qualification illegible_text_control (perfect_reply)",
     "expect": {
