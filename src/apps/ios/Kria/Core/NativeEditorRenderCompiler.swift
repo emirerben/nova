@@ -117,6 +117,9 @@ enum NativeEditorRenderError: Error, Equatable {
         // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
         // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
         let creatorHearsCameraWithSong = hasExplicitOriginalGain && originalGain > 0
+        // A Talking edit's voice IS the camera audio, so a creator song never mutes it: the song is a music-role
+        // bed that ducks under the spoken windows, like the library bed below (KRI-1578).
+        let songUnderVoice = document.editFormat == "subtitled"
         func slot(for clip: EditorClip, index: Int) -> EditorTimelineSlot? {
             if let id = clip.slotID, let value = activeSlots.first(where: { $0.id == id }) { return value }
             return activeSlots.indices.contains(index) ? activeSlots[index] : nil
@@ -298,7 +301,7 @@ enum NativeEditorRenderError: Error, Equatable {
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: sourceStart, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
-                volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
+                volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong && !songUnderVoice ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
             if let raw = authoredSlot?.raw["speaker_frame_override"], raw != .null {
@@ -415,7 +418,10 @@ enum NativeEditorRenderError: Error, Equatable {
             // KRI-561: the creator may have stopped the music earlier (absolute song second `endS`).
             let natural = min(total, available - start)
             let creatorEndApplies = bed.endS.map { $0 - start < natural - 0.05 } ?? false
-            let length = creatorEndApplies ? max(0, (bed.endS ?? 0) - start) : natural
+            // A song under a Talking edit loops its window under the whole video, like a library bed (the server's
+            // `music_bed_from_user_song`): the window is start..creator end (or the song's end), repeated.
+            let loopSection = songUnderVoice ? max(0, min(bed.endS ?? available, available) - start) : 0
+            let length = songUnderVoice ? min(loopSection, total) : creatorEndApplies ? max(0, (bed.endS ?? 0) - start) : natural
             if length > 0 {
                 let id = Self.songTrackID
                 assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint, duration: available)
@@ -426,10 +432,28 @@ enum NativeEditorRenderError: Error, Equatable {
                 clip.audioFadeIn = bed.fadeIn.map { min($0, length / 2) }
                 // The server fades a creator-stopped song out over 1.5 s; a song that merely runs out keeps the
                 // recipe's own fade.
-                clip.audioFadeOut = creatorEndApplies
+                clip.audioFadeOut = creatorEndApplies && !songUnderVoice
                     ? min(NativeEditorSongBed.creatorEndFadeOut, length / 2)
                     : bed.fadeOut.map { min($0, length / 2) }
-                audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: [clip]))
+                var songClips = [clip]
+                if songUnderVoice, loopSection > 0.05 {
+                    // Consecutive pieces of the window, one per repeat; only the last may be cut short by the video's end.
+                    var cursor = length
+                    while total - cursor > 0.05 {
+                        let piece = min(loopSection, total - cursor)
+                        var repeated = TimelineClip(id: "\(id)-\(songClips.count)", sourceAssetID: id, sourceStart: start, sourceDuration: piece,
+                                                    timelineStart: cursor, volume: bed.volume)
+                        repeated.audioFadeIn = nil
+                        songClips.append(repeated)
+                        cursor += piece
+                    }
+                    songClips[0].audioFadeOut = nil
+                    songClips[songClips.count - 1].audioFadeOut = bed.fadeOut.map { min($0, songClips[songClips.count - 1].sourceDuration / 2) }
+                }
+                // The windows come from the cues the creator sees, as for the library bed below.
+                let windows = songUnderVoice ? Self.speechWindows(cues: document.captionCues, items: items, total: total) : []
+                speechWindows = windows
+                audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: songClips, role: windows.isEmpty ? nil : .music))
             } else {
                 // No song plays (its window is past the end of the file): the camera is not muted for nothing.
                 for index in video.indices { video[index].volume = cameraLevelWithoutSong[index] }

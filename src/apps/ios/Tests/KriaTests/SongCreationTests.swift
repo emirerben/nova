@@ -87,6 +87,24 @@ import KriaMediaEngine
         XCTAssertFalse(off.songOrderQuestionsEnabled)
     }
 
+    /// KRI-1578: a Talking edit takes a song (it plays under the voice) only when the server advertises song upload.
+    func testSongAttachFollowsTheServerAndTheFormat() throws {
+        let on = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"media":{"song":{"max":1,"max_file_bytes":10,"content_types":["audio/mpeg"]}}}"#.utf8))
+        XCTAssertTrue(on.songAttachAvailable(for: .montage))
+        XCTAssertTrue(on.songAttachAvailable(for: .lipsync))
+        XCTAssertTrue(on.songAttachAvailable(for: .talkingToCamera))
+        XCTAssertFalse(on.songAttachAvailable(for: .narrated), "a narrated edit plays its voiceover, not a song")
+        XCTAssertFalse(on.songAttachAvailable(for: .slides))
+        XCTAssertFalse(on.songAttachAvailable(for: nil))
+        for off in [#"{"formats":[]}"#, #"{"formats":[],"media":{"clips":{"max":10,"max_file_bytes":1000,"content_types":["video/mp4"]}}}"#,
+                    #"{"formats":[],"media":{"song":null}}"#] {
+            let capabilities = try JSONDecoder().decode(CreationCapabilities.self, from: Data(off.utf8))
+            for format in [CreationFormat.montage, .lipsync, .talkingToCamera, .narrated, .slides] {
+                XCTAssertFalse(capabilities.songAttachAvailable(for: format), "\(format) without server song upload: \(off)")
+            }
+        }
+    }
+
     func testNullMediaEntryDegradesInsteadOfFailingTheWholeCapabilitiesLoad() throws {
         let json = Data(#"""
         {"formats":[],"media":{"clips":{"max":10,"max_file_bytes":1000,"content_types":["video/mp4"]},"song":null},
