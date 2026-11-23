@@ -93,7 +93,8 @@ from app.tasks import generative_build
 from app.text_fold import loose_text
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kri1585_kyoto"
-_LABEL = re.compile(r"^[^\d:\n]{1,60}:\s")
+# Any colon that ends a word, digits or not: "25 dakika: …", "Güzergah:".
+_LABEL = re.compile(r":(\s|$)")
 _ASK = "Bu Kyoto'daki Toroko treni tren hakkında bilgilendirici alt yazı istiyorum"
 
 
@@ -525,6 +526,138 @@ def _run(text_design: str):
     )
 
 
+def _crossfaded(count: int, length: float, fade: float) -> dict:
+    """The Kyoto clips recut to ``count`` clips of ``length`` s, each cross-faded ``fade`` s
+    into the next (the phone editor allows up to 0.3 s, its default for an added transition)."""
+    snapshot = _snapshot()
+    base = snapshot["slots"]
+    snapshot["slots"] = [
+        {
+            **base[index % len(base)],
+            "media_id": f"clip-{index}.mp4",
+            "clip_index": index,
+            "output_start_s": round(index * (length - fade), 3),
+            "output_end_s": round(index * (length - fade) + length, 3),
+            "duration_s": length,
+        }
+        for index in range(count)
+    ]
+    snapshot["story_beat_windows"] = []
+    return snapshot
+
+
+def _own_spans(snapshot: dict) -> dict[str, tuple[float, float]]:
+    """Each clip's stretch after the opening that no neighbour's cross-fade shares."""
+    slots = snapshot["slots"]
+    _hook, facts_start = design_opening(snapshot)
+    spans = {}
+    for index, slot in enumerate(slots):
+        start = max(slot["output_start_s"], facts_start)
+        end = slot["output_end_s"]
+        if index:
+            start = max(start, slots[index - 1]["output_end_s"])
+        if index + 1 < len(slots):
+            end = min(end, slots[index + 1]["output_start_s"])
+        if end > start:
+            spans[slot["media_id"]] = (start, end)
+    return spans
+
+
+def _write_what_fits(calls: dict):
+    """A writer that answers every offered window its design's rows hold, in order, each
+    heading and detail read together inside the window's reading time."""
+    lines = [(c.text, c.evidence_ids) for c in _designed("B1").captions]
+    pairs = [(c.heading, c.text, c.evidence_ids) for c in _designed("A2").captions]
+
+    def write(self, input, *, ctx=None):
+        calls["writer"].append(input)
+        windows = input.snapshot["research_windows"]
+        guide = input.text_design == "B1"
+        if not guide:
+            hook = input.snapshot.get("hook_window")
+            windows = windows[: researched_text.design_row_budget(hook) // 2]
+        captions = []
+        for index, window in enumerate(windows):
+            heading, text, ids = (
+                ("", *lines[index % len(lines)]) if guide else pairs[index % len(pairs)]
+            )
+            captions.append(
+                {
+                    "window_id": window["id"],
+                    "heading": heading,
+                    "text": _fit(text, window["max_characters"] - len(heading)),
+                    "evidence_ids": ids,
+                    "visual_quote": window["seen"][0]["text"][:16],
+                }
+            )
+        hook = _designed("B1").hook.model_dump() if input.snapshot.get("hook_window") else None
+        return self.parse(json.dumps({"hook": hook, "captions": captions}), input)
+
+    return write
+
+
+@pytest.mark.parametrize("text_design", ["B1", "A2"])
+@pytest.mark.parametrize(
+    ("count", "length"), [(15, 2.0), (12, 3.0)], ids=["15x2s", "12x3s-first-clip-partly-hooked"]
+)
+def test_every_clip_after_the_hook_is_offered_with_cross_fades_of_0_3_s(
+    monkeypatch, text_design, count, length
+):
+    snapshot = _crossfaded(count, length, 0.3)
+    # Earlier generated text on one clip, as it ran in the clip's own window, fades included.
+    middle = snapshot["slots"][3]
+    snapshot["text_bars"] = [
+        {
+            "id": "earlier",
+            "text": "Eski satır",
+            "start_s": middle["output_start_s"],
+            "end_s": middle["output_end_s"],
+        }
+    ]
+    spans = _own_spans(snapshot)
+    windows = design_windows(snapshot, text_design)
+    offered = {
+        clip
+        for clip, (start, end) in spans.items()
+        if any(row["start_s"] <= start and end <= row["end_s"] for row in windows)
+    }
+    assert offered == set(spans)
+    calls = _stub_agents(monkeypatch, [])
+    monkeypatch.setattr(researched_text.ResearchCopyAgent, "run", _write_what_fits(calls))
+    output = run_researched_revision(
+        ResearchRequest.model_validate(_load("research.json")["public_facts"]["input"]),
+        utterance=_request(),
+        snapshot=snapshot,
+        text_design=text_design,
+    )
+    assert [op for op in output.ops if op["op"] == "remove_text"]
+    approved = PreparedResearch(
+        status="ready",
+        requirement_id="r1",
+        topic="Kyoto'daki Toroko treni",
+        request_quote="bilgilendirici alt yazı",
+        basis_digest="0" * 64,
+        texts=prepared_research_texts(output.ops),
+        retrieved_at=_evidence().retrieved_at,
+        search_entry_html=_evidence().search_entry_html,
+        evidence_facts=prepared_evidence_facts(output.ops),
+    )
+    assert pinned_research_operations(approved, snapshot) == output.ops
+    if text_design == "B1":
+        lines = [
+            op
+            for op in output.ops
+            if op["op"] == "add_text" and op["research"]["design"]["level"] == "line"
+        ]
+        covered = {
+            clip
+            for clip, (start, end) in spans.items()
+            if any(op["start_s"] <= start and end <= op["end_s"] for op in lines)
+        }
+        assert covered == set(spans)
+        assert uncovered_design_windows(output.ops, snapshot) == []
+
+
 def _partial(keep: int) -> tuple[dict, set[str]]:
     full = _designed("B1").model_dump()
     kept = full["captions"][:keep]
@@ -570,7 +703,7 @@ def test_kyoto_design_copy_opens_with_the_hook_then_grounded_facts(monkeypatch, 
     hook, facts = rows[0], rows[1:]
     assert (hook["start_s"], hook["end_s"]) == (0.0, 3.4) and hook["text"]
     assert min(row["start_s"] for row in facts) >= 4.0
-    assert not [row["text"] for row in rows if _LABEL.match(row["text"])]
+    assert not [row["text"] for row in rows if _LABEL.search(row["text"])]
     every_fact = [fact.id for fact in _evidence().facts]
     assert [f["id"] for f in hook["source_params"]["research"]["evidence_facts"]] == every_fact
     assert not [row for row in facts if "evidence_facts" in row["source_params"]["research"]]
@@ -784,7 +917,7 @@ def test_guided_composition_before_approval_writes_the_design_when_the_flag_is_o
     assert rows[0]["source_params"]["phone_text_role"] == "hook"
     lines = [row for row in rows if _level(row) == "line"]
     assert lines and min(row["start_s"] for row in lines) >= 4.0
-    assert not [row["text"] for row in rows if _LABEL.match(row["text"])]
+    assert not [row["text"] for row in rows if _LABEL.search(row["text"])]
     assert not drops
 
 
@@ -1238,6 +1371,32 @@ def test_a_number_inside_a_decimal_its_fact_states_is_not_grounded():
     designed_operations(written, _evidence(), _snapshot(), _request(), "A2")
 
 
+def test_designed_text_layers_carry_the_fact_set_once():
+    """As design rows do: a copy per layer would outgrow the editor state a turn carries."""
+    from app.services.researched_text import layer_operations, prepared_layers  # noqa: PLC0415
+
+    slots = _snapshot()["slots"]
+    written = [
+        ResearchedLayer(
+            text=text, language="tr", position="bottom", start_s=a, end_s=b, evidence_ids=ids
+        )
+        for text, a, b, ids in [
+            ("7,3 km", 4, 9, ["fact-6"]),
+            ("Ahşap banklar", 10, 17, ["fact-11"]),
+            ("Beş vagon", 19, 24, ["fact-12"]),
+        ]
+    ]
+    ops = layer_operations(
+        prepared_layers(written, _evidence(), slots),
+        slots,
+        retrieved_at=_evidence().retrieved_at,
+        search_entry_html=_evidence().search_entry_html,
+        evidence_facts=_evidence().facts,
+    )
+    assert ["evidence_facts" in op["research"] for op in ops] == [True, False, False]
+    assert [f.id for f in prepared_evidence_facts(ops)] == [f.id for f in _evidence().facts]
+
+
 def test_a_text_layer_under_a_design_reads_decimals_too():
     from app.services.researched_text import validate_research_layers  # noqa: PLC0415
 
@@ -1252,6 +1411,84 @@ def test_a_text_layer_under_a_design_reads_decimals_too():
     )
     with pytest.raises(ResearchUnavailable, match="3"):
         validate_research_layers([layer], _evidence(), snapshot, _request(), text_design="A2")
+
+
+@pytest.mark.parametrize("text_design", ["A2", "B1"])
+@pytest.mark.parametrize(
+    ("where", "text", "ids"),
+    [
+        ("hook", "25 dakika: Kyoto'nun en güzeli", ["fact-1", "fact-6"]),
+        ("line", "7,3 km'lik güzergah: Saga'dan Kameoka'ya", ["fact-6"]),
+        ("line", "1899'dan beri: Kyoto'yu Sonobe'ye bağlıyor", ["fact-1"]),
+        ("line", "5 vagon: biri tamamen açık", ["fact-12"]),
+        ("heading", "Güzergah:", ["fact-6"]),
+        ("line", "Saat 10:30 treni: Saga'dan Kameoka'ya", ["fact-6"]),
+    ],
+)
+def test_a_colon_label_is_rejected_with_digits_or_at_the_end(text_design, where, text, ids):
+    if where == "heading" and text_design == "B1":
+        pytest.skip("B1 lines have no heading")
+    written = _opened(text_design, "Her mevsim başka", _FACT6_LINE)
+    if where == "hook":
+        written["hook"] = {"text": text, "evidence_ids": ids}
+    elif where == "heading":
+        written["captions"][0]["heading"] = text
+    else:
+        written["captions"][0].update(text=text, evidence_ids=ids)
+        if text_design == "A2":
+            written["captions"][0]["heading"] = "Tren"
+    assert "colon" in _reject(written, text_design)
+
+
+@pytest.mark.parametrize("text_design", ["A2", "B1"])
+def test_a_clock_time_is_not_a_colon_label(text_design):
+    evidence = _evidence()
+    facts = [
+        fact.model_copy(update={"text": fact.text + " Tren her gün 10:30'da kalkar."})
+        if fact.id == "fact-6"
+        else fact
+        for fact in evidence.facts
+    ]
+    written = _opened(text_design, "Her mevsim başka", "Tren her gün 10:30'da kalkar")
+    ops, _missing = designed_operations(
+        DesignedCopyOutput.model_validate(written),
+        evidence.model_copy(update={"facts": facts}),
+        _snapshot(),
+        _request(),
+        text_design,
+    )
+    assert "Tren her gün 10:30'da kalkar" in [op["text"] for op in ops]
+
+
+def test_a_short_clip_is_never_joined_across_a_hole_in_the_timeline():
+    snapshot = _crossfaded(6, 3.0, 0.0)
+    for slot in snapshot["slots"][3:]:
+        slot["output_start_s"] += 1.0
+        slot["output_end_s"] += 1.0
+    snapshot["slots"][2]["output_end_s"] = 7.2  # 1.2 s after the facts start, then the hole
+    hole = (snapshot["slots"][2]["output_end_s"], snapshot["slots"][3]["output_start_s"])
+    for text_design in ("A2", "B1"):
+        windows = design_windows(snapshot, text_design)
+        assert not [w for w in windows if w["start_s"] < hole[1] and w["end_s"] > hole[0]]
+
+
+@pytest.mark.parametrize("text_design", ["A2", "B1"])
+def test_a_text_layer_colon_label_with_digits_is_rejected(text_design):
+    from app.services.researched_text import validate_research_layers  # noqa: PLC0415
+
+    snapshot = {"slots": _snapshot()["slots"], "total_duration_s": 60.0}
+    layer = ResearchedLayer(
+        text="7,3 km'lik güzergah: Saga'dan Kameoka'ya",
+        language="tr",
+        position="bottom",
+        start_s=4,
+        end_s=9,
+        evidence_ids=["fact-6"],
+    )
+    with pytest.raises(ResearchUnavailable, match="colon"):
+        validate_research_layers(
+            [layer], _evidence(), snapshot, _request(), text_design=text_design
+        )
 
 
 def test_a_heading_and_its_detail_share_the_windows_reading_time():

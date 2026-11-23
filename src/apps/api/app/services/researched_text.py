@@ -320,8 +320,10 @@ class DesignedCopyOutput(BaseModel):
 # A rejected writer answer is corrected once, with the reason, before research gives up.
 _CORRECTION_ROUNDS = 1
 
-# "Torokko Saga İstasyonu: 7.3 km ..." is the encyclopedia template the designs replace.
-_LABEL_COLON = re.compile(r"^[^\d:\n]{1,60}:\s")
+# "Torokko Saga İstasyonu: 7.3 km ..." is the encyclopedia template the designs replace, and
+# so are "25 dakika: …", "Saat 10:30 treni: …" and a heading "Güzergah:". A clock time
+# ("10:30") is not a label: no space follows its colon.
+_LABEL_COLON = re.compile(r"^[^\n]{1,60}?:(?:\s|$)")
 _SUBTITLE_ASK = re.compile(r"\b(?:subtitles?|subtitled|alt ?yazi\w*|untertitel\w*)\b")
 _NO_SUBTITLES = re.compile(
     r"alt ?yazi\w*\s+(?:istemiyorum|istemem|olmasin|yok|gerekmiyor)|alt ?yazisiz"
@@ -1092,6 +1094,18 @@ _GUIDE_MIN_WINDOW_S = 1.5
 _CLIP_JOIN_S = 0.25
 
 
+# The longest cross-fade the phone editor and guided plans set.
+_MAX_CROSSFADE_S = 0.3
+
+
+def _design_edge_tolerance(snapshot: dict) -> float:
+    """How far a clip-aligned text may run past a design window: its longest cross-fade."""
+    slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
+    fades = [_window(a)[1] - _window(b)[0] for a, b in zip(slots, slots[1:], strict=False)]
+    # Plus a millisecond: design windows are rounded to it.
+    return min(max([_CLIP_JOIN_S, *fades]), _MAX_CROSSFADE_S) + 0.001
+
+
 def design_opening(snapshot: dict) -> tuple[dict | None, float]:
     """The hook title's window, and where the facts may start.
 
@@ -1160,27 +1174,33 @@ def design_windows(snapshot: dict, text_design: str) -> list[dict]:
         return pauses
     slots = [slot for slot in snapshot.get("slots") or [] if not slot.get("removed")]
     hook, facts_start = design_opening(snapshot)
+    # Clips that touch or cross-fade share a stretch; a short clip joins its neighbour across
+    # that cross-fade however long the creator set it, but never across a hole in the timeline.
     spans = []
+    stretch = 0
     for index, slot in enumerate(slots):
         start, end = _window(slot)
         if index:
+            stretch += start > _window(slots[index - 1])[1] + _CLIP_JOIN_S
             start = max(start, _window(slots[index - 1])[1])
         if index + 1 < len(slots):
             end = min(end, _window(slots[index + 1])[0])
         start = max(start, facts_start)
         if end > start:
-            spans.append([start, end])
+            spans.append((start, end, stretch))
     merged: list[list[float]] = []
     run: list[float] | None = None
-    for start, end in spans:
-        if run is not None and start - run[1] <= _CLIP_JOIN_S:
+    run_stretch = merged_stretch = -1
+    for start, end, stretch in spans:
+        if run is not None and stretch == run_stretch:
             run[1] = end
         else:
-            run = [start, end]
+            run, run_stretch = [start, end], stretch
         if run[1] - run[0] >= min_window_s:
             merged.append(run)
+            merged_stretch = run_stretch
             run = None
-    if run is not None and merged and run[0] - merged[-1][1] <= _CLIP_JOIN_S:
+    if run is not None and merged and run_stretch == merged_stretch:
         merged[-1][1] = run[1]
     while guide and len(merged) > design_row_budget(hook):
         index = min(range(len(merged) - 1), key=lambda i: merged[i + 1][1] - merged[i][0])
@@ -1494,14 +1514,15 @@ def layer_operations(
                 "facts": [fact.model_dump() for fact in layer.facts],
                 "retrieved_at": retrieved_at,
                 "search_entry_html": search_entry_html,
+                # One copy, on the first layer, as on design rows.
                 **(
                     {"evidence_facts": [fact.model_dump() for fact in evidence_facts]}
-                    if evidence_facts
+                    if evidence_facts and not index
                     else {}
                 ),
             },
         }
-        for layer in layers
+        for index, layer in enumerate(layers)
     ]
 
 
@@ -1748,10 +1769,11 @@ def designed_operations(
             shared_window=shared,
             # A design window drops the cross-fade, so a clip-aligned text it replaces runs
             # past it by that much.
-            edge_tolerance_s=_CLIP_JOIN_S,
+            edge_tolerance_s=edge_tolerance_s,
             ignore_removed=True,
         )
 
+    edge_tolerance_s = _design_edge_tolerance(snapshot)
     names = not _german_copy(written, request)
     if hook_window is not None:
         if written.hook is None:
@@ -2152,7 +2174,9 @@ def pinned_research_operations(prepared: PreparedResearch, snapshot: dict) -> li
                     else _MIN_WINDOW_S,
                     shared_window=heading is not None
                     and (heading.start_s, heading.end_s) == (row.start_s, row.end_s),
-                    edge_tolerance_s=_CLIP_JOIN_S if design is not None else 0.0,
+                    edge_tolerance_s=_design_edge_tolerance(snapshot)
+                    if design is not None
+                    else 0.0,
                     ignore_removed=design is not None,
                 )
             )
