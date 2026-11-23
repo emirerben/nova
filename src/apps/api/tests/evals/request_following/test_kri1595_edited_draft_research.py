@@ -26,6 +26,9 @@ Failure modes written before the test:
 11. Garbage from an untrusted client snapshot (text, NaN, a flag) crashes the turn.
 12. A job stamped with an informative text design (KRI-1580) reads its hook and per-clip
     windows from the raw slots, so the same request on the same draft is refused again.
+13. With captions on several reordered clips, one lands on a neighbour (the pre-reorder slot,
+    or a window shifted by the crossfades): only the clip it explains may be on screen under
+    it, apart from a crossfade's 0.12 s edge.
 
 Independent expectation: ``tests/fixtures/kri1595_edited_draft/prod_timeline.json``, the prod
 timeline as stored and its clock worked out by hand, whose last end is the job's recorded
@@ -396,3 +399,120 @@ def test_a_design_job_gets_its_hook_and_titled_fact_on_the_edited_draft(monkeypa
         assert (row["start_s"], row["end_s"]) == pytest.approx(valley, abs=1e-3)
         assert "valley" in row["research"]["media_ids"]
         assert row["research"]["sources"][0]["url"] == SOURCE
+
+
+# One sourced line per clip, each a different wording of the one fact.
+LINES = {
+    "friends": "The Sagano Scenic Railway",
+    "wave": "Open carriages along the Hozu River",
+    "arrival": "It runs between Saga and Kameoka",
+    "platform": "Open sightseeing carriages",
+    "map": "Along the Hozu River",
+    "ticket": "Between Saga and Kameoka",
+    "valley": "Sightseeing carriages on the Hozu River",
+}
+CROSSFADE_S = 0.12
+
+
+def on_screen(start: float, end: float) -> dict[str, float]:
+    """Seconds of each clip on screen under [start, end], by the hand-written clock."""
+    return {media: max(0.0, min(end, b) - max(start, a)) for media, (a, b) in CLOCK.items()}
+
+
+def assert_on_its_clip(row: dict, media_id: str) -> None:
+    """The caption's clip is on screen all through it; a neighbour only in a crossfade."""
+    start, end = row["start_s"], row["end_s"]
+    seen = on_screen(start, end)
+    assert seen[media_id] == pytest.approx(end - start, abs=1e-3), (media_id, row["text"], seen)
+    assert all(t <= CROSSFADE_S + 1e-3 for m, t in seen.items() if m != media_id), (
+        media_id,
+        seen,
+    )
+    assert media_id in row["research"]["media_ids"]
+
+
+@pytest.mark.parametrize(
+    "clips", [("wave", "platform", "ticket"), ("arrival", "map", "valley")], ids=str
+)
+def test_captions_on_several_reordered_clips_stay_on_their_clips(monkeypatch, clips):
+    """Failure mode 13, legacy (no design): a caption on every other clip, since captions on
+    neighbouring clips would share a crossfade and be refused as overlapping."""
+    job, variant = edited_job()
+    stub_models(monkeypatch)
+
+    def write(self, input, *, ctx=None):
+        windows = input.snapshot["research_windows"]
+        captions = []
+        for media_id in clips:
+            window = window_on(windows, media_id)
+            captions.append(
+                {
+                    "window_id": window["id"],
+                    "text": LINES[media_id],
+                    # Shown as "Sagano: <line>": short enough for a 3.1 s clip.
+                    "context_label": "Sagano",
+                    "media_ids": window["media_ids"],
+                    "evidence_ids": ["fact-0"],
+                    "visual_quote": PROD["seen"][media_id],
+                    "scope": "context",
+                    "subject_name": "",
+                    "identity_quote": "",
+                }
+            )
+        return self.parse(json.dumps({"captions": captions}), input)
+
+    monkeypatch.setattr(ResearchCopyAgent, "run", write)
+
+    result = turn(snapshot_of(job, variant))
+
+    assert result.outcome == "proposed", result.reply
+    by_text = {op["text"]: op for op in result.ops}
+    assert set(by_text) == {f"Sagano: {LINES[media_id]}" for media_id in clips}
+    for media_id in clips:
+        row = by_text[f"Sagano: {LINES[media_id]}"]
+        # The whole clip on the renderer's clock, its crossfade edges included.
+        assert (row["start_s"], row["end_s"]) == pytest.approx(CLOCK[media_id])
+        assert_on_its_clip(row, media_id)
+
+
+def test_a_running_guide_puts_each_line_on_its_reordered_clip(monkeypatch):
+    """Failure mode 13, design B1: a line on every clip after the hook, all in one turn. The
+    design leaves the crossfades bare, so each line is its clip alone."""
+    job, variant = edited_job()
+    stub_models(monkeypatch)
+    order = list(CLOCK)
+
+    def write(self, input, *, ctx=None):
+        captions = []
+        for window in input.snapshot["research_windows"]:
+            media_id = max(
+                window["media_ids"],
+                key=lambda m: on_screen(window["start_s"], window["end_s"])[m],
+            )
+            captions.append(
+                {
+                    "window_id": window["id"],
+                    "text": LINES[media_id],
+                    "evidence_ids": ["fact-0"],
+                    "visual_quote": PROD["seen"][media_id],
+                    "scope": "context",
+                }
+            )
+        hook = {"text": LINES["friends"], "evidence_ids": ["fact-0"]}
+        return self.parse(json.dumps({"hook": hook, "captions": captions}), input)
+
+    monkeypatch.setattr(ResearchCopyAgent, "run", write)
+
+    result = turn(snapshot_of(job, variant), text_design="B1")
+
+    assert result.outcome == "proposed", result.reply
+    hook, *lines = result.ops
+    assert hook["text"] == LINES["friends"]
+    assert_on_its_clip(hook, "friends")
+    assert [row["text"] for row in lines] == [LINES[m] for m in order[1:]]
+    for index, (media_id, row) in enumerate(zip(order[1:], lines, strict=True), start=1):
+        # From the end of the previous clip's crossfade to the start of the next one.
+        start = max(CLOCK[media_id][0], CLOCK[order[index - 1]][1], 4.0)
+        end = CLOCK[order[index + 1]][0] if index + 1 < len(order) else CLOCK[media_id][1]
+        assert (row["start_s"], row["end_s"]) == pytest.approx((start, end), abs=1e-3)
+        assert_on_its_clip(row, media_id)
