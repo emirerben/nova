@@ -14,7 +14,8 @@
       "the copilot's unmet reasons (production's prose was not kept in the record)",
       "the English rows: the same turns asked in English",
       "the KRI-1476/1472/1355 rows: those asks made as chat edits on a ready draft",
-      "the typed facts the brief writer records for these asks (caption_position, audio_intent, title 'off'): production's brief rows were not in the record, so they are assumed as the brief prompt types them (KRI-1177, KRI-1164, KRI-1355)"
+      "the typed facts the brief writer records for these asks (caption_position, audio_intent, title 'off'): production's brief rows were not in the record, so they are assumed as the brief prompt types them (KRI-1177, KRI-1164, KRI-1355)",
+      "the mixed-one-unsupported rows (Tadic's #prs hold on #2485): no production turn; the requirements, the caption op and the copilot's unmet reason are written as the brief writer and copilot produce them"
     ]
   },
   "cases": [
@@ -701,6 +702,151 @@
         "reply_has": [
           "Your call: make the title pop",
           "How much shorter should the video be?"
+        ]
+      }
+    },
+    {
+      "id": "mixed-one-unsupported-en",
+      "incident": "Tadic's #prs hold on #2485: a mixed chat edit with one supported and one unsupported part. The caption size op applies; only the voice part is declined, with its reason.",
+      "language": "en",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "description": "Make the captions bigger",
+          "facts": {
+            "caption_size": "large"
+          }
+        },
+        {
+          "id": "r2",
+          "kind": "audio",
+          "description": "Make my voice sound deeper"
+        }
+      ],
+      "ops": [
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "size_px": 96
+          }
+        }
+      ],
+      "unmet_requests": [
+        {
+          "request": "make my voice sound deeper",
+          "reason": "I can't change how your voice sounds"
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "done",
+          "r2": "declined"
+        },
+        "status": {
+          "r1": "met",
+          "r2": "not_possible"
+        },
+        "changes": {
+          "caption_meta.size_px": [
+            "r1"
+          ]
+        },
+        "line_has": {
+          "r1": [
+            "Done:",
+            "Changed the caption size"
+          ],
+          "r2": [
+            "Couldn't: Make my voice sound deeper",
+            "I can't change how your voice sounds"
+          ]
+        },
+        "line_lacks": {
+          "r1": [
+            "Couldn't",
+            "Partly",
+            "voice"
+          ]
+        },
+        "reply_lacks": [
+          "fresh version",
+          "isn't available",
+          "unchanged",
+          "Also changed"
+        ]
+      }
+    },
+    {
+      "id": "mixed-one-unsupported-tr",
+      "incident": "The same mixed edit asked in Turkish.",
+      "language": "tr",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "description": "Altyazıları büyüt",
+          "facts": {
+            "caption_size": "large"
+          }
+        },
+        {
+          "id": "r2",
+          "kind": "audio",
+          "description": "Sesimi daha kalın yap"
+        }
+      ],
+      "ops": [
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "size_px": 96
+          }
+        }
+      ],
+      "unmet_requests": [
+        {
+          "request": "sesimi daha kalın yap",
+          "reason": "Sesinin tonunu değiştiremiyorum"
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "done",
+          "r2": "declined"
+        },
+        "status": {
+          "r1": "met",
+          "r2": "not_possible"
+        },
+        "changes": {
+          "caption_meta.size_px": [
+            "r1"
+          ]
+        },
+        "line_has": {
+          "r1": [
+            "Yapıldı:",
+            "Altyazı boyutu değişti"
+          ],
+          "r2": [
+            "Yapamadım: Sesimi daha kalın yap",
+            "Sesinin tonunu değiştiremiyorum"
+          ]
+        },
+        "line_lacks": {
+          "r1": [
+            "Yapamadım",
+            "Kısmen",
+            "Ses"
+          ]
+        },
+        "reply_lacks": [
+          "yeniden yap",
+          "değişmedi",
+          "Ayrıca"
         ]
       }
     }

@@ -17,6 +17,7 @@ editor compiler, diff, brief checkers, ask ledger and reply builder run; no mode
 | `kri1472-*` | "Only my voice" and "No music" both done by removing the music. |
 | `kri1355-*` | "Kein Titel" / "No title": removing the title is done. |
 | `alanur-t4-no-ops-tr`, `no-ops-question-en` | A turn with no ops still gives each part a state and a line. |
+| `mixed-one-unsupported-en` / `-tr` | A mixed edit: "bigger captions" (an op does it) + "a deeper voice" (no op family can). The caption op applies and its change is named under the caption ask, which is done; only the voice part is declined, with the copilot's reason; no whole-message refusal or redo offer. Red controls in `test_kri1563_ask_ledger.py`: the row fails when the caption op is dropped or the whole ask is declined. |
 
 Provenance: see `source` in `fixture.json`. The production ops are from the `draft_applied`
 events of job fa10c4a4 (2026-11-19 21:15:58, 21:17:56, 21:19:15 UTC); the draft is the phone

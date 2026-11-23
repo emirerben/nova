@@ -196,6 +196,16 @@ def check_case(case: dict[str, Any], result: CaseResult) -> list[str]:
         for text in texts:
             if text not in line:
                 problems.append(f"{rid} line lacks {text!r}: {line!r}")
+    for rid, texts in (expect.get("line_lacks") or {}).items():
+        line = _line(result.reply, case, rid)
+        for text in texts:
+            if text in line:
+                problems.append(f"{rid} line still says {text!r}: {line!r}")
+    owners = {change.key: list(change.owners) for change in result.ledger.changes}
+    for key, want in (expect.get("changes") or {}).items():
+        # The op applied (its change is in the diff) and is named under the asks it served.
+        if owners.get(key) != want:
+            problems.append(f"change {key}: owners {owners.get(key)!r}, expected {want!r}")
     if expect.get("prod_reply_gaps"):
         # Negative control: the reply production actually sent for this turn must fail the
         # ledger check, naming the changes it left out.

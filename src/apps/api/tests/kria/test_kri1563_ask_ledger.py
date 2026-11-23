@@ -25,11 +25,15 @@ Failure modes, written before the code:
 9. The switch is off and the turn still changes (``KRIA_ASK_LEDGER_ENABLED=false`` must give
    the previous replies).
 10. The Turkish reply drifts from the English structure.
+11. A mixed edit (one part an op can do, one no op family can) loses the supported op, or
+    the reply refuses the whole message instead of naming only the part it could not do
+    (rows ``mixed-one-unsupported-*`` and their red controls; Tadic's hold on #2485).
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -89,6 +93,86 @@ def test_production_replies_fail_the_ledger_check(monkeypatch) -> None:
         found = set(result.ledger.gaps(ids, case["prod_reply"]))
         assert {f"unnamed_change:{key}" for key in missing} <= found
         assert result.ledger.gaps(ids, result.reply) == []
+
+
+_WHOLE_REFUSAL = {
+    "en": ("I can't change how your voice sounds, so I left the video as it is.", "Couldn't"),
+    "tr": ("Sesinin tonunu değiştiremiyorum, videoyu olduğu gibi bıraktım.", "Yapamadım"),
+}
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_a_mixed_edit_red_controls_fail_the_row(monkeypatch, language) -> None:
+    """Red controls for the mixed rows: the check fails when the supported part is lost.
+
+    The row passes only when the caption op applies and only the voice part is declined. The
+    same row must fail when (a) the copilot drops the caption op and declines the voice part,
+    (b) it refuses the whole message as one, and (c) the ops apply but the reply still refuses
+    the whole ask.
+    """
+    case, result = _alanur(f"mixed-one-unsupported-{language}", monkeypatch)
+    assert check_case(case, result) == []
+    refusal, couldnt = _WHOLE_REFUSAL[language]
+    whole = " ".join(req["description"] for req in case["requirements"])
+
+    dropped = {
+        **case,
+        "ops": [],
+        "copilot": {
+            "outcome": "unsupported",
+            "reply": refusal,
+            "unmet_requests": case["unmet_requests"],
+        },
+    }
+    declined_whole = {
+        **dropped,
+        "copilot": {
+            "outcome": "unsupported",
+            "reply": refusal,
+            "unmet_requests": [{"request": whole, "reason": refusal}],
+        },
+    }
+    for control in (dropped, declined_whole):
+        problems = check_case(control, run_case(control, monkeypatch))
+        assert any(p.startswith("r1: state 'declined', expected 'done'") for p in problems), (
+            problems
+        )
+        assert any(p.startswith("change caption_meta.size_px") for p in problems), problems
+
+    whole_reply = f"{couldnt}: {whole} ({refusal})"
+    problems = check_case(case, replace(result, reply=whole_reply))
+    assert any(p.startswith("r1 line lacks") for p in problems), problems
+
+
+@pytest.mark.asyncio
+async def test_the_planner_keeps_a_mixed_turns_ops_and_names_only_the_unmet_part(
+    monkeypatch,
+) -> None:
+    """The planner passes the copilot's ops on with only the part it could not do as unmet."""
+    unmet = [
+        {"request": "make my voice sound deeper", "reason": "I can't change how your voice sounds"}
+    ]
+    response = CopilotTurnResponse(
+        intent="edit",
+        ops=[{"op": "set_caption_meta", "patch": {"size_px": 96}}],
+        confidence=0.9,
+        reply="Made the captions bigger.",
+        outcome="applied",
+        unmet_requests=unmet,
+    )
+    reqs = [
+        _req("r1", "Make the captions bigger"),
+        _req("r2", "Make my voice sound deeper", kind="audio"),
+    ]
+    plan = await _revision(monkeypatch, response, requirements=reqs)
+    assert plan.mode == "act"
+    (intent,) = plan.intents
+    arguments = (
+        intent.arguments if isinstance(intent.arguments, dict) else intent.arguments.model_dump()
+    )
+    assert arguments["operations"] == response.ops
+    assert [dict(item) for item in arguments["unmet_requests"]] == unmet
+    assert plan.requirement_receipts is None
 
 
 def test_a_requirement_with_no_row_or_no_reason_is_a_gap() -> None:
