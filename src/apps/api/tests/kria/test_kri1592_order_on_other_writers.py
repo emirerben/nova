@@ -37,8 +37,13 @@ Ways this can fail, written before the fix (each is pinned below):
  F9 the approval re-check of the saved draft disagrees with the report saved with it.
  F10 the ask's other requirements change verdict.
  F11 the montage showing Visuals is approved as "can't promise", but the phone montage plan its
-    worker builds misses the order, so the worker refuses the render after approval. The plan's
-    own checked order miss must hold the draft before approval (`readiness_plan_blockers`).
+    worker builds misses the order, so after approval the worker renders the wrong order with a
+    note (KRI-129). The plan's own checked order miss must hold the draft before approval
+    (`readiness_plan_blockers`).
+ F12 production's flags (KRI-1587: the default-order flag is on in production; #2483's clip-order
+    ledger is on too) change a verdict: an explicit order ("in the order I filmed them", "in the
+    order I added them", the recorded take order) or a pinned one is declined, or an order nothing
+    pins still holds, on any of the three writers (`test_flag_on_replay_per_writer`).
 
 Runs the REAL approval readiness (manifest, policy re-check, render contract, receipts), the
 route resolver the dispatch mirrors (`route_capabilities.resolve_route_id`) and the draft
@@ -48,8 +53,10 @@ Recorded vs reconstructed: the Toroko request and clip rows come from the #2458 
 (`test_unstated_order_default.py`, itself cloned from the recorded Leverkusen M1 run 2 rows);
 the Talking takes and brief come from the recorded S3 Yorum2 thread (`s3_yorum2_talking_order.
 json`). RECONSTRUCTED here: the Visuals photo beside the Toroko clips, the voiceover beside the
-first ten of them (the native voiceover writer takes at most twelve clips), and a "start with"
-pin with no ordering basis on the Talking takes (the recorded r1 named filming order).
+first ten of them (the native voiceover writer takes at most twelve clips), a "start with"
+pin with no ordering basis on the Talking takes (the recorded r1 named filming order), and, in the
+F12 table, the single "in the order I filmed / added them" asks (no described groups) and the
+photo's filming time.
 """
 
 from __future__ import annotations
@@ -63,6 +70,7 @@ from typing import Any
 import pytest
 
 from app.config import settings
+from app.kria import approval_readiness
 from app.kria.approval_readiness import (
     APPROVABLE,
     assess_readiness,
@@ -118,6 +126,8 @@ def _prod(prod_profile, monkeypatch: pytest.MonkeyPatch) -> None:
     # Every account renders on the phone (prod's empty allowlist) and several-take Talking is on.
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
     monkeypatch.setattr(settings, "talking_multi_clip_enabled", True)
+    # #2483's clip-order ledger is on in production too.
+    monkeypatch.setattr(settings, "kria_clip_order_ledger_enabled", True)
 
 
 def _flag(monkeypatch: pytest.MonkeyPatch, on: bool) -> None:
@@ -127,9 +137,17 @@ def _flag(monkeypatch: pytest.MonkeyPatch, on: bool) -> None:
 # -- one draft per writer ------------------------------------------------------------------------
 
 
-def _toroko(single: bool) -> tuple[CreativeBrief, dict[str, Any], dict[str, Any]]:
-    """The Toroko request: the four described groups, or only "the map video first"."""
-    if single:
+def _toroko(
+    single: bool, explicit: tuple[str, str] | None = None
+) -> tuple[CreativeBrief, dict[str, Any], dict[str, Any]]:
+    """The Toroko request: the four described groups, or only "the map video first", or (with
+    ``explicit``) one order ask that names its basis and no group (key, description)."""
+    if explicit is not None:
+        key, description = explicit
+        data = _brief(key=key).model_dump(mode="json")
+        data["requirements"][1]["description"] = description
+        brief, groups = CreativeBrief.model_validate(data), ()
+    elif single:
         brief = _brief(first_clip="the map video")
         groups = (("order_map_first", "the map video", "first", (5,), (5,)),)
     else:
@@ -137,13 +155,17 @@ def _toroko(single: bool) -> tuple[CreativeBrief, dict[str, Any], dict[str, Any]
     return brief, _drafted(brief, groups=groups), _snapshot()
 
 
-def _visuals(single: bool) -> dict[str, Any]:
+def _visuals(
+    single: bool, explicit: tuple[str, str] | None = None, photo_time: str | None = None
+) -> dict[str, Any]:
     """The Toroko montage showing one Visuals photo (a Visual is spread, never seated by the
-    order the clips were added, so the contract pins nothing)."""
-    brief, strategy, media = _toroko(single)
+    order the clips were added, so the contract pins nothing). ``photo_time`` dates the photo,
+    so a filming-order ask can place it."""
+    brief, strategy, media = _toroko(single, explicit)
     strategy["selected_media_ids"] = [*strategy["selected_media_ids"], PHOTO]
+    capture = {"capture_time": photo_time} if photo_time else {}
     media["visuals"] = [
-        {"kind": "image", "capture": {}, "media_id": PHOTO, "source_filename": "photo.jpeg"}
+        {"kind": "image", "capture": capture, "media_id": PHOTO, "source_filename": "photo.jpeg"}
     ]
     manifest = resolve_creator_manifest(
         item_id=ITEM,
@@ -159,10 +181,10 @@ def _visuals(single: bool) -> dict[str, Any]:
     return {"brief": brief, "strategy": strategy, "media": media, "manifest": manifest}
 
 
-def _voiceover(single: bool) -> dict[str, Any]:
+def _voiceover(single: bool, explicit: tuple[str, str] | None = None) -> dict[str, Any]:
     """The Toroko clips cut under a recorded voiceover: the native program's voiceover montage
     writer, which follows the voice and pins no clip order."""
-    brief, strategy, media = _toroko(single)
+    brief, strategy, media = _toroko(single, explicit)
     keep = [row["media_id"] for row in media["clip_assignments"][:VOICEOVER_CLIPS]]
     media["clip_assignments"] = media["clip_assignments"][:VOICEOVER_CLIPS]
     media["clip_paths"] = media["clip_paths"][:VOICEOVER_CLIPS]
@@ -207,11 +229,15 @@ def _voiceover(single: bool) -> dict[str, Any]:
     return {"brief": brief, "strategy": strategy, "media": media, "manifest": manifest}
 
 
-def _talking(facts: dict[str, Any], media: dict[str, Any] | None = None) -> dict[str, Any]:
+def _talking(
+    facts: dict[str, Any],
+    media: dict[str, Any] | None = None,
+    description: str = "Start with the 20-second home clip",
+) -> dict[str, Any]:
     """The S3 Yorum2 takes on the phone Talking writer (native program), r1 reset to ``facts``."""
     data = copy.deepcopy(S3["brief"])
     data["requirements"][0]["facts"] = facts
-    data["requirements"][0]["description"] = "Start with the 20-second home clip"
+    data["requirements"][0]["description"] = description
     snapshot = media if media is not None else copy.deepcopy(S3["snapshot"])
     manifest = resolve_creator_manifest(
         item_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "kri1592-talking")),
@@ -325,6 +351,116 @@ def test_flag_off_is_unchanged_on_every_row(monkeypatch: pytest.MonkeyPatch) -> 
         order = _rows(report)[order_id]
         assert order["disposition"] != "declined" and order["reason"] != DECLINE_EN, row
         assert report["ready"] is False, row
+
+
+# -- F12: the replay with production's flags, one table across the three writers ---------------
+
+FILMED = ("capture_time", "In the order I filmed them")
+ADDED = ("attachment", "In the order I added them")
+PHOTO_TIME = "2026-10-01T10:00:00Z"
+
+
+def _s3_silent_cutaway() -> dict[str, Any]:
+    """The recorded S3 takes with the last one silent: it plays as a cutaway the verifier counts,
+    so readiness gives the pinned take order no credit."""
+    media = copy.deepcopy(S3["snapshot"])
+    media["clip_assignments"][-1]["analysis"]["understanding"]["speech"] = {
+        "has_speech": False,
+        "transcript": "",
+    }
+    return media
+
+
+REPLAY: dict[str, tuple[Any, str, str, bool | None]] = {
+    # "writer/ask": (draft, the order ask's id, its verdict with both production flags on,
+    #               whether the render contract pins the order: None = not the point of the row)
+    "visuals/unpinned-groups": (lambda: _visuals(single=False), "r2", "declined", False),
+    "visuals/unpinned-start-with": (lambda: _visuals(single=True), "r2", "declined", False),
+    "visuals/explicit-filming-order": (
+        lambda: _visuals(False, FILMED, photo_time=PHOTO_TIME),
+        "r2",
+        "executable",
+        True,
+    ),
+    "visuals/explicit-added-order": (lambda: _visuals(False, ADDED), "r2", "unsupported", None),
+    "voiceover/unpinned-groups": (lambda: _voiceover(single=False), "r2", "declined", False),
+    "voiceover/unpinned-start-with": (lambda: _voiceover(single=True), "r2", "declined", False),
+    "voiceover/explicit-filming-order": (
+        lambda: _voiceover(False, FILMED),
+        "r2",
+        "evidence_missing",
+        True,
+    ),
+    "voiceover/explicit-added-order": (lambda: _voiceover(False, ADDED), "r2", "unsupported", None),
+    "talking/unpinned-start-with": (
+        lambda: _talking({"first_clip": "20-second home clip"}),
+        "r1",
+        "declined",
+        False,
+    ),
+    "talking/explicit-filming-order": (
+        lambda: _talking({"key": "capture_time"}, description=FILMED[1]),
+        "r1",
+        "executable",
+        True,
+    ),
+    "talking/recorded-take-order-pinned": (
+        lambda: _talking(
+            copy.deepcopy(S3["brief"]["requirements"][0]["facts"]),
+            _s3_silent_cutaway(),
+            description=S3["brief"]["requirements"][0]["description"],
+        ),
+        "r1",
+        "evidence_missing",
+        True,
+    ),
+    "talking/explicit-added-order": (
+        lambda: _talking({"key": "attachment"}, description=ADDED[1]),
+        "r1",
+        "unsupported",
+        None,
+    ),
+}
+
+
+@pytest.mark.parametrize("row", list(REPLAY))
+def test_flag_on_replay_per_writer(row: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """KRI-1587: ``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`` is on in production (and #2483's
+    clip-order ledger with it), so this change is live on deploy. With both on:
+
+    * an order nothing pins proceeds: declined with the plain line, and it is the only thing
+      that stops holding (what still holds held without this change too);
+    * an explicit order (filming order, "the order I added them", the recorded take order) or a
+      pinned one keeps exactly the verdict it has without this change (`_order_not_promised`
+      switched off), whatever that verdict is, and is never declined.
+
+    A Visuals plan that misses the order: `test_a_visuals_plan_that_misses_the_order_holds_
+    before_approval` below."""
+    build, order_id, expected, pinned = REPLAY[row]
+    _flag(monkeypatch, True)
+    draft = build()
+    report = _report(draft)
+    order = _rows(report)[order_id]
+    assert order["disposition"] == expected, order
+    if pinned is not None:
+        assert _pins(draft) is pinned
+    with monkeypatch.context() as without_this_change:
+        without_this_change.setattr(
+            approval_readiness, "_order_not_promised", lambda *_a, **_k: False
+        )
+        without = _report(build())
+    if expected == "declined":
+        assert order["reason"] == DECLINE_EN
+        held = {rid for rid, r in _rows(report).items() if r["disposition"] not in APPROVABLE}
+        held_without = {
+            rid for rid, r in _rows(without).items() if r["disposition"] not in APPROVABLE
+        }
+        assert order_id in held_without and held == held_without - {order_id}
+        assert report["ready"] is (not held)
+    else:
+        assert order == _rows(without)[order_id], "an explicit or pinned order is untouched"
+        assert order["reason"] != DECLINE_EN
+        assert report["ready"] is without["ready"]
 
 
 # -- F2: an order the contract pins stays held -------------------------------------------------

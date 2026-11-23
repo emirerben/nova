@@ -1251,13 +1251,15 @@ asked", EN/TR/DE, a format limit in `brief_checks._FORMAT_LIMIT_EN`, so never a 
 `with_declined_order_receipts` puts the same line on the draft turn's own receipt. Only with the flag on, only
 for a strategy draft (an editor draft's ops are its whole change), never for an order replacement, and only
 when no writer vouches for an order and the contract pins none: a pinned order is one the phone verifier
-refuses a render for, so it keeps its hold (approval would only move the refusal after the render). The
-unified montage worker still refuses a render whose own order receipt misses, so with the flag on
-`phone_montage_preflight.readiness_plan_blockers` also returns order asks: a Visuals montage whose plan misses
-the order is held before approval, not after the render. Guard:
-`tests/kria/test_kri1592_order_on_other_writers.py` (a Visuals montage, a voiceover montage on the native
-program and a Talking "start with X", each held before and offered after; the pinned and checked cases stay
-held). The disclosure rides the requirement receipt, not the reply prose (the reply keeps the model's summary
+refuses a render for, so it keeps its hold (approval would only move the refusal after the render). After
+approval the unified montage worker renders a plan whose own order receipt misses and only says so in a note
+(KRI-129), so with the flag on `phone_montage_preflight.readiness_plan_blockers` also returns order asks: a
+Visuals montage whose plan misses the order is held before approval instead of rendering in the wrong order.
+The flag is on in production (KRI-1587). Guard: `tests/kria/test_kri1592_order_on_other_writers.py` (a
+Visuals montage, a voiceover montage on the native program and a Talking "start with X", each held before and
+offered after; `test_flag_on_replay_per_writer` runs production's flags, including #2483's clip-order ledger,
+across the three writers: an order nothing pins proceeds, an explicit filming or added order and a pinned order
+keep the verdict they have without this change; the checked cases stay held). The disclosure rides the requirement receipt, not the reply prose (the reply keeps the model's summary
 when every judged ask is met, like the "group first" clause). After render the receipt says `met` with no
 reason. A later change plans story order with the model, keeps a ledger and offers drag cards; this one is
 the deterministic default only. Guard: `tests/kria/test_unstated_order_default.py` (the failure-mode list

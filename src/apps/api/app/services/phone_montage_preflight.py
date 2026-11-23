@@ -132,9 +132,10 @@ def readiness_plan_blockers(
     length keep readiness's own checks. Fails open like ``phone_montage_blockers``.
 
     KRI-1592: with ``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`` readiness approves an order ask nothing
-    pins (a montage showing Visuals) as "can't promise", while this plan's worker still refuses a
-    render whose order receipt misses. So order asks come back too: a plan that misses the order
-    holds the draft before approval instead of failing the render after it.
+    pins (a montage showing Visuals) as "can't promise", while this plan's worker, after approval,
+    renders a plan whose order receipt misses and only says so in a note (KRI-129). So order asks
+    come back too: a plan that misses the order holds the draft before approval instead of
+    rendering in the wrong order.
     """
     from app.kria.brief_checks import _wants_whole_take, needs_creator_choice  # noqa: PLC0415
     from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
