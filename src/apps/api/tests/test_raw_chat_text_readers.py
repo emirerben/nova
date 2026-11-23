@@ -183,6 +183,13 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "schemas/clip_intents.py": ("plan_time", "caption grounding of clip intents", None),
     "schemas/edit_proposal.py": ("plan_time", "proposal brief schema", None),
     "services/clip_intent_planning.py": ("plan_time", "clip-intent planning", None),
+    "services/choice_questions.py": (
+        "plan_time",
+        "KRI-1582: the text design question's recommended option reads the request for a "
+        "subtitle ask before approval; the answer is pinned in choice_answers and the render "
+        "reads the snapshot's text_design, never the request",
+        frozenset({"ChoiceCapability", "_text_design"}),
+    ),
     "services/clip_intent_resolution.py": ("plan_time", "clip-intent resolution", None),
     "services/creator_sessions.py": ("plan_time", "compiles the active plan", None),
     "services/edit_direction_planner.py": ("plan_time", "direction snapshot planning", None),

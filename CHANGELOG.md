@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.104.0] - 2026-11-23
+
+### Changed
+- ci(testflight): decide eligibility and wait for Fly on Linux, Mac only to build (KRI-1551) (#2482) <!-- release-pr: 2482 -->
+
+## [0.89.103.0] - 2026-11-23
+
+### Changed
+- ci: main seeds the Docker cache, locked installs, classify five root paths (KRI-1551) (#2479) <!-- release-pr: 2479 -->
+
 ## [0.89.102.0] - 2026-11-23
 
 ### Changed

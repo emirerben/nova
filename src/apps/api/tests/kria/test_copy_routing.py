@@ -916,6 +916,23 @@ EXPECTED: dict[str, dict[str, Any]] = {
     },
     "choice questions sweep": {
         "en": {
+            "text_design": [
+                [
+                    "I'll add the sourced facts as on-screen text.",
+                    "Which look should the text have?",
+                    "I'll add the sourced facts as on-screen text. Which look should the text have?\n1. Editorial serif\n2. Bold on a soft shade\n3. Centred display serif\n4. Running guide (recommended)\nTap an option, or tell me in your own words.",
+                    "Editorial serif",
+                    "A serif title, then small capitals over a serif line for each fact.",
+                    "Bold on a soft shade",
+                    "A bold title, then a yellow heading over a small line, on a soft dark fade.",
+                    "Centred display serif",
+                    "A large serif title and headings, each with a small line under it, centred.",
+                    "Running guide",
+                    "A title, then one line on every clip, as if you were telling it.",
+                    'I\'ll add the sourced facts as on-screen text. Unfortunately which look should the text have? The most I can do is: Editorial serif. Reply "Editorial serif" to go with that, or change your request.',
+                ],
+                [["A1"], ["A2"], ["A3"], ["B1"]],
+            ],
             "coverage_cap_below_coverage": [
                 [
                     "The selected footage cannot meet the included-clip constraints.",
@@ -1820,6 +1837,28 @@ EXPECTED: dict[str, dict[str, Any]] = {
             ],
         },
         "tr": {
+            "text_design": [
+                [
+                    "Kaynaklı bilgileri ekrana yazı olarak ekleyeceğim.",
+                    "Yazılar hangi görünümde olsun?",
+                    "Kaynaklı bilgileri ekrana yazı olarak ekleyeceğim. Yazılar hangi görünümde olsun?\n1. Editoryal serif\n2. Yumuşak gölgede kalın\n3. Ortalanmış serif\n4. Akan anlatım (önerilen)\nBir seçeneğe dokun ya da kendi sözlerinle anlat.",
+                    "Editoryal serif",
+                    "Serif bir başlık, ardından her bilgi için serif bir satırın üstünde küçük büyük harfler.",
+                    "Yumuşak gölgede kalın",
+                    "Kalın bir başlık, ardından yumuşak bir karartmanın üstünde sarı başlık ve küçük bir satır.",
+                    "Ortalanmış serif",
+                    "Büyük serif başlık ve ara başlıklar, her birinin altında küçük bir satır, ortada.",
+                    "Akan anlatım",
+                    "Bir başlık, ardından her klipte sanki sen anlatıyormuşsun gibi bir satır.",
+                    'Kaynaklı bilgileri ekrana yazı olarak ekleyeceğim. Maalesef yazılar hangi görünümde olsun? Yapabileceğim en fazla şu: Editoryal serif. Bunu istiyorsan "Editoryal serif" yaz ya da isteğini değiştir.',
+                ],
+                [
+                    ["A1", "Editorial serif"],
+                    ["A2", "Bold on a soft shade"],
+                    ["A3", "Centred display serif"],
+                    ["B1", "Running guide"],
+                ],
+            ],
             "coverage_cap_below_coverage": [
                 [
                     "Seçili çekimler, dahil edilen kliplerin koşullarını karşılayamıyor.",
