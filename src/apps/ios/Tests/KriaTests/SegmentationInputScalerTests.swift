@@ -1,4 +1,5 @@
 import CoreVideo
+import IOSurface
 import XCTest
 @testable import Kria
 
@@ -7,7 +8,8 @@ import XCTest
 /// 2. a frame that is already small gets blown up, or the scaler fails on it;
 /// 3. the rows flip or the picture mirrors, so the mask is upside down against the camera;
 /// 4. a frame size change mid-session keeps drawing into buffers of the old size;
-/// 5. buffers pile up (one per frame) instead of being recycled;
+/// 5. buffers pile up: an output stays alive after it was given back, a frame finds no buffer ready although the
+///    last one was given back, or nothing limits how many exist when the caller keeps them;
 /// 6. the scaler cannot render and the segmentation fails instead of falling back to the full frame.
 final class SegmentationInputScalerTests: XCTestCase {
     private func frame(width: Int, height: Int, topLeftRed: Bool = true) -> CVPixelBuffer {
@@ -26,6 +28,13 @@ final class SegmentationInputScalerTests: XCTestCase {
             }
         }
         return pixels
+    }
+
+    /// The memory behind a buffer. The pool hands a reused surface out inside a new `CVPixelBuffer` object, so an
+    /// object's address follows the allocator and changes with timing. Surface ids are reused too once a surface is
+    /// freed, so counting them shows buffers that stay alive, not whether one was reused or made again (KRI-1599).
+    private func surface(_ buffer: CVPixelBuffer) -> IOSurfaceID {
+        CVPixelBufferGetIOSurface(buffer).map { IOSurfaceGetID($0.takeUnretainedValue()) } ?? 0
     }
 
     private func red(_ buffer: CVPixelBuffer, x: Int, y: Int) -> Int {
@@ -65,12 +74,28 @@ final class SegmentationInputScalerTests: XCTestCase {
         let scaler = SegmentationInputScaler()
         XCTAssertEqual(CVPixelBufferGetHeight(scaler.scaled(frame(width: 540, height: 960))), 682)
         XCTAssertEqual(CVPixelBufferGetWidth(scaler.scaled(frame(width: 1080, height: 810))), 512)
-        var seen = Set<UnsafeMutableRawPointer>()
+        // Each output is given back before the next frame, as on the frame queue.
+        var alive = Set<IOSurfaceID>()
         let input = frame(width: 540, height: 960)
-        for _ in 0..<30 {
+        for index in 0..<30 {
             let output = scaler.scaled(input)
-            seen.insert(Unmanaged.passUnretained(output).toOpaque())
+            XCTAssertFalse(output === input, "frame \(index) is scaled: the buffer given back is ready for it")
+            alive.insert(surface(output))
         }
-        XCTAssertLessThanOrEqual(seen.count, 8, "a handful of pooled buffers serve every frame, not one new buffer each (30 renders)")
+        XCTAssertFalse(alive.contains(0), "every output is backed by a surface")
+        XCTAssertLessThanOrEqual(alive.count, 8, "outputs that were given back do not stay alive (30 renders)")
+    }
+
+    func testOutputsTheCallerKeepsStopAtAHandfulAndAReleasedOneIsUsedAgain() {
+        let scaler = SegmentationInputScaler()
+        let input = frame(width: 540, height: 960)
+        var kept: [CVPixelBuffer] = []
+        for _ in 0..<30 { kept.append(scaler.scaled(input)) }
+        let pooled = Set(kept.filter { $0 !== input }.map(surface))
+        XCTAssertGreaterThan(pooled.count, 0, "the first frames are scaled")
+        XCTAssertLessThanOrEqual(pooled.count, 8, "kept outputs cannot grow without limit (30 renders, none given back)")
+        XCTAssertEqual(kept.filter { $0 === input }.count, 30 - pooled.count, "every kept output has its own memory, and past the limit the camera frame itself comes back")
+        kept.removeAll()
+        XCTAssertFalse(scaler.scaled(input) === input, "once outputs are given back, frames are scaled again")
     }
 }

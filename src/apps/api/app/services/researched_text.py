@@ -440,51 +440,6 @@ def chat_text_design(
     return research_text_design(shown, request)
 
 
-# Turkish case, possessive and plural endings, plus English and German plural ones, on a
-# folded word. None carries an "o": fact "Saga" never grounds "Sagano".
-_SUFFIX = re.compile(
-    r"(?:l[ae]r|[iu]m[iu]z|[iu]n[iu]z|n?[iu]n|m[iu]z|n[iu]z|[iu]m|[nsy]?[iu]|[ny]?[ae]"
-    r"|n?[dt][ae]n?|y?l[ae]|l[iu]k?|ki|[dt][iu]r|e?s|e[nr]|n){1,3}"
-)
-
-
-def _stems_match(word: str, fact_word: str) -> bool:
-    """Same word up to its suffixes: "banklı" and "banklarla", "Tren" and "treni", "Trenin".
-
-    A word shorter than five letters must match whole up to its length; a longer word may be
-    the fact's word plus endings (fact "Tren" grounds "Trenimiz"). A longer name that only
-    starts like a fact word is not that word: fact "Saga" does not ground "Sagano".
-    """
-    size = min(5, len(word))
-    if word == fact_word or (size >= 4 and word[:size] == fact_word[:size]):
-        return True
-    rest = word[len(fact_word) :]
-    return (
-        len(fact_word) >= 3
-        and word.startswith(fact_word)
-        and len(rest) <= 6
-        and _SUFFIX.fullmatch(rest) is not None
-    )
-
-
-# Closed-class words a framing sentence opens with (EN, TR, DE). A hook's opener outside this
-# list reads as a name ("Nara is 25 minutes away"): one title is cheap to correct.
-_FRAMING_OPENERS = frozenset(
-    loose_text(word)
-    for word in (
-        "the this that these those here there every each all some one our my your we you its "
-        "what why how when where who which just only first last today tonight now inside after "
-        "before from with let "
-        "bu şu işte her bir ilk son tam hem ama sonra önce şimdi bugün burada orada tüm bütün "
-        "hepsi sadece daha bizim benim senin nasıl neden nerede kim hangi hadi haydi yine böyle "
-        "burası şurası orası bura şura ora burada şurada orada buradan oradan "
-        "der die das ein eine dieser diese dieses hier heute jeder jede unser unsere"
-    ).split()
-)
-# "Don't", "We're": English contractions, not a name's suffix ("Kyoto'nun", "Kyoto's").
-_CONTRACTION = re.compile(r"['’](?:t|re|ve|ll|d|m)$", re.IGNORECASE)
-
-
 # "7,3" and "7.3" are one number, and neither states "3".
 _DECIMAL = re.compile(r"\d+(?:[.,]\d+)*")
 
@@ -493,58 +448,15 @@ def _numbers(text: str) -> list[str]:
     return [number.replace(",", ".") for number in _DECIMAL.findall(text)]
 
 
-def ungrounded_terms(
-    text: str,
-    facts: list[ResearchFact],
-    *,
-    heading: bool = False,
-    hook: bool = False,
-    names: bool = True,
-) -> list[str]:
-    """Numbers and names in ``text`` that its cited facts do not state.
+def ungrounded_numbers(text: str, facts: list[ResearchFact]) -> list[str]:
+    """Numbers in ``text`` that its cited facts do not state.
 
-    A number is read whole, decimals included. A name is a capitalised word. A framing word
-    ("İşte", "This", "Her") is never a name, wherever it sits, so the name after it is what is
-    checked ("İşte Kyoto'nun ..."). A sentence's opening word is checked when it reads as a
-    name: the next word joins it as one name ("Kyoto Demiryolu"), or it carries a name's
-    apostrophe suffix ("Kyoto'nun", "Kyoto's"; not "That's" or "Today's"). Other line openers
-    are the writer's own ("Ray, ..."). A hook's opener is checked unless it is a framing word.
-    A heading names its fact, so its opening word is always checked ("Sagano treni" over a
-    fact that never says Sagano). A bare name opening a line ("Arashiyama treni ...") cannot
-    be told from a content noun here; the claim reviewer owns it, as it owns names in German,
-    where every noun is capitalised (``names=False``).
+    A number is read whole, decimals included: "7,3" and "7.3" are one number, and neither
+    states "3". Names are not checked here: a language-blind word match rejected correct
+    Turkish copy over English facts, so the claim reviewer owns them.
     """
-    cited = "\n".join(fact.text for fact in facts)
-    stated = set(_numbers(cited))
-    missing = list(dict.fromkeys(number for number in _numbers(text) if number not in stated))
-    if not names:
-        return missing
-    fact_words = set(re.findall(r"\w+", loose_text(cited)))
-    for sentence in re.split(r"[.!?;]\s+|\n", text):
-        tokens = list(re.finditer(r"[^\W\d_][\w'’]*", sentence))
-        # Turkish suffixes follow an apostrophe: "Kameoka'ya" names Kameoka.
-        words = [re.split(r"['’]", token.group())[0] for token in tokens]
-        for index, word in enumerate(words):
-            folded = loose_text(word)
-            if folded in _FRAMING_OPENERS:
-                continue
-            joined = (
-                index + 1 < len(tokens)
-                and words[index + 1][:1].isupper()
-                and not sentence[tokens[index].end() : tokens[index + 1].start()].strip()
-            )
-            token = tokens[index].group()
-            suffixed = token != word and not _CONTRACTION.search(token)
-            # "I", "TV": too short to name a place or a claim.
-            if (
-                len(word) < 3
-                or not word[:1].isupper()
-                or (index == 0 and not heading and not joined and not suffixed and not hook)
-            ):
-                continue
-            if not any(_stems_match(folded, fact) for fact in fact_words):
-                missing.append(word)
-    return missing
+    stated = set(_numbers("\n".join(fact.text for fact in facts)))
+    return list(dict.fromkeys(number for number in _numbers(text) if number not in stated))
 
 
 class ResearchCopyAgent(Agent[ResearchCopyInput, ResearchCopyOutput]):
@@ -705,8 +617,7 @@ def _designed_copy_prompt(input: ResearchCopyInput, payload: dict) -> str:
         + "Open with hook: a title for this story, at most hook_window.max_characters, shown "
         "alone over the opening (e.g. 'Kyoto'nun en güzel 25 dakikası', citing a fact that "
         "says Kyoto and one that says 25 dakika). It may frame and invite, but every number "
-        "and name in it must come from the facts it cites. Open it with a framing word ('Her', "
-        "'İşte', 'Bu', 'Every', 'This') or with a name those facts state. "
+        "and name in it must come from the facts it cites. "
         "When hook_window is null the creator's own opening is the hook: return hook=null. "
         + shape
         + "Every heading, line and hook cites its facts in evidence_ids, and every number and "
@@ -1554,9 +1465,7 @@ def validate_research_layers(
         if any(key not in facts for key in layer.evidence_ids):
             raise ResearchUnavailable(f"{label} cites unavailable evidence")
         if text_design is not None:
-            _check_designed_copy(
-                label, layer.text, [facts[key] for key in layer.evidence_ids], names=False
-            )
+            _check_designed_copy(label, layer.text, [facts[key] for key in layer.evidence_ids])
         if layer.translation_of is None:
             cited = "\n".join(facts[key].text for key in layer.evidence_ids)
             unstated = sorted(set(_NUMBER.findall(layer.text)) - set(_NUMBER.findall(cited)))
@@ -1807,39 +1716,17 @@ def write_research_layers(
     raise ResearchUnavailable("No researched text was approved")
 
 
-def _check_designed_copy(
-    label: str,
-    text: str,
-    cited: list[ResearchFact],
-    *,
-    names: bool = True,
-    heading: bool = False,
-    hook: bool = False,
-) -> None:
-    """Design copy never reads "Label: claim", and states only what its cited facts state.
-
-    ``names=False`` checks its numbers only (a text layer, or German copy).
-    """
+def _check_designed_copy(label: str, text: str, cited: list[ResearchFact]) -> None:
+    """Design copy never reads "Label: claim", and states no number its cited facts do not."""
     if _LABEL_COLON.match(text):
         raise ResearchUnavailable(
             f"{label} joins a label and a claim with a colon; write one spoken line instead"
         )
-    missing = ungrounded_terms(text, cited, heading=heading, hook=hook, names=names)
+    missing = ungrounded_numbers(text, cited)
     if missing:
         raise ResearchUnavailable(
-            f"{label} states what its cited facts do not: {', '.join(missing)}"
+            f"{label} states numbers its cited facts do not: {', '.join(missing)}"
         )
-
-
-def _german_copy(written: DesignedCopyOutput, request: str) -> bool:
-    """Whether the answer is German, whose capitals mark every noun, not only names."""
-    from app.pipeline.caption_language import detect_text_language  # noqa: PLC0415
-
-    rows = [written.hook.text] if written.hook else []
-    rows += [part for caption in written.captions for part in (caption.heading, caption.text)]
-    copy = "\n".join(row for row in rows if row)
-    language = detect_text_language(copy) or detect_text_language(request)
-    return language == "de"
 
 
 def _check_identity(caption: Any, request: str, visible_text: list[str]) -> None:
@@ -1921,14 +1808,11 @@ def designed_operations(
         )
 
     edge_tolerance_s = _design_edge_tolerance(snapshot)
-    names = not _german_copy(written, request)
     if hook_window is not None:
         if written.hook is None:
             raise ResearchUnavailable("The informative edit needs a hook title over its opening")
         hook_facts = cited(written.hook.evidence_ids, "The hook title")
-        _check_designed_copy(
-            "The hook title", written.hook.text, hook_facts, hook=True, names=names
-        )
+        _check_designed_copy("The hook title", written.hook.text, hook_facts)
         if len(written.hook.text) > hook_window["max_characters"]:
             raise ResearchUnavailable(
                 f"The hook title is longer than {hook_window['max_characters']} characters"
@@ -1961,20 +1845,14 @@ def designed_operations(
             raise ResearchUnavailable(
                 f"Design {design.id} lines have no heading; fold “{caption.heading}” into the line"
             )
-        _check_designed_copy(f"“{caption.text}”", caption.text, rows, names=names)
+        _check_designed_copy(f"“{caption.text}”", caption.text, rows)
         if not guide and not caption.heading:
             raise ResearchUnavailable(
                 f"Design {design.id} shows each fact as a heading over its detail; "
                 f"“{caption.text}” has no heading"
             )
         if caption.heading:
-            _check_designed_copy(
-                f"The heading “{caption.heading}”",
-                caption.heading,
-                rows,
-                heading=True,
-                names=names,
-            )
+            _check_designed_copy(f"The heading “{caption.heading}”", caption.heading, rows)
             if len(caption.heading) + len(caption.text) > window["max_characters"]:
                 raise ResearchUnavailable(
                     f"The heading “{caption.heading}” and its detail are read together: at "

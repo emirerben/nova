@@ -8,7 +8,12 @@ fails when a prompt or an AI-layer literal hand-lists part of a registered vocab
 import re
 from typing import NamedTuple, get_args
 
-from app.agents._schemas.intent_review import CONFIDENCE_LEVELS, DEFECT_KINDS, VERDICTS
+from app.agents._schemas.intent_review import (
+    CONFIDENCE_LEVELS,
+    DEFECT_KINDS,
+    LEGIBILITY_DEFECT_KINDS,
+    VERDICTS,
+)
 from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, TextAnimationPhases
 from app.services.editor_limits import (
     ANIMATION_SPEED_MAX,
@@ -52,6 +57,7 @@ PROMPT_VOCABULARIES: dict[str, PromptVocabulary] = {
     "TEXT_ANIMATION_LOOPS": _loops(),
     "INTENT_REVIEW_VERDICTS": _plain(VERDICTS),
     "INTENT_REVIEW_DEFECT_KINDS": _plain(DEFECT_KINDS),
+    "INTENT_REVIEW_LEGIBILITY_DEFECT_KINDS": _plain(LEGIBILITY_DEFECT_KINDS),
     "INTENT_REVIEW_CONFIDENCE": _plain(CONFIDENCE_LEVELS),
     "EDITOR_MIN_CLIP_S": _number(EDITOR_MIN_CLIP_S),
     "PLAYBACK_RATE_MIN": _number(PLAYBACK_RATE_MIN),
@@ -69,6 +75,7 @@ PROMPT_VOCABULARY_SOURCES: dict[str, str] = {
     "TEXT_ANIMATION_LOOPS": "app/agents/_schemas/text_animation_phases.py",
     "INTENT_REVIEW_VERDICTS": "app/agents/_schemas/intent_review.py",
     "INTENT_REVIEW_DEFECT_KINDS": "app/agents/_schemas/intent_review.py",
+    "INTENT_REVIEW_LEGIBILITY_DEFECT_KINDS": "app/agents/_schemas/intent_review.py",
     "INTENT_REVIEW_CONFIDENCE": "app/agents/_schemas/intent_review.py",
     "EDITOR_MIN_CLIP_S": "app/services/editor_limits.py",
     "PLAYBACK_RATE_MIN": "app/services/editor_limits.py",

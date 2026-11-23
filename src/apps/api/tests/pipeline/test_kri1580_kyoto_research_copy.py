@@ -2,9 +2,9 @@
 
 Failure modes, written before the code:
 1. Flag off changes the writer, layers or reviewer prompt, or the ops the shipped answer becomes.
-2. A "Label: claim" line passes because the label check reads every fact, not the cited one
-   ("Kyoto Demiryolu" over fact-11, "Hozukyo Geçidi" over fact-8).
-3. A number or name the cited fact does not state passes (the number check skipped this path).
+2. A "Label: claim" line passes (the shipped "Torokko Saga İstasyonu: ..." line, a colon after
+   digits or at the end of a heading).
+3. A number the cited fact does not state passes (the number check skipped this path).
 4. A subtitle ask (B1) leaves clips bare, as prod did with 3 of 7, or the correction round does
    not tell the writer which clips.
 5. The hook is missing, is not the first row, lands outside the opening, or does not resolve to
@@ -22,8 +22,14 @@ Failure modes, written before the code:
 11. The windows the writer is offered disagree with what placement accepts: a generated opening
    she deleted (an editor tombstone) offers a hook that placement then refuses, or a spoken
    edit offers more pauses than the row budget holds while the guide must fill every one.
-12. Live answers the checks wrongly refuse: a framing opener before a name ("İşte Kyoto'nun"),
-   a fact word with a Turkish ending ("Trenin" over "Tren"), German nouns read as names.
+12. A correct answer is refused because a word match runs across languages (prod thread
+   ff5935f8, 2026-11-23: "Tren Sagano Scenic Railway adıyla da biliniyor." over the English fact
+   "... known as the Sagano Scenic Railway" was held for "Tren"). The deterministic check reads
+   numbers and the colon label only, so these pass: that caption, a Turkish opener before a
+   name, a framing opener, a Turkish suffix on a fact's word, German nouns. A fabricated name is
+   the claim reviewer's: ``test_the_claim_reviewer_still_runs_and_its_rejection_holds_a_
+   designed_answer`` below, and the legacy twin in tests/evals/request_following/
+   test_researched_text.py (``test_failed_claim_to_footage_review_leaves_draft_unchanged``).
 13. Limits a row slips past: "3 km" grounded by "7.3 km", a heading and detail over the window's
    reading time together, a titled fact with no heading, a fact set on every row outgrowing the
    editor state, a partly bare guide reported as her whole ask failing.
@@ -87,7 +93,7 @@ from app.services.researched_text import (
     research_windows,
     run_researched_revision,
     uncovered_design_windows,
-    ungrounded_terms,
+    ungrounded_numbers,
 )
 from app.tasks import generative_build
 from app.text_fold import loose_text
@@ -204,10 +210,14 @@ def test_flag_off_the_shipped_answer_becomes_the_shipped_ops():
 
 
 def _reject(written: dict, text_design: str) -> str:
+    return _reject_with(written, text_design)
+
+
+def _reject_with(written: dict, text_design: str, evidence: ResearchEvidence | None = None) -> str:
     with pytest.raises(ResearchUnavailable) as caught:
         designed_operations(
             DesignedCopyOutput.model_validate(written),
-            _evidence(),
+            evidence or _evidence(),
             _snapshot(),
             _request(),
             text_design,
@@ -235,27 +245,6 @@ def test_the_shipped_colon_line_is_rejected_under_a_design():
     assert "colon" in _reject(_one("", shipped["text"], shipped["evidence_ids"]), "A2")
 
 
-@pytest.mark.parametrize(
-    ("index", "name"), [(1, "Kyoto"), (2, "Hozukyo")], ids=["kyoto-demiryolu", "hozukyo-gecidi"]
-)
-def test_a_shipped_heading_its_cited_fact_does_not_name_is_rejected(index, name):
-    shipped = _attempt()["output"]["captions"][index]
-    written = _one(shipped["context_label"], "Ahşap banklar", shipped["evidence_ids"])
-    assert name in _reject(written, "A2")
-
-
-@pytest.mark.parametrize(
-    ("heading", "text", "name"),
-    [
-        ("Sagano treni", "Ahşap banklar", "Sagano"),
-        ("Retro vagonlar", "Ahşap banklar, Arashiyama yakın", "Arashiyama"),
-    ],
-    ids=["heading-opens-with-a-name", "name-after-a-comma"],
-)
-def test_a_name_in_no_cited_fact_is_rejected_wherever_it_sits(heading, text, name):
-    assert name in _reject(_one(heading, text, ["fact-11"]), "A2")
-
-
 def test_the_grounded_shipped_label_passes_as_a_heading():
     shipped = _attempt()["output"]["captions"][0]
     written = DesignedCopyOutput.model_validate(
@@ -270,24 +259,21 @@ def test_a_number_its_cited_fact_does_not_state_is_rejected():
     assert "4" in _reject(written, "A2")
 
 
-def test_the_teardown_train_name_is_in_no_fact_and_is_rejected():
-    written = _one("", "İşte trenimiz, Sagano Romantik Treni", ["fact-11"])
-    assert "Sagano" in _reject(written, "A2")
-
-
 @pytest.mark.parametrize(
     ("text", "missing"),
     [
         ("Every season is different", []),
         ("I love the 7.3 km ride", []),
-        ("Ray, Hozukyo Geçidi boyunca kıvrılıyor", []),
-        ("Kyoto Railway opened it", ["Kyoto", "Railway"]),
+        ("Ray, 7,3 km boyunca kıvrılıyor", []),
         ("Altyazısız olsun", []),
+        ("Kyoto Railway opened it in 1899", ["1899"]),
+        ("3 km, then 25 dakika", ["3"]),
+        ("Kameoka'ya 99 dakika", ["99"]),
     ],
 )
-def test_grounding_reads_names_and_numbers_not_sentence_case(text, missing):
+def test_grounding_reads_numbers_not_names(text, missing):
     fact = _evidence().facts[1]  # fact-6: Saga, Kameoka, Hozukyo Geçidi, 7.3, 25
-    assert ungrounded_terms(text, [fact]) == missing
+    assert ungrounded_numbers(text, [fact]) == missing
 
 
 def _opened(text_design: str, hook: str, line: str, ids=("fact-6",)) -> dict:
@@ -303,86 +289,95 @@ def _opened(text_design: str, hook: str, line: str, ids=("fact-6",)) -> dict:
 
 
 _FACT6_LINE = "Saga'dan Kameoka'ya 25 dakika"
-# The authored Kyoto copy's sentence openers that are framing, not names ("İşte trenimiz").
-_FRAMING_OPENERS = {"İşte", "Ray"}
-# Endings the Kyoto copy puts on a fact's own word ("Tren" -> "Trenin", "Trenimiz").
-_ORACLE_ENDINGS = ("", "i", "in", "imiz", "e", "de", "den", "le", "ler", "lar")
 
 
-def _oracle_grounded(name: str, cited_text: str, cited_words: set[str]) -> bool:
-    """A plain oracle, not the server's check: the name's first five letters are in the cited
-    text, or it is a cited word plus one of the copy's own endings."""
-    return name[: min(5, len(name))] in cited_text or any(
-        name == word + ending for word in cited_words for ending in _ORACLE_ENDINGS
+def _accepted(written: dict, text_design: str, evidence: ResearchEvidence | None = None):
+    ops, _bare = designed_operations(
+        DesignedCopyOutput.model_validate(written),
+        evidence or _evidence(),
+        _snapshot(),
+        _request(),
+        text_design,
     )
+    return ops
 
 
 @pytest.mark.parametrize("text_design", ["A2", "B1"])
 @pytest.mark.parametrize(
-    ("hook", "name"),
+    "hook",
     [
-        ("Arashiyama'nın en güzel 25 dakikası", "Arashiyama"),
-        ("Nara'nın en güzel 25 dakikası", "Nara"),
-        ("Osaka'dan 25 dakika uzakta", "Osaka"),
-        ("Kyoto's most beautiful 25 minutes", "Kyoto"),
-        ("Nara is 25 minutes away", "Nara"),
-        ("Arashiyama treniyle 25 dakika", "Arashiyama"),
-        ("Osaka to Kameoka in 25 minutes", "Osaka"),
+        "Her mevsim başka bir 25 dakika",
+        "İşte 25 dakikalık bir yolculuk",
+        "That's 25 minutes of river views",
+        "Bu 25 dakika başka",
+        "Kyoto'nun en güzel 25 dakikası",
+        "İşte Kyoto'nun en güzel 25 dakikası",
+        "This Kyoto ride takes 25 minutes",
+        # A name the cited fact does not state: the claim reviewer's, not a word match's.
+        "Nara is 25 minutes away",
+        "Arashiyama treniyle 25 dakika",
     ],
 )
-def test_a_hook_that_opens_with_a_name_its_facts_do_not_state_is_rejected(text_design, hook, name):
-    assert name in _reject(_opened(text_design, hook, _FACT6_LINE), text_design)
-
-
-@pytest.mark.parametrize(
-    ("text_design", "line", "name"),
-    [
-        ("B1", "Kyoto'nun treni Hozukyo Geçidi boyunca kıvrılıyor", "Kyoto"),
-        ("B1", "Tren Sagano'dan Kameoka'ya gidiyor", "Sagano"),
-        ("A2", "Tren Sagano'dan Kameoka'ya gidiyor", "Sagano"),
-    ],
-    ids=["line-opens-with-a-suffixed-name", "b1-stem-of-a-shorter-fact-word", "a2-detail-stem"],
-)
-def test_a_line_naming_what_its_facts_do_not_is_rejected(text_design, line, name):
-    assert name in _reject(_opened(text_design, "Her mevsim başka", line), text_design)
-
-
-def test_a_heading_sharing_a_short_facts_stem_is_rejected():
-    """fact-6 says "Saga"; "Sagano" is a different name, in no fact."""
-    assert "Sagano" in _reject(_one("Sagano treni", "Ahşap banklar", ["fact-6"]), "A2")
-
-
-@pytest.mark.parametrize("text_design", ["A2", "B1"])
-@pytest.mark.parametrize(
-    ("hook", "ids"),
-    [
-        ("Her mevsim başka bir 25 dakika", ["fact-6"]),
-        ("İşte 25 dakikalık bir yolculuk", ["fact-6"]),
-        ("That's 25 minutes of river views", ["fact-6"]),
-        ("Let's ride for 25 minutes", ["fact-6"]),
-        ("Today's 25 minutes of river views", ["fact-6"]),
-        ("Bu 25 dakika başka", ["fact-6"]),
-        ("Kameoka'ya 25 dakika", ["fact-6"]),
-        ("Kyoto'nun en güzel 25 dakikası", ["fact-1", "fact-6"]),
-    ],
-)
-def test_a_framing_hook_or_one_whose_facts_name_its_subject_passes(text_design, hook, ids):
-    written = DesignedCopyOutput.model_validate(_opened(text_design, hook, _FACT6_LINE, ids))
-    ops, _missing = designed_operations(written, _evidence(), _snapshot(), _request(), text_design)
+def test_a_hook_passes_the_deterministic_check_whatever_word_opens_it(text_design, hook):
+    ops = _accepted(_opened(text_design, hook, _FACT6_LINE), text_design)
     assert ops[0]["text"] == hook
 
 
+# The English fact the prod thread's search returned (ff5935f8, 2026-11-23).
+_PROD_FACT = {
+    "id": "fact-99",
+    "text": (
+        "The Kyoto Toroko train, officially known as the Sagano Scenic Railway, runs along "
+        "the Hozu River gorge"
+    ),
+    "sources": [{"url": "https://www.japan.travel/en/spot/1234/", "title": "japan.travel"}],
+}
+
+
+def _with_prod_fact() -> ResearchEvidence:
+    evidence = _attempt()["input"]["evidence"]
+    return ResearchEvidence.model_validate({**evidence, "facts": [*evidence["facts"], _PROD_FACT]})
+
+
 @pytest.mark.parametrize(
-    ("text", "facts"),
+    "line",
     [
-        ("Tren, Hozukyo Geçidi boyunca kıvrılıyor", ["fact-6"]),
-        ("Ahşap banklı retro vagonlar", ["fact-11"]),
-        ("Mevsimden mevsime değişen manzaralar", ["fact-8"]),
+        "Tren Sagano Scenic Railway adıyla da biliniyor.",
+        "Kyoto Demiryolu hattı, Sagano Scenic Railway",
+        "İşte Sagano Scenic Railway",
+        "Tren, Hozu Nehri vadisinde ilerliyor",
+        "Trenimiz Sagano'dan geçiyor",
     ],
 )
-def test_a_stem_the_cited_fact_carries_still_grounds_the_word(text, facts):
-    cited = [fact for fact in _evidence().facts if fact.id in facts]
-    assert ungrounded_terms(text, cited, heading=True) == []
+def test_the_prod_caption_over_an_english_fact_passes(line):
+    """Turkish words over English facts cannot match by stem; only numbers and colons count."""
+    ops = _accepted(_one("", line, ["fact-99"]), "B1", _with_prod_fact())
+    assert ops[-1]["text"] == line
+
+
+def test_a_prod_caption_with_a_number_the_english_fact_lacks_is_still_rejected():
+    reason = _reject_with(
+        _one("", "Tren 1899'dan beri Sagano Scenic Railway", ["fact-99"]), "B1", _with_prod_fact()
+    )
+    assert "1899" in reason
+
+
+@pytest.mark.parametrize("text_design", ["A2", "B1"])
+def test_the_claim_reviewer_still_runs_and_its_rejection_holds_a_designed_answer(
+    monkeypatch, text_design
+):
+    """With no word match, the reviewer is what stops a name no fact states."""
+    answer = _designed(text_design).model_dump()
+    calls = _stub_agents(monkeypatch, [answer, answer])
+
+    def reject(self, input, *, ctx=None):
+        calls["review"].append(input)
+        return ResearchReviewOutput(approved=False, reason="Nara is in no cited fact")
+
+    monkeypatch.setattr(researched_text.ResearchReviewAgent, "run", reject)
+    with pytest.raises(ResearchUnavailable, match="Nara is in no cited fact"):
+        _run(text_design)
+    assert len(calls["review"]) == 2 and all(row.designed is not None for row in calls["review"])
 
 
 # -- 4. coverage -----------------------------------------------------------------------------
@@ -734,30 +729,7 @@ def test_kyoto_design_copy_opens_with_the_hook_then_grounded_facts(monkeypatch, 
         cited = [
             fact for fact in _evidence().facts if fact.id in {f["id"] for f in research["facts"]}
         ]
-        # Every capitalised word, the opener included: only the copy's framing words are free.
-        # Read with a plain substring oracle, not the server's own check.
         cited_text = loose_text(" ".join(fact.text for fact in cited))
-        cited_words = set(re.findall(r"\w+", cited_text))
-        names = {
-            re.split(r"['’]", word)[0]
-            for word in re.findall(r"[^\W\d_][\w'’]*", row["text"])
-            if word[:1].isupper()
-        }
-        if _level(row) in {"line", "detail"}:
-            # The contract leaves a line's plain sentence opener to the writer ("Trende beş
-            # vagon var"): one with no apostrophe and no capitalised word after it.
-            names -= {
-                match.group(1)
-                for match in re.finditer(
-                    r"(?:^|[.!?;]\s+)([^\W\d_]+)(?=\s+[^\W\d_A-ZÇĞİÖŞÜ]|,|$)", row["text"]
-                )
-            }
-        unstated = {
-            name
-            for name in names - _FRAMING_OPENERS
-            if len(name) >= 3 and not _oracle_grounded(loose_text(name), cited_text, cited_words)
-        }
-        assert not unstated, (row["text"], unstated)
         numbers = {n.replace(",", ".") for n in re.findall(r"\d+(?:[.,]\d+)*", row["text"])}
         stated = {n.replace(",", ".") for n in re.findall(r"\d+(?:[.,]\d+)*", cited_text)}
         assert numbers <= stated, row["text"]
@@ -1341,20 +1313,6 @@ def test_a_framing_opener_before_a_grounded_name_passes_in_a_line(text_design, l
     assert ops[-1]["text"] == line
 
 
-@pytest.mark.parametrize("text_design", ["A2", "B1"])
-@pytest.mark.parametrize(
-    ("hook", "line"),
-    [
-        ("İşte Nara'nın en güzel 25 dakikası", _FACT6_LINE),
-        ("Her mevsim başka", "İşte Sagano Geçidi, 25 dakika"),
-        ("This Nara ride takes 25 minutes", _FACT6_LINE),
-    ],
-)
-def test_the_name_after_a_framing_opener_is_still_checked(text_design, hook, line):
-    unstated = _reject(_opened(text_design, hook, line), text_design).split("do not: ")[1]
-    assert unstated in {"Nara", "Sagano"}
-
-
 @pytest.mark.parametrize(
     ("heading", "text", "ids", "text_design"),
     [
@@ -1363,7 +1321,7 @@ def test_the_name_after_a_framing_opener_is_still_checked(text_design, hook, lin
         ("", "Trenimiz Hozukyo Geçidi boyunca kıvrılıyor", ["fact-6"], "B1"),
     ],
 )
-def test_a_turkish_suffix_on_the_facts_word_still_grounds_it(heading, text, ids, text_design):
+def test_a_turkish_suffix_on_a_facts_word_passes(heading, text, ids, text_design):
     """Live re-record (2.34): fact-11 says "Tren"; "Trenin" ("the train's") is that word."""
     written = _one(heading, text, ids)
     ops, _missing = designed_operations(
@@ -1374,14 +1332,6 @@ def test_a_turkish_suffix_on_the_facts_word_still_grounds_it(heading, text, ids,
         text_design,
     )
     assert ops[-1]["text"] == text
-
-
-@pytest.mark.parametrize(
-    ("heading", "ids", "name"),
-    [("Sagano treni", ["fact-6"], "Sagano"), ("Sagaon treni", ["fact-6"], "Sagaon")],
-)
-def test_a_longer_name_sharing_a_short_facts_word_is_still_rejected(heading, ids, name):
-    assert name in _reject(_one(heading, "Ahşap banklar", ids), "A2")
 
 
 def test_a_number_inside_a_decimal_its_fact_states_is_not_grounded():
@@ -1564,7 +1514,7 @@ def _german(**replace: str) -> dict:
     }
 
 
-def test_german_nouns_are_not_names_but_german_numbers_are_still_checked():
+def test_german_nouns_pass_but_german_numbers_are_still_checked():
     """German capitalises every noun ("Zug", "Schlucht"), so capitals do not mark a name."""
     written = DesignedCopyOutput.model_validate(_german())
     ops, missing = designed_operations(written, _evidence(), _snapshot(), _request(), "B1")
@@ -1636,20 +1586,8 @@ def test_a_full_guide_with_a_full_fact_set_fits_the_editor_state(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("heading", "ids", "unstated"),
-    [
-        ("Her mevsim başka", ["fact-8"], None),
-        ("Bu Sagano treni", ["fact-6"], "Sagano"),
-        ("İşte Hozukyo Geçidi", ["fact-6"], None),
-    ],
+    "heading", ["Her mevsim başka", "Bu Sagano treni", "İşte Hozukyo Geçidi", "Retro vagonlar"]
 )
-def test_a_heading_may_open_with_a_framing_word_but_not_an_ungrounded_name(heading, ids, unstated):
-    written = _one(heading, "Ahşap banklar", ["fact-11"])
-    written["captions"][0]["evidence_ids"] = ids + ["fact-11"]
-    if unstated is None:
-        ops, _missing = designed_operations(
-            DesignedCopyOutput.model_validate(written), _evidence(), _snapshot(), _request(), "A2"
-        )
-        assert ops[1]["text"] == heading
-    else:
-        assert _reject(written, "A2").split("do not: ")[1] == unstated
+def test_a_heading_passes_whatever_word_opens_it(heading):
+    ops = _accepted(_one(heading, "Ahşap banklar", ["fact-6", "fact-11"]), "A2")
+    assert ops[1]["text"] == heading

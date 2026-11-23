@@ -1171,6 +1171,11 @@ def plan_lipsync_montage(
     if not title:
         title_source = "none"
     snapshot_kwargs: dict[str, Any] = {}
+    from app.services.choice_questions import text_design_answer  # noqa: PLC0415
+
+    if (picked_design := text_design_answer(strategy)) is not None:
+        # KRI-1582: a song montage that researches facts draws them in her pick too.
+        snapshot_kwargs["text_design"] = picked_design
     if closing:
         snapshot_kwargs["closing_title"] = closing
     if pins:

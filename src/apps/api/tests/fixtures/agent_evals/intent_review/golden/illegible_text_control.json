@@ -1,0 +1,152 @@
+{
+  "agent": "nova.kria.intent_review",
+  "prompt_version": "intent_review_v4",
+  "input": {
+    "original_request": "Full creator request (chronological):\nMake a short reel of my festival day. Title: \"Festival Day\". Start with the red balloon. Add upbeat music.\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [b1] [text/title] Title (\"Festival Day\")\n- [b2] [select/global] Start with the red balloon\n- [b3] [audio/global] Add upbeat music",
+    "catalog": {
+      "digest": "67cb15e6a0de5e3affad06868d8b25554b23307f461afccd352827373d85f4f1",
+      "frames": [
+        {
+          "frame_id": "f0",
+          "t_ms": 800,
+          "sha256": "6e60fcde103907d78835cdb04120ebc4e735c1f8a4c53a42e71ecdcf83bb6906",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": null
+        },
+        {
+          "frame_id": "f1",
+          "t_ms": 2000,
+          "sha256": "7b820b454a881665b44815ee1d289b8de20213bd40ce59ed6626f3151cc51261",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": "text-0"
+        },
+        {
+          "frame_id": "f2",
+          "t_ms": 4000,
+          "sha256": "2756086c8d33ebd10c4e5878d13b8188d209cb14145a7ed111e3223db0f11c74",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": null
+        },
+        {
+          "frame_id": "f3",
+          "t_ms": 5600,
+          "sha256": "4aa934c856810110cc3a969b0ce8c65bf614f148223ec254b3488c872515112d",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": null
+        },
+        {
+          "frame_id": "f4",
+          "t_ms": 7200,
+          "sha256": "17d36a0deab9f46ea0b520eda7b1bc26bc0e292603b255f90446eb23945fabe4",
+          "w": 360,
+          "h": 640,
+          "anchor_ref": null
+        }
+      ],
+      "requirements": [
+        {
+          "requirement_id": "R1",
+          "brief_id": "b1",
+          "kind": "text",
+          "label": "Title (\"Festival Day\")",
+          "literal": "Festival Day",
+          "element_refs": [
+            "title"
+          ],
+          "draft_matches_authority": true
+        },
+        {
+          "requirement_id": "R2",
+          "brief_id": "b2",
+          "kind": "select",
+          "label": "Start with the red balloon",
+          "literal": null,
+          "element_refs": [],
+          "draft_matches_authority": null
+        }
+      ],
+      "withheld": [
+        {
+          "brief_id": "b3",
+          "reason": "audio"
+        }
+      ],
+      "candidates": [
+        {
+          "candidate_id": "651999fda01aa795",
+          "kind": "move_text_to_safe_anchor",
+          "requirement_ids": [
+            "R1"
+          ],
+          "defect_kinds": [
+            "text_obstructed"
+          ],
+          "element_ref": "title",
+          "role": "title",
+          "allowed_paths": [
+            "editor_payload.text_elements[0].position",
+            "editor_payload.text_elements[0].x_frac",
+            "editor_payload.text_elements[0].y_frac"
+          ],
+          "target": {
+            "anchor": "bottom"
+          },
+          "auto": false
+        }
+      ],
+      "text_legibility": true
+    }
+  },
+  "raw_text": "{\"schema_version\":1,\"findings\":[{\"requirement_id\":\"R1\",\"verdict\":\"unmet\",\"defect_kind\":\"text_illegible\",\"evidence_frame_ids\":[\"f1\"],\"confidence\":\"high\"},{\"requirement_id\":\"R2\",\"verdict\":\"met\",\"defect_kind\":null,\"evidence_frame_ids\":[\"f0\"],\"confidence\":\"high\"}]}",
+  "output": {
+    "schema_version": 1,
+    "findings": [
+      {
+        "requirement_id": "R1",
+        "verdict": "unmet",
+        "defect_kind": "text_illegible",
+        "evidence_frame_ids": [
+          "f1"
+        ],
+        "confidence": "high"
+      },
+      {
+        "requirement_id": "R2",
+        "verdict": "met",
+        "defect_kind": null,
+        "evidence_frame_ids": [
+          "f0"
+        ],
+        "confidence": "high"
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "raw_text": "live_recorded",
+    "recorded": {"run_id": "iqual-1123a-full", "item": "illegible_text_control#1", "model": "gpt-6.1-sol", "response_id": "resp_03fda2827efcf402016b040af8e31087d2b6d708d35bc619e7", "date": "2026-11-23"},
+    "case": "KRI-1583 black on dark: the title is there as approved but drawn near-black on a dark strip, on a job stamped for informative text",
+    "built_from": "app.kria.intent_review_qualification illegible_text_control (perfect_reply)",
+    "expect": {
+      "review": {
+        "status": "suggestion",
+        "why": [
+          "no_candidate"
+        ],
+        "candidate_kinds": []
+      },
+      "repair": {
+        "status": "suggestion",
+        "why": [
+          "no_candidate"
+        ],
+        "candidate_kinds": []
+      }
+    }
+  },
+  "prompt_sha": "283d32d3df9bf03d"
+}

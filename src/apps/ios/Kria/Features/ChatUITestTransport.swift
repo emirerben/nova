@@ -128,7 +128,7 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     }
     private func finishLoading() {
         if PerfFixture.isFullProjectionRead(request) { Perf.mark("fixture.full.sent") }
-        if let perf = ChatShortenFixture.respond(request) ?? PerfFixture.respond(request) {
+        if let perf = DesignPickerUITestFixture.respond(request) ?? ChatShortenFixture.respond(request) ?? PerfFixture.respond(request) {
             guard let url = request.url,
                   let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
                 client?.urlProtocol(self, didFailWithError: URLError(.badURL))
@@ -554,7 +554,7 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
-            if HeldDraftReplayFixture.isEnabled { capabilities["choice_questions"] = true }
+            if HeldDraftReplayFixture.isEnabled || DesignPickerUITestFixture.isEnabled { capabilities["choice_questions"] = true }
             // A server that still advertises the removed place-hint capability: the app must ignore it.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] == "1" { capabilities["upload_place_hint"] = true }
             // KRIA_CHAT_VOICEOVER_SCRIPT (KRI-815): "1" = server advertises voiceover_script_cards; "legacy" = it still
@@ -1463,6 +1463,18 @@ final class CreationChatFixture: @unchecked Sendable {
             } else if runtime == 2, HeldDraftReplayFixture.isEnabled {
                 // KRI-1239: Kria thinks (and streams thoughts) for a while, then lands the recorded reply.
                 replayTurns[id] = (turnID: turnID, ticks: 0)
+            } else if runtime == 2, DesignPickerUITestFixture.isEnabled {
+                if let selection = body["choice_selection"] as? [String: Any] {
+                    // KRI-1582: echo what the server received, then the draft for the tapped design.
+                    DesignPickerUITestFixture.recordPick(selection["option_key"] as? String)
+                    append("assistant_response", text: "Got it. design[\(selection["option_key"] ?? "")] question[\(selection["question_id"] ?? "")]")
+                    append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                    append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+                } else {
+                    append("assistant_response", text: DesignPickerUITestFixture.questionText, payload: [
+                        "turn_id": turnID, "turn_value": "question", "choice_question": DesignPickerUITestFixture.question,
+                    ])
+                }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
                 if let selection = body["choice_selection"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.

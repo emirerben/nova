@@ -2184,6 +2184,20 @@
     "I'll play your song quietly under your voice.": "Ich spiele deinen Song leise unter deiner Stimme.",
     "Lip-sync needs a Lip-sync video: on a Talking video your song plays quietly under your voice. Should I play it under your voice instead?": "Lip-Sync braucht ein Lip-Sync-Video: In einem Talking-Video läuft dein Song leise unter deiner Stimme. Soll ich ihn stattdessen unter deiner Stimme spielen?",
     "Lip-sync needs a Lip-sync video; on a Talking video your song plays quietly under your voice.": "Lip-Sync braucht ein Lip-Sync-Video; in einem Talking-Video läuft dein Song leise unter deiner Stimme.",
-    "No sourced line for {count} of the clips.": "Für {count} der Clips gab es keine belegte Zeile."
+    "No sourced line for {count} of the clips.": "Für {count} der Clips gab es keine belegte Zeile.",
+    "I'll add the sourced facts as on-screen text.": "Ich füge die belegten Infos als Text im Video ein.",
+    "Which look should the text have?": "Wie soll der Text aussehen?",
+    "Editorial serif": "Redaktionelle Serifenschrift",
+    "A serif title, then small capitals over a serif line for each fact.": "Ein Serifentitel, dann für jede Info kleine Großbuchstaben über einer Serifenzeile.",
+    "Bold on a soft shade": "Fett auf weichem Schatten",
+    "A bold title, then a yellow heading over a small line, on a soft dark fade.": "Ein fetter Titel, dann eine gelbe Überschrift über einer kleinen Zeile, auf einem weichen dunklen Verlauf.",
+    "Centred display serif": "Zentrierte Serifenschrift",
+    "A large serif title and headings, each with a small line under it, centred.": "Ein großer Serifentitel und Überschriften, jede mit einer kleinen Zeile darunter, zentriert.",
+    "Running guide": "Laufende Erzählung",
+    "A title, then one line on every clip, as if you were telling it.": "Ein Titel, dann eine Zeile auf jedem Clip, als würdest du es erzählen.",
+    "Your opening title": "Dein Eröffnungstitel",
+    "A fact's heading": "Die Überschrift einer Info",
+    "Its detail sits right under it, on one short line": "Das Detail steht direkt darunter, in einer kurzen Zeile",
+    "One line on every clip, as if you were telling it": "Eine Zeile auf jedem Clip, als würdest du es erzählen"
   }
 }

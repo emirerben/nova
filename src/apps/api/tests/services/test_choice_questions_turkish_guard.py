@@ -404,6 +404,44 @@ def _cases() -> dict[str, tuple[str, list]]:
                 # KRI-898: sent from an app build that plays a freeze hold.
                 ChoiceCapability(creator_id="u", client_protocol=16),
             )
+    # KRI-1582: which design researched facts take, for a build that draws the designs.
+    from app.services.client_protocol import TEXT_DESIGN_PICKER_PROTOCOL
+
+    with (
+        patch.object(settings, "informative_text_designs_enabled", True),
+        patch.object(settings, "phone_text_styling_enabled", True),
+        patch.object(settings, "phone_rendering_enabled", True),
+        patch.object(settings, "phone_render_user_ids", []),
+        patch.object(
+            settings,
+            "phone_render_verified_features",
+            [*settings.phone_render_verified_features, "textDesigns"],
+        ),
+    ):
+        add(
+            "text_design",
+            cq.CONFLICT_TEXT_DESIGN,
+            {"edit_format": "montage", "audio_strategy": "licensed_music"},
+            _brief(
+                BriefRequirement(
+                    id="r1",
+                    kind="text",
+                    scope="global",
+                    description="Bilgilendirici alt yazı",
+                    facts={
+                        "research": {
+                            "topic": "Kyoto'daki Toroko treni",
+                            "request_quote": "tren hakkında bilgilendirici alt yazı istiyorum",
+                        }
+                    },
+                )
+            ),
+            {
+                "clip_assignments": [{"media_id": "a", "kind": "video", "duration_s": 9.0}],
+                "clip_paths": ["users/u/creation-threads/t/analysis-proxy-ios-0.mp4"],
+            },
+            ChoiceCapability(creator_id="u", client_protocol=TEXT_DESIGN_PICKER_PROTOCOL),
+        )
     return cases
 
 

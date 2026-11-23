@@ -657,8 +657,9 @@ struct ClipPreviewPage: View {
     static func localURL(mediaID: String, projectID: UUID?) -> URL? {
         #if DEBUG
         // `KRIA_CHAT_CLIP_QUESTION=1`: the first fixture clip has a local original (a generated clip), the others
-        // do not, so a UI test sees both the playing and the poster-only page.
-        if ["KRIA_CHAT_CLIP_QUESTION", "KRIA_CHAT_CLIP_ORDER"].contains(where: { ProcessInfo.processInfo.environment[$0] == "1" }), mediaID == "fixture-clip" {
+        // do not, so a UI test sees both the playing and the poster-only page. `KRIA_CHAT_DESIGN_PICKER=1` (KRI-1582)
+        // draws the design previews over the same clip.
+        if ["KRIA_CHAT_CLIP_QUESTION", "KRIA_CHAT_CLIP_ORDER", "KRIA_CHAT_DESIGN_PICKER"].contains(where: { ProcessInfo.processInfo.environment[$0] == "1" }), mediaID == "fixture-clip" {
             return SongTimelineFixture.clipURL(mediaID: mediaID, force: true)
         }
         #endif
