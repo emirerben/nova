@@ -76,6 +76,13 @@ final class CameraRollCollectionUITests: XCTestCase {
     /// ("1 held, 0 released"), a tap lets the waiting ones go.
     private func heldRequests(_ app: XCUIApplication) -> XCUIElement { element(app, "camera-roll-fixture-release") }
 
+    /// Lets one held request go when the Use sheet covers that control (`-collection-hold-use-steps`). Asking before
+    /// the request has reached the server is kept for it, so this never races the app.
+    private func releaseNextHeldRequest() {
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             CFNotificationName("com.kria.fixture.camera-roll.release-next" as CFString), nil, nil, true)
+    }
+
     // MARK: Surface
 
     func testDrawerOpensTheCameraRollFullScreen() {
@@ -400,16 +407,26 @@ final class CameraRollCollectionUITests: XCTestCase {
     }
 
     func testUseShowsEachStepThenOpensTheChat() {
-        let app = launch(["-collection-mixed-states", "-collection-slow-use"])
+        // The server answers each clip, and the hand-over, only when this test asks. On a 0.8 s timer per step a slow
+        // runner's first look came after "1/2" had gone by (KRI-1604).
+        let app = launch(["-collection-mixed-states", "-collection-hold-use-steps"])
         openEvent(app, sunday)
         let use = element(app, "camera-roll-idea-use-\(ferryIdea)")
         scrollTo(use, in: app)
         use.tap()
         XCTAssertTrue(element(app, "camera-roll-use-sheet").waitForExistence(timeout: 5), "Use opens the progress sheet at once")
         let clips = element(app, "camera-roll-use-step-clips")
-        XCTAssertTrue(wait(clips, "label CONTAINS %@", "Uploading clips 1/2", timeout: 10), "Clip uploads count up")
+        let chat = element(app, "camera-roll-use-step-chat")
+        XCTAssertTrue(wait(clips, "label CONTAINS %@", "Uploading clips 0/2", timeout: 15), "No clip is counted before the server has it: \(clips.label)")
+        releaseNextHeldRequest()
+        XCTAssertTrue(wait(clips, "label CONTAINS %@", "Uploading clips 1/2", timeout: 15), "Clip uploads count up: \(clips.label)")
+        XCTAssertEqual(clips.value as? String, "In progress")
         attach("Use progress", app.screenshot())
-        XCTAssertTrue(wait(element(app, "camera-roll-use-step-chat"), "value == %@", "In progress", timeout: 15))
+        releaseNextHeldRequest()
+        XCTAssertTrue(wait(chat, "value == %@", "In progress", timeout: 15), "The chat step starts once both clips are in: \(clips.label)")
+        XCTAssertTrue(clips.label.contains("Uploading clips 2/2"), clips.label)
+        XCTAssertFalse(element(app, "camera-roll-opened-chat").exists, "The chat opens only after the server takes the idea")
+        releaseNextHeldRequest()
         XCTAssertTrue(element(app, "camera-roll-opened-chat").waitForExistence(timeout: 15), "Success goes straight to the chat")
     }
 

@@ -13,7 +13,8 @@ import Foundation
 ///                               tapped while it is in flight
 ///   `-collection-legacy-server` a server from before event titles and about: its collection has no `events`, and
 ///                               a body that sends them is refused, as `extra="forbid"` refuses it
-///   `-collection-slow-use`      every step of "Use this idea" takes the server 0.8 s, so its progress can be watched
+///   `-collection-hold-use-steps` every clip added by "Use this idea", and handing the chat to the idea, waits on the
+///                               server until the test lets that one go, so each step of its progress can be read
 ///   `-collection-hold-use`      handing the chat to the idea waits on the server until the test releases it, so the
 ///                               sheet can be closed and reopened while the work is still going
 ///   `-collection-use-fails-once` handing the chat to the idea fails the first time, so Retry can be tapped
@@ -172,7 +173,7 @@ private final class CameraRollSurfaceURLProtocol: URLProtocol, @unchecked Sendab
         if Self.server.holds(request) {
             Self.server.hold(answer)
         } else {
-            DispatchQueue.global().asyncAfter(deadline: .now() + Self.server.delay(for: request), execute: answer)
+            DispatchQueue.global().async(execute: answer)
         }
     }
     override func stopLoading() {}
@@ -193,7 +194,11 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
     /// What the server stores for each event. A legacy server has no such field.
     private var events: [[String: Any]] = []
 
-    static let shared = CameraRollSurfaceFixtureServer()
+    static let shared: CameraRollSurfaceFixtureServer = {
+        let server = CameraRollSurfaceFixtureServer()
+        if has("-collection-hold-use-steps") { server.listenForReleaseNext() }
+        return server
+    }()
     /// "group|title|about" per stored event, for the test host to show what actually reached the server.
     var storedEventsSummary: String {
         lock.lock(); defer { lock.unlock() }
@@ -201,14 +206,6 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
     }
 
     private static func has(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains(flag) }
-
-    func delay(for request: URLRequest) -> TimeInterval {
-        let path = request.url?.path ?? ""
-        if Self.has("-collection-slow-use"), path.contains("/creation-threads/") || path.hasSuffix("/select") || (request.httpMethod == "POST" && path.hasSuffix("/creation-threads")) {
-            return 0.8
-        }
-        return 0
-    }
 
     // MARK: held requests
 
@@ -218,6 +215,8 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
     private var held: [@Sendable () -> Void] = []
     var holdsRequests: Bool { Self.has("-collection-hold-use") || Self.has("-collection-hold-group-delete") }
     private var released = 0
+    /// Releases asked for before their request arrived (`releaseNext`); the next held request takes one and answers.
+    private var credits = 0
     /// "1 held, 0 released": what is waiting now and what the test has let go so far.
     var heldSummary: String {
         lock.lock(); defer { lock.unlock() }
@@ -227,12 +226,35 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
     func holds(_ request: URLRequest) -> Bool {
         let path = request.url?.path ?? ""
         if Self.has("-collection-hold-use"), request.httpMethod == "POST", path.hasSuffix("/select") { return true }
+        if Self.has("-collection-hold-use-steps"), request.httpMethod == "POST", path.hasSuffix("/media") || path.hasSuffix("/select") { return true }
         return Self.has("-collection-hold-group-delete") && request.httpMethod == "DELETE" && path.hasSuffix("/groups")
     }
 
     func hold(_ answer: @escaping @Sendable () -> Void) {
-        lock.lock(); defer { lock.unlock() }
-        held.append(answer)
+        lock.lock()
+        guard credits > 0 else { held.append(answer); lock.unlock(); return }
+        credits -= 1; released += 1
+        lock.unlock()
+        DispatchQueue.global().async(execute: answer)
+    }
+
+    /// Lets exactly one request go: the oldest one waiting, or the next to arrive. Asking early is not lost, so a
+    /// test never has to know whether the request has reached the server yet.
+    func releaseNext() {
+        lock.lock()
+        guard !held.isEmpty else { credits += 1; lock.unlock(); return }
+        let answer = held.removeFirst()
+        released += 1
+        lock.unlock()
+        DispatchQueue.global().async(execute: answer)
+    }
+
+    /// The Use sheet covers the host's Release control, so a test that watches the sheet asks with this notification.
+    static let releaseNextNotification = "com.kria.fixture.camera-roll.release-next"
+    func listenForReleaseNext() {
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
+            CameraRollSurfaceFixtureServer.shared.releaseNext()
+        }, Self.releaseNextNotification as CFString, nil, .deliverImmediately)
     }
 
     func release() {
