@@ -45,6 +45,15 @@ final class ChoiceQuestionTests: XCTestCase {
         XCTAssertNil(ChoiceQuestion.parse(payload: payload(options: [option("only", "One option")])), "one option is not a choice")
     }
 
+    /// KRI-1560: a title Kria built from the creator's words carries `editable`; the card draws a pencil only then.
+    func testEditableIsReadAndOffByDefault() throws {
+        var editable = option("title_1", "Black doesn't suit everyone", detail: "0:12 · “Everyone says black goes with everything.”")
+        if case .object(var fields) = editable { fields["editable"] = .bool(true); editable = .object(fields) }
+        let q = try XCTUnwrap(ChoiceQuestion.parse(payload: payload(options: [editable, option("cancel", "No title")])))
+        XCTAssertEqual(q.options.map(\.editable), [true, false])
+        XCTAssertEqual(q.options[0].detail, "0:12 · “Everyone says black goes with everything.”")
+    }
+
     func testDuplicateKeysAndBlankLabelsAreDropped() throws {
         let q = try XCTUnwrap(ChoiceQuestion.parse(payload: payload(options: [
             option("a", "First"), option("a", "Again"), option("b", "   "), option("c", "Third"),

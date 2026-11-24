@@ -257,6 +257,18 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker + light).
     phone_voiceover_reaction_beats_enabled: bool = True
+    # KRI-1598: named sound cues ("a whoosh when I say Barcelona") on a phone montage-family
+    # edit WITH a recorded voiceover, sound only. Takes effect only while
+    # `phone_rollout.phone_voiceover_reaction_beats_supported()` holds (the same grounding and
+    # KRI-281 lanes the Voiceover beats use): the manifest then advertises
+    # `reaction_beats:sound_only`, the Main Creator is taught sound-only beats for that edit, the
+    # repair keeps a beat's sound and leaves its picture / the closing shot out with a notice,
+    # and `_run_phone_voiceover_montage_job` grounds the cues against the voice into the
+    # sound-effect lane (`phone_beat_receipt` on the variant). False (default): byte-identical
+    # -- no manifest key, no prompt section, beats stripped with today's notice, no grounding.
+    # Apply: `fly secrets set PHONE_VOICEOVER_MONTAGE_SOUND_CUES_ENABLED=true --app nova-video`
+    # + `fly machine restart <id>` (api + worker); rollback with `=false` the same way.
+    phone_voiceover_montage_sound_cues_enabled: bool = False
     # Exact-timed small cards: "show the menu photo as a small card at 3 seconds for 2
     # seconds" / "put the receipt in the corner during the second clip" on a
     # phone-rendered Montage (guided / unified montage, montage-family voiceover) or
@@ -3289,6 +3301,11 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-1560: a title ask is answered with up to three titles built from what the creator said,
+    # in one question (`services/opening_titles`). Kill switch: false asks the older "do you have
+    # an idea, or should I write one?" question instead, and makes no extra model call.
+    kria_opening_title_options_enabled: bool = True
+
     # KRI-1563: the ask ledger of a chat edit. Every part of the ask ends done, declined or
     # waiting on a choice; the reply names every change (no "first two" cut), a turn that
     # changed nothing still answers each part, and on a failed-render correction a part the

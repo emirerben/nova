@@ -4032,6 +4032,17 @@
         "src/apps/api/tests/pipeline/test_creator_song_bed.py",
         "src/apps/api/tests/kria/test_talking_creator_song.py"
       ]
+    },
+    {
+      "id": "kri-1560-opening-titles",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1560_opening_titles_postgres.py tests/services/test_creative_copy_decisions.py tests/kria/test_creative_copy_planner.py",
+      "paths": [
+        "src/apps/api/app/agents/opening_title.py",
+        "src/apps/api/app/services/opening_titles.py",
+        "src/apps/api/tests/kria/test_kri1560_opening_titles_postgres.py",
+        "src/apps/api/tests/fixtures/kria_replay/kri1560_opening_titles/"
+      ]
     }
   ]
 }
