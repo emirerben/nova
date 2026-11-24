@@ -862,6 +862,11 @@ class Settings(BaseSettings):
     # ["*"] admits every account (ENABLED stays the kill switch). Off = today's title rows.
     intro_scene_enabled: bool = False
     intro_scene_user_ids: list[str] = []
+    # KRI-1612: its own kill switch for the model that picks the scene
+    # (`agents/intro_scene_designer`) instead of the seeded pick. Needs the two flags above;
+    # read once at dispatch and stamped, so a worker never re-reads it. Off = the seeded pick,
+    # byte-identical to KRI-1611.
+    intro_scene_model_enabled: bool = False
 
     def intro_scene_for(self, user_id: object) -> bool:
         if not self.intro_scene_enabled or user_id is None:

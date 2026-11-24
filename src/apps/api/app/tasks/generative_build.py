@@ -10374,6 +10374,9 @@ def _run_phone_subtitled_job(
             talking_title_duration_s = float(_raw_hold)
     title_rows: list[dict] = []
     title_receipt: dict[str, Any] | None = None
+    # KRI-1612: the model's intro-scene answer asked for in this run, pinned on the job at the
+    # end (`pin_model_pick`); ``None`` when nothing new was asked.
+    intro_model_pin: dict[str, Any] | None = None
     # KRI-514: the creator's closing text ("a 'MY PICK' badge"), a second row on
     # the same lane over the ending. Read only while its rollout is on, so the
     # flag-off recipe and variant stay byte-identical.
@@ -11939,7 +11942,15 @@ def _run_phone_subtitled_job(
                 caption_look=protected_caption_look,
                 **text_canvas,
             )
+            title_scene_plan: Mapping[str, Any] | None = snapshot
             if talking_title_text:
+                title_scene_plan, intro_model_pin = _intro_scene_model_plan(
+                    snapshot,
+                    talking_title_text,
+                    job_id=job_id,
+                    reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
+                    spoken_language=str(all_candidates.get("language") or "") or None,
+                )
 
                 def _place_title(
                     look_caption_avoid: Any, *, logo_below_band: bool = False
@@ -11955,7 +11966,7 @@ def _run_phone_subtitled_job(
                         position_x=speaker_position_x or 0.0,
                         protected=protected_plan,
                         caption_avoid=protected_caption_avoid,
-                        title_look_plan=snapshot,
+                        title_look_plan=title_scene_plan,
                         reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
                         look_caption_avoid=look_caption_avoid,
                         logo_below_band=logo_below_band,
@@ -14293,6 +14304,10 @@ def _run_phone_subtitled_job(
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo/video as referenced.
             current[PHONE_VISUALS_FIELD] = visual_rows
+        # KRI-1612: pin the model's intro-scene answer so a re-render draws the same scene.
+        from app.pipeline.intro_scene_pick import pin_model_pick  # noqa: PLC0415
+
+        current = pin_model_pick(current, intro_model_pin)
         job.assembly_plan = current
         from app.pipeline.phone_initial_split_screen import compile_initial_split_screen
 
@@ -16229,6 +16244,48 @@ def _phone_talking_title_rows(
     return placed_rows, receipt
 
 
+def _intro_scene_model_plan(
+    snapshot: Mapping[str, Any] | None,
+    title: str,
+    *,
+    job_id: str,
+    reserve_logo: bool,
+    spoken_language: str | None,
+) -> tuple[Mapping[str, Any] | None, dict[str, Any] | None]:
+    """KRI-1612: ``(plan the title is placed with, new model answer to pin)``. Asks the intro-scene
+    agent once, here, before the title is placed (placement can run twice per render). Not asked
+    when the model arm was not stamped, an answer is already pinned, or the scene would not apply
+    (a logo above the title, a pinned text rule). Never raises: the plan is returned unchanged."""
+    try:
+        from app.pipeline.intro_scene_pick import (  # noqa: PLC0415
+            has_text_ask,
+            language_of,
+            resolve_for_render,
+        )
+        from app.services.phone_text_styling import generation_title_frames  # noqa: PLC0415
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        policy = current_phone_text_policy() or {}
+        plan, pin = resolve_for_render(
+            snapshot,
+            title,
+            applies=settings.title_look_enabled and not reserve_logo and not has_text_ask(policy),
+            language=language_of(title, spoken_language),
+            footage_notes=str(policy.get("_footage_mood") or ""),
+            frames=generation_title_frames(),
+            job_id=job_id,
+        )
+        if pin is not None:
+            try:
+                record_pipeline_event("phone", "intro_scene_model", dict(pin))
+            except Exception:  # noqa: BLE001 - observability only
+                pass
+        return plan, pin
+    except Exception as exc:  # noqa: BLE001 - a styled intro never blocks a render
+        log.warning("intro_scene.model_plan_failed", error=str(exc)[:200])
+        return snapshot, None
+
+
 def _intro_scene_title_rows(
     opening_title: str,
     *,
@@ -16254,6 +16311,7 @@ def _intro_scene_title_rows(
     a text rule is pinned, or no stamped candidate fits this footage. Read from the stamp, never
     the flag; the same call serves the re-placement after the captions are cleared."""
     from app.pipeline.intro_scene_pick import (  # noqa: PLC0415
+        ask_for_fit,
         fit_intro_scene,
         has_text_ask,
         language_of,
@@ -16264,6 +16322,17 @@ def _intro_scene_title_rows(
     if ask is None or reserve_logo or not settings.title_look_enabled:
         return None
     if has_text_ask(current_phone_text_policy() or {}):
+        return None
+    # KRI-1612: the seeded stamp as it is, or the model arm's one pinned scene (a decline, a
+    # failed or missing answer: today's rows).
+    ask, arm_info = ask_for_fit(ask)
+    if ask is None:
+        try:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            record_pipeline_event("phone", "intro_scene", {"reason": "model_no_scene", **arm_info})
+        except Exception:  # noqa: BLE001 - observability only
+            pass
         return None
     try:
         from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
@@ -16303,6 +16372,7 @@ def _intro_scene_title_rows(
             language=language_of(opening_title, spoken_language),
             place=place,
         )
+        info = {**info, **arm_info}
         try:
             record_pipeline_event("phone", "intro_scene", info)
         except Exception:  # noqa: BLE001 - observability only

@@ -43,12 +43,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
-from app.pipeline.render_geometry import NormalizedBox
+if TYPE_CHECKING:
+    from app.pipeline.render_geometry import NormalizedBox
 
 log = structlog.get_logger(__name__)
 
@@ -260,10 +261,23 @@ def check_scene(scene: IntroScene, title: str, menu: IntroMenu) -> str | None:
 
 # A typical speaker (head with clear wall above it) and the captions under it, normalized 0-1.
 # Stand-ins: compile has no footage, so it asks "could these rows sit clear of a typical head?".
-TYPICAL_FACE = NormalizedBox(0.27, 0.29, 0.74, 0.73)
-TYPICAL_CAPTIONS = NormalizedBox(0.12, 0.81, 0.88, 0.87)
-# The title safe zone `phone_title_look` places inside (x 3-97%, y 6-95%).
-SAFE_ZONE = NormalizedBox(0.03, 0.06, 0.97, 0.95)
+# Built lazily (module ``__getattr__`` below): `render_geometry` imports Skia, and the schema
+# half of this module must import without it (structural-evals CI has no libEGL, KRI-1612).
+_REGIONS: dict[str, tuple[float, float, float, float]] = {
+    "TYPICAL_FACE": (0.27, 0.29, 0.74, 0.73),
+    "TYPICAL_CAPTIONS": (0.12, 0.81, 0.88, 0.87),
+    "SAFE_ZONE": (0.03, 0.06, 0.97, 0.95),  # the title safe zone `phone_title_look` places inside
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name == "NormalizedBox" or name in _REGIONS:
+        from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+
+        return NormalizedBox if name == "NormalizedBox" else NormalizedBox(*_REGIONS[name])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 CLEAN_STATUSES = frozenset({"preset", "moved", "moved_below_face", "shrunk", "squeezed"})
 MAX_INK_COVERAGE = 0.05  # the title placement's own face-coverage limit, here on the ink box
 
@@ -283,11 +297,12 @@ def ink_box_problems(
 ) -> list[str]:
     """Why a row's measured ink box is not acceptable (empty when it is)."""
     problems = []
+    safe = __getattr__("SAFE_ZONE")
     if (
-        box.left < SAFE_ZONE.left - 1e-6
-        or box.right > SAFE_ZONE.right + 1e-6
-        or box.top < SAFE_ZONE.top - 1e-6
-        or box.bottom > SAFE_ZONE.bottom + 1e-6
+        box.left < safe.left - 1e-6
+        or box.right > safe.right + 1e-6
+        or box.top < safe.top - 1e-6
+        or box.bottom > safe.bottom + 1e-6
     ):
         problems.append(f"ink outside the title safe zone {box.as_dict()}")
     if box.coverage_by(face) > MAX_INK_COVERAGE:
@@ -315,7 +330,7 @@ def place_on_typical_face(
     from app.pipeline.phone_title_look import place_title_look  # noqa: PLC0415
     from app.pipeline.render_geometry import ProtectedRegion  # noqa: PLC0415
 
-    region = ProtectedRegion(0.0, 1e6, TYPICAL_FACE, kind="face")
+    region = ProtectedRegion(0.0, 1e6, __getattr__("TYPICAL_FACE"), kind="face")
 
     def sample(_path, anchors, **_kwargs):  # noqa: ANN001, ANN202 - a fixed stand-in speaker
         return [region], {"attempted": len(anchors), "decoded": 1, "detected": 1}
@@ -329,7 +344,7 @@ def place_on_typical_face(
         canvas=canvas,
         sample=sample,
         position=position,
-        avoid=[TYPICAL_CAPTIONS],
+        avoid=[__getattr__("TYPICAL_CAPTIONS")],
     )
 
 
@@ -337,6 +352,7 @@ def preflight_rows(rows: list[dict[str, Any]], position: str | None, canvas: Any
     """Place ``rows`` on a typical speaker, draw them, and measure the ink. Returns the decline
     reason, or ``None`` when they sit clear."""
     from app.pipeline import overlay_verify as ov  # noqa: PLC0415
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
 
     placed, receipt = place_on_typical_face(rows, position, canvas)
     if not placement_is_clean(receipt):
@@ -349,7 +365,9 @@ def preflight_rows(rows: list[dict[str, Any]], position: str | None, canvas: Any
         box = NormalizedBox(
             bbox[0] / bare.width, bbox[1] / bare.height, bbox[2] / bare.width, bbox[3] / bare.height
         )
-        if ink_box_problems(box, face=TYPICAL_FACE, captions=TYPICAL_CAPTIONS):
+        if ink_box_problems(
+            box, face=__getattr__("TYPICAL_FACE"), captions=__getattr__("TYPICAL_CAPTIONS")
+        ):
             return "ink_off_zone"
     return None
 
