@@ -34,6 +34,8 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayDissolve: NativeDissolveRenderer? = nil
     var sourceCrop: NormalizedSourceRect? = nil
     var backdrop: ClipBackdrop? = nil
+    /// The clip's `TimelineClip.dim`, applied to its picture and backdrop before any fade or transition blend.
+    var dim: Double? = nil
     /// Set only on a layer that exists to be a clip's `.media` backdrop: the pool visual id it draws. Such a layer
     /// is never composed onto the canvas itself; `composeVideoLayer` reads it under the clips that name it.
     var backdropAssetID: String? = nil
@@ -454,9 +456,18 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         var speaker = CIImage(color: .clear).cropped(to: instruction.canvas)
         let speakerStart = DispatchTime.now().uptimeNanoseconds
         for layer in speakers { speaker = try composeVideoLayer(layer, onto: speaker, instruction: instruction, request: request, time: time) }
+        // The person mask is found on the undimmed picture, so a dark (or black) speaker keeps the same cut-out.
+        var maskSource = speaker
+        if speakers.contains(where: { $0.dim != nil }) {
+            maskSource = CIImage(color: .clear).cropped(to: instruction.canvas)
+            for var layer in speakers {
+                layer.dim = nil
+                maskSource = try composeVideoLayer(layer, onto: maskSource, instruction: instruction, request: request, time: time)
+            }
+        }
         EngineSignpost.stage("talk.stage.speakerLayer", since: speakerStart)
         let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
-        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil, frame: turn) {
+        switch matte.answer(for: maskSource, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil, frame: turn) {
         case .cutout(let mask):
             if slice != .speakerOnly { try compose(background) }
             // The mask was computed on the full-size speaker layer; only then is the cut-out moved into its frame (S27).
@@ -647,6 +658,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             }
             if let under { positioned = positioned.composited(over: under).cropped(to: canvas) }
         }
+        if let dim = layer.dim { positioned = Self.dimmed(positioned, by: dim) }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
             positioned = positioned.transformed(by: CGAffineTransform(translationX: -layer.overlayCenter.x, y: -layer.overlayCenter.y))
@@ -687,6 +699,19 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 .cropped(to: viewport).composited(over: background).cropped(to: instruction.canvas)
         }
         return frame
+    }
+
+    /// `image` with every encoded sRGB channel times `1 - dim` and its alpha kept, so 0.5 halves the pixel values
+    /// an export writes. The compositor works in linear light, so the multiply runs on encoded values.
+    static func dimmed(_ image: CIImage, by dim: Double) -> CIImage {
+        let keep = CGFloat(1 - min(max(dim, 0), 1))
+        return image.applyingFilter("CILinearToSRGBToneCurve")
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: keep, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: keep, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: keep, w: 0),
+            ])
+            .applyingFilter("CISRGBToneCurveToLinear")
     }
 
     /// A `TextScrim` as a canvas-space image: one linear gradient per pair of stops, each cropped to its
