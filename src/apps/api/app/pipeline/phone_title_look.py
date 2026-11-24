@@ -41,6 +41,7 @@ from app.pipeline.cloud_render_evidence import normalize_text
 from app.pipeline.narrated_title import TITLE_FONT_FAMILY, narrated_title_placement
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import NormalizedBox
+from app.text_fold import fold_text
 
 log = structlog.get_logger(__name__)
 
@@ -194,14 +195,11 @@ def collapse_title_look(
     return first, rest
 
 
-_TURKISH_I = str.maketrans({"İ": "i", "I": "i", "ı": "i"})
-
-
 def _case_blind(value: object) -> str:
     """``normalize_text`` without letter case, Turkish-safe: a caps face draws "bu yılın" as
     "BU YILIN" and "trendi" as "TRENDİ", and no stock casefold maps those back ("İ" lowers to
     "i" plus a combining dot). The dotted and dotless i all read as "i" here."""
-    return normalize_text(value).translate(_TURKISH_I).casefold()
+    return fold_text(normalize_text(value))
 
 
 def _intro_stack_matches(
