@@ -885,7 +885,7 @@
     "Montage format": "Format: Montaj",
     "More than one clip says {quote}, so I couldn't tell which to keep whole": "{quote} birden fazla klipte geçiyor, hangisini bütün bırakacağımı anlayamadım",
     "More than one of your clips has someone talking.": "Birden fazla klibinde biri konuşuyor.",
-    "More than one of your clips shows {shown}{more}. For each one, keep the clip to use ticked and untick the others.": "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klibi işaretli bırak, diğerlerinin işaretini kaldır.",
+    "More than one of your clips shows {shown}{more}. For each one, keep the clips to use ticked and untick the others.": "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klipleri işaretli bırak, diğerlerinin işaretini kaldır.",
     "Moved the captions to the bottom": "Altyazılar alt konuma taşındı",
     "Moved the captions to the middle": "Altyazılar orta konuma taşındı",
     "Moved the captions to the top": "Altyazılar üst konuma taşındı",

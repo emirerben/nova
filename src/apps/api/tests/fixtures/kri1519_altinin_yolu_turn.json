@@ -1,0 +1,439 @@
+{
+  "_provenance": "KRI-1519 / KRI-1517: Cusco DJI T4 'Altinin yolu', thread 04611131-56f7-41b0-939c-be18b6558d20, job 91270ec0, event #17 (2026-11-17 10:47:09Z), build 2016, server 80c96b04c. clips/records/model_strategy/clip_intents from the job's debug record; kit_file/kit_shows from the kit's EXPECTED.md shot table (independent of Kria). resolver_matches: the rows event #17 asked carry its suggested clips at one equal confidence (inferred: the row was asked, so they tied); the wall and the city carry the job's own 0.95 matches. No user id, storage path or transcript.",
+  "creator_request": "My voiceover is in Turkish. Turkish captions. Show each thing when I say it: the paintings in gold frames on \"arkadaşlar İspanyollar geldi\", the dark stone wall with the window on \"İnkalar için\", the snowy mountains on \"Ant Dağları'ndan\", and the wide view of the city on \"Osmanlı'ya dayanıyor\". Fill the rest with the other clips. Title: \"Altının yolu\"",
+  "event_17": {
+    "response": "More than one of your clips shows \"the paintings in gold frames\", \"the snowy mountains\", \"the other clips\". For each one, keep the clip to use ticked and untick the others.",
+    "category_keys": [
+      "include:the-paintings-in-gold-frames",
+      "include:the-snowy-mountains",
+      "include:the-other-clips"
+    ],
+    "suggested_media_ids": {
+      "include_gold_frames": [
+        "analysis-proxy-ios-BE1BB5C3-D519-4DB2-882D-EE650537A453.mp4",
+        "analysis-proxy-ios-51517555-3AB6-496D-A004-ED61E86D698E.mp4"
+      ],
+      "include_snowy_mountains": [
+        "analysis-proxy-ios-5385E7D6-FA91-4D4D-BE28-D00CFFEF6B31.mp4",
+        "analysis-proxy-ios-7611EF20-D68F-4C2D-856E-13CC2AE26D5E.mp4"
+      ],
+      "include_other_clips": [
+        "analysis-proxy-ios-A91EAEF1-25F6-4EEC-8514-FEA19D8A34DD.mp4",
+        "analysis-proxy-ios-EB778A3D-49E8-47B2-945A-732AB57B43B1.mp4",
+        "analysis-proxy-ios-A1A65B43-B0E2-42B0-A54C-1DEF8C5A4E09.mp4",
+        "analysis-proxy-ios-E66806A9-F641-4B09-BDF7-B64A4088F621.mp4",
+        "analysis-proxy-ios-79397282-6DE9-4F62-8502-56CAD1D9A61A.mp4"
+      ]
+    }
+  },
+  "clips": [
+    {
+      "media_id": "analysis-proxy-ios-BE1BB5C3-D519-4DB2-882D-EE650537A453.mp4",
+      "kind": "video",
+      "duration_s": 9.0,
+      "chat_number": 1,
+      "kit_file": "T4_01",
+      "kit_shows": "Paintings in gold frames",
+      "record": {
+        "subject": "large framed paintings",
+        "summary": "The video shows a slow pan across several large, ornate paintings with golden frames, depicting historical or religious scenes with many figures in period attire, likely in a church or museum setting.",
+        "setting": "church or museum interior",
+        "activity": "displaying artwork",
+        "props": [
+          "large gold-framed paintings",
+          "wooden ceiling"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-A91EAEF1-25F6-4EEC-8514-FEA19D8A34DD.mp4",
+      "kind": "video",
+      "duration_s": 8.0,
+      "chat_number": 2,
+      "kit_file": "T4_06",
+      "kit_shows": "Green garden",
+      "record": {
+        "subject": "people in a park",
+        "summary": "The video shows an elevated view of a park-like area with green grass, trees, and stone structures. Several people are present, with one person walking across a grassy area and another person sitting on steps near a garden bed.",
+        "setting": "outdoor historical park or garden",
+        "activity": "walking in a park, sitting on steps",
+        "props": [],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-763E52B2-0E08-48C4-8D67-67A7D7AC4EE0.mp4",
+      "kind": "video",
+      "duration_s": 9.0,
+      "chat_number": 3,
+      "kit_file": "T4_02",
+      "kit_shows": "Dark Inca stone wall with the window",
+      "record": {
+        "subject": "ancient stone wall",
+        "summary": "The camera focuses on a meticulously crafted ancient stone wall with a trapezoidal opening, looking through to another room with similar stonework and a smaller opening further inside.",
+        "setting": "ancient stone interior",
+        "activity": "",
+        "props": [
+          "dark gray megalithic stone wall",
+          "trapezoidal stone doorway"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-5385E7D6-FA91-4D4D-BE28-D00CFFEF6B31.mp4",
+      "kind": "video",
+      "duration_s": 7.5,
+      "chat_number": 4,
+      "kit_file": "T4_03",
+      "kit_shows": "Snowy mountains and a hut",
+      "record": {
+        "subject": "snowy mountain landscape with people and horses",
+        "summary": "The video pans across a vast, snow-dusted mountain landscape with patches of brown earth, showing a valley where tourists gather and some ride horses along a dirt path.",
+        "setting": "snowy mountain valley in daytime",
+        "activity": "panning across a mountain landscape with people walking and riding horses",
+        "props": [
+          "small wooden building",
+          "several horses"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-EB778A3D-49E8-47B2-945A-732AB57B43B1.mp4",
+      "kind": "video",
+      "duration_s": 5.5,
+      "chat_number": 5,
+      "kit_file": "T4_04",
+      "kit_shows": "Carved stone blocks",
+      "record": {
+        "subject": "ancient stone artifacts",
+        "summary": "The video displays a collection of ancient, sculpted stone artifacts, likely in a museum or exhibition. The camera pans across various block-like stones, some with carved holes and indentations.",
+        "setting": "indoor exhibition space or museum",
+        "activity": "displaying ancient stone artifacts",
+        "props": [
+          "grey stone block with number 6 sign",
+          "large grey stone block with a rectangular cavity",
+          "large grey stone block with two circular indentations",
+          "several grey stone blocks of various shapes and sizes"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-A1A65B43-B0E2-42B0-A54C-1DEF8C5A4E09.mp4",
+      "kind": "video",
+      "duration_s": 6.0,
+      "chat_number": 6,
+      "kit_file": "T4_05",
+      "kit_shows": "Courtyard arches with flowers",
+      "record": {
+        "subject": "historic stone building with arches and flowers",
+        "summary": "The video displays an old stone building featuring multiple arches on the ground level and a balcony adorned with vibrant pink flowers on the upper level.",
+        "setting": "courtyard of a historical stone building",
+        "activity": "displaying architectural details of a building",
+        "props": [
+          "pink flowering plants in hanging baskets",
+          "large framed paintings",
+          "green potted plants in white planters"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-51517555-3AB6-496D-A004-ED61E86D698E.mp4",
+      "kind": "video",
+      "duration_s": 7.0,
+      "chat_number": 7,
+      "kit_file": "T4_10",
+      "kit_shows": "More paintings in gold frames",
+      "record": {
+        "subject": "large historical paintings",
+        "summary": "The video shows a series of large, ornate historical paintings with gold frames, depicting religious or historical scenes. The camera slowly pans across these artworks, which are mounted on a stone wall beneath a wooden ceiling.",
+        "setting": "interior of a historical building or church",
+        "activity": "camera panning across historical paintings",
+        "props": [
+          "gold-framed historical paintings",
+          "stone block wall",
+          "dark wooden ceiling"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-E66806A9-F641-4B09-BDF7-B64A4088F621.mp4",
+      "kind": "video",
+      "duration_s": 6.0,
+      "chat_number": 8,
+      "kit_file": "T4_09",
+      "kit_shows": "Inca wall behind columns",
+      "record": {
+        "subject": "ancient stone wall",
+        "summary": "The video shows a slow pan across an ancient stone wall with intricate masonry, a modern structure built above it, and a stone pillar in the foreground. A small planter sits on a ledge.",
+        "setting": "exterior of an ancient stone structure with modern additions",
+        "activity": "showcasing ancient and modern architecture",
+        "props": [
+          "grey stone pillar with ornate capital",
+          "ancient red-brown stone wall with tight-fitting blocks",
+          "modern structure with glass panels",
+          "grey stone planter with green plants"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-A35ADB37-5050-42A7-A4DC-B55263E9F8FD.mp4",
+      "kind": "video",
+      "duration_s": 5.5,
+      "chat_number": 9,
+      "kit_file": "T4_07",
+      "kit_shows": "Wide view of Cusco",
+      "record": {
+        "subject": "cityscape with large Christmas tree",
+        "summary": "The video shows an aerial view of a city with a large Christmas tree in a green park in the foreground. People are walking around the park and on the street in front of buildings. Hills covered with residential areas are visible in the background.",
+        "setting": "outdoor park in a city",
+        "activity": "walking in a park, urban scene",
+        "props": [
+          "large green Christmas tree with decorations",
+          "white and red city bus",
+          "park benches"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-79397282-6DE9-4F62-8502-56CAD1D9A61A.mp4",
+      "kind": "video",
+      "duration_s": 6.5,
+      "chat_number": 10,
+      "kit_file": "T4_08",
+      "kit_shows": "Close-up of the stone wall (a hand comes in at the end)",
+      "record": {
+        "subject": "person's hand on a textured surface",
+        "summary": "A person's hand touches and traces the rough surface of grey stone blocks, moving across the visible seams.",
+        "setting": "outdoor ground or wall",
+        "activity": "hand touching and tracing a textured surface",
+        "props": [
+          "grey textured stone blocks"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-7611EF20-D68F-4C2D-856E-13CC2AE26D5E.mp4",
+      "kind": "video",
+      "duration_s": 8.0,
+      "chat_number": 11,
+      "kit_file": "T5_01",
+      "kit_shows": "Snowy mountains (T5 kit clip, attached by accident, sideways)",
+      "record": {
+        "subject": "snowy mountain landscape with horses",
+        "summary": "The video opens with a close-up of a snow-covered building with icicles, then pans out to reveal a vast, snowy mountain valley where several horses and people are gathered.",
+        "setting": "snowy mountain valley",
+        "activity": "observing a mountain landscape, people gathering with horses",
+        "props": [
+          "snow-covered wooden building",
+          "metal cage structure",
+          "brown horses",
+          "snowy mountains"
+        ],
+        "people": {
+          "speaks_to_camera": false
+        }
+      }
+    }
+  ],
+  "model_strategy": {
+    "pacing": "balanced",
+    "direction": "native",
+    "rationale": "Your recorded Turkish narration will lead, with clean Turkish subtitles and no added music. A 55-second planning target will allow the painting pans, layered stone window, hand tracing the stone seam, and mountain views to register rather than flash past. The recording's actual timing will govern the spoken-cue alignment; the narration will not be rewritten to fit the visuals.",
+    "edit_format": "narrated_planned",
+    "media_scope": "selected",
+    "clip_intents": [
+      {
+        "op": "include",
+        "attribute": "the paintings in gold frames",
+        "intent_id": "include_gold_frames",
+        "source_quote": "Show each thing when I say it: the paintings in gold frames on \"arkadaşlar İspanyollar geldi\""
+      },
+      {
+        "op": "include",
+        "attribute": "the dark stone wall with the window",
+        "intent_id": "include_stone_wall",
+        "source_quote": "the dark stone wall with the window on \"İnkalar için\""
+      },
+      {
+        "op": "include",
+        "attribute": "the snowy mountains",
+        "intent_id": "include_snowy_mountains",
+        "source_quote": "the snowy mountains on \"Ant Dağları'ndan\""
+      },
+      {
+        "op": "include",
+        "attribute": "the wide view of the city",
+        "intent_id": "include_wide_city_view",
+        "source_quote": "the wide view of the city on \"Osmanlı'ya dayanıyor\""
+      },
+      {
+        "op": "include",
+        "attribute": "the other clips",
+        "intent_id": "include_other_clips",
+        "source_quote": "Fill the rest with the other clips."
+      }
+    ],
+    "caption_style": "clean",
+    "opening_title": "Altının yolu",
+    "audio_strategy": "voiceover",
+    "render_program": "native",
+    "story_structure": [
+      "Follow the recorded narration's existing order, showing the gold-framed paintings at the requested spoken cue.",
+      "Match the dark stone window and snowy mountain views to their respective spoken cues.",
+      "Show the wide city view at its requested spoken cue.",
+      "Use representative moments from every remaining clip between the cue-matched visuals…"
+    ],
+    "target_duration_s": 55,
+    "selected_media_ids": [
+      "analysis-proxy-ios-BE1BB5C3-D519-4DB2-882D-EE650537A453.mp4",
+      "analysis-proxy-ios-A91EAEF1-25F6-4EEC-8514-FEA19D8A34DD.mp4",
+      "analysis-proxy-ios-763E52B2-0E08-48C4-8D67-67A7D7AC4EE0.mp4",
+      "analysis-proxy-ios-5385E7D6-FA91-4D4D-BE28-D00CFFEF6B31.mp4",
+      "analysis-proxy-ios-EB778A3D-49E8-47B2-945A-732AB57B43B1.mp4",
+      "analysis-proxy-ios-A1A65B43-B0E2-42B0-A54C-1DEF8C5A4E09.mp4",
+      "analysis-proxy-ios-51517555-3AB6-496D-A004-ED61E86D698E.mp4",
+      "analysis-proxy-ios-E66806A9-F641-4B09-BDF7-B64A4088F621.mp4",
+      "analysis-proxy-ios-A35ADB37-5050-42A7-A4DC-B55263E9F8FD.mp4",
+      "analysis-proxy-ios-79397282-6DE9-4F62-8502-56CAD1D9A61A.mp4",
+      "analysis-proxy-ios-7611EF20-D68F-4C2D-856E-13CC2AE26D5E.mp4"
+    ],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "selected_music_section": null
+  },
+  "clip_intents": [
+    {
+      "intent_id": "include_gold_frames",
+      "op": "include",
+      "attribute": "the paintings in gold frames",
+      "source_quote": "Show each thing when I say it: the paintings in gold frames on \"arkadaşlar İspanyollar geldi\""
+    },
+    {
+      "intent_id": "include_stone_wall",
+      "op": "include",
+      "attribute": "the dark stone wall with the window",
+      "source_quote": "the dark stone wall with the window on \"İnkalar için\""
+    },
+    {
+      "intent_id": "include_snowy_mountains",
+      "op": "include",
+      "attribute": "the snowy mountains",
+      "source_quote": "the snowy mountains on \"Ant Dağları'ndan\""
+    },
+    {
+      "intent_id": "include_wide_city_view",
+      "op": "include",
+      "attribute": "the wide view of the city",
+      "source_quote": "the wide view of the city on \"Osmanlı'ya dayanıyor\""
+    },
+    {
+      "intent_id": "include_other_clips",
+      "op": "include",
+      "attribute": "the other clips",
+      "source_quote": "Fill the rest with the other clips."
+    }
+  ],
+  "resolver_matches": {
+    "include_gold_frames": [
+      [
+        "analysis-proxy-ios-BE1BB5C3-D519-4DB2-882D-EE650537A453.mp4",
+        0.9,
+        "record match"
+      ],
+      [
+        "analysis-proxy-ios-51517555-3AB6-496D-A004-ED61E86D698E.mp4",
+        0.9,
+        "record match"
+      ]
+    ],
+    "include_snowy_mountains": [
+      [
+        "analysis-proxy-ios-5385E7D6-FA91-4D4D-BE28-D00CFFEF6B31.mp4",
+        0.9,
+        "record match"
+      ],
+      [
+        "analysis-proxy-ios-7611EF20-D68F-4C2D-856E-13CC2AE26D5E.mp4",
+        0.9,
+        "record match"
+      ]
+    ],
+    "include_other_clips": [
+      [
+        "analysis-proxy-ios-A91EAEF1-25F6-4EEC-8514-FEA19D8A34DD.mp4",
+        0.9,
+        "record match"
+      ],
+      [
+        "analysis-proxy-ios-EB778A3D-49E8-47B2-945A-732AB57B43B1.mp4",
+        0.9,
+        "record match"
+      ],
+      [
+        "analysis-proxy-ios-A1A65B43-B0E2-42B0-A54C-1DEF8C5A4E09.mp4",
+        0.9,
+        "record match"
+      ],
+      [
+        "analysis-proxy-ios-E66806A9-F641-4B09-BDF7-B64A4088F621.mp4",
+        0.9,
+        "record match"
+      ],
+      [
+        "analysis-proxy-ios-79397282-6DE9-4F62-8502-56CAD1D9A61A.mp4",
+        0.9,
+        "record match"
+      ]
+    ],
+    "include_stone_wall": [
+      [
+        "analysis-proxy-ios-763E52B2-0E08-48C4-8D67-67A7D7AC4EE0.mp4",
+        0.95,
+        "record match"
+      ]
+    ],
+    "include_wide_city_view": [
+      [
+        "analysis-proxy-ios-A35ADB37-5050-42A7-A4DC-B55263E9F8FD.mp4",
+        0.95,
+        "record match"
+      ]
+    ]
+  },
+  "kit_fill_clips": [
+    "analysis-proxy-ios-A91EAEF1-25F6-4EEC-8514-FEA19D8A34DD.mp4",
+    "analysis-proxy-ios-EB778A3D-49E8-47B2-945A-732AB57B43B1.mp4",
+    "analysis-proxy-ios-A1A65B43-B0E2-42B0-A54C-1DEF8C5A4E09.mp4",
+    "analysis-proxy-ios-E66806A9-F641-4B09-BDF7-B64A4088F621.mp4",
+    "analysis-proxy-ios-79397282-6DE9-4F62-8502-56CAD1D9A61A.mp4"
+  ]
+}

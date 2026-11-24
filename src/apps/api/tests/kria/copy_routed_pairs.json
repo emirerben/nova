@@ -2890,6 +2890,11 @@
    "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
+  ],
+  [
+   "app/kria/clip_ties.py",
+   "More than one of your clips shows {shown}{more}. For each one, keep the clips to use ticked and untick the others.",
+   "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klipleri işaretli bırak, diğerlerinin işaretini kaldır."
   ]
  ],
  "retired": [
@@ -3312,6 +3317,11 @@
    "app/kria/brief_checks.py",
    "A Talking video can't do this, so it stays as filmed",
    "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır"
+  ],
+  [
+   "app/kria/clip_ties.py",
+   "More than one of your clips shows {shown}{more}. For each one, keep the clip to use ticked and untick the others.",
+   "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klibi işaretli bırak, diğerlerinin işaretini kaldır."
   ]
  ]
 }

@@ -89,6 +89,7 @@ from app.services.clip_selection import (
     build_clip_question,
     category_label,
     clip_question_text,
+    fills_the_rest,
     intent_key,
 )
 from app.services.clip_understanding import clip_record
@@ -891,11 +892,12 @@ def _claimed_by_described_clips(
     """Clips a resolved include/order intent picked out, for the last-clip-left pre-tick.
 
     An intent that kept every clip of its kind ("use every uploaded file") says nothing
-    about which clip is which, so it claims none.
+    about which clip is which, so it claims none; nor does "the other clips" (KRI-1519),
+    which takes only what no named ask claims.
     """
     claimed: set[str] = set()
     for intent in resolved:
-        if intent.op not in _LAST_CLIP_LEFT_OPS:
+        if intent.op not in _LAST_CLIP_LEFT_OPS or fills_the_rest(intent):
             continue
         kept = {a.media_id for a in intent.assignments}
         of_kind = {c.media_id for c in clips if intent.accepts_source_kind(c.kind)}
@@ -2430,8 +2432,10 @@ async def resolve_clip_intents_for_turn(
     for intent in intents:
         work = work_by_id[intent.intent_id]
         # KRI-667: an exclude is settled by whatever the resolver confidently matched,
-        # even nothing: it never asks the creator and never holds the turn.
-        settles_itself = intent.op == "exclude"
+        # even nothing: it never asks the creator and never holds the turn. KRI-1519: so is
+        # "Fill the rest with the other clips" (``fills_the_rest``), every clip not already
+        # placed: Altının yolu asked which clip is "the other clips".
+        settles_itself = intent.op == "exclude" or fills_the_rest(intent)
         has_non_creator_failure = not settles_itself and bool(
             work.pending_media_ids
             or work.provider_unavailable_media_ids
