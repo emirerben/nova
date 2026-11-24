@@ -551,13 +551,16 @@ def apply_chosen_videos(
     takes_everything = not strategy.selected_media_ids or (
         strategy.media_scope == "all" and strategy.render_program != "native"
     )
-    base = (
-        [media.media_id for media in manifest.media]
-        if takes_everything
-        else list(dict.fromkeys(strategy.selected_media_ids))
-    )
-    kept = [media_id for media_id in base if media_id not in left_out]
-    result = [*kept, *(media_id for media_id in chosen if media_id not in kept)]
+    if takes_everything:
+        # Only the creator's own videos decide a Talking take: an empty pick narrows to the named
+        # videos alone, never to an explicit list of every Visual in the pool.
+        if not left_out:
+            return strategy
+        base, result = own, list(chosen)
+    else:
+        base = list(dict.fromkeys(strategy.selected_media_ids))
+        kept = [media_id for media_id in base if media_id not in left_out]
+        result = [*kept, *(media_id for media_id in chosen if media_id not in kept)]
     if result == base:
         return strategy
     if strategy.render_program == "native" and len(result) > MAX_MAIN_CREATOR_SELECTED_MEDIA:

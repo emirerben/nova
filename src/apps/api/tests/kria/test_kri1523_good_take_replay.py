@@ -43,6 +43,7 @@ Failure modes written before the fix (each has a test below):
 from __future__ import annotations
 
 import dataclasses
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -191,7 +192,7 @@ def _readiness(
         strategy,
         media={"clip_paths": [m.media_id for m in manifest.media if m.kind == "video"]},
         manifest=manifest,
-        creator_id=__import__("uuid").UUID("7b56dd6f-6b9a-4634-89c8-ce91bb50a50d"),
+        creator_id=uuid.UUID("7b56dd6f-6b9a-4634-89c8-ce91bb50a50d"),
         protected_regions=[],
         protected_marks=True,
     )
@@ -439,3 +440,10 @@ def test_a_typed_pick_of_the_only_video_reads_like_kri1488(monkeypatch):
     facts = plan_facts_from_strategy({**STRATEGY, "selected_media_ids": [GOOD_TAKE]}, manifest=one)
     receipt = build_receipts([R1], dataclasses.replace(facts, phone_talking=True))[0]
     assert (receipt.status, receipt.reason) == ("met", ONE_VIDEO)
+
+
+def test_an_empty_pick_narrows_to_the_named_video_not_every_visual(monkeypatch):
+    # Review of 845209127: an empty list never becomes an explicit list of the whole pool.
+    _prod(monkeypatch)
+    planned = _planned({**STRATEGY, "selected_media_ids": []}, manifest=_manifest(photo=True))
+    assert planned["selected_media_ids"] == [GOOD_TAKE]
