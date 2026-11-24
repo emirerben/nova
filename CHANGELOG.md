@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.1.0] - 2026-11-24
+
+### Changed
+- feat(intro): IntroScene schema, compiler to title rows, five teardowns, render check (KRI-1610) (#2500) <!-- release-pr: 2500 -->
+
 ## [0.90.0.0] - 2026-11-24
 
 ### Added
