@@ -2863,6 +2863,15 @@ def _title_look_text_of(rows: object) -> str | None:
     return title_look_text(live) or None
 
 
+def _intro_plain_text_of(rows: object) -> str | None:
+    """KRI-1611: an intro scene's lines read as her slashless title (``None`` for any other)."""
+    if not isinstance(rows, (list, tuple)) or not rows:
+        return None
+    from app.pipeline.phone_title_look import intro_plain_text  # noqa: PLC0415
+
+    return intro_plain_text([r for r in rows if isinstance(r, Mapping) and not r.get("removed")])
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -2964,8 +2973,11 @@ def plan_facts_from_editor_payload(
     look_text = _title_look_text_of(timing_rows)
     if look_text:
         strings.append(look_text)
+        plain = _intro_plain_text_of(timing_rows)
+        if plain:
+            strings.append(plain)
         if title is not None and title == (look_text.split(" / ", 1)[0]):
-            title = look_text
+            title = plain or look_text
     strings.extend(_cta_joined_texts(timing_rows))
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):

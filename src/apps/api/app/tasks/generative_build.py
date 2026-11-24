@@ -109,7 +109,7 @@ from app.pipeline.look_presets import (
     normalize_look_preset,
 )
 from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
-from app.pipeline.phone_title_look import title_look_text
+from app.pipeline.phone_title_look import intro_plain_text, title_look_text
 from app.pipeline.speech_cleanup_apply import (
     PREFLIGHT_JOB_CONTRACT_FIELD,
     PREFLIGHT_JOB_CONTRACT_VALUE,
@@ -11959,6 +11959,7 @@ def _run_phone_subtitled_job(
                         reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
                         look_caption_avoid=look_caption_avoid,
                         logo_below_band=logo_below_band,
+                        spoken_language=str(all_candidates.get("language") or "") or None,
                         **text_canvas,
                     )
 
@@ -14313,7 +14314,9 @@ def _run_phone_subtitled_job(
             "captions": list(cues or []),
             **(
                 {
-                    "title": title_look_text(title_rows) or title_rows[0]["text"],
+                    "title": intro_plain_text(title_rows)
+                    or title_look_text(title_rows)
+                    or title_rows[0]["text"],
                     "title_bar_id": title_rows[0].get("id"),
                 }
                 if title_rows
@@ -15734,6 +15737,7 @@ def _style_rows_keeping_title_look(rows: list[dict], *, job_id: str, canvas: Any
     styled = [row if is_title_look_row(row) else restyled[row["id"]] for row in rows]
     # Q1 run 4: nothing measured the pixels under the final title block; outline a line the
     # footage swallows (`TITLE_LEGIBILITY_ENABLED`). Off or unmeasured: the rows as they were.
+    from app.pipeline.intro_scene_pick import intro_ink_pass  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
     from app.pipeline.phone_title_legibility import title_legibility_pass  # noqa: PLC0415
     from app.services.phone_text_styling import (  # noqa: PLC0415
@@ -15741,10 +15745,13 @@ def _style_rows_keeping_title_look(rows: list[dict], *, job_id: str, canvas: Any
         register_title_legibility,
     )
 
+    title_canvas = canvas if canvas is not None else _STORY_CANVAS
+    # KRI-1611: an intro scene takes the one ink of its pinned order that reads on the take.
+    styled = intro_ink_pass(styled, generation_title_frames(), canvas=title_canvas)
     styled, legibility_receipt = title_legibility_pass(
         styled,
         generation_title_frames(),
-        canvas=canvas if canvas is not None else _STORY_CANVAS,
+        canvas=title_canvas,
     )
     register_title_legibility(legibility_receipt)
     return styled
@@ -16090,6 +16097,7 @@ def _phone_talking_title_rows(
     reserve_logo: bool = False,
     look_caption_avoid: Any = None,
     logo_below_band: bool = False,
+    spoken_language: str | None = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
@@ -16116,6 +16124,26 @@ def _phone_talking_title_rows(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     timeline_s = sum(max(0.0, end - start) for start, end in keep_segments)
+    scene_title = _intro_scene_title_rows(
+        opening_title,
+        duration_s=duration_s,
+        timeline_s=timeline_s,
+        binding=binding,
+        clip_path=clip_path,
+        keep_segments=keep_segments,
+        landscape_fit=landscape_fit,
+        position_x=position_x,
+        protected=protected,
+        caption_avoid=caption_avoid,
+        canvas=canvas,
+        title_look_plan=title_look_plan,
+        reserve_logo=reserve_logo,
+        look_caption_avoid=look_caption_avoid,
+        logo_below_band=logo_below_band,
+        spoken_language=spoken_language,
+    )
+    if scene_title is not None:
+        return scene_title
     rows: list[dict] | None = None
     position: str | None = None
     if settings.title_look_enabled:
@@ -16199,6 +16227,92 @@ def _phone_talking_title_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return placed_rows, receipt
+
+
+def _intro_scene_title_rows(
+    opening_title: str,
+    *,
+    duration_s: float | None,
+    timeline_s: float,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float,
+    protected: Any,
+    caption_avoid: Any,
+    canvas: Any,
+    title_look_plan: Mapping[str, Any] | None,
+    reserve_logo: bool,
+    look_caption_avoid: Any,
+    logo_below_band: bool,
+    spoken_language: str | None,
+) -> tuple[list[dict], dict[str, Any] | None] | None:
+    """KRI-1611: the stamped intro scene (`intro_scene_pick`) as the opening title's rows, placed
+    with the real `place_title_look` and used only when that receipt is clean. ``None`` (today's
+    rows, byte-identical) when the job carries no stamp, she asked for a logo above the title,
+    a text rule is pinned, or no stamped candidate fits this footage. Read from the stamp, never
+    the flag; the same call serves the re-placement after the captions are cleared."""
+    from app.pipeline.intro_scene_pick import (  # noqa: PLC0415
+        fit_intro_scene,
+        has_text_ask,
+        language_of,
+        pinned_intro_scene,
+    )
+
+    ask = pinned_intro_scene(title_look_plan)
+    if ask is None or reserve_logo or not settings.title_look_enabled:
+        return None
+    if has_text_ask(current_phone_text_policy() or {}):
+        return None
+    try:
+        from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+        from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+        from app.pipeline.phone_title_look import place_title_look  # noqa: PLC0415
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        canvas = canvas if canvas is not None else _STORY_CANVAS
+        display_width, display_height = display_dims(binding.original)
+        scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+
+        def place(rows: list[dict], position: str | None) -> tuple[list[dict], dict[str, Any]]:
+            window = (float(rows[0]["start_s"]), float(rows[0]["end_s"]))
+            common = {
+                "clip_path": clip_path,
+                "keep_segments": keep_segments,
+                "display_width": display_width,
+                "display_height": display_height,
+                "canvas": canvas,
+                "scale": scale,
+                "position_x": position_x,
+                "avoid": caption_avoid(window) if caption_avoid else (),
+                **_protected_placement_kwargs(protected),
+            }
+            if not caption_avoid and look_caption_avoid:
+                common["avoid"] = look_caption_avoid(window)
+            return place_title_look(
+                rows, position=position, logo_below_band=logo_below_band, **common
+            )
+
+        rows, receipt, info = fit_intro_scene(
+            ask,
+            opening_title,
+            canvas=canvas,
+            timeline_duration_s=timeline_s,
+            duration_s=duration_s,
+            language=language_of(opening_title, spoken_language),
+            place=place,
+        )
+        try:
+            record_pipeline_event("phone", "intro_scene", info)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+        if rows is None or receipt is None:
+            return None
+        return rows, {**receipt, "intro_scene": info.get("chosen")}
+    except Exception as exc:  # noqa: BLE001 - a styled intro never blocks a render
+        log.warning("intro_scene.title_failed", error=str(exc)[:200])
+        return None
 
 
 def _phone_saved_title_rule() -> dict:

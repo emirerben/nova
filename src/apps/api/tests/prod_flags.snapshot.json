@@ -469,6 +469,14 @@
       "source": "default",
       "value": false
     },
+    "intro_scene_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "intro_scene_user_ids": {
+      "source": "default",
+      "value": []
+    },
     "ios_device_only_mode": {
       "source": "decisions-md:2026-11-02",
       "value": true

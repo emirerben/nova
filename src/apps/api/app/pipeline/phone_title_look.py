@@ -152,6 +152,60 @@ def title_look_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
     return " / ".join(str(row.get("text") or "") for row in look_rows)
 
 
+def intro_plain_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
+    """Her title as she wrote it (words joined by spaces) when every look row is an intro-scene
+    line (KRI-1611: the scene sets her slashless words as several rows), else ``None``."""
+    look_rows = [row for row in rows if is_title_look_row(row)]
+    if not look_rows or not all(
+        str((_look_params(row) or {}).get("style") or "").startswith("intro_") for row in look_rows
+    ):
+        return None
+    look_rows.sort(key=lambda row: int(_look_params(row).get("line") or 0))  # type: ignore[union-attr]
+    return " ".join(str(row.get("text") or "") for row in look_rows)
+
+
+def _intro_stack_matches(
+    pool: Sequence[Mapping[str, Any]], wanted: str, *, tolerance_s: float
+) -> list[dict]:
+    """KRI-1611: ``wanted`` (her slashless title) drawn as an intro scene's stacked lines: 2-5
+    rows shown together (their start and end within ``tolerance_s``), strictly top to bottom,
+    that read as exactly her words in order. A recipe layer carries no element id, so this reads
+    text, time and ``anchor_y`` only, like the typed-stack check."""
+    target = normalize_text(re.sub(r"\s+/\s+", " ", wanted))
+    timed: list[tuple[float, float, float, Mapping[str, Any]]] = []
+    for row in pool:
+        text = normalize_text(row.get("text", ""))
+        if not text or text not in target:
+            continue
+        try:
+            timed.append((float(row["anchor_y"]), float(row["start_s"]), float(row["end_s"]), row))
+        except (KeyError, TypeError, ValueError):
+            continue
+    timed.sort(key=lambda item: item[0])
+    for first in range(len(timed)):
+        for last in range(first + _MIN_LINES, min(len(timed), first + _MAX_LINES) + 1):
+            window = timed[first:last]
+            ys = [item[0] for item in window]
+            starts = [item[1] for item in window]
+            ends = [item[2] for item in window]
+            if any(lower <= upper for upper, lower in zip(ys, ys[1:], strict=False)):
+                continue
+            if max(starts) - min(starts) > tolerance_s or max(ends) - min(ends) > tolerance_s:
+                continue
+            if normalize_text(" ".join(str(item[3].get("text", "")) for item in window)) != target:
+                continue
+            return [
+                {
+                    "text": wanted,
+                    "start_s": starts[0],
+                    "end_s": min(ends),
+                    "role": None,
+                    "stacked_lines": [str(item[3].get("element_id")) for item in window],
+                }
+            ]
+    return []
+
+
 # --- her ask -----------------------------------------------------------------------------
 
 
@@ -961,9 +1015,9 @@ def stacked_title_matches(
     Needs a distinct non-caption row per line with her exact words, all starting (and all
     ending) together, stacked top to bottom in line order."""
     lines = split_title_lines(wanted)
-    if lines is None:
-        return []
     pool = [row for row in rows if not str(row.get("element_id") or "").startswith("caption-")]
+    if lines is None:
+        return _intro_stack_matches(pool, wanted, tolerance_s=tolerance_s)
     options = [
         [r for r in pool if normalize_text(r.get("text", "")) == normalize_text(line)]
         for line in lines
