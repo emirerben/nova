@@ -330,6 +330,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.spoken_cue_resolver import SpokenCueResolverAgent
 
         return SpokenCueResolverAgent
+    if agent_name == "nova.kria.story_sequencer":
+        from app.agents.story_sequencer import StorySequencerAgent
+
+        return StorySequencerAgent
     if agent_name == "nova.compose.phone_typography":
         from app.agents.phone_typography import PhoneTypographyAgent
 

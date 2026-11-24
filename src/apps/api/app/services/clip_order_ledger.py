@@ -70,6 +70,11 @@ class LedgerEntry:
     rows: tuple[str, ...] = field(default=())
     # A drag right after another drag is the same gesture: it takes no undo step of its own.
     coalesce: bool = False
+    # KRIA_STORY_SEQUENCER_ENABLED: the clips the story sequencer was asked to place on this
+    # entry (`story_order`). Only its own ``ai_story`` entries carry it; an order the plan was
+    # merely seen to have laid out (`observed_entry`) never does. The entry is written even when
+    # the order did not change, so a later turn knows these clips were already looked at.
+    story_ids: tuple[str, ...] = field(default=())
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -79,6 +84,7 @@ class LedgerEntry:
             "turn_id": self.turn_id,
             **({"rows": list(self.rows)} if self.rows else {}),
             **({"coalesce": True} if self.coalesce else {}),
+            **({"story_ids": list(self.story_ids)} if self.story_ids else {}),
         }
 
     @classmethod
@@ -96,6 +102,7 @@ class LedgerEntry:
             else ()
         )
         turn = raw.get("turn_id")
+        story = _ids(raw.get("story_ids")) if raw["actor"] == AI_STORY else None
         return cls(
             str(raw["actor"]),
             before,
@@ -103,6 +110,7 @@ class LedgerEntry:
             str(turn) if turn else None,
             fingerprints,
             coalesce=raw.get("coalesce") is True,
+            story_ids=story or (),
         )
 
 
@@ -295,6 +303,9 @@ class ClipOrderState:
     basis: Basis
     previous: tuple[str, ...] | None
     entries: tuple[LedgerEntry, ...]
+    # KRIA_STORY_SEQUENCER_ENABLED: the clips whose place the story sequencer chose and nobody
+    # has moved since. Empty until it has changed an order.
+    story_ids: frozenset[str] = frozenset()
 
     def source_of(self, media_id: str) -> str:
         return self.source.get(media_id, SERVER_DEFAULT)
@@ -306,7 +317,25 @@ def first_appearance(media_ids: Iterable[object]) -> list[str]:
     return list(dict.fromkeys(str(item) for item in media_ids if isinstance(item, str) and item))
 
 
+# Inside `_replay` only: a place the story sequencer chose (`LedgerEntry.story_ids`), told apart
+# from an ``ai_story`` order the plan was merely seen to have laid out. Readers get ``ai_story``.
+_STORY = "ai_story:sequenced"
+
+
 def replay(
+    attachment_ids: Sequence[str], entries: Sequence[LedgerEntry]
+) -> tuple[list[str], dict[str, str], tuple[str, ...] | None]:
+    """The ledger replayed over the order the clips were added: (order, source by id, previous).
+    See `_replay`; every source is a ledger actor."""
+    order, source, previous = _replay(attachment_ids, entries)
+    return (
+        order,
+        {item: AI_STORY if actor == _STORY else actor for item, actor in source.items()},
+        previous,
+    )
+
+
+def _replay(
     attachment_ids: Sequence[str], entries: Sequence[LedgerEntry]
 ) -> tuple[list[str], dict[str, str], tuple[str, ...] | None]:
     """The ledger replayed over the order the clips were added: (order, source by id, previous).
@@ -327,6 +356,11 @@ def replay(
             continue
         for item in moved_ids(order, updated):
             source[item] = entry.actor
+        if entry.story_ids:
+            # The sequencer placed every clip it was asked about, the ones it left where they
+            # were included: all of them read as its choice, not as the upload order.
+            present = set(updated)
+            source.update({item: _STORY for item in entry.story_ids if item in present})
         if history and tuple(updated) == history[-1]:
             history.pop()
         elif not (entry.coalesce and history):
@@ -348,7 +382,7 @@ def current_clip_order(
     one it is the ledger replayed over ``attachment_ids``. ``basis`` is ``confirmed`` once any
     creator actor touched the order and ``attachment_order`` while nobody did.
     """
-    replayed, source, previous = replay(attachment_ids, entries)
+    replayed, source, previous = _replay(attachment_ids, entries)
     order = replayed
     if rendered_ids:
         shown = [item for item in dict.fromkeys(rendered_ids)]
@@ -356,12 +390,14 @@ def current_clip_order(
         # attached: they are in the project and a later "add it back" seats them last.
         order = [*shown, *(item for item in replayed if item not in set(shown))]
     touched = any(entry.actor in CREATOR_ACTORS for entry in entries)
+    story = frozenset(item for item, actor in source.items() if actor == _STORY)
     return ClipOrderState(
         tuple(order),
-        source,
+        {item: AI_STORY if actor == _STORY else actor for item, actor in source.items()},
         "confirmed" if touched else "attachment_order",
         previous,
         tuple(entries),
+        story_ids=story,
     )
 
 
@@ -520,13 +556,29 @@ def reorder_receipt(
     )
 
 
-def order_listing(order: Sequence[str], label_of: Mapping[str, str]) -> str:
-    """The current order as a plain numbered list, each number paired with its name."""
+def order_listing(order: Sequence[str], label_of: Mapping[str, str], *, story: bool = False) -> str:
+    """The current order as a plain numbered list, each number paired with its name.
+
+    ``story``: the story sequencer chose some of these places, so the list says whose order it
+    is before it lists it (a build with no card has no badge to say it)."""
     lines = [
         f"{position}. {label_of.get(media_id) or f'Clip {position}'}"
         for position, media_id in enumerate(order, start=1)
     ]
-    head = say(en="Your clips play in this order:", tr="Kliplerin şu sırayla oynuyor:")
+    head = (
+        say(
+            en=(
+                "Where you didn't set the order, I picked the one that tells the story best. "
+                "Your clips play in this order:"
+            ),
+            tr=(
+                "Sırayı belirlemediğin yerlerde hikâyeyi en iyi anlatan sırayı ben seçtim. "
+                "Kliplerin şu sırayla oynuyor:"
+            ),
+        )
+        if story
+        else say(en="Your clips play in this order:", tr="Kliplerin şu sırayla oynuyor:")
+    )
     return "\n".join([head, *lines])
 
 
@@ -554,6 +606,9 @@ _UNSAFE_TOKEN = re.compile(
 # ── what a turn reads and writes ───────────────────────────────────────────────────────────────
 
 SNAPSHOT_KEY = "clip_order_ids"
+# KRIA_STORY_SEQUENCER_ENABLED: set beside SNAPSHOT_KEY when the order holds places the story
+# sequencer chose, so a receipt says "an order that fits the story", not "the order you have".
+STORY_SNAPSHOT_KEY = "clip_order_story"
 
 
 def group_words_by_clip(resolved_intents: object) -> dict[str, str]:
@@ -666,20 +721,42 @@ def ordered_by_ids(items: Sequence[Any], ids: Sequence[str], key: Any = str) -> 
 def with_clip_order_ids(snapshot: Mapping[str, Any], state: ClipOrderState) -> dict[str, Any]:
     """The approval-bound media snapshot, carrying the order every reader of it must seat on.
 
-    Only when a creator actor changed the order: an untouched order IS the order the clips were
-    added, which the snapshot's own lists already say, and an order only the AI laid out is the
-    plan's, not a statement of the creator's to pin. Source identity (`media_identity`) never
-    reads this key, so it never invalidates an approval.
+    Only when a creator actor changed the order, or the story sequencer chose one
+    (``state.story_ids``, which then also sets ``STORY_SNAPSHOT_KEY``): an untouched order IS the
+    order the clips were added, which the snapshot's own lists already say, and an order the plan
+    was merely seen to have laid out is the plan's, not a statement to pin. Source identity
+    (`media_identity`) never reads these keys, so they never invalidate an approval.
     """
-    if state.basis != "confirmed":
+    if state.basis != "confirmed" and not state.story_ids:
         return dict(snapshot)
-    return {**snapshot, SNAPSHOT_KEY: list(state.order)}
+    return with_order(snapshot, state.order, story=bool(state.story_ids))
+
+
+def with_order(
+    snapshot: Mapping[str, Any], order: Sequence[str], *, story: bool = False
+) -> dict[str, Any]:
+    """``snapshot`` carrying ``order``; ``story`` says the story sequencer chose part of it."""
+    out = {key: value for key, value in snapshot.items() if key != STORY_SNAPSHOT_KEY}
+    out[SNAPSHOT_KEY] = list(order)
+    if story:
+        out[STORY_SNAPSHOT_KEY] = True
+    return out
 
 
 def snapshot_order(snapshot: Mapping[str, Any] | None) -> list[str]:
     """The ledger order a snapshot carries ([] when it carries none)."""
     raw = (snapshot or {}).get(SNAPSHOT_KEY)
     return [str(item) for item in raw if isinstance(item, str)] if isinstance(raw, list) else []
+
+
+def snapshot_story(snapshot: Mapping[str, Any] | None) -> bool:
+    """Whether the order a snapshot carries holds places the story sequencer chose."""
+    return bool(snapshot_order(snapshot)) and (snapshot or {}).get(STORY_SNAPSHOT_KEY) is True
+
+
+def story_decided_ids(entries: Iterable[LedgerEntry]) -> frozenset[str]:
+    """The clips the story sequencer has already been asked to place (whatever it answered)."""
+    return frozenset(item for entry in entries for item in entry.story_ids)
 
 
 def _is_order_row(intent: Any) -> bool:
@@ -793,6 +870,9 @@ class TurnClipOrder:
     # The creator's own words for each clip's group (`known_group_words`): the names `labels`
     # was built with, kept so a receipt written later in the turn names clips the same way.
     groups: Mapping[str, str] = field(default_factory=dict)
+    # KRIA_STORY_SEQUENCER_ENABLED: the clips of the newest card when the creator tapped "use
+    # this order" on it: each is where they want it, so the story sequencer never moves one.
+    confirmed_ids: tuple[str, ...] = ()
     # Why this turn restarts the creator's request, noted while it plans (`note_restarted`).
     # Mutable on purpose: planning runs below the context this object was set in.
     restarted: list[str] = field(default_factory=list, compare=False)

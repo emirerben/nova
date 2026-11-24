@@ -2845,6 +2845,16 @@
    "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "where you didn't say, I put the clips in the order that tells the story best",
+   "söylemediğin yerlerde klipleri hikâyeyi en iyi anlatan sıraya ben koydum"
+  ],
+  [
+   "app/services/clip_order_ledger.py",
+   "Where you didn't set the order, I picked the one that tells the story best. Your clips play in this order:",
+   "Sırayı belirlemediğin yerlerde hikâyeyi en iyi anlatan sırayı ben seçtim. Kliplerin şu sırayla oynuyor:"
   ]
  ],
  "retired": [

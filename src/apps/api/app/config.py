@@ -3316,6 +3316,14 @@ class Settings(BaseSettings):
     # behaviour, prompts, ops and receipts byte-identical. Apply: fly secret + restart api and
     # worker.
     kria_clip_order_ledger_enabled: bool = False
+    # KRI-1593 story sequencer (needs the ledger flag): on a first draft, where the creator did
+    # not say where a clip goes, a small separate model ranks those clips into the order that
+    # tells the story; the server keeps every clip the creator placed where it is, writes the
+    # order as an `ai_story` ledger entry and pins it like the creator's own. No answer, "cannot
+    # decide" or an order the render contract would not pin = the order the clips were added.
+    # false = no model call and no new entry (a story order already written stays the thread's
+    # order). Apply: fly secret + restart api and worker.
+    kria_story_sequencer_enabled: bool = False
     # KRI-1358 (de1): approval readiness reads the same "the phone Voiceover compiler renders
     # this" fact the draft turn reads, so one clip's own sound under the voice is judged on the
     # phone draft instead of refused as "only works in a voiceover edit made on your iPhone".

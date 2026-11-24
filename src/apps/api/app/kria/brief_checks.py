@@ -577,6 +577,10 @@ class PlanFacts:
     # KRIA_CLIP_ORDER_LEDGER_ENABLED: a creator actor changed the order (the approved snapshot
     # carries it), so the order a draft pins is theirs, not the order the clips were added in.
     order_confirmed: bool = False
+    # KRIA_STORY_SEQUENCER_ENABLED: the order that snapshot carries holds places the story
+    # sequencer chose (`clip_order_ledger.snapshot_story`), so what the creator did not say is
+    # the AI's story order, and the receipt says so instead of "the order you have them now".
+    order_story: bool = False
     # Leverkusen M2 run 3: (the creator's words, the clip's app number) of each named moment
     # inside one of several clips that no cut is shown to hold (codes in _CLIP_MOMENT_CODES).
     sequence_clip_moments: tuple[tuple[str, int | None], ...] = ()
@@ -4569,6 +4573,11 @@ _UNSTATED_ORDER_DEFAULTED = "where you didn't say, the clips play in the order y
 # ... and once the creator has moved the clips themselves (a drag, an edit, a message) what they
 # did not say stays in the order they have them now, not the order they were added in.
 _UNSTATED_ORDER_KEPT = "where you didn't say, the clips play in the order you have them now"
+# KRIA_STORY_SEQUENCER_ENABLED: ... and when the story sequencer chose those places, the receipt
+# says the choice was the AI's, never the creator's own or the upload order.
+_UNSTATED_ORDER_STORY = (
+    "where you didn't say, I put the clips in the order that tells the story best"
+)
 # KRIA_CLIP_ORDER_LEDGER_ENABLED: an order the creator described earlier was applied then, and a
 # later order of theirs (a drag, an edit, a message) replaced it; the newest statement stands.
 _ORDER_SET_SINCE = "you set the order yourself since, and the order you set is the one that plays"
@@ -4809,6 +4818,8 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         # default for what the creator left unsaid; the phone verifier refuses any other order).
         if facts.sequence_unlocated:
             return _receipt(req, "partial", _unlocated_moments_reason(facts))
+        if facts.order_story:
+            return _receipt(req, "met", _UNSTATED_ORDER_STORY)
         return _receipt(
             req, "met", _UNSTATED_ORDER_KEPT if facts.order_confirmed else _UNSTATED_ORDER_DEFAULTED
         )
@@ -12492,6 +12503,9 @@ _ANIMATION_UNAVAILABLE = (
 )
 _REASON_TR[_UNSTATED_ORDER_DEFAULTED] = "söylemediğin yerlerde klipler eklediğin sırayla oynar"
 _REASON_TR[_UNSTATED_ORDER_KEPT] = "söylemediğin yerlerde klipler şu an olduğu sırayla oynar"
+_REASON_TR[_UNSTATED_ORDER_STORY] = (
+    "söylemediğin yerlerde klipleri hikâyeyi en iyi anlatan sıraya ben koydum"
+)
 _REASON_TR[_ORDER_SET_SINCE] = "sırayı sonradan kendin belirledin, oynayan senin belirlediğin sıra"
 _REASON_TR[_ANIMATION_PLANNED] = (
     "yazı belirirken animasyonlu girecek; bitmiş videoda kontrol edeceğim"
