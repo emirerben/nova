@@ -15082,6 +15082,22 @@
         }
       }
     },
+    "Edit “%@”" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "„%@“ bearbeiten"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "“%@” düzenle"
+          }
+        }
+      }
+    },
     "Edited" : {
       "localizations" : {
         "de" : {
@@ -42961,6 +42977,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Başlık ve şarkı sözleri bu yerel sürümde salt okunur."
+          }
+        }
+      }
+    },
+    "Title: “%@”" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Titel: „%@“"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Başlık: “%@”"
           }
         }
       }

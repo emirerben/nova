@@ -5947,8 +5947,20 @@ def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dic
     ask whose gate is open. The content-hash transcript cache serves a re-render; any failure
     reads as "no timed words", which the chooser reports as ``no_timed_evidence``.
     """
+    return _phone_montage_voice_transcript(job_id, voiceover_gcs_path)[0]
+
+
+def _phone_montage_voice_transcript(
+    job_id: str, voiceover_gcs_path: Any, *, verbatim_prompt: str | None = None
+) -> tuple[list[dict], str | None]:
+    """``_phone_montage_voice_words`` plus the language whisper heard (``None`` when unknown).
+
+    KRI-1598: ``verbatim_prompt`` seeds whisper with the creator's sound-cue words, as the
+    Voiceover worker does, so a name comes back spelled the way the cue is written; it is part of
+    the transcript cache key. ``None`` keeps the call exactly as the general ask makes it.
+    """
     if not voiceover_gcs_path:
-        return []
+        return [], None
     try:
         from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
         from app.storage import download_to_file  # noqa: PLC0415
@@ -5956,14 +5968,58 @@ def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dic
         with tempfile.TemporaryDirectory() as tmpdir:
             local = os.path.join(tmpdir, "montage_voiceover")
             download_to_file(str(voiceover_gcs_path), local)
-            transcript = transcribe_whisper_cached(local)
+            transcript = (
+                transcribe_whisper_cached(local, verbatim_prompt=verbatim_prompt)
+                if verbatim_prompt
+                else transcribe_whisper_cached(local)
+            )
         return [
             {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
             for word in transcript.words
-        ]
+        ], (getattr(transcript, "language", None) or None)
     except Exception as exc:  # noqa: BLE001 - optional effects never fail the render
         log.warning("phone_montage_sfx.transcribe_failed", job_id=job_id, error=str(exc)[:200])
-        return []
+        return [], None
+
+
+def _montage_sound_cue_beats(strategy: Mapping[str, Any]) -> list[dict]:
+    """KRI-1598: the strategy's reaction beats as the voiceover montage plays them -- sound only.
+
+    The repair already took every picture off (`creator_capabilities._repair_sound_only_beats`);
+    this keeps the worker to the same contract for a stored or hand-written strategy: a beat
+    without a sound, or anchored to the title, is not a cue, and a picture field is dropped."""
+    raw = strategy.get("reaction_beats")
+    beats: list[dict] = []
+    for beat in raw if isinstance(raw, list) else []:
+        if not isinstance(beat, Mapping) or not beat.get("sound") or beat.get("anchor") == "title":
+            continue
+        beats.append(
+            {
+                key: value
+                for key, value in beat.items()
+                if key not in ("visual_id", "visual_role", "display_mode", "following_clip_id")
+            }
+        )
+    return beats
+
+
+def _montage_voice_end_s(recipe: Any) -> float:
+    """Where the recorded voice stops playing on the montage clock (KRI-1598).
+
+    The compiler caps the narration clip to the decided window (`phone_voiceover_montage_plan`,
+    ``narration-voice`` on the ``narration`` track), which can be shorter than the recording, so
+    a word after this point is never heard in the video."""
+    end = float(recipe.duration)
+    for track in recipe.tracks:
+        if track.id != "narration":
+            continue
+        ends = [
+            float(clip.timeline_start) + float(clip.source_duration) / float(clip.rate or 1.0)
+            for clip in track.clips
+        ]
+        if ends:
+            end = min(end, max(ends))
+    return end
 
 
 def _no_sound_effects_asked(snapshot: Any) -> bool:
@@ -6650,15 +6706,50 @@ def _run_phone_voiceover_montage_job(
                 )
                 timed_cards = ()
 
+    # KRI-1598: the creator's named sound cues ("a whoosh when I say Barcelona"), sound only.
+    # The voice plays from the first frame, so its words are on the montage clock up to where the
+    # compiler caps it; the cue sounds join the KRI-281 sound-effect lane below. Never fails the
+    # job: every miss lands on `phone_beat_receipt`.
+    beat_receipt: dict | None = None
+    beat_sfx: list = []
+    cue_words: list[dict] | None = None
+    sound_beats = _montage_sound_cue_beats(raw_creator_strategy)
+    if sound_beats:
+        from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+            trigger_vocabulary_prompt,
+        )
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            phone_voiceover_montage_sound_cues_supported,
+        )
+
+        if phone_voiceover_montage_sound_cues_supported(require_client=False):
+            heard, spoken_language = _phone_montage_voice_transcript(
+                job_id,
+                decision.extras.get("voiceover_gcs_path"),
+                verbatim_prompt=trigger_vocabulary_prompt(sound_beats, None),
+            )
+            voice_end_s = _montage_voice_end_s(recipe)
+            cue_words = [word for word in heard if float(word["end_s"]) <= voice_end_s]
+            cue_lanes, _cue_visuals, beat_receipt = _phone_narrated_reaction_lanes(
+                job_id,
+                beats=sound_beats,
+                closing=None,
+                words=cue_words,
+                duration_s=float(recipe.duration),
+                language=spoken_language or language,
+                requirements=_phone_brief_live_requirements(snapshot),
+            )
+            beat_sfx = list(cue_lanes.sound_effects) if cue_lanes is not None else []
+        else:
+            log.info("phone_montage_sound_cues.gate_closed", job_id=job_id)
+
     # KRI-1561: a general "add sound effects where they fit" ask. The recorded voice plays from
     # the first frame, so its words are on the montage clock; the effects join the KRI-281 lane
-    # beside any timed cards, and a recipe the compiler refuses keeps its pre-effects shape.
+    # beside any timed cards (and the named cues, whose moments it leaves alone), and a recipe
+    # the compiler refuses keeps its pre-effects shape.
     sfx_choice_receipt: dict | None = None
+    chosen_sfx: list = []
     if raw_creator_strategy.get("sfx_ask"):
-        from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
-            replace_editor_lanes as _replace_lanes,
-        )
-        from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
         from app.services.sfx_capability import voiceover_sfx_limit  # noqa: PLC0415
         from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
@@ -6666,35 +6757,59 @@ def _run_phone_voiceover_montage_job(
         sfx_limit = (
             SfxLimit.creator_said_no if _no_sound_effects_asked(snapshot) else voiceover_sfx_limit()
         )
+        if sfx_limit is not None:
+            ask_words: list[dict] = []
+        elif cue_words is not None:
+            ask_words = cue_words  # KRI-1598: the voice is transcribed once
+        else:
+            ask_words = _phone_montage_voice_words(
+                job_id, decision.extras.get("voiceover_gcs_path")
+            )
         chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
             job_id,
             strategy=raw_creator_strategy,
             snapshot=snapshot,
             limit=sfx_limit,
-            words=(
-                _phone_montage_voice_words(job_id, decision.extras.get("voiceover_gcs_path"))
-                if sfx_limit is None
-                else []
-            ),
+            words=ask_words,
             duration_s=float(recipe.duration),
-            taken_at_s=[],
+            taken_at_s=[float(row.request.at_s) for row in beat_sfx],
             lane_drops=[],
         )
-        if chosen_sfx:
-            try:
-                recipe = _replace_lanes(
-                    recipe,
-                    lanes=PhoneSubtitledLanes(overlays=list(timed_cards), sound_effects=chosen_sfx),
-                    visuals=timed_visuals,
-                    video_track_id="montage",
-                )
-            except (UnsupportedPhonePlan, ValueError) as exc:
+    sound_rows = [*beat_sfx, *chosen_sfx]
+    if beat_sfx and chosen_sfx:
+        sound_rows.sort(key=lambda row: row.request.at_s)
+    if sound_rows:
+        from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+            replace_editor_lanes as _replace_lanes,
+        )
+        from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+
+        try:
+            recipe = _replace_lanes(
+                recipe,
+                lanes=PhoneSubtitledLanes(overlays=list(timed_cards), sound_effects=sound_rows),
+                visuals=timed_visuals,
+                video_track_id="montage",
+            )
+        except (UnsupportedPhonePlan, ValueError) as exc:
+            log.warning("phone_montage_sfx.compile_dropped", job_id=job_id, error=str(exc))
+            if chosen_sfx:
                 from app.services.phone_sfx_choice import demote_receipt  # noqa: PLC0415
 
-                log.warning("phone_montage_sfx.compile_dropped", job_id=job_id, error=str(exc))
                 sfx_choice_receipt = demote_receipt(
                     sfx_choice_receipt, [row.request.id for row in chosen_sfx]
                 )
+            if beat_receipt is not None and beat_sfx:
+                beat_receipt = _demote_beat_receipt(
+                    beat_receipt,
+                    sfx_ids=frozenset(row.request.id for row in beat_sfx),
+                    reason="compile_dropped",
+                )
+    if beat_receipt is not None:
+        try:
+            _record_phone_beat_events(variant_id=spec["variant_id"], receipt=beat_receipt)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
@@ -6767,6 +6882,9 @@ def _run_phone_voiceover_montage_job(
                 new_entry[TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
         if sfx_choice_receipt is not None:
             new_entry["phone_sfx_choice_receipt"] = sfx_choice_receipt
+        if beat_receipt is not None:
+            # KRI-1598: where each named sound cue landed (montage clock), or why not.
+            new_entry["phone_beat_receipt"] = beat_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:

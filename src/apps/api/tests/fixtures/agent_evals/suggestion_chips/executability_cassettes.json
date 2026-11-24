@@ -40,7 +40,8 @@
    "state": "first_prompt",
    "fixture": "fp_silent_broll_music",
    "engine": "strategy",
-   "message": "Add a hook that matches the video",
+   "message": "Find an opening title for my video",
+   "message_note": "model_output recorded for the earlier chip message \"Add a hook that matches the video\"; KRI-1560 renamed the chip, the tap still reaches the same planner path",
    "model_output": {
     "action": {
      "kind": "ask_user",
@@ -69,7 +70,8 @@
    "state": "ready",
    "fixture": "rd_plain_montage",
    "engine": "editor",
-   "message": "Add a hook that matches the video",
+   "message": "Find an opening title for my video",
+   "message_note": "model_output recorded for the earlier chip message \"Add a hook that matches the video\"; KRI-1560 renamed the chip, the tap still reaches the same planner path",
    "model_output": {
     "intent": "edit",
     "ops": [

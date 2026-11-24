@@ -1513,6 +1513,7 @@ private struct CreationWorkspaceView: View {
                        replyOptionsMode: replyOptionsMode(for: message),
                        voiceoverScriptMode: voiceoverScriptMode(for: message),
                        answerOwn: { startAnsweringOwn(message) },
+                       editOption: { words in editOwnTitle(words, for: message) },
                        isAnsweringOwn: answeringQuestion != nil && composerFocused,
                        changeHeldChoice: { questionBatches[message.id]?.releaseChoice() })
     }
@@ -1827,6 +1828,13 @@ private struct CreationWorkspaceView: View {
     private func startAnsweringOwn(_ message: ChatTranscriptMessage) {
         answeringQuestion = message.displayedContent
         composerFocused = true
+    }
+
+    /// KRI-1560: the pencil beside a title Kria wrote from the creator's words. The words go in the composer
+    /// inside quotes, so what she sends (edited or not) reads as her own wording for the title.
+    private func editOwnTitle(_ words: String, for message: ChatTranscriptMessage) {
+        prompt = String(localized: "Title: “\(words)”")
+        startAnsweringOwn(message)
     }
 
     /// One file of a media receipt, as the project holds it now (a poster that arrived later, a new name).
