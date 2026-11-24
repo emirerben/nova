@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 
 skia = pytest.importorskip("skia")  # core dep; skip cleanly if a runner lacks it
 
@@ -170,6 +170,54 @@ def test_fixtures_render_unclipped(fixture):
         assert o.clipping == "PASS", f"{fixture} ov{o.overlay_index}: {o.reasons}"
         assert o.resolved_typeface, f"{fixture} ov{o.overlay_index}: missing typeface report"
         assert "fallback" in o.resolved_typeface
+
+
+# The gate used to turn each Skia frame into a PIL image by encoding it to PNG and decoding it
+# again. It now reads the pixels directly. Every check downstream reads those pixels, so the two
+# must agree on every pixel, soft shadow and glow edges included.
+PIXEL_PARITY_FIXTURES = [
+    "high_visibility_shadow.json",
+    "glow_yellow_keyword.json",
+    "handwriting_single.json",
+    "anchor_right.json",
+]
+
+
+def _png_round_trip(overlay: dict) -> Image.Image:
+    import io
+
+    duration_s = max(0.0, float(overlay.get("end_s", 0.0)) - float(overlay.get("start_s", 0.0)))
+    img = ov.tos._draw_frame(overlay, ov._settled_t(duration_s), max(duration_s, 0.5))
+    return Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+
+
+@pytest.mark.parametrize("fixture", PIXEL_PARITY_FIXTURES)
+def test_overlay_frame_pixels_match_the_png_round_trip(fixture):
+    soft = coloured = 0
+    for overlay in _fixture_overlays(fixture):
+        want = _png_round_trip(overlay)
+        got = ov.render_overlay_frame(overlay)
+        assert (got.mode, got.size) == (want.mode, want.size)
+        # Compared outside the assert: on a mismatch pytest would diff two 8 MB byte strings.
+        differing = ImageChops.difference(got, want).getbbox(alpha_only=False)
+        assert differing is None, f"{fixture}: {overlay.get('text')!r} differs inside {differing}"
+        alpha = want.getchannel("A").histogram()
+        soft += sum(alpha[1:255])
+        red, _green, blue, _a = want.split()
+        coloured += sum(1 for r, b in zip(red.tobytes(), blue.tobytes(), strict=True) if r != b)
+    assert soft > 1000, "the sample must hold half-transparent pixels, where a wrong read shows"
+    if fixture == "glow_yellow_keyword.json":
+        assert coloured > 1000, "and coloured ones, where swapped channels show"
+
+
+def test_a_premultiplied_pixel_read_is_caught_by_the_parity_sample():
+    """Control: the wrong read (colour still multiplied by alpha) differs on this sample."""
+    overlay = _fixture_overlays("high_visibility_shadow.json")[0]
+    duration_s = max(0.0, float(overlay.get("end_s", 0.0)) - float(overlay.get("start_s", 0.0)))
+    img = ov.tos._draw_frame(overlay, ov._settled_t(duration_s), max(duration_s, 0.5))
+    wrong = img.toarray(colorType=skia.kRGBA_8888_ColorType, alphaType=skia.kPremul_AlphaType)
+    same = wrong.tobytes() == _png_round_trip(overlay).tobytes()
+    assert not same
 
 
 def test_unknown_font_family_fixture_is_expected_fail():
