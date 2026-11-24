@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.7.0] - 2026-11-24
+
+### Changed
+- fix(overlays): the intro render check no longer sits at the 60 s test limit (KRI-1629) (#2516) <!-- release-pr: 2516 -->
+
 ## [0.90.6.0] - 2026-11-24
 
 ### Changed
