@@ -19,7 +19,9 @@ Failure modes these runs guard (docs/reviews/kri-1558-section-layout-failure-mod
   names another section or the whole video;
 * "make me smaller in part 1" asked as a checked requirement: the per-request summary (the ask
   ledger) does not count the part's layout change as that ask, so the line reads as not done (or
-  "partly") and the change is listed under "also changed" instead.
+  "partly") and the change is listed under "also changed" instead;
+* the same ask answered by changing another part (part 3) is marked done, because the check
+  looks at the direction but not at which part was asked for.
 """
 
 from __future__ import annotations
@@ -388,3 +390,91 @@ def test_make_me_bigger_in_part_1_answered_by_making_her_small_is_not_done(prod_
     ledger = editor_ledger(reqs, receipts, compiled.diff, facts.text_styles or ())
     (receipt,) = ledger.receipts
     assert receipt.status != "met", receipt
+
+
+def _size_ask_receipt(language: str, ask: str, section_numbers: list[int]):
+    """Ask `ask`, make her small in `section_numbers`, then run the per-request summary."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from app.kria.ask_ledger import editor_ledger  # noqa: PLC0415
+    from app.kria.brief import BriefRequirement  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        build_receipts,
+        plan_facts_from_editor_payload,
+    )
+    from app.kria.editor_receipts import reply_from_editor_receipts  # noqa: PLC0415
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+
+    setup = _talk(language)
+    arranged = _turn(setup, None, {"op": "arrange_sections", "asset_ids": ["bg-1", "bg-2"]})
+    sections = _sections(arranged["snapshot"])
+    assert len(sections) >= 3, sections
+    layouts = arranged["background"]["layout_windows"]
+    assert layouts[0]["layout"] == "own" and layouts[-1]["layout"] == "own", layouts
+    turn = _turn(
+        setup,
+        arranged["background"],
+        {"op": "set_section_layout", "speaker_layout": "small", "section_numbers": section_numbers},
+    )
+    compiled = turn["compiled"]
+    reqs = [BriefRequirement(id="r1", kind="style", scope="global", description=ask)]
+    with reply_language_for(language):
+        payload = compiled.payload.model_dump(mode="json", exclude_none=True)
+        facts = plan_facts_from_editor_payload(
+            payload, compiled.text_diff or None, compiled.changes
+        )
+        facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
+        receipts = build_receipts(reqs, facts, include_unchecked=True)
+        ledger = editor_ledger(reqs, receipts, compiled.diff, facts.text_styles or ())
+        reply = reply_from_editor_receipts(reqs, list(ledger.receipts), unbound=ledger.extras)
+    (receipt,) = ledger.receipts
+    return receipt, ledger, reply, sections
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_make_me_smaller_in_part_1_answered_in_another_part_is_not_done(
+    language: str, prod_profile
+) -> None:
+    """Tadic's wrong-part control: part 3 changed for a part-1 ask is never "Done ... in part 3"."""
+    ask, _done = ASKS[language]
+    receipt, _ledger, reply, _sections = _size_ask_receipt(language, ask, [3])
+    assert receipt.status != "met", (receipt, reply)
+    assert not reply.startswith(("Done", "Yapıldı")), reply
+    # The part-3 change is still named, honestly, as something else that changed.
+    assert ("part 3" if language == "en" else "3. bölümde") in reply, reply
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_make_me_smaller_in_part_1_answered_in_parts_1_and_3_is_done(
+    language: str, prod_profile
+) -> None:
+    ask, _done = ASKS[language]
+    receipt, _ledger, reply, _sections = _size_ask_receipt(language, ask, [1, 3])
+    assert (receipt.status, receipt.verification) == ("met", "checked"), (receipt, reply)
+
+
+@pytest.mark.parametrize(
+    ("ask", "parts"),
+    [
+        ("make me smaller in part 1", {1}),
+        ("make me small in parts 1 and 3", {1, 3}),
+        ("shrink me in the first part", {1}),
+        ("make me small in the last part", {-1}),
+        ("beni 1. bölümde küçült", {1}),
+        ("beni 1. ve 3. bölümlerde küçült", {1, 3}),
+        ("ilk bölümde beni küçült", {1}),
+        ("son kısımda beni küçült", {-1}),
+        ("mach mich in Teil 2 kleiner", {2}),
+        ("mach mich im zweiten Teil kleiner", {2}),
+        ("mach mich im letzten Abschnitt kleiner", {-1}),
+        # No part named: a whole-video ask, and a count that is not a part number.
+        ("make me smaller", set()),
+        ("split the video into 3 parts", set()),
+        ("sonra beni küçült", set()),
+    ],
+)
+def test_the_part_a_size_ask_names_is_read_in_english_turkish_and_german(ask, parts) -> None:
+    from app.kria.editor_receipts import _parts  # noqa: PLC0415
+    from app.kria.style_asks import words  # noqa: PLC0415
+
+    assert _parts(words(ask)) == frozenset(parts)

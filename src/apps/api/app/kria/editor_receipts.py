@@ -340,6 +340,8 @@ class AskShape:
     literal: str = ""
     clip_scope: str = ""
     ordinal: int | None = None
+    # KRI-1558: the talk's parts the ask names ("in part 1", "1. bölümde"; -1 = the last one).
+    parts: frozenset[int] = field(default_factory=frozenset)
     quantified_named_scope: bool = False
     # KRI-1563: the caption look the brief writer typed (never read from the words, KRI-667).
     caption_position: str | None = None  # the typed `caption_position` (KRI-1177 vocabulary)
@@ -481,6 +483,56 @@ def _ordinal(text: str) -> int | None:
     return next(iter(found)) if len(found) == 1 else None
 
 
+# KRI-1558: a part of the talk named by number or ordinal, on words() text (lower case, no
+# accents or punctuation: "1. bölümde" reads "1 bolumde"). Turkish counts before the noun.
+_PART_NOUN = r"(?:parts?|sections?|bolum\w*|kisim\w*|kism\w*|teil\w*|abschnitt\w*)"
+_PART_AFTER_NOUN = re.compile(rf"\b{_PART_NOUN} ((?:\d+ (?:and |ve |und |& )?)*\d+)\b")
+_PART_BEFORE_NOUN = re.compile(r"\b((?:\d+ (?:ve )?)*\d+) (?:bolum\w*|kisim\w*|kism\w*)")
+_PART_ORDINAL = re.compile(
+    r"\b(first|second|third|fourth|fifth|sixth|last|ilk|ikinci|ucuncu|dorduncu|besinci|altinci"
+    r"|son|erst\w*|zweit\w*|dritt\w*|viert\w*|funft\w*|sechst\w*|letzt\w*) " + _PART_NOUN
+)
+_PART_ORDINAL_WORDS = {
+    **{k: v for k, v in _ORDINALS.items() if not k[0].isdigit()},
+    "besinci": 5,
+    "altinci": 6,
+}
+# German ordinals are declined ("ersten", "zweiten", "letzten"): matched by stem.
+_PART_ORDINAL_STEMS_DE = {
+    "erst": 1,
+    "zweit": 2,
+    "dritt": 3,
+    "viert": 4,
+    "funft": 5,
+    "sechst": 6,
+    "letzt": -1,
+}
+
+
+def _parts(text: str) -> frozenset[int]:
+    found: set[int] = set()
+    for pattern in (_PART_AFTER_NOUN, _PART_BEFORE_NOUN):
+        for match in pattern.finditer(text):
+            found |= {int(n) for n in re.findall(r"\d+", match.group(1))}
+    for match in _PART_ORDINAL.finditer(text):
+        word = match.group(1)
+        if word in _PART_ORDINAL_WORDS:
+            found.add(_PART_ORDINAL_WORDS[word])
+            continue
+        stem = next((k for k in _PART_ORDINAL_STEMS_DE if word.startswith(k)), None)
+        if stem is not None:
+            found.add(_PART_ORDINAL_STEMS_DE[stem])
+    return frozenset(found)
+
+
+def _part_ok(t: DiffTarget, parts: frozenset[int]) -> bool:
+    """A part-layout target (``part-N``, extra ``(N, total)``) is one of the asked parts."""
+    if not t.id.startswith("part-") or not isinstance(t.extra, tuple):
+        return False
+    number, total = int(t.extra[0]), int(t.extra[1])
+    return number in parts or (-1 in parts and number == total)
+
+
 def _wanted(req: BriefRequirement) -> Mapping[str, str]:
     """The typed values the ask names, keyed by the diff field that must hold them."""
     if req.kind == "style":
@@ -567,6 +619,7 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
         and req.scope == "global"
         and bool(_QUANTIFIER.search(text))
         and not _wanted(req),
+        parts=_parts(text),
         ordinal=(
             None
             if req.kind == "timing"
@@ -796,6 +849,9 @@ def _judge(entry: DiffEntry, shape: AskShape) -> tuple[DiffEntry | None, str]:
         if entry.field != "order":
             targets = [t for t in targets if _clip_ordinal_ok(t, shape.ordinal)]
             narrowed_by_name = True
+    if shape.parts and entry.lane == "speaker_background" and entry.field == "layout":
+        # KRI-1558: "make me smaller in part 1" is answered by part 1, never by part 3 alone.
+        targets = [t for t in targets if _part_ok(t, shape.parts)]
     if not targets:
         return None, "off_target"
     checked = [(t, _violation(entry, t, shape)) for t in targets]
