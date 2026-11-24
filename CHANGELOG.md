@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.0.0] - 2026-11-24
+
+### Added
+- feat(kria): offer several opening titles grounded in what the creator said (KRI-1560) (#2455) <!-- release-pr: 2455 -->
+
 ## [0.89.114.0] - 2026-11-24
 
 ### Changed
