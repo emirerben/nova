@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.111.0] - 2026-11-24
+
+### Changed
+- feat(kria): chat edits answer every part of an ask as done, declined or waiting, checked in code (KRI-1563) (#2485) <!-- release-pr: 2485 -->
+
 ## [0.89.110.0] - 2026-11-24
 
 ### Changed
