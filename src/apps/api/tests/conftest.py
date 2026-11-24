@@ -172,6 +172,36 @@ def exclusive_slide_post_delivery():
         engine.dispose()
 
 
+@pytest.fixture
+def exclusive_notification_delivery():
+    """Hold one cross-worker lock while a test owns the notification delivery state.
+
+    That state is every ``notification_installations`` and ``notification_deliveries`` row.
+    On one xdist database it is shared, in two ways:
+
+    - an active device token belongs to one installation (the unique index on its
+      fingerprint), and the tests register one fixed token, so two workers in this state at
+      once refuse each other with 409. Main run 45430423656 failed 14 tests that way, seven
+      on each of two workers inside three seconds;
+    - ``discover_deliveries`` acts on every pending activity and installation, so a sweep in
+      one test creates the delivery row another test is about to insert by hand
+      (``uq_notification_delivery_pair``, hosted run 45469233667).
+
+    Same class and same remedy as ``exclusive_slide_post_delivery`` above (KRI-1545). One
+    database per worker would remove all of these locks.
+    """
+
+    db_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    engine = create_engine(db_url, pool_pre_ping=True)
+    # Once these tests are collected, failure to acquire their lock must fail rather than skip.
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": 2026112401})
+            yield
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture(autouse=True)
 def _fresh_client_request_context() -> None:
     """Start every test outside an HTTP request with no declared client protocol.
