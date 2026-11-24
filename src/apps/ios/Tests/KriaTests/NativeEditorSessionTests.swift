@@ -4839,6 +4839,59 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.session.isPlaying)
     }
 
+    /// A server answer that takes the text the creator typed.
+    private static var textSaved: EditorCommitResponse {
+        EditorCommitResponse(ok: true, generation: "g2",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+    }
+
+    /// KRI-1617: Save tapped while the editor was still preparing was dropped, and the button read "Save changes".
+    func testSaveTappedWhileTheEditorIsStillPreparingRunsOnceItIsReady() async throws {
+        let held = try await Self.preparingSession()
+        XCTAssertTrue(held.session.isLoadingEditor, "the load is still open, so this is the window the test is about")
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        XCTAssertTrue(held.session.hasUnsavedChanges)
+        await held.session.save()
+        XCTAssertEqual(held.spy.commitCount, 0, "nothing is sent while the load is open")
+        XCTAssertEqual(headerSaveControl(held.session), .saving, "the creator asked for a save, so the button says one is on its way")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let saved = await waitUntil { headerSaveControl(held.session) == .saved }
+        XCTAssertTrue(saved, "the save she asked for runs once the editor is ready; commits \(held.spy.commitCount), \(held.session.saveState)")
+        XCTAssertEqual(held.spy.commitCount, 1)
+    }
+
+    /// The editor still opens when its sources cannot be read, so a Save kept for the end of that load still runs
+    /// and the button never stays on "Saving" with nothing in flight.
+    func testASaveKeptForALoadWhoseSourcesFailStillRuns() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        await held.session.save()
+        XCTAssertEqual(headerSaveControl(held.session), .saving)
+        held.spy.sourcePoolError = .requestFailed(status: 503)
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let settled = await waitUntil { headerSaveControl(held.session) != .saving }
+        XCTAssertTrue(settled, "the button is still on Saving: \(held.session.saveState)")
+        XCTAssertEqual(headerSaveControl(held.session), .saved)
+        XCTAssertEqual(held.spy.commitCount, 1)
+    }
+
+    /// An edit made while the editor prepares, with no Save tap, stays an unsaved edit: nothing saves on its own.
+    func testAnEditMadeWhileTheEditorPreparesIsNotSavedUnasked() async throws {
+        let held = try await Self.preparingSession()
+        held.session.addText(content: "Typed while the preview prepares")
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(held.spy.commitCount, 0)
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+    }
+
     private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>) {
         let jobID = UUID(), threadID = UUID()
         let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
