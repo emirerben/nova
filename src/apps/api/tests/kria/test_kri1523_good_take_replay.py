@@ -43,7 +43,9 @@ Failure modes written before the fix (each has a test below):
 from __future__ import annotations
 
 import dataclasses
+import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -213,10 +215,33 @@ def _row(report: dict, rid: str) -> dict:
 # ------------------------------------------------------------------ the incident
 
 
+PROD = json.loads(Path(__file__).with_name("kri1523_good_take_prod.json").read_text("utf-8"))
+
+
+def test_the_rows_here_are_the_rows_prod_stored():
+    stored = {row["id"]: row for row in PROD["brief_v1"]}
+    for req in BRIEF.requirements:
+        row = stored[req.id]
+        assert (req.kind, req.scope, req.description, req.facts) == (
+            row["kind"],
+            row["scope"],
+            row["description"],
+            row["facts"],
+        )
+    assert [m["media_id"] for m in PROD["media"]] == [FALSE_START, GOOD_TAKE]
+
+
 def test_control_switch_off_holds_the_first_draft_exactly_as_prod_did(monkeypatch):
     _prod(monkeypatch, fix=False)
     assert _planned(STRATEGY)["selected_media_ids"] == [FALSE_START, GOOD_TAKE]
-    assert _held(_readiness(monkeypatch, STRATEGY, fix=False)) == {"r1": TALKING_CANT}
+    report = _readiness(monkeypatch, STRATEGY, fix=False)
+    prod_held = {
+        row["requirement_id"]: row["reason"]
+        for row in PROD["hold_readiness"]
+        if row["disposition"] not in APPROVABLE
+    }
+    assert prod_held == {"r1": TALKING_CANT}
+    assert _held(report) == prod_held
 
 
 def test_only_the_good_take_is_planned_and_the_draft_says_so(monkeypatch):
