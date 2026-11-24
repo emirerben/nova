@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.111.0] - 2026-11-24
+
+### Changed
+- feat(kria): chat edits answer every part of an ask as done, declined or waiting, checked in code (KRI-1563) (#2485) <!-- release-pr: 2485 -->
+
+## [0.89.110.0] - 2026-11-24
+
+### Changed
+- feat(kria): an order ask nothing pins is declined plainly on Visuals, voiceover and Talking edits instead of held (KRI-1592) (#2481) <!-- release-pr: 2481 -->
+
+## [0.89.109.0] - 2026-11-24
+
+### Changed
+- KRI-1598: say why no sound effects were placed on every montage writer (#2495) <!-- release-pr: 2495 -->
+
+## [0.89.108.0] - 2026-11-23
+
+### Changed
+- KRI-1585: writer rows carry the copy's language so A1 caps are Turkish (acceptance fixes) (#2494) <!-- release-pr: 2494 -->
+
 ## [0.89.107.0] - 2026-11-23
 
 ### Fixed

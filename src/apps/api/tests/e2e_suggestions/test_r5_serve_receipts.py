@@ -29,6 +29,8 @@ from app.kria.brief import BriefRequirement
 from app.kria.editor_receipts import ask_shape
 
 # ask -> (dimensions named, any dimension named, clip ordinal): captured from origin/main.
+# KRI-1563: a caption ask that names a size is proved by the caption size field, so the two
+# caption rows carry a `caption_size` group beside the (optional) caption look.
 OFF = {
     "make the music quieter": (["music", "volume"], True, None),
     "turn down the volume": (["volume"], True, None),
@@ -36,7 +38,7 @@ OFF = {
     "no sound effects please": (["sfx"], True, None),
     "remove the second clip": (["clips"], True, 2),
     "move the first clip to the end": (["reorder"], True, 1),
-    "make the captions bigger": (["captions"], True, None),
+    "make the captions bigger": (["caption_size", "captions"], True, None),
     "crossfade between the clips": (["transition"], True, None),
     "mute clip 3": (["volume"], True, 3),
     "Keep the better of clips 2 and 3": (["audio"], False, None),
@@ -48,7 +50,7 @@ OFF = {
     "müzik ekle": (["music"], True, None),
     "müzik olmasın": (["music"], True, None),
     "şarkıyı değiştir": (["music"], True, None),
-    "altyazıyı büyüt": (["captions"], True, None),
+    "altyazıyı büyüt": (["caption_size", "captions"], True, None),
     "geçişleri kaldır": (["transition"], True, None),
     "klipleri kısalt": (["length"], True, None),
     "ilk klibi sona koy": (["audio"], False, None),

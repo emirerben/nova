@@ -67,9 +67,11 @@ from app.agents.main_creator import (
 )
 from app.config import settings
 from app.kria import ask_refusals, pending_visuals, voiceover_script
+from app.kria.ask_ledger import ask_ledger_enabled, no_op_ledger, no_op_reply
 from app.kria.ask_refusals import is_refusal_code, stale_capability_refusal
 from app.kria.brief import (
     BriefCoverageError,
+    BriefRequirement,
     BriefUpdate,
     BriefUpdateBatchError,
     CreativeBrief,
@@ -147,6 +149,7 @@ from app.kria.strategy_policy import (
     transcript_labels_dropped_notice,
 )
 from app.kria.style_asks import brief_moment_ask, carry_moment_ask, moment_ask_in_text
+from app.kria.text_trim import trim_at_word
 from app.kria.turn_outcome import (
     ANALYSIS_PENDING,
     CHANGE_REQUEST_SELECTED,
@@ -2708,6 +2711,10 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
 _turn_brief: contextvars.ContextVar[CreativeBrief | None] = contextvars.ContextVar(
     "kria_turn_brief", default=None
 )
+# KRI-1563: this turn's new requirements, for the ask ledger of a copilot turn with no ops.
+_turn_requirements: contextvars.ContextVar[tuple[BriefRequirement, ...]] = contextvars.ContextVar(
+    "kria_turn_requirements", default=()
+)
 
 
 @contextmanager
@@ -3121,6 +3128,10 @@ def _phone_editor_reply(reply: str) -> str:
     return reply
 
 
+# The no-op ledger reply leaves room for the redo offer under the plan's 1200-character bound.
+_NO_OP_LEDGER_MAX_CHARS = 1000
+
+
 async def _plan_editor_revision(
     db: AsyncSession,
     *,
@@ -3129,7 +3140,10 @@ async def _plan_editor_revision(
     user_message: str,
     editor_state: Any = None,
     original_request: str | None = None,
+    requirements: Sequence[BriefRequirement] | None = None,
 ) -> KriaTurnPlan | None:
+    if requirements is None:
+        requirements = _turn_requirements.get()
     try:
         target = await _load_editor_target(
             db, thread_id=thread_id, item=item, **_state_kw(editor_state)
@@ -3193,9 +3207,11 @@ async def _plan_editor_revision(
         draft_plan = adapt_editor_action(
             reply=_phone_editor_reply(response.reply), ops=response.ops or []
         )
-        if getattr(response, "unmet_requests", None) or (
-            response.ops and not _is_fast_path_plan(draft_plan)
-        ):
+        unmet = getattr(response, "unmet_requests", None) or ()
+        # KRI-1563: a part the copilot could not do no longer throws away the in-place ops it
+        # made for the other parts; the ledger declines that part on the receipt instead.
+        keeps_ops = bool(response.ops) and ask_ledger_enabled()
+        if (unmet and not keeps_ops) or (response.ops and not _is_fast_path_plan(draft_plan)):
             return KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
@@ -3206,6 +3222,7 @@ async def _plan_editor_revision(
             plan = adapt_editor_action(
                 reply=_phone_editor_reply(response.reply),
                 ops=response.ops,
+                unmet_requests=unmet if keeps_ops else (),
                 notes=getattr(response, "reply_notes", None) or None,
             )
             return plan.model_copy(
@@ -3245,6 +3262,21 @@ async def _plan_editor_revision(
         return None
     if response.outcome in {"clarification", "unsupported", "stale", "failed", "no_effect"}:
         reply = response.reply
+        ledger_receipts = None
+        if requirements and ask_ledger_enabled():
+            # KRI-1563: a turn that changed nothing still answers each part of the ask: declined
+            # with the copilot's reason for it, or waiting on the question this turn asks.
+            ledger = no_op_ledger(
+                requirements,
+                reply=response.reply,
+                asks_question=response.outcome == "clarification",
+                unmet=getattr(response, "unmet_requests", None) or (),
+            )
+            reply = trim_at_word(
+                no_op_reply(requirements, ledger, question=response.reply),
+                _NO_OP_LEDGER_MAX_CHARS,
+            )
+            ledger_receipts = [r.model_dump(mode="json") for r in ledger.receipts]
         if (
             response.outcome == "unsupported"
             and _REDO_OFFER not in reply
@@ -3255,6 +3287,7 @@ async def _plan_editor_revision(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
             response=reply,
+            requirement_receipts=ledger_receipts,
             diagnostics=(
                 None
                 if response.outcome == "clarification"
@@ -3295,11 +3328,17 @@ class _CreatorInputs:
     talk: tuple = ()
 
 
-async def _plan_editor_revision_with_brief(effective, *args, **kwargs):  # noqa: ANN001, ANN202
+async def _plan_editor_revision_with_brief(effective, *args, requirements=(), **kwargs):  # noqa: ANN001, ANN202
     """`_plan_editor_revision` with this turn's brief updates folded into what chat may do
-    (KRI-1561): the copilot's snapshot flags (`no_music`, `no_sound_effects`) read `_turn_brief`."""
-    with _turn_brief_is(effective):
-        return await _plan_editor_revision(*args, **kwargs)
+    (KRI-1561): the copilot's snapshot flags (`no_music`, `no_sound_effects`) read `_turn_brief`.
+    ``requirements`` are this turn's new asks, which a turn with no ops answers one by one
+    (KRI-1563, read through `_turn_requirements`)."""
+    token = _turn_requirements.set(tuple(requirements))
+    try:
+        with _turn_brief_is(effective):
+            return await _plan_editor_revision(*args, **kwargs)
+    finally:
+        _turn_requirements.reset(token)
 
 
 async def _unrecorded_creator_lines(
@@ -8977,6 +9016,7 @@ async def _plan_live_turn(
                         original_request=render_brief_request(
                             effective, latest_message=user_message
                         ),
+                        requirements=fresh,
                         **_state_kw(editor_state),
                     )
                 )
@@ -9341,6 +9381,7 @@ async def _plan_live_turn(
                 item=item,
                 user_message=user_message,
                 original_request=effective_request,
+                requirements=fresh,
                 **_state_kw(editor_state),
             )
         if editor_plan is not None:

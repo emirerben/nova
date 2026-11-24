@@ -128,6 +128,11 @@ ASK_DECLINES: tuple[AskDecline, ...] = (
         lines.animation_decline,
     ),
     AskDecline("captions", lambda req, _s: lines.asks_captions_on(req), lines.captions_decline),
+    # KRI-1598: this writer has no effects lane; the draft says so before approval and the
+    # finished video's receipt says the same (`phone_speech_montage_job._sfx_ask_receipt`).
+    AskDecline(
+        "sound_effects", lambda req, _s: lines.asks_sound_effects(req), lines.sfx_ask_decline
+    ),
 )
 
 # Planner-settable fields this route's code never reads and its table does not mention: today a

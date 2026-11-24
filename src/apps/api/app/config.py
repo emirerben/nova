@@ -3293,6 +3293,13 @@ class Settings(BaseSettings):
     # in one question (`services/opening_titles`). Kill switch: false asks the older "do you have
     # an idea, or should I write one?" question instead, and makes no extra model call.
     kria_opening_title_options_enabled: bool = True
+
+    # KRI-1563: the ask ledger of a chat edit. Every part of the ask ends done, declined or
+    # waiting on a choice; the reply names every change (no "first two" cut), a turn that
+    # changed nothing still answers each part, and on a failed-render correction a part the
+    # copilot could not do no longer throws away the ops for the others. false = the previous
+    # receipts and replies. Apply: fly secret + restart api and worker.
+    kria_ask_ledger_enabled: bool = True
     # 29 Ekim lane E (KRI-1039): an ask the editor ops can express is composed with them
     # instead of refused, asked about or re-planned: a word-by-word title is one
     # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up
@@ -3302,8 +3309,9 @@ class Settings(BaseSettings):
     # Unstated clip order never blocks (PR 1): what the creator did not say about the order
     # INSIDE a group they described defaults to the order the clips were added, disclosed on the
     # card, instead of holding the draft behind "tell me the order". Honoured exactly: anything
-    # they did say. false = the previous hold, byte-identical. Apply: fly secret + restart
-    # api and worker.
+    # they did say. KRI-1592: where nothing pins an order (Visuals, voiceover, Talking writers) the
+    # order ask is declined with a plain line, never held. false = the previous hold,
+    # byte-identical. Apply: fly secret + restart api and worker.
     kria_unstated_order_default_enabled: bool = False
     # Clip order is one live, AI-aware state (PR 2): every order change (the creator's message,
     # a drag, a manual timeline edit, the AI's own story order) is one ledger entry; the chat

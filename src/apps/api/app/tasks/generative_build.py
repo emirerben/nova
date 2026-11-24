@@ -2673,7 +2673,9 @@ def _refuse_sfx_on_speech_writer(candidates: dict) -> None:
     The creation manifest opens ``sound_effects`` for the guided formats, and only the
     guided / unified writers materialize a licensed effect. Rather than build a speech edit
     that quietly omits the effect the creator asked for (KRI-129: no silent overrides),
-    refuse it with the reason.
+    refuse it with the reason. A general ask (`sfx_ask`) is optional, so it never fails the
+    edit: the writer declines it on the variant's receipt instead
+    (`phone_speech_montage_job._sfx_ask_receipt`, KRI-1598).
     """
     strategy = candidates.get("creator_strategy")
     if isinstance(strategy, dict) and (strategy.get("licensed_sfx") or strategy.get("sfx_intent")):
@@ -5195,7 +5197,11 @@ def _run_phone_guided_job(
     # has no speech), then the plan compiles once more with them. A refusal renders the plain
     # compile and says so on the receipt, never a failed job. Kept off the canonical plan: only
     # this variant's private plan carries the rows, so the approved plan stays as approved.
-    sfx_choice_receipt: dict | None = None
+    # KRI-1598: a plan the ask is not served on (a named effect, a pinned narration) still says
+    # why on the receipt, so the judge answers instead of staying neutral.
+    sfx_choice_receipt: dict | None = _guided_sfx_ask_unserved_receipt(
+        plan, creator_strategy, snapshot
+    )
     sfx_rows: list[dict] = []
     if plan.narration is None and not plan.editor_sound_effects and not plan.licensed_sfx_intent:
         from app.services.phone_sfx_choice import read_sfx_ask  # noqa: PLC0415
@@ -5444,7 +5450,9 @@ def _run_phone_guided_job(
                 raw_plan["editor_sound_effects"]
             )
         if sfx_choice_receipt is not None:
-            from app.services.phone_sfx_choice import RECEIPT_FIELD as SFX_CHOICE_FIELD  # noqa: PLC0415
+            from app.services.phone_sfx_choice import (
+                RECEIPT_FIELD as SFX_CHOICE_FIELD,  # noqa: PLC0415
+            )
 
             # KRI-1561: what the general sound-effect ask got on this montage, and why not.
             current["variants"][0][SFX_CHOICE_FIELD] = sfx_choice_receipt
@@ -5970,6 +5978,32 @@ def _no_sound_effects_asked(snapshot: Any) -> bool:
     except (ValueError, TypeError, AttributeError):
         return False
     return asks_no_sound_effects(brief)
+
+
+def _guided_sfx_ask_unserved_receipt(plan: Any, strategy: Any, snapshot: Any) -> dict | None:
+    """KRI-1598: the receipt for a general sound-effect ask this guided plan does not serve.
+
+    None when there is no ask, or when the plan is one the chooser serves (or an editor revision
+    that already holds its rows). A named effect (`licensed_sfx_intent`) plays alone: the
+    named-effect check (`validate_licensed_sfx_runtime`) refuses any other row on the next Save,
+    so nothing is chosen beside it and the receipt says ``named_effect``. A plan with a pinned
+    narration has no chooser here (``format_unsupported``). A live "no sound effects" outranks
+    both, as it does for every writer.
+    """
+    from app.services.phone_sfx_choice import declined_receipt, read_sfx_ask  # noqa: PLC0415
+    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+    if read_sfx_ask(strategy) is None:
+        return None
+    if plan.licensed_sfx_intent:
+        limit = SfxLimit.named_effect
+    elif plan.narration is not None and not plan.editor_sound_effects:
+        limit = SfxLimit.format_unsupported
+    else:
+        return None
+    if _no_sound_effects_asked(snapshot):
+        limit = SfxLimit.creator_said_no
+    return declined_receipt(limit)
 
 
 def _guided_ask_sfx_rows(resolved: list[Any], names: dict[str, Any]) -> list[dict]:

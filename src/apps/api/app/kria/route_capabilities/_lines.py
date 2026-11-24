@@ -13,6 +13,7 @@ from app.kria.animation_ask import animates_text_kind
 from app.kria.brief import BriefRequirement
 from app.kria.reply_language import say
 from app.kria.route_capabilities._types import Builder, WithAsks
+from app.services.sfx_capability import FORMAT_UNSUPPORTED_EN, FORMAT_UNSUPPORTED_TR
 
 # Carriers for ``Applied(via=...)``: the shared function that reads a field off the strategy
 # outside a route's own files. The grader accepts only these shared ones (each must read the
@@ -441,6 +442,22 @@ def asks_text_animation(req: BriefRequirement) -> bool:
     return animates_text_kind(req) and bool(req.facts.get("animation"))
 
 
+def asks_sound_effects(req: BriefRequirement) -> bool:
+    """A typed general sound-effect ask (``audio_intent: sound_effects``, KRI-1561)."""
+    from app.kria.brief_checks import wants_sound_effects  # noqa: PLC0415
+
+    return wants_sound_effects(req)
+
+
+def sfx_ask_decline() -> str:
+    """KRI-1598: a general sound-effect ask on a route whose writer has no effects lane. The
+    finished video's receipt says the same sentence (`SfxLimit.format_unsupported`)."""
+    from app.services.sfx_capability import limit_line  # noqa: PLC0415
+    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+    return limit_line(SfxLimit.format_unsupported)
+
+
 def asks_captions_on(req: BriefRequirement) -> bool:
     """A typed ``captions`` fact that turns speech captions on ("on" or "word_by_word")."""
     from app.kria.brief_checks import _caption_fact  # noqa: PLC0415
@@ -537,6 +554,8 @@ DECLINE_PREFIXES: tuple[str, ...] = (
     TITLE_ENTRANCE_TAKEN_DECLINE_TR,
     TITLE_ENTRANCE_FADE_DECLINE_EN,
     TITLE_ENTRANCE_FADE_DECLINE_TR,
+    FORMAT_UNSUPPORTED_EN,
+    FORMAT_UNSUPPORTED_TR,
 )
 
 
