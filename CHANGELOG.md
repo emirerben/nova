@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.10.0] - 2026-11-24
+
+### Changed
+- test(notifications): notification delivery tests no longer collide across test workers (KRI-1630) (#2517) <!-- release-pr: 2517 -->
+
 ## [0.90.9.0] - 2026-11-24
 
 ### Changed
