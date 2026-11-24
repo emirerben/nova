@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.114.0] - 2026-11-24
+
+### Changed
+- feat(kria): named sound cues on a phone montage with a recorded voiceover, sound only, behind a flag (KRI-1598) (#2496) <!-- release-pr: 2496 -->
+
 ## [0.89.113.0] - 2026-11-24
 
 ### Changed
