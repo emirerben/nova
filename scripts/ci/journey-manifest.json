@@ -3946,16 +3946,18 @@
     {
       "id": "kri-1466-narrated-named-moment",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_narrated_footage_fit.py tests/tasks/test_kri1466_narrated_named_moment.py tests/tasks/test_tahini_narrated_pace_cues.py tests/kria/test_narrated_pace_same_clip_jump.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/pipeline/test_phone_narrated_plan.py tests/kria/test_brief_checks_narrated_alignment.py",
+      "api_tests": "tests/pipeline/test_narrated_footage_fit.py tests/tasks/test_kri1466_narrated_named_moment.py tests/tasks/test_tahini_narrated_pace_cues.py tests/kria/test_narrated_pace_same_clip_jump.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/pipeline/test_phone_narrated_plan.py tests/kria/test_brief_checks_narrated_alignment.py tests/kria/test_kri1517_cusco_t4_named_moments_review.py",
       "paths": [
         "src/apps/api/app/kria/narrated_render_checks.py",
         "src/apps/api/app/pipeline/narrated_footage_fit.py",
         "src/apps/api/tests/fixtures/narrated_alignment/kri1466_tor_moment.json",
+        "src/apps/api/tests/fixtures/narrated_alignment/kri1517_cusco_t4_moments.json",
         "src/apps/api/tests/fixtures/narrated_alignment/tahini_pace_cues.json",
         "src/apps/api/tests/pipeline/test_narrated_footage_fit.py",
         "src/apps/api/tests/tasks/test_kri1466_narrated_named_moment.py",
         "src/apps/api/tests/tasks/test_tahini_narrated_pace_cues.py",
-        "src/apps/api/tests/kria/test_narrated_pace_same_clip_jump.py"
+        "src/apps/api/tests/kria/test_narrated_pace_same_clip_jump.py",
+        "src/apps/api/tests/kria/test_kri1517_cusco_t4_named_moments_review.py"
       ]
     },
     {

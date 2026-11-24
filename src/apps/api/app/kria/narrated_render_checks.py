@@ -23,7 +23,7 @@ None there and the draft's receipts, holds and promises are what they were.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from app.kria.reply_language import say
@@ -195,6 +195,68 @@ def _clip_matches(step: NarratedStepFact, clip: str) -> bool:
     return clip in {step.media_id, step.clip} - {""}
 
 
+def _named_labels(req: BriefRequirement, steps: Sequence[NarratedStepFact]) -> frozenset[str]:
+    """KRI-1517: the steps' shot labels a word-cue row names ("Show the snowy mountains when I
+    say "Ant Dağları'ndan""), the most specific ones only.
+
+    The brief types such a row ``scope: global`` with ``facts.triggers``; the worker stores the
+    creator's words for each shot it placed on the step (``labels``). A label counts when its
+    whole name (no article) is in the row's words and is not just its quoted words ("Tor" never
+    names a shot labelled "Tor"); a label that is part of a longer named label ("the paintings"
+    in "the paintings in gold frames") gives way to it.
+    """
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _contains_text,
+        _label_core,
+        _loose_req,
+        _named_triggers,
+    )
+
+    text = _loose_req(req)
+    said = [_label_core(trigger) for trigger in _named_triggers(req)]
+    named = {
+        label: core
+        for step in steps
+        for label in step.labels
+        if (core := _label_core(label))
+        and _contains_text(text, core)
+        and not any(_contains_text(words, core) for words in said if words)
+    }
+    return frozenset(
+        label
+        for label, core in named.items()
+        if not any(other != core and _contains_text(other, core) for other in named.values())
+    )
+
+
+def _cue_shot(
+    req: BriefRequirement, steps: Sequence[NarratedStepFact]
+) -> tuple[Callable[[NarratedStepFact], bool], list[str]] | None:
+    """``(is this step the clip the row named, the words it plays on)``, or None.
+
+    A ``clip:<id>``-scoped row names its clip by id (Tahini run); a word-cue row of a Voiceover
+    names it by the creator's own words for the shot (KRI-1517, `_named_labels`)."""
+    from app.kria.brief_checks import _named_triggers  # noqa: PLC0415
+
+    asked = clip_cue_triggers(req)
+    if asked is not None:
+        clip, triggers = asked
+        return (lambda step: _clip_matches(step, clip)), triggers
+    if req.kind == "text" or req.scope.startswith("clip:"):
+        return None
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.narrated_footage_fit_enabled:
+        # A label can name a moment inside its clip ("the TOR on the big screen"); without the
+        # footage fit no moment is located, so the clip on screen proves nothing: old answer.
+        return None
+    triggers = [t for t in _named_triggers(req) if str(t).strip()]
+    labels = _named_labels(req, steps) if triggers else frozenset()
+    if not labels:
+        return None
+    return (lambda step: bool(labels.intersection(step.labels))), triggers
+
+
 def _token_steps(steps: Sequence[NarratedStepFact]) -> tuple[list[str], list[int]]:
     from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
 
@@ -207,11 +269,11 @@ def _token_steps(steps: Sequence[NarratedStepFact]) -> tuple[list[str], list[int
     return tokens, owners
 
 
-def _spans(steps: Sequence[NarratedStepFact], clip: str) -> str:
-    """Where ``clip`` plays, "4.2–6.0 s" each, merged where its steps touch."""
+def _spans(steps: Sequence[NarratedStepFact], named: Callable[[NarratedStepFact], bool]) -> str:
+    """Where the named clip plays, "4.2–6.0 s" each, merged where its steps touch."""
     spans: list[list[float]] = []
     for step in steps:
-        if not _clip_matches(step, clip):
+        if not named(step):
             continue
         if spans and abs(spans[-1][1] - step.start_s) < 1e-3:
             spans[-1][1] = step.end_s
@@ -231,12 +293,12 @@ def check_clip_cue(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     from app.kria.brief_checks import _named_moment_note, _names, _receipt  # noqa: PLC0415
     from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
 
-    asked = clip_cue_triggers(req)
     steps = list(facts.narrated_cue_steps or ())
-    if asked is None or not steps:
+    asked = _cue_shot(req, steps) if steps else None
+    if asked is None:
         return None
-    clip, triggers = asked
-    if not any(_clip_matches(step, clip) for step in steps):
+    named, triggers = asked
+    if not any(named(step) for step in steps):
         return None
     tokens, owners = _token_steps(steps)
     verdicts: list[tuple[str, str]] = []
@@ -248,8 +310,27 @@ def check_clip_cue(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
             if wanted and tokens[i : i + len(wanted)] == wanted
         ]
         if not found:
-            return None
-        on_it = [index for index in found if _clip_matches(steps[index], clip)]
+            # KRI-1517: the words are not in the finished voice (Clean up speech cut them, or
+            # the recording never says them as quoted). Said, with where the clip plays.
+            verdicts.append(
+                (
+                    "partial",
+                    say(
+                        en=(
+                            "I couldn't find {v1} in the finished voiceover; "
+                            "the clip you named plays at {shown_at} s"
+                        ),
+                        tr=(
+                            "Bitmiş seslendirmede {v1} sözünü bulamadım; söylediğin klip "
+                            "{shown_at} sn arasında oynuyor"
+                        ),
+                        v1=_names([name]),
+                        shown_at=_spans(steps, named),
+                    ),
+                )
+            )
+            continue
+        on_it = [index for index in found if named(steps[index])]
         index = on_it[0] if on_it else found[0]
         step = steps[index]
         if on_it:
@@ -293,7 +374,7 @@ def check_clip_cue(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
                     v1=_names([name]),
                     step_start_s=step.start_s,
                     step_end_s=step.end_s,
-                    shown_at=_spans(steps, clip),
+                    shown_at=_spans(steps, named),
                 ),
             )
         )
