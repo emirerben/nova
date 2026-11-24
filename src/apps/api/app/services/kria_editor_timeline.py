@@ -170,6 +170,7 @@ def project_guided_draft_slots(
         "layout",
         "source_crop",
         "tilt",
+        "dim",
         "playback_rate",
     )
     rows: list[dict[str, Any]] = []

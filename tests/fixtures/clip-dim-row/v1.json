@@ -1,0 +1,24 @@
+{
+ "description": "Clip dim ROW contract. `clips[i].raw[\"dim\"]` is the share of the way to black the device draws a clip's picture at: 0.01..1 in hundredths, each encoded pixel times 1 - dim. Python (app.kria.clip_dim) and Swift (ClipDim) must each turn every `valid` value into `normalized` (null = the key is omitted from the row and the recipe clip has no `dim`), and reject every `invalid` value. A value is rounded to hundredths BEFORE the range check, so 0.004 is no dim and 1.004 is black. A percent (40) is not a strength.",
+ "valid": [
+  {"name": "half", "dim": 0.5, "normalized": 0.5},
+  {"name": "forty-percent", "dim": 0.4, "normalized": 0.4},
+  {"name": "rounds-to-hundredths", "dim": 0.4049, "normalized": 0.4},
+  {"name": "smallest", "dim": 0.01, "normalized": 0.01},
+  {"name": "black", "dim": 1, "normalized": 1.0},
+  {"name": "rounds-to-black", "dim": 1.004, "normalized": 1.0},
+  {"name": "zero-is-no-dim", "dim": 0, "normalized": null},
+  {"name": "rounds-to-zero", "dim": 0.004, "normalized": null},
+  {"name": "negative-zero", "dim": -0.004, "normalized": null},
+  {"name": "null-is-no-dim", "dim": null, "normalized": null}
+ ],
+ "invalid": [
+  {"name": "string", "dim": "0.5"},
+  {"name": "bool", "dim": true},
+  {"name": "above-one", "dim": 1.2},
+  {"name": "negative", "dim": -0.1},
+  {"name": "percent", "dim": 40},
+  {"name": "object", "dim": {"strength": 0.5}},
+  {"name": "array", "dim": [0.5]}
+ ]
+}

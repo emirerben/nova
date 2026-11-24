@@ -164,6 +164,10 @@ class TimelineClip(_RecipeModel):
     # clockwise on screen) uncovers, or the bars around a letterboxed clip.
     # Requires the ``clipTilt`` capability.
     backdrop: ClipBackdrop | None = None
+    # How dark the device draws this main-track clip's picture: each encoded pixel times
+    # ``1 - dim``, under every text, caption, sticker and drawing (``app.kria.clip_dim``).
+    # Requires the ``clipDim`` capability.
+    dim: float | None = Field(default=None, gt=0, le=1)
     volume: float = Field(default=1, ge=0, le=2)
     # Seconds of linear gain ramp at this clip's audio start/end (KRI-139).
     # Replaces the device's ~25ms declick edge when longer: the music bed's
@@ -189,6 +193,7 @@ class TimelineClip(_RecipeModel):
             "still_layout",
             "source_crop",
             "backdrop",
+            "dim",
             "audio_fade_in",
             "audio_fade_out",
         ):
@@ -363,6 +368,8 @@ MediaCapability = Literal[
     # A clip's `backdrop` of kind `media`: a Visuals-pool photo or looping video drawn under the
     # clip (KRI-1139). Always accompanies `clipTilt`.
     "clipBackdropMedia",
+    # A main-track clip's `dim`, drawn on device by `KriaMediaEngine`'s compositor.
+    "clipDim",
     # KRI-1192: a text run drawn in a script-fallback face (Noto Sans KR / Noto Sans Arabic),
     # bundled in the app from protocol 35. Derived from the run's font asset file.
     "scriptFonts",
@@ -450,6 +457,10 @@ class EditRecipeV1(_RecipeModel):
                     raise ValueError("a backdrop requires a main-track clip without a placement")
                 if clip.transform.rotation_degrees != 0 or clip.backdrop is not None:
                     self.required_capabilities |= {"clipTilt"}
+                if clip.dim is not None:
+                    if track.kind != "video" or clip.visual_placement is not None:
+                        raise ValueError("a dim requires a main-track clip without a placement")
+                    self.required_capabilities |= {"clipDim"}
                 if clip.backdrop is not None and clip.backdrop.kind == "media":
                     if self.schema_version != 2:
                         raise ValueError("a media backdrop requires a V2 recipe")
