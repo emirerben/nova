@@ -335,7 +335,9 @@ def test_a_plain_photo_in_the_pinned_plan_does_not_make_the_card_promise_a_fast_
     assert story_media_blocker(STRATEGY, {"length_plan": short}) == "holds_do_not_fit"
 
 
-def test_the_card_names_a_fast_montage_fallback_before_approval() -> None:
+def test_the_card_names_a_fast_montage_fallback_before_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     asks = [
         BriefRequirement(id="r1", kind="text", scope="per_clip", description="a label per clip")
     ]
@@ -344,7 +346,12 @@ def test_the_card_names_a_fast_montage_fallback_before_approval() -> None:
     built_fields = {d.subject for d in built}
     # Built as a text explainer: direction and pacing are read, the outline only sets chapters.
     assert "direction" not in built_fields and "pacing" not in built_fields
-    assert any(d.subject == "story_structure" and "won't reorder" in d.text for d in built)
+    # KRI-1474 (Cusco T5): the outline is the planner's own idea; nobody asked, so no line.
+    assert "story_structure" not in built_fields
+    with monkeypatch.context() as off:
+        off.setattr(settings, "kria_headsup_asked_only_enabled", False)
+        unfiltered = card_disclosures([], STRATEGY, route=UNIFIED_MONTAGE)
+    assert any(d.subject == "story_structure" and "won't reorder" in d.text for d in unfiltered)
     line = next(d.text for d in kept if d.subject == "direction")
     assert "fast montage instead of a text explainer" in line and "individual clips" in line
     assert brief_view(CreativeBrief(version=1, requirements=asks)).wants_per_clip_text

@@ -1,0 +1,930 @@
+{
+ "_source": "job_debug creator_strategy + creator_brief_binding and the draft_applied event's payload.not_applied, per run. Tahini's order ask was live at draft time; the server superseded it later (superseded_by: server), so it is replayed open.",
+ "cusco_t5": {
+  "route": "unified_montage",
+  "run": "Cusco DJI T5 \"Cusco'da bir gün\" (KRI-1513), 2026-11-17, thread 6b52ecd6, event #14 draft_applied, server 80c96b04c",
+  "strategy": {
+   "pacing": "balanced",
+   "archetype": "day_vlog",
+   "direction": "guided_story",
+   "rationale": "Twenty seconds will allow the mountain pan and hand tracing the stonework to register, with shorter glimpses of the courtyard, exhibits and garden before the square closes the edit. Shooting order will give this day vlog a clear progression. Licensed music will connect the changing spaces; no speech subtitles are needed for the supplied ambient footage.",
+   "intro_hook": "Let the mountain panorama unfold before moving into the architectural details.",
+   "edit_format": "montage",
+   "media_scope": "all",
+   "caption_style": "none",
+   "opening_title": "Cusco'da bir gün",
+   "audio_strategy": "licensed_music",
+   "render_program": "guided",
+   "story_structure": [
+    "Open on the snowy mountain panorama with the supplied title.",
+    "Move into the courtyard, following the order filmed.",
+    "Explore the stonework through the hand movement and opening, then the paintings and displayed stone blocks.",
+    "Finish outdoors with the patterned garden and city square."
+   ],
+   "target_duration_s": 20,
+   "creator_duration_s": 20,
+   "selected_media_ids": [],
+   "video_reuse_policy": "once",
+   "optional_treatments": [],
+   "selected_music_section": {
+    "status": "fallback_footage"
+   },
+   "target_duration_requested": true
+  },
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {
+     "edit_format": "montage"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make a montage from these clips.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r2",
+    "kind": "select",
+    "facts": {
+     "all": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make a montage from these clips.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "They were filmed sideways, so fill the whole screen, no black bars.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r4",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 20
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 20 seconds.",
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Cusco'da bir gün",
+    "description": null,
+    "source_turn_id": "529cc485-f52e-401b-a7a7-3eb59977e7b7"
+   }
+  ],
+  "recorded_not_applied": [
+   {
+    "code": "not_applied_on_route",
+    "text": "I can't use the opening hook idea (\"Let the mountain panorama unfold before moving into the architectural…\") on this video yet, so it won't be shown as text",
+    "subject": "intro_hook"
+   },
+   {
+    "code": "not_applied_on_route",
+    "text": "The planned story structure (Open on the snowy mountain panorama wit…, Move into the courtyard, following the…, Explore the stonework through the hand…, Finish outdoors with the patterned gard…) sets the chapters (which clips are grouped together), but it won't reorder your clips: they stay in the order you gave",
+    "subject": "story_structure"
+   },
+   {
+    "code": "not_applied_on_route",
+    "text": "I can't use the day vlog story archetype on this video yet",
+    "subject": "archetype"
+   }
+  ]
+ },
+ "cusco_t2": {
+  "route": "talking_head",
+  "run": "Cusco DJI T2 \"list 1\" (KRI-1502), 2026-11-16, thread ca6a8138, event #7 draft_applied, server 6d36200c4",
+  "strategy": {
+   "pacing": "balanced",
+   "direction": "native",
+   "rationale": "Keeping the full 51.9-second take would preserve all four explanations, their qualifications, and the closing comparison without rushing the speech. Original audio would keep the speaker central, with clean Turkish subtitles representing what is actually said. This edit cannot place separate text labels at specific spoken moments.",
+   "intro_hook": "Open on the speaker introducing what modern engineering learned from the Incas.",
+   "edit_format": "subtitled",
+   "caption_style": "clean",
+   "audio_strategy": "original_audio",
+   "render_program": "native",
+   "story_structure": [
+    "Keep the introduction establishing the four engineering lessons.",
+    "Preserve the explanations of flexibility and interlocking systems in their original order.",
+    "Continue through form and the closing discussion of building with nature."
+   ],
+   "target_duration_s": 51.9,
+   "selected_media_ids": [
+    "analysis-proxy-ios-D9401D9E-2D4C-4742-BBF3-4B639143CC6C.mp4"
+   ],
+   "video_reuse_policy": "once",
+   "optional_treatments": []
+  },
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "1. Esneklik",
+    "description": "Show this label when the first lesson starts, as the first of four successive lesson labels.",
+    "source_turn_id": "79868d56-55c7-4100-a726-9ec63e6b60ba"
+   },
+   {
+    "id": "r2",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "2. Kilitli sistemler",
+    "description": "Show this label when the second lesson starts, replacing the preceding lesson label.",
+    "source_turn_id": "79868d56-55c7-4100-a726-9ec63e6b60ba"
+   },
+   {
+    "id": "r3",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "3. Form",
+    "description": "Show this label when the third lesson starts, replacing the preceding lesson label.",
+    "source_turn_id": "79868d56-55c7-4100-a726-9ec63e6b60ba"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "4. Doğayı biliyordu",
+    "description": "Show this label when the fourth lesson starts, replacing the preceding lesson label.",
+    "source_turn_id": "79868d56-55c7-4100-a726-9ec63e6b60ba"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "captions": "on",
+     "caption_language": "tr"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Turkish captions.",
+    "source_turn_id": "79868d56-55c7-4100-a726-9ec63e6b60ba"
+   }
+  ],
+  "recorded_not_applied": [
+   {
+    "code": "not_applied_on_route",
+    "text": "I can't use the opening hook idea (\"Open on the speaker introducing what modern engineering learned from…\") on this video yet, so it won't be shown as text",
+    "subject": "intro_hook"
+   }
+  ]
+ },
+ "tahini": {
+  "route": "voiceover_montage",
+  "run": "Roasted carrots Voiceover \"Tahini\", 2026-11-17, thread c07abe31, event #23 draft_applied, server 75084c915",
+  "strategy": {
+   "pacing": "fast",
+   "direction": "native",
+   "rationale": "A 40-second target will leave room for the slicing, pouring, stirring and plating actions to register before the fork-bite finish. The existing voiceover will lead the edit without a whole-recording guarantee. Requested spoken cues will remain visual-matching instructions, but exact word synchronization, one-second switching and repeated shots will not be guaranteed on this simpler path. The title will be the only added writing; speech captions and kitchen-sound mixing will be omitted as accepted.",
+   "intro_hook": "The knife slicing a colorful carrot will introduce the recipe through a clear preparation action.",
+   "edit_format": "narrated_planned",
+   "media_scope": "selected",
+   "clip_intents": [
+    {
+     "op": "include",
+     "attribute": "every uploaded file",
+     "intent_id": "include_all_clips",
+     "source_quote": "Use every uploaded file."
+    },
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "the finished dish while I say the first two sentences",
+     "intent_id": "order_finished_dish_opening",
+     "source_quote": "Open on the finished dish while I say the first two sentences"
+    },
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "the crispy topping stirred in the pan",
+     "intent_id": "order_crispy_topping_stirred",
+     "source_quote": "the crispy topping stirred in the pan"
+    },
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "the topping going over the carrots on the plate",
+     "intent_id": "order_topping_over_carrots",
+     "source_quote": "the topping going over the carrots on the plate"
+    },
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "the fork taking a bite",
+     "intent_id": "order_fork_bite_opening",
+     "source_quote": "the fork taking a bite"
+    },
+    {
+     "op": "include",
+     "attribute": "slicing carrots on \"rainbow carrots\"",
+     "intent_id": "include_slicing_carrots",
+     "source_quote": "slicing carrots on \"rainbow carrots\""
+    },
+    {
+     "op": "include",
+     "attribute": "dark syrup poured over the tray on \"molasses\"",
+     "intent_id": "include_molasses_pour",
+     "source_quote": "dark syrup poured over the tray on \"molasses\""
+    },
+    {
+     "op": "include",
+     "attribute": "the roasted tray on \"sticky\"",
+     "intent_id": "include_roasted_tray",
+     "source_quote": "the roasted tray on \"sticky\""
+    },
+    {
+     "op": "include",
+     "attribute": "almonds going into the garlic pan on \"almonds\"",
+     "intent_id": "include_almonds_garlic_pan",
+     "source_quote": "almonds going into the garlic pan on \"almonds\""
+    },
+    {
+     "op": "include",
+     "attribute": "dates and capers on \"dates\"",
+     "intent_id": "include_dates_capers",
+     "source_quote": "dates and capers on \"dates\""
+    },
+    {
+     "op": "include",
+     "attribute": "lemon grated over the yogurt on \"lemon zest\"",
+     "intent_id": "include_lemon_zest",
+     "source_quote": "lemon grated over the yogurt on \"lemon zest\""
+    },
+    {
+     "op": "include",
+     "attribute": "tahini stirred in on \"tahini\"",
+     "intent_id": "include_tahini_stirred",
+     "source_quote": "tahini stirred in on \"tahini\""
+    },
+    {
+     "op": "include",
+     "attribute": "yogurt spread on the plate on \"Yogurt down\"",
+     "intent_id": "include_yogurt_spread",
+     "source_quote": "yogurt spread on the plate on \"Yogurt down\""
+    },
+    {
+     "op": "include",
+     "attribute": "carrots laid on it on \"carrots on\"",
+     "intent_id": "include_carrots_laid",
+     "source_quote": "carrots laid on it on \"carrots on\""
+    },
+    {
+     "op": "include",
+     "attribute": "topping over them on \"topping over\"",
+     "intent_id": "include_topping_over",
+     "source_quote": "topping over them on \"topping over\""
+    },
+    {
+     "op": "include",
+     "attribute": "the fork bite on \"grab a fork\"",
+     "intent_id": "include_fork_bite_plating",
+     "source_quote": "the fork bite on \"grab a fork\""
+    }
+   ],
+   "caption_style": "auto",
+   "opening_title": "Roasted carrots, crispy topping",
+   "audio_strategy": "voiceover",
+   "render_program": "native",
+   "story_structure": [
+    "Introduce the carrot preparation with slicing, syrup pouring and the roasted tray.",
+    "Show the pan additions and the finished topping being stirred.",
+    "Follow the yogurt preparation through lemon zest, tahini and spreading.",
+    "Finish with carrots placed on the yogurt, topping added and the fork bite."
+   ],
+   "target_duration_s": 40,
+   "selected_media_ids": [
+    "analysis-proxy-ios-9E896B69-4761-4E9E-AE28-5747C55B47E8.mp4",
+    "analysis-proxy-ios-40C01815-1305-4A76-8499-DDE6B360CF4C.mp4",
+    "analysis-proxy-ios-FFD8E311-4A20-481C-A471-2A1C2E11F236.mp4",
+    "analysis-proxy-ios-D4A47378-9669-4B8C-8847-C8B8BF87ABDB.mp4",
+    "analysis-proxy-ios-81E3EDC6-E944-4202-8D99-1EFDA159476D.mp4",
+    "analysis-proxy-ios-85DB1CA9-31D4-4CA9-8A9B-2DCC097A3C78.mp4",
+    "analysis-proxy-ios-B4C6A91A-94C7-4001-BB46-A59C0D620C71.mp4",
+    "analysis-proxy-ios-D54EE59E-6096-4B7C-91D4-0325F2A14FCF.mp4",
+    "analysis-proxy-ios-CA68C2FF-1ACB-42AB-8DEB-5D6EC19ACE35.mp4",
+    "analysis-proxy-ios-6AFC4A0B-FF30-44DC-87D1-4E2822249D2B.mp4",
+    "analysis-proxy-ios-D69510DD-191A-4AD6-A136-BA8F94725F51.mp4",
+    "analysis-proxy-ios-174DE2D6-35B5-4413-B385-C008C62EE899.mp4"
+   ],
+   "video_reuse_policy": "once",
+   "optional_treatments": [],
+   "resolved_clip_intents": [
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "every uploaded file",
+     "intent_id": "include_all_clips",
+     "assignments": [
+      {
+       "evidence": "uploaded file",
+       "media_id": "analysis-proxy-ios-9E896B69-4761-4E9E-AE28-5747C55B47E8.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "uploaded file",
+       "media_id": "analysis-proxy-ios-40C01815-1305-4A76-8499-DDE6B360CF4C.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "uploaded file",
+       "media_id": "analysis-proxy-ios-FFD8E311-4A20-481C-A471-2A1C2E11F236.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "every uploaded file",
+       "media_id": "analysis-proxy-ios-D4A47378-9669-4B8C-8847-C8B8BF87ABDB.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "every uploaded file",
+       "media_id": "analysis-proxy-ios-81E3EDC6-E944-4202-8D99-1EFDA159476D.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "every uploaded file",
+       "media_id": "analysis-proxy-ios-85DB1CA9-31D4-4CA9-8A9B-2DCC097A3C78.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "every uploaded file",
+       "media_id": "analysis-proxy-ios-B4C6A91A-94C7-4001-BB46-A59C0D620C71.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "every uploaded file",
+       "media_id": "analysis-proxy-ios-D54EE59E-6096-4B7C-91D4-0325F2A14FCF.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "every uploaded file",
+       "media_id": "analysis-proxy-ios-CA68C2FF-1ACB-42AB-8DEB-5D6EC19ACE35.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "all uploaded files are to be used",
+       "media_id": "analysis-proxy-ios-6AFC4A0B-FF30-44DC-87D1-4E2822249D2B.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "all uploaded files are to be used",
+       "media_id": "analysis-proxy-ios-D69510DD-191A-4AD6-A136-BA8F94725F51.mp4",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "all uploaded files are to be used",
+       "media_id": "analysis-proxy-ios-174DE2D6-35B5-4413-B385-C008C62EE899.mp4",
+       "confidence": 1.0
+      }
+     ],
+     "source_quote": "Use every uploaded file."
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "first",
+     "attribute": "the finished dish while I say the first two sentences",
+     "intent_id": "order_finished_dish_opening",
+     "assignments": [
+      {
+       "evidence": "person handling a roasted carrot on a bed of creamy white dip",
+       "media_id": "analysis-proxy-ios-6AFC4A0B-FF30-44DC-87D1-4E2822249D2B.mp4",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "garnishing a roasted carrot dish, platter of roasted colorful carrots",
+       "media_id": "analysis-proxy-ios-D69510DD-191A-4AD6-A136-BA8F94725F51.mp4",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "close-up shot shows a hand using a fork to pick up a roasted carrot from a beautifully plated dish",
+       "media_id": "analysis-proxy-ios-174DE2D6-35B5-4413-B385-C008C62EE899.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "Open on the finished dish while I say the first two sentences"
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "first",
+     "attribute": "the crispy topping stirred in the pan",
+     "intent_id": "order_crispy_topping_stirred",
+     "assignments": [
+      {
+       "evidence": "hand uses a spoon to stir a mixture of sliced almonds, dried cranberries, and capers in a black non-stick pan",
+       "media_id": "analysis-proxy-ios-81E3EDC6-E944-4202-8D99-1EFDA159476D.mp4",
+       "confidence": 0.8
+      }
+     ],
+     "source_quote": "the crispy topping stirred in the pan"
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "first",
+     "attribute": "the topping going over the carrots on the plate",
+     "intent_id": "order_topping_over_carrots",
+     "assignments": [
+      {
+       "evidence": "hand uses a spoon to add a mix of peas, grapes, and nuts as a topping to a platter of roasted colorful carrots",
+       "media_id": "analysis-proxy-ios-D69510DD-191A-4AD6-A136-BA8F94725F51.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "the topping going over the carrots on the plate"
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "first",
+     "attribute": "the fork taking a bite",
+     "intent_id": "order_fork_bite_opening",
+     "assignments": [
+      {
+       "evidence": "hand using a fork to pick up a roasted carrot from a beautifully plated dish",
+       "media_id": "analysis-proxy-ios-174DE2D6-35B5-4413-B385-C008C62EE899.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "the fork taking a bite"
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "slicing carrots on \"rainbow carrots\"",
+     "intent_id": "include_slicing_carrots",
+     "assignments": [
+      {
+       "evidence": "slicing carrots on a wooden cutting board; slices a yellow carrot lengthwise with a knife",
+       "media_id": "analysis-proxy-ios-40C01815-1305-4A76-8499-DDE6B360CF4C.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "slicing carrots on \"rainbow carrots\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "dark syrup poured over the tray on \"molasses\"",
+     "intent_id": "include_molasses_pour",
+     "assignments": [
+      {
+       "evidence": "drizzled with a dark red sauce; drizzling dark sauce over carrots",
+       "media_id": "analysis-proxy-ios-9E896B69-4761-4E9E-AE28-5747C55B47E8.mp4",
+       "confidence": 0.8
+      }
+     ],
+     "source_quote": "dark syrup poured over the tray on \"molasses\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "the roasted tray on \"sticky\"",
+     "intent_id": "include_roasted_tray",
+     "assignments": [
+      {
+       "evidence": "A baking sheet filled with roasted purple, orange, and yellow carrots",
+       "media_id": "analysis-proxy-ios-FFD8E311-4A20-481C-A471-2A1C2E11F236.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "the roasted tray on \"sticky\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "almonds going into the garlic pan on \"almonds\"",
+     "intent_id": "include_almonds_garlic_pan",
+     "assignments": [
+      {
+       "evidence": "A hand adds sliced garlic and slivered almonds to a frying pan",
+       "media_id": "analysis-proxy-ios-D4A47378-9669-4B8C-8847-C8B8BF87ABDB.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "almonds going into the garlic pan on \"almonds\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "dates and capers on \"dates\"",
+     "intent_id": "include_dates_capers",
+     "assignments": [
+      {
+       "evidence": "A hand adds dried fruit and green peas to a frying pan",
+       "media_id": "analysis-proxy-ios-85DB1CA9-31D4-4CA9-8A9B-2DCC097A3C78.mp4",
+       "confidence": 0.7
+      },
+      {
+       "evidence": "stir a mixture of sliced almonds, dried cranberries, and capers in a black non-stick pan",
+       "media_id": "analysis-proxy-ios-81E3EDC6-E944-4202-8D99-1EFDA159476D.mp4",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "small green capers",
+       "media_id": "analysis-proxy-ios-174DE2D6-35B5-4413-B385-C008C62EE899.mp4",
+       "confidence": 0.8
+      }
+     ],
+     "source_quote": "dates and capers on \"dates\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "lemon grated over the yogurt on \"lemon zest\"",
+     "intent_id": "include_lemon_zest",
+     "assignments": [
+      {
+       "evidence": "person grates lemon zest into bowl",
+       "media_id": "analysis-proxy-ios-B4C6A91A-94C7-4001-BB46-A59C0D620C71.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "lemon grated over the yogurt on \"lemon zest\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "tahini stirred in on \"tahini\"",
+     "intent_id": "include_tahini_stirred",
+     "assignments": [
+      {
+       "evidence": "hand pours liquid with a spoon into a bowl, hand stirs ingredients in the bowl",
+       "media_id": "analysis-proxy-ios-CA68C2FF-1ACB-42AB-8DEB-5D6EC19ACE35.mp4",
+       "confidence": 0.6
+      }
+     ],
+     "source_quote": "tahini stirred in on \"tahini\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "yogurt spread on the plate on \"Yogurt down\"",
+     "intent_id": "include_yogurt_spread",
+     "assignments": [
+      {
+       "evidence": "creator selected",
+       "media_id": "analysis-proxy-ios-D54EE59E-6096-4B7C-91D4-0325F2A14FCF.mp4",
+       "confidence": 1.0
+      }
+     ],
+     "source_quote": "yogurt spread on the plate on \"Yogurt down\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "carrots laid on it on \"carrots on\"",
+     "intent_id": "include_carrots_laid",
+     "assignments": [
+      {
+       "evidence": "person places carrot on dip",
+       "media_id": "analysis-proxy-ios-6AFC4A0B-FF30-44DC-87D1-4E2822249D2B.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "carrots laid on it on \"carrots on\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "topping over them on \"topping over\"",
+     "intent_id": "include_topping_over",
+     "assignments": [
+      {
+       "evidence": "hand sprinkles toppings onto the dish",
+       "media_id": "analysis-proxy-ios-D69510DD-191A-4AD6-A136-BA8F94725F51.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "topping over them on \"topping over\""
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "the fork bite on \"grab a fork\"",
+     "intent_id": "include_fork_bite_plating",
+     "assignments": [
+      {
+       "evidence": "hand lifts fork with a carrot and sauce, hand moves fork with carrot toward camera",
+       "media_id": "analysis-proxy-ios-174DE2D6-35B5-4413-B385-C008C62EE899.mp4",
+       "confidence": 0.9
+      }
+     ],
+     "source_quote": "the fork bite on \"grab a fork\""
+    }
+   ],
+   "selected_music_section": null
+  },
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Quick-cut recipe video from my voiceover and cooking clips.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r2",
+    "kind": "select",
+    "facts": {
+     "all": true
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Use every uploaded file.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r3",
+    "kind": "audio",
+    "facts": {
+     "superseded_by": "server",
+     "speech_cleanup": false,
+     "keep_whole_take": true
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Keep my whole voiceover.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r4",
+    "kind": "order",
+    "facts": {
+     "first_clip": "the crispy topping stirred in the pan",
+     "superseded_by": "server",
+     "opening_during": "the first two sentences",
+     "opening_sequence": [
+      "the crispy topping stirred in the pan",
+      "the topping going over the carrots on the plate",
+      "the fork taking a bite"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Open on the finished dish while I say the first two sentences: the crispy topping stirred in the pan, the topping going over the carrots on the plate, the fork taking a bite. Then show each step when I say it.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r5",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "rainbow carrots"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-40C01815-1305-4A76-8499-DDE6B360CF4C.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "slicing carrots on \"rainbow carrots\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r6",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "molasses"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-9E896B69-4761-4E9E-AE28-5747C55B47E8.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "dark syrup poured over the tray on \"molasses\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r7",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "sticky"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-FFD8E311-4A20-481C-A471-2A1C2E11F236.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "the roasted tray on \"sticky\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r8",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "almonds"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-D4A47378-9669-4B8C-8847-C8B8BF87ABDB.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "almonds going into the garlic pan on \"almonds\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r9",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "dates"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-85DB1CA9-31D4-4CA9-8A9B-2DCC097A3C78.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "dates and capers on \"dates\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r10",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "lemon zest"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-B4C6A91A-94C7-4001-BB46-A59C0D620C71.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "lemon grated over the yogurt on \"lemon zest\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r11",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "tahini"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-CA68C2FF-1ACB-42AB-8DEB-5D6EC19ACE35.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "tahini stirred in on \"tahini\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r12",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "Yogurt down"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-D54EE59E-6096-4B7C-91D4-0325F2A14FCF.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "yogurt spread on the plate on \"Yogurt down\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r13",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "carrots on"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-6AFC4A0B-FF30-44DC-87D1-4E2822249D2B.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "carrots laid on it on \"carrots on\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r14",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "topping over"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-D69510DD-191A-4AD6-A136-BA8F94725F51.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "topping over them on \"topping over\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r15",
+    "kind": "style",
+    "facts": {
+     "triggers": [
+      "grab a fork"
+     ]
+    },
+    "scope": "clip:analysis-proxy-ios-174DE2D6-35B5-4413-B385-C008C62EE899.mp4",
+    "status": "open",
+    "literal": null,
+    "description": "the fork bite on \"grab a fork\"",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r16",
+    "kind": "style",
+    "facts": {
+     "video_reuse_allowed": true,
+     "approximate_cut_duration_s": 1
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Change the picture about once a second; reuse a clip if needed.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r17",
+    "kind": "style",
+    "facts": {
+     "captions": "on",
+     "caption_color": "#FFFFFF",
+     "superseded_by": "server"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "White captions, a few words at a time, following my voice.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r18",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Roasted carrots, crispy topping",
+    "description": null,
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r19",
+    "kind": "style",
+    "facts": {
+     "added_text": "title_only"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "No other text.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   },
+   {
+    "id": "r20",
+    "kind": "audio",
+    "facts": {
+     "superseded_by": "server"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Keep kitchen sounds quiet under my voice.",
+    "source_turn_id": "1d81b2d9-5a96-44f0-8dd3-5e7c63d58da0"
+   }
+  ],
+  "recorded_not_applied": [
+   {
+    "code": "not_applied_on_route",
+    "text": "I can't use the opening hook idea (\"The knife slicing a colorful carrot will introduce the recipe through…\") on this video yet, so it won't be shown as text",
+    "subject": "intro_hook"
+   },
+   {
+    "code": "not_applied_on_route",
+    "text": "I can't follow the planned story structure (Introduce the carrot preparation with s…, Show the pan additions and the finished…, Follow the yogurt preparation through l…, Finish with carrots placed on the yogur…) on this video yet, so it won't change the order of the clips",
+    "subject": "story_structure"
+   }
+  ]
+ }
+}
