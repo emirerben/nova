@@ -3301,6 +3301,11 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-1560: a title ask is answered with up to three titles built from what the creator said,
+    # in one question (`services/opening_titles`). Kill switch: false asks the older "do you have
+    # an idea, or should I write one?" question instead, and makes no extra model call.
+    kria_opening_title_options_enabled: bool = True
+
     # KRI-1563: the ask ledger of a chat edit. Every part of the ask ends done, declined or
     # waiting on a choice; the reply names every change (no "first two" cut), a turn that
     # changed nothing still answers each part, and on a failed-render correction a part the

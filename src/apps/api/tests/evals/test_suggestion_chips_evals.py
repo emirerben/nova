@@ -224,8 +224,8 @@ NEGATIVE_CONTROLS = [
             "first_prompt",
             _chip(
                 "hook",
-                "Add a hook to the opening",
-                "Add a hook that matches the video",
+                "Find an opening title",
+                "Find an opening title for my video",
                 media_id="ghost",
                 clip_ordinal=9,
                 moment=sc.ChipMomentOut(start_s=99.0, end_s=100.0),
@@ -268,8 +268,8 @@ NEGATIVE_CONTROLS = [
         "rd_plain_montage",
         _bad(
             "ready",
-            _chip("hook", "Add a hook to the opening", "Add a hook that matches the video"),
-            _chip("hook", "Add a hook to the opening", "Add a hook that matches the video", rank=2),
+            _chip("hook", "Find an opening title", "Find an opening title for my video"),
+            _chip("hook", "Find an opening title", "Find an opening title for my video", rank=2),
             _chip("sfx", "Add sound effects", "Add sound effects", rank=3),
             _chip("sfx", "Add sound effects", "Add sound effects", rank=4),
         ),
@@ -279,7 +279,7 @@ NEGATIVE_CONTROLS = [
         "fp_silent_broll_music",
         _bad(
             "first_prompt",
-            _chip("hook", "Add a hook to the opening", "Add a hook that matches the video"),
+            _chip("hook", "Find an opening title", "Find an opening title for my video"),
         ),
     ),
     (
@@ -300,7 +300,7 @@ NEGATIVE_CONTROLS = [
         "fp_silent_broll_music",
         _bad(
             "first_prompt",
-            _chip("hook", "Add a hook to the opening", "Add a hook about pouring matcha"),
+            _chip("hook", "Find an opening title", "Add a hook about pouring matcha"),
         ),
     ),
     (
@@ -310,7 +310,7 @@ NEGATIVE_CONTROLS = [
         _bad(
             "first_prompt",
             _chip(
-                "hook", "Hook on pouring matcha into a glass", "Add a hook that matches the video"
+                "hook", "Hook on pouring matcha into a glass", "Find an opening title for my video"
             ),
         ),
     ),
@@ -342,7 +342,7 @@ NEGATIVE_CONTROLS = [
                 id="sc_x",
                 kind="hook",
                 label="Add 3 killer hooks",
-                message="Add a hook that matches the video",
+                message="Find an opening title for my video",
                 rank=1,
                 label_source="agent",
             ),
@@ -357,8 +357,8 @@ NEGATIVE_CONTROLS = [
             sc.SuggestionChipOut(
                 id="sc_x",
                 kind="hook",
-                label="Add a hook to the opening",
-                message="Add a hook that matches the video",
+                label="Find an opening title",
+                message="Find an opening title for my video",
                 rank=1,
                 label_source="agent",
                 why="skateboard tricks at sunset",
@@ -374,8 +374,8 @@ NEGATIVE_CONTROLS = [
             sc.SuggestionChipOut(
                 id="sc_h",
                 kind="hook",
-                label="Add a hook to the opening",
-                message="Add a hook that matches the video",
+                label="Find an opening title",
+                message="Find an opening title for my video",
                 rank=1,
                 default_edit=True,
             ),
@@ -397,8 +397,8 @@ NEGATIVE_CONTROLS = [
         _bad(
             "first_prompt",
             _chip("default_edit", "Let Kria decide", "Suggest an edit."),
-            _chip("hook", "Add a hook to the opening", "Add a hook that matches the video", rank=2),
-            _chip("hook", "Add a hook to the opening", "Add a hook that matches the video", rank=2),
+            _chip("hook", "Find an opening title", "Find an opening title for my video", rank=2),
+            _chip("hook", "Find an opening title", "Find an opening title for my video", rank=2),
         ),
     ),
 ]

@@ -2472,6 +2472,36 @@
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
   ],
   [
+   "app/services/opening_titles.py",
+   "Your first sentence already pulls people in: “{line}”. I'd keep it without a title, or you can pick one of these.",
+   "İlk cümlen zaten izleyiciyi içine çekiyor: “{line}”. Başlıksız bırakmanı öneririm, istersen bunlardan birini seç."
+  ],
+  [
+   "app/services/opening_titles.py",
+   "I found one opening in what you said. Use it, or type your own.",
+   "Söylediklerinde bir açılış buldum. Bunu kullan ya da kendin yaz."
+  ],
+  [
+   "app/services/opening_titles.py",
+   "Here are {count} openings from what you said. Pick one and I'll open the video with it.",
+   "Söylediklerinden {count} açılış çıkardım. Birini seç, videoyu onunla açayım."
+  ],
+  [
+   "app/kria/planner.py",
+   "Do you have an idea, or would you like me to write one?",
+   "Aklında bir fikir var mı, yoksa ben mi yazayım?"
+  ],
+  [
+   "app/kria/planner.py",
+   "Which opening title should I use? Pick one, type your own, or skip it.",
+   "Hangi açılış başlığını kullanayım? Birini seç, kendin yaz ya da atla."
+  ],
+  [
+   "app/kria/planner.py",
+   "Once you choose, I'll do the rest of what you asked.",
+   "Sen seçince isteğinin kalanını da yapacağım."
+  ],
+  [
    "app/services/sfx_capability.py",
    "You named a sound effect, so I played that one and added no others",
    "Bir ses efekti söyledin, o yüzden onu çaldım ve başka efekt eklemedim"

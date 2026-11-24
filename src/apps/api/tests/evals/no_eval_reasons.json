@@ -2,6 +2,7 @@
   "nova.audio.lyric_style_selector": "0 prod calls; unit-tested; runs only when lyrics are on and no style set is chosen.",
   "nova.compose.agentic_style_selector": "0 prod calls; unit-tested; runs only for agentic templates.",
   "nova.compose.narration_focus": "0 prod calls; unit-tested; guided-narration path only.",
+  "nova.compose.opening_title": "0 prod calls; new in KRI-1560. Its answer never reaches the screen unchecked: `opening_titles.check_title` drops any title whose names or numbers are not in the sentence it cites (offline tests). A recorded eval waits for an approved paid run.",
   "nova.compose.talking_insert_sentence": "1 prod call; unit-tested; runs only when a creator asks for inserts.",
   "nova.compose.text_alignment": "0 prod calls; unit-tested; Layer-2 overlay stage.",
   "nova.compose.text_classification": "0 prod calls; unit-tested; Layer-2 overlay stage.",

@@ -15,6 +15,9 @@ struct ChoiceQuestion: Equatable, Sendable {
         let label: String
         let detail: String?
         let recommended: Bool
+        /// KRI-1560: a title Kria wrote from the creator's own words; the card offers a pencil that puts
+        /// these words in the composer for her to change and send as her own.
+        var editable = false
         /// Version 2 (KRI-1582): what this option looks like over the creator's own clip, drawn on this iPhone.
         var preview: Preview? = nil
         var id: String { key }
@@ -62,6 +65,7 @@ struct ChoiceQuestion: Equatable, Sendable {
             let detail = object["description"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
             return Option(key: key, label: label, detail: detail?.isEmpty == false ? detail : nil,
                           recommended: object["recommended"]?.boolValue ?? false,
+                          editable: object["editable"]?.boolValue ?? false,
                           preview: version >= 2 ? Preview.parse(object["preview"]) : nil)
         }
         // One option is not a choice: keep the plain text question.

@@ -585,6 +585,10 @@
       "source": "default",
       "value": 2
     },
+    "kria_opening_title_options_enabled": {
+      "source": "default",
+      "value": true
+    },
     "kria_pending_visual_go_ahead_enabled": {
       "source": "default",
       "value": true

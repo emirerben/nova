@@ -72,7 +72,10 @@ DARK_KINDS = ("opener_clip", "pinned_text")
 # must be made here too, which is the point: it forces a conscious wording review.
 MESSAGE_DECK: dict[str, dict[str, str]] = {
     "default_edit": {"en": "Suggest an edit.", "tr": "Suggest an edit."},
-    "hook": {"en": "Add a hook that matches the video", "tr": "Videoya uyan bir hook ekle"},
+    "hook": {
+        "en": "Find an opening title for my video",
+        "tr": "Videom için bir açılış başlığı bul",
+    },
     "captions": {"en": "Add captions", "tr": "Altyazı ekle"},
     "sfx": {"en": "Add sound effects", "tr": "Ses efektleri ekle"},
     "music": {"en": "Turn the music down", "tr": "Müziği kıs"},
@@ -85,7 +88,7 @@ MESSAGE_DECK: dict[str, dict[str, str]] = {
 
 LABEL_DECK: dict[str, dict[str, str]] = {
     "default_edit": {"en": "Let Kria decide", "tr": "İlk versiyonu Kria kessin"},
-    "hook": {"en": "Add a hook to the opening", "tr": "Açılışa bir hook ekle"},
+    "hook": {"en": "Find an opening title", "tr": "Açılış başlığı bul"},
     "captions": {"en": "Add captions", "tr": "Altyazı ekle"},
     "sfx": {"en": "Add sound effects", "tr": "Ses efektleri ekle"},
     "music": {"en": "Turn the music down", "tr": "Müziği kıs"},
