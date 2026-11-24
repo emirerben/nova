@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from app.agents._runtime import RunContext
@@ -3141,6 +3141,7 @@ async def _plan_editor_revision(
     editor_state: Any = None,
     original_request: str | None = None,
     requirements: Sequence[BriefRequirement] | None = None,
+    title_answer: _TitleAnswer | None = None,
 ) -> KriaTurnPlan | None:
     if requirements is None:
         requirements = _turn_requirements.get()
@@ -3167,6 +3168,13 @@ async def _plan_editor_revision(
         )
     if target is None:
         return None
+    # KRI-1560: her answer to the titles question settles the title, and the rest of the message
+    # that asked for it ("and bigger captions") is done now, in this one editor call.
+    if title_answer is not None:
+        user_message = title_answer.ask or user_message
+        original_request = "\n".join(
+            part for part in (original_request, _settled_title_note(title_answer.state)) if part
+        )
     # Release the read transaction before Copilot model I/O. The response is
     # derived only from the immutable snapshot and copied conversation rows.
     await db.rollback()
@@ -3189,11 +3197,14 @@ async def _plan_editor_revision(
         compile_check=target.compile_check,
         text_design=_chat_text_design(target, user_message),
     )
+    ops = list(response.ops or [])
+    if title_answer is not None:
+        ops = _with_settled_title(ops, title_answer.state)
     if (
-        response.ops
+        ops
         and editor_state is not None
         and editor_state_has_lanes(editor_state)
-        and any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops)
+        and any(op.get("op") == "apply_speech_cut_candidate" for op in ops)
     ):
         # Cutting silences renders from PERSISTED state, which would drop the creator's
         # unsaved edits: say so instead of crashing at compile time.
@@ -3204,24 +3215,22 @@ async def _plan_editor_revision(
             diagnostics=outcome_diagnostics("recovery", SPEECH_CUT_NEEDS_SAVE),
         )
     if target.recovery_basis is not None:
-        draft_plan = adapt_editor_action(
-            reply=_phone_editor_reply(response.reply), ops=response.ops or []
-        )
+        draft_plan = adapt_editor_action(reply=_phone_editor_reply(response.reply), ops=ops)
         unmet = getattr(response, "unmet_requests", None) or ()
         # KRI-1563: a part the copilot could not do no longer throws away the in-place ops it
         # made for the other parts; the ledger declines that part on the receipt instead.
-        keeps_ops = bool(response.ops) and ask_ledger_enabled()
-        if (unmet and not keeps_ops) or (response.ops and not _is_fast_path_plan(draft_plan)):
+        keeps_ops = bool(ops) and ask_ledger_enabled()
+        if (unmet and not keeps_ops) or (ops and not _is_fast_path_plan(draft_plan)):
             return KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
                 response=_failed_correction_alternative(),
                 diagnostics=outcome_diagnostics("recovery", FAILED_CORRECTION),
             )
-        if response.ops:
+        if ops:
             plan = adapt_editor_action(
                 reply=_phone_editor_reply(response.reply),
-                ops=response.ops,
+                ops=ops,
                 unmet_requests=unmet if keeps_ops else (),
                 notes=getattr(response, "reply_notes", None) or None,
             )
@@ -3233,17 +3242,17 @@ async def _plan_editor_revision(
                     }
                 }
             )
-    if response.ops and _writes_unasked_title(response.ops, user_message, target):
+    if ops and title_answer is None and _writes_unasked_title(ops, user_message, target):
         # KRI-1560: the editor model wrote an opening title of its own on a draft that has
         # none (prod thread 1b8974a0, "Renk Kavgası"); she picks from her own words instead.
         return await _title_question_plan(db, item=item, request=user_message)
-    if response.ops:
+    if ops:
         plan = adapt_editor_action(
             reply=_phone_editor_reply(response.reply),
-            ops=response.ops,
+            ops=ops,
             # This portable operation invokes server speech processing; ordinary
             # text/timeline/mix edits stay drafts until an explicit Save.
-            request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops),
+            request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in ops),
             unmet_requests=getattr(response, "unmet_requests", None) or (),
             notes=getattr(response, "reply_notes", None) or None,
         )
@@ -6170,24 +6179,86 @@ def _draft_has_title(target: Any) -> bool:
     return title_bar(SimpleNamespace(snapshot=snapshot)) is not None
 
 
+def _opening_words(op: Any) -> str | None:
+    """The words an editor op puts at the very start of the video, None for any other op."""
+    if not isinstance(op, Mapping):
+        return None
+    kind = op.get("op")
+    start = op.get("start_s", 0) or 0
+    if kind != "set_title" and not (
+        kind == "add_text" and isinstance(start, int | float) and start <= 0.5
+    ):
+        return None
+    words = op.get("title") if kind == "set_title" else op.get("text")
+    return normalize_copy(words) if isinstance(words, str) else ""
+
+
 def _writes_unasked_title(ops: Sequence[Any], user_message: str, target: Any) -> bool:
     """An editor op puts opening words she did not type on a draft with no title."""
     if _draft_has_title(target):
         return False
     said = normalize_copy(user_message).casefold()
-    for op in ops:
-        if not isinstance(op, Mapping):
-            continue
-        kind = op.get("op")
-        words = op.get("title") if kind == "set_title" else op.get("text")
-        start = op.get("start_s", 0) or 0
-        opening = kind == "set_title" or (
-            kind == "add_text" and isinstance(start, int | float) and start <= 0.5
+    return any((words := _opening_words(op)) and words.casefold() not in said for op in ops)
+
+
+class _TitleAnswer(NamedTuple):
+    """Her answer to the titles question in THIS turn, and the message that asked for a title."""
+
+    state: CreativeCopyState
+    ask: str
+
+
+def _title_answer_in(events: Sequence[tuple[str, Any]], *, digest: str) -> _TitleAnswer | None:
+    """The opening title her latest message settled (a title, her own words, or "No title")."""
+    last = next((i for i in range(len(events) - 1, -1, -1) if events[i][0] == "user"), None)
+    if last is None:
+        return None
+    after = fold_creative_copy(events, dependency_digest=digest).get("opening_title")
+    if after is None or not (after.approved or after.cancelled):
+        return None
+    before = fold_creative_copy(events[:last], dependency_digest=digest).get("opening_title")
+    if before is not None and (before.approved or before.cancelled):
+        return None
+    asked = next(
+        (
+            i
+            for i in range(last - 1, -1, -1)
+            if events[i][0] == "assistant"
+            and isinstance(events[i][1].get("choice_question"), Mapping)
+        ),
+        None,
+    )
+    ask = next(
+        (
+            str(events[i][1].get(CONTENT_KEY) or "")
+            for i in range(asked - 1 if asked is not None else -1, -1, -1)
+            if events[i][0] == "user"
+        ),
+        "",
+    )
+    return _TitleAnswer(after, ask)
+
+
+def _settled_title_note(state: CreativeCopyState) -> str:
+    """What the editor model is told about the title she just settled (it writes none)."""
+    if state.approved:
+        return (
+            f"Opening title: she picked {json.dumps(state.approved, ensure_ascii=False)}; "
+            "the server sets it, so do not write or change a title."
         )
-        text = normalize_copy(words or "") if isinstance(words, str) else ""
-        if opening and text and text.casefold() not in said:
-            return True
-    return False
+    return "Opening title: she chose no title; do not add one."
+
+
+def _with_settled_title(ops: Sequence[Any], state: CreativeCopyState) -> list[Any]:
+    """The editor's ops with the title she settled: her exact words, or none at all.
+
+    Any opening words the model wrote are dropped (they are not hers), so the edit carries the
+    title exactly once, or never after "No title".
+    """
+    kept = [op for op in ops if _opening_words(op) is None]
+    if state.approved:
+        kept.append({"op": "set_title", "title": state.approved})
+    return kept
 
 
 async def _title_question_plan(db: AsyncSession, *, item: Any, request: str) -> KriaTurnPlan:
@@ -6817,6 +6888,11 @@ _EDITOR_TARGET_IN_FLIGHT_REPLY_TR = (
 def _state_kw(editor_state: Any) -> dict[str, Any]:
     """Pass `editor_state` only when present: the no-state call stays byte-identical."""
     return {"editor_state": editor_state} if editor_state is not None else {}
+
+
+def _title_kw(title_answer: _TitleAnswer | None) -> dict[str, Any]:
+    """Pass `title_answer` only when her message settled a title (KRI-1560), like `_state_kw`."""
+    return {"title_answer": title_answer} if title_answer is not None else {}
 
 
 _EDITOR_STATE_STALE_REPLY_TR = "Videon değişti. Editörü yeniden açıp tekrar dene."
@@ -8708,10 +8784,11 @@ async def _plan_live_turn(
     # settled). The durable fold reads all events, not the model's bounded context.
     from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
 
-    creative_copy_states = fold_creative_copy(
-        await _load_thread_events(db, thread_id, release=False),
-        dependency_digest=media_digest(snapshot_media(item)),
-    )
+    thread_events = await _load_thread_events(db, thread_id, release=False)
+    copy_digest = media_digest(snapshot_media(item))
+    creative_copy_states = fold_creative_copy(thread_events, dependency_digest=copy_digest)
+    # KRI-1560: this message answered the titles question; its editor turn applies her choice.
+    title_answer = _title_answer_in(thread_events, digest=copy_digest)
     # Only a wording question still being answered keeps the turn on the planner path. Settled
     # words stay protected at draft commit, which refuses an editor draft that changes them
     # (`creative_copy_problem(editor_text=...)`).
@@ -8806,6 +8883,7 @@ async def _plan_live_turn(
             item=item,
             user_message=user_message,
             **_state_kw(editor_state),
+            **_title_kw(title_answer),
         )
         if editor_plan is None and _editor_target_miss_guarded() and has_render:
             return _editor_target_recovery(manifest)
@@ -8989,7 +9067,8 @@ async def _plan_live_turn(
                 # KRI-1560: "başlık koy" on a finished draft. The editor model would write a
                 # title itself and put it on the video unasked (prod thread 1b8974a0, "Renk
                 # Kavgası"); she gets titles built from what she said to pick from instead, and
-                # this turn's other asks wait in the brief for the re-plan her answer starts.
+                # this turn's other asks wait for her answer, whose editor turn does them with
+                # the title she settled (`_title_answer_in`).
                 titles_turn = await _chat_title_turn(
                     db,
                     item_id=item_id,
@@ -9018,6 +9097,7 @@ async def _plan_live_turn(
                         ),
                         requirements=fresh,
                         **_state_kw(editor_state),
+                        **_title_kw(title_answer),
                     )
                 )
                 if editor_plan is not None:
@@ -9194,7 +9274,12 @@ async def _plan_live_turn(
         # alone could have served: fall back to the legacy order, no brief update.
         item = await _refetch_item(db, item_id)
         editor_plan = await _plan_editor_revision(
-            db, thread_id=thread_id, item=item, user_message=user_message, **_state_kw(editor_state)
+            db,
+            thread_id=thread_id,
+            item=item,
+            user_message=user_message,
+            **_state_kw(editor_state),
+            **_title_kw(title_answer),
         )
         if editor_plan is None:
             raise
@@ -9383,6 +9468,7 @@ async def _plan_live_turn(
                 original_request=effective_request,
                 requirements=fresh,
                 **_state_kw(editor_state),
+                **_title_kw(title_answer),
             )
         if editor_plan is not None:
             return PlannedKriaTurn(

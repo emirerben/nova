@@ -342,6 +342,118 @@ async def test_her_answer_ends_with_exactly_what_she_chose(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["title_2", "cancel"], ids=["pick_a_title", "no_title"])
+async def test_a_title_and_a_caption_size_asked_together_apply_once_after_her_choice(
+    monkeypatch, answer
+):
+    """Tadic's hold on #2455: one message asks for an opening title AND bigger captions.
+
+    The titles question comes first and nothing on the video changes; her answer (a title, or
+    "No title") then applies the caption change exactly once, and the chat reports it in that
+    turn only, after it applies. Ways this can fail, each pinned below:
+    * the caption change is drafted or reported with the question, before she answers;
+    * her answer settles the title but the caption ask is lost: the editor model is handed only
+      her answer ("Başlık olmasın", or the title's words) as the whole request;
+    * the editor model writes a title of its own ("Renk Kavgası") and it reaches the video,
+      replaces her pick, or makes the server ask the titles question again after "No title";
+    * the caption change runs twice (two drafts, or two editor calls).
+    """
+    case = _seed()
+    real_brief = planner.load_latest_brief
+    _agents(monkeypatch, case, MODEL_ANSWER)
+    # Her two turns share one brief, as in production.
+    monkeypatch.setattr(planner, "load_latest_brief", real_brief)
+    ask = "Başlık koy ve altyazıları büyüt"
+    extracted = iter(
+        [
+            [
+                BriefUpdate(kind="text", scope="title", description="başlık koy"),
+                BriefUpdate(kind="style", scope="global", description="altyazıları büyüt"),
+            ]
+        ]
+    )
+
+    async def extractor(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return SimpleNamespace(
+            brief_updates=next(extracted, []), request_scope="edit", clarification=None
+        )
+
+    monkeypatch.setattr(planner, "_call_brief_extractor", extractor)
+    edits: list[str] = []
+
+    async def copilot(body, **_kwargs):  # noqa: ANN001, ANN202
+        edits.append(body.message)
+        # The editor model writes a title of its own next to the caption change.
+        return SimpleNamespace(
+            ops=[
+                {"op": "set_title", "title": "Renk Kavgası"},
+                {"op": "patch_caption_line", "all": True, "size_px": 80},
+            ],
+            outcome="proposed",
+            reply="Başlık ekledim ve altyazıları büyüttüm.",
+            intent="edit",
+            rejection_reasons=[],
+            unmet_requests=[],
+            reply_notes=None,
+        )
+
+    monkeypatch.setattr(planner, "run_copilot_turn", copilot)
+
+    _accepted, first = await _run(case, ask)
+
+    assert first["status"] == "completed", first
+    assert edits == [] and _no_draft(case.thread_id), "nothing changes before she answers"
+    message, question = _question(case.thread_id)
+    assert question["kind"] == "creative_copy_candidates"
+    assert "Sen seçince isteğinin kalanını da yapacağım." in message
+    assert not [row for row in _events(case.thread_id) if row[1] == "draft_applied"]
+
+    option = next(o for o in question["options"] if o["key"] == answer)
+    async with session_factory() as db:
+        expected = (await db.get(CreationThread, case.thread_id)).revision
+        accepted, _ = await submit_turn(
+            db,
+            thread_id=case.thread_id,
+            creator_id=case.user_id,
+            body=SubmitTurnBody(
+                message=option["label"],
+                client_event_id=str(uuid.uuid4()),
+                expected_thread_revision=expected,
+                choice_selection={"question_id": question["question_id"], "option_key": answer},
+            ),
+        )
+    second = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+
+    assert second["status"] == "completed", second
+    assert len(edits) == 1, "one editor call does the rest of her ask"
+    assert "altyazıları büyüt" in edits[0], "the editor is handed the caption ask, not her answer"
+    with sync_session() as db:
+        drafts = (
+            db.execute(select(CreatorEditDraft).where(CreatorEditDraft.thread_id == case.thread_id))
+            .scalars()
+            .all()
+        )
+        payloads = [dict(row.snapshot_json or {}).get("editor_payload") or {} for row in drafts]
+    assert len(payloads) == 1, "the caption change is drafted once"
+    assert payloads[0]["caption_meta"]["size_px"] == 80
+    picked = option["label"] if answer == "title_2" else None
+    assert (payloads[0].get("title") or None) == picked
+    events = _events(case.thread_id)
+    answered_at = max(i for i, row in enumerate(events) if row[0] == "user")
+    applied = [i for i, row in enumerate(events) if row[1] == "draft_applied"]
+    assert len(applied) == 1 and applied[0] > answered_at, "reported once, after it applies"
+    report = events[applied[0]][2]
+    assert "Altyazı boyutu" in report
+    assert ("Başlık" in report) == (answer == "title_2"), report
+    assert not any(
+        isinstance(payload.get("choice_question"), dict)
+        for role, _type, _content, payload in events[answered_at:]
+        if role == "assistant"
+    ), "her answer is not asked again"
+    assert "Renk Kavgası" not in json.dumps(events, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
 async def test_a_failed_title_model_falls_back_to_the_older_question(monkeypatch):
     case = _seed()
     agents = _agents(monkeypatch, case, RuntimeError("provider down"))
