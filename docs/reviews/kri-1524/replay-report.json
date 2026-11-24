@@ -1,0 +1,609 @@
+{
+ "ticket": "KRI-1524",
+ "incident": "prod job d988bb99-bf5c-4bc5-9e83-aa2ffae1ca76, server 80c96b04c",
+ "ask": "Use only the good take and cut my pauses so it's tight. Turkish captions.",
+ "takes": [
+  "T1_01.mp4",
+  "T1_02.mp4"
+ ],
+ "arms": {
+  "off": {
+   "keep_segments": [
+    [
+     [
+      0.683,
+      4.33
+     ],
+     [
+      5.275,
+      6.66
+     ],
+     [
+      7.96,
+      10.175
+     ],
+     [
+      10.634,
+      11.5
+     ]
+    ],
+    [
+     [
+      0.0,
+      8.025
+     ],
+     [
+      9.37,
+      12.865
+     ],
+     [
+      16.07,
+      19.7
+     ]
+    ]
+   ],
+   "added_removed_ms": [
+    0,
+    0
+   ],
+   "reports": [
+    {
+     "take": 0,
+     "version": 1,
+     "status": "no_change",
+     "target_s": 0.3,
+     "limit_s": 0.35,
+     "added_cuts": 0,
+     "added_removed_ms": 0,
+     "longest_pause_s": null,
+     "longest_pause_before_s": null,
+     "pauses_over_limit": null,
+     "guard_dropped": 0,
+     "guard_trimmed": 0,
+     "capped": false,
+     "reason": "noisy_take"
+    },
+    {
+     "take": 1,
+     "version": 1,
+     "status": "no_change",
+     "target_s": 0.3,
+     "limit_s": 0.35,
+     "added_cuts": 0,
+     "added_removed_ms": 0,
+     "longest_pause_s": null,
+     "longest_pause_before_s": null,
+     "pauses_over_limit": null,
+     "guard_dropped": 0,
+     "guard_trimmed": 0,
+     "capped": false,
+     "reason": "noisy_take"
+    }
+   ],
+   "join_trims": [],
+   "take_join_gaps": [
+    {
+     "after_take": 0,
+     "gap_s": 0.0
+    }
+   ],
+   "receipt": {
+    "status": "partial",
+    "reason": "There's background sound in some of your takes, so I only cut the long pauses in those"
+   },
+   "independent_check": {
+    "duration_s": 23.26,
+    "voice_band_floor_db": -47.5,
+    "gaps_over_0_35_s": [
+     [
+      0.8,
+      1.25,
+      0.45
+     ],
+     [
+      2.3,
+      2.8,
+      0.5
+     ],
+     [
+      5.9,
+      6.4,
+      0.5
+     ],
+     [
+      7.95,
+      8.55,
+      0.6
+     ],
+     [
+      10.15,
+      11.35,
+      1.2
+     ],
+     [
+      12.15,
+      12.9,
+      0.75
+     ],
+     [
+      14.65,
+      15.2,
+      0.55
+     ],
+     [
+      16.95,
+      17.85,
+      0.9
+     ]
+    ],
+    "gaps_0_5_s_or_more": [
+     [
+      2.3,
+      2.8,
+      0.5
+     ],
+     [
+      5.9,
+      6.4,
+      0.5
+     ],
+     [
+      7.95,
+      8.55,
+      0.6
+     ],
+     [
+      10.15,
+      11.35,
+      1.2
+     ],
+     [
+      12.15,
+      12.9,
+      0.75
+     ],
+     [
+      14.65,
+      15.2,
+      0.55
+     ],
+     [
+      16.95,
+      17.85,
+      0.9
+     ]
+    ],
+    "longest_gap_s": 1.2
+   }
+  },
+  "on": {
+   "keep_segments": [
+    [
+     [
+      0.683,
+      1.663
+     ],
+     [
+      1.834,
+      3.05
+     ],
+     [
+      3.175,
+      4.33
+     ],
+     [
+      5.275,
+      6.66
+     ],
+     [
+      7.96,
+      9.008
+     ],
+     [
+      9.172,
+      10.175
+     ],
+     [
+      10.634,
+      11.5
+     ]
+    ],
+    [
+     [
+      0.31,
+      2.2
+     ],
+     [
+      3.13,
+      4.25
+     ],
+     [
+      4.55,
+      6.685
+     ],
+     [
+      6.954,
+      8.025
+     ],
+     [
+      9.37,
+      10.4
+     ],
+     [
+      10.9,
+      12.85
+     ],
+     [
+      16.07,
+      19.7
+     ]
+    ]
+   ],
+   "added_removed_ms": [
+    459,
+    2323
+   ],
+   "reports": [
+    {
+     "take": 0,
+     "version": 1,
+     "status": "applied",
+     "target_s": 0.3,
+     "limit_s": 0.35,
+     "added_cuts": 3,
+     "added_removed_ms": 459,
+     "longest_pause_s": 0.47,
+     "longest_pause_before_s": 0.59,
+     "pauses_over_limit": 1,
+     "guard_dropped": 0,
+     "guard_trimmed": 1,
+     "capped": false,
+     "reason": null
+    },
+    {
+     "take": 1,
+     "version": 1,
+     "status": "applied",
+     "target_s": 0.3,
+     "limit_s": 0.35,
+     "added_cuts": 6,
+     "added_removed_ms": 2323,
+     "longest_pause_s": 0.43,
+     "longest_pause_before_s": 1.23,
+     "pauses_over_limit": 2,
+     "guard_dropped": 0,
+     "guard_trimmed": 0,
+     "capped": false,
+     "reason": null
+    }
+   ],
+   "join_trims": [],
+   "take_join_gaps": [
+    {
+     "after_take": 0,
+     "gap_s": 0.29
+    }
+   ],
+   "receipt": {
+    "status": "partial",
+    "reason": "Speech cleanup cut your pauses tight, but 3 still last longer than 0.35 s (the longest is 0.5 s)"
+   },
+   "independent_check": {
+    "duration_s": 20.48,
+    "voice_band_floor_db": -46.6,
+    "gaps_over_0_35_s": [
+     [
+      2.1,
+      2.5,
+      0.4
+     ],
+     [
+      10.45,
+      10.9,
+      0.45
+     ],
+     [
+      14.7,
+      15.1,
+      0.4
+     ]
+    ],
+    "gaps_0_5_s_or_more": [],
+    "longest_gap_s": 0.45
+   }
+  }
+ },
+ "incident_video_check": {
+  "duration_s": 23.27,
+  "voice_band_floor_db": -44.7,
+  "gaps_over_0_35_s": [
+   [
+    0.8,
+    1.25,
+    0.45
+   ],
+   [
+    2.3,
+    2.8,
+    0.5
+   ],
+   [
+    5.9,
+    6.4,
+    0.5
+   ],
+   [
+    7.95,
+    8.55,
+    0.6
+   ],
+   [
+    10.15,
+    11.35,
+    1.2
+   ],
+   [
+    12.15,
+    12.9,
+    0.75
+   ],
+   [
+    14.65,
+    15.2,
+    0.55
+   ],
+   [
+    16.95,
+    17.85,
+    0.9
+   ]
+  ],
+  "gaps_0_5_s_or_more": [
+   [
+    2.3,
+    2.8,
+    0.5
+   ],
+   [
+    5.9,
+    6.4,
+    0.5
+   ],
+   [
+    7.95,
+    8.55,
+    0.6
+   ],
+   [
+    10.15,
+    11.35,
+    1.2
+   ],
+   [
+    12.15,
+    12.9,
+    0.75
+   ],
+   [
+    14.65,
+    15.2,
+    0.55
+   ],
+   [
+    16.95,
+    17.85,
+    0.9
+   ]
+  ],
+  "longest_gap_s": 1.2
+ },
+ "new_cuts": [
+  {
+   "take": 0,
+   "start_s": 1.664,
+   "end_s": 1.835,
+   "loudest_20ms_over_floor_db": 5.0
+  },
+  {
+   "take": 0,
+   "start_s": 3.051,
+   "end_s": 3.176,
+   "loudest_20ms_over_floor_db": 2.9
+  },
+  {
+   "take": 0,
+   "start_s": 9.008,
+   "end_s": 9.172,
+   "loudest_20ms_over_floor_db": 0.1
+  },
+  {
+   "take": 1,
+   "start_s": 0.0,
+   "end_s": 0.31,
+   "loudest_20ms_over_floor_db": 6.4
+  },
+  {
+   "take": 1,
+   "start_s": 2.201,
+   "end_s": 3.131,
+   "loudest_20ms_over_floor_db": 4.0
+  },
+  {
+   "take": 1,
+   "start_s": 4.251,
+   "end_s": 4.551,
+   "loudest_20ms_over_floor_db": 4.6
+  },
+  {
+   "take": 1,
+   "start_s": 6.685,
+   "end_s": 6.954,
+   "loudest_20ms_over_floor_db": 5.0
+  },
+  {
+   "take": 1,
+   "start_s": 10.401,
+   "end_s": 10.901,
+   "loudest_20ms_over_floor_db": 7.4
+  },
+  {
+   "take": 1,
+   "start_s": 12.851,
+   "end_s": 12.866,
+   "loudest_20ms_over_floor_db": null
+  }
+ ],
+ "controls": [
+  {
+   "take": "T1_01_footage.mp4",
+   "room_floor_dbfs": -31.8,
+   "speech_over_floor_db": 17.3,
+   "verdict_off": "noisy",
+   "verdict_on": "noisy",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": "noisy_take",
+    "added_cuts": 0
+   },
+   "plan_untouched": true,
+   "reply": {
+    "status": "partial",
+    "reason": "There's background sound in your take, so I only cut the long pauses"
+   }
+  },
+  {
+   "take": "T2_01_footage.mp4",
+   "room_floor_dbfs": -33.9,
+   "speech_over_floor_db": 17.1,
+   "verdict_off": "noisy",
+   "verdict_on": "noisy",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": "noisy_take",
+    "added_cuts": 0
+   },
+   "plan_untouched": true,
+   "reply": {
+    "status": "partial",
+    "reason": "There's background sound in your take, so I only cut the long pauses"
+   }
+  },
+  {
+   "take": "T1_01_footage.mp4",
+   "room_floor_dbfs": -36.2,
+   "speech_over_floor_db": 24.6,
+   "verdict_off": "noisy",
+   "verdict_on": "noisy",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": "noisy_take",
+    "added_cuts": 0
+   },
+   "plan_untouched": true,
+   "reply": {
+    "status": "partial",
+    "reason": "There's background sound in your take, so I only cut the long pauses"
+   }
+  },
+  {
+   "take": "R_Dem_WtSo-4q.mp4",
+   "room_floor_dbfs": -30.8,
+   "speech_over_floor_db": 22.5,
+   "verdict_off": "noisy",
+   "verdict_on": "noisy",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": "noisy_take",
+    "added_cuts": 0
+   },
+   "plan_untouched": true,
+   "reply": {
+    "status": "partial",
+    "reason": "There's background sound in your take, so I only cut the long pauses"
+   }
+  },
+  {
+   "take": "T2_01.mp4",
+   "room_floor_dbfs": -43.5,
+   "speech_over_floor_db": 30.2,
+   "verdict_off": "noisy",
+   "verdict_on": "hot",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": null,
+    "added_cuts": 0
+   },
+   "plan_untouched": true
+  },
+  {
+   "take": "T3_01.mp4",
+   "room_floor_dbfs": -41.2,
+   "speech_over_floor_db": 31.2,
+   "verdict_off": "noisy",
+   "verdict_on": "hot",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": null,
+    "added_cuts": 0
+   },
+   "plan_untouched": true
+  },
+  {
+   "take": "V4.mp4",
+   "room_floor_dbfs": -44.9,
+   "speech_over_floor_db": 30.5,
+   "verdict_off": "noisy",
+   "verdict_on": "hot",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": null,
+    "added_cuts": 0
+   },
+   "plan_untouched": true
+  },
+  {
+   "take": "V5.mp4",
+   "room_floor_dbfs": -39.8,
+   "speech_over_floor_db": 28.4,
+   "verdict_off": "noisy",
+   "verdict_on": "hot",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": null,
+    "added_cuts": 0
+   },
+   "plan_untouched": true
+  },
+  {
+   "take": "R_DfAnY7ZowA7.mp4",
+   "room_floor_dbfs": -39.2,
+   "speech_over_floor_db": 30.3,
+   "verdict_off": "noisy",
+   "verdict_on": "hot",
+   "switch_on_report": {
+    "status": "no_change",
+    "reason": null,
+    "added_cuts": 0
+   },
+   "plan_untouched": true
+  }
+ ],
+ "words": {
+  "model": "ggml-large-v3-turbo-q5_0.bin",
+  "word_count_off": 42,
+  "word_count_on": 42,
+  "differences": [
+   {
+    "op": "replace",
+    "off": [
+     "bizi"
+    ],
+    "on": [
+     "biz"
+    ]
+   }
+  ],
+  "note": "word lists left out of git (private transcript); rerun the script with --model to see them"
+ },
+ "revision_note": "generated by scripts/dev/kri1524_tight_pause_replay.py on branch claude/kri-1524-pauses-44d4f8 (base origin/main 5edf64772)"
+}

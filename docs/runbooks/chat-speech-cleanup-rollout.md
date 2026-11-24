@@ -58,7 +58,7 @@ setting the flag:
 `TIGHT_PAUSE_CUT_ENABLED` (default off; off is byte-identical) adds extra pause cuts to a
 consented phone Talking render when the approved brief records `pauses: "tight"` ("cut out all
 my pauses so it's tight"; Main Creator v121). It needs consented cleanup (`required_v1`), one
-clip, and a take whose room floor is at or below -45 dBFS; the render writes
+clip, and a take whose room floor is at or below -45 dBFS (or a loud but clean take, below); the render writes
 `variant["tight_pauses"]` and the receipt reports the measured longest pause (0.35 s limit). The
 thread projection also marks a recorded cleanup ask (`requested_in_chat`, `pause_style`) so new
 iPhone builds show Clean up speech already on; older builds ignore the fields. Design, limits
@@ -68,6 +68,25 @@ and evidence: `docs/reviews/qendresa-13-tight-pauses.md`.
    on the creator's own take, plus one take with background noise (expect no tight cuts).
 2. `fly secrets set TIGHT_PAUSE_CUT_ENABLED=true --app nova-video`, restart api and worker.
 3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
+### Takes recorded loud (KRI-1524)
+
+An action camera records hot, so an ordinary outdoor take's room floor sits near -40 dBFS. With
+`TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED` (default **on**, bug-fix kill switch) a take above -45 dBFS
+is noisy only when its speech (95th percentile of 40 ms frames) rises less than 25 dB above its
+floor; otherwise the tight / long pass cuts it with the same floor-relative protections, and its
+pauses and the several-take join gaps are measured against its own floor (90 Hz high-passed
+20 ms RMS under floor + 10 dB, 0.12 s), not the -38 dB bar that heard no pause in it. Takes at or
+below -45 dBFS are unchanged. Measured on the kit and fixture clips: Cusco DJI / Qendresa
+talking takes 28-34 dB (now cut), restaurant / café / crowd takes 17-25 dB (still noisy). The
+draft promise says "unless a take is noisy" in EN/TR/DE; drafts stored with the old wording stay
+render promises. Replay and evidence: `scripts/dev/kri1524_tight_pause_replay.py`,
+`docs/reviews/kri-1524-tight-pauses-hot-takes.md`.
+
+1. Check a fresh several-take Talking render on an action-camera take: `tight_pauses.status` is
+   `applied` (not `noisy_take`) and `take_join_gaps` are non-zero measured values.
+2. Kill switch: `fly secrets set TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED=false --app nova-video` +
+   api and worker restart; every plan, report and receipt is then byte-identical to before.
 
 ## Long pauses by default
 

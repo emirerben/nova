@@ -13,7 +13,10 @@ module adds those cuts at render time, ON TOP of an already-consented ``CutPlan`
 - a kept speech fragment shorter than ``MIN_KEEP_SPEECH_SEGMENT_S`` never touches a new cut;
 - faint unvoiced sound the acceptance tool hears as pause (a breath or click) is cut with the
   pause, unless it is a word's tail (within ``TIGHT_ATTACH_S`` after it) or onset (within
-  ``TIGHT_ATTACH_S`` before it, with no gate dip between).
+  ``TIGHT_ATTACH_S`` before it, with no gate dip between);
+- a noisy take gets no new cuts. With ``relative_noise`` (KRI-1524) a take recorded loud but
+  clean (room floor above -45 dBFS, speech 25 dB+ above it) is not noisy: it is cut with the same
+  floor-relative protections and its pauses are measured against its own floor.
 
 Pure given decoded samples; ``apply_tight_pauses`` is the I/O wrapper.
 """
@@ -90,6 +93,21 @@ TIGHT_DIP_MIN_S = 0.03
 TIGHT_SPAN_SEAM_S = 0.02
 # On a noisy take "silence" is ambient noise and soft speech hides in it (KRI-1017): no cuts.
 TIGHT_MAX_FLOOR_DBFS = -45.0
+# KRI-1524: an action camera records hot (Cusco DJI T1 peaks at -0.8 dBFS), so a quiet street
+# take's floor sits near -40 dBFS. With ``relative_noise`` a take above TIGHT_MAX_FLOOR_DBFS is
+# noisy only when its speech (this percentile of the same 40 ms frames) rises less than
+# TIGHT_MIN_SPEECH_OVER_FLOOR_DB above that floor. Measured on 299 kit and fixture clips: the
+# Cusco DJI and Qendresa talking takes 28-34 dB, restaurant and café takes 17-25 dB, crowd, music
+# and silent clips 3-18 dB. Every cut bar below is already floor-relative.
+TIGHT_MIN_SPEECH_OVER_FLOOR_DB = 25.0
+TIGHT_SPEECH_PERCENTILE = 95.0
+# ... and such a "hot" take's pauses are measured against its own floor: the acceptance bar
+# (-38 dB, per sample) sits inside a -40 dBFS room's tone and heard no pause at all ("longest
+# pause 0.0" next to 1.2 s gaps). Quiet = 20 ms RMS frames (10 ms hop) of the 90 Hz high-passed
+# audio under the take's own floor (5th percentile of those frames) + this, for >= 0.12 s.
+TIGHT_MEASURE_ABOVE_FLOOR_DB = 10.0
+_MEASURE_HIGHPASS_HZ = 90.0
+_MEASURE_MIN_S = 0.12
 # Inside a word's own stamp the loud bar is lower than elsewhere: today's cleanup never cuts
 # inside a stamp, so a soft unvoiced ending/onset (+12 dB) there stays protected. Room tone
 # flickers up to about +8 dB in 20 ms frames, so the bar sits above that.
@@ -254,6 +272,71 @@ def _room_floor_db(samples: np.ndarray, sr: int) -> float:
     if len(open_levels) == len(levels) or len(open_levels) == 0:
         return quiet_floor_db(samples, sr)
     return float(np.percentile(open_levels, FLOOR_PERCENTILE))
+
+
+def _speech_level_db(samples: np.ndarray, sr: int) -> float:
+    """``TIGHT_SPEECH_PERCENTILE`` of the frames ``_room_floor_db`` reads (KRI-1524)."""
+
+    win = int(sr * FRAME_S)
+    usable = len(samples) - len(samples) % win
+    if usable < win:
+        return -120.0
+    frames = samples[:usable].astype(np.float64).reshape(-1, win)
+    levels = 10.0 * np.log10(np.mean(frames**2, axis=1) + 1e-12)
+    open_levels = levels[levels > TIGHT_GATE_CLOSED_DBFS]
+    return float(
+        np.percentile(open_levels if len(open_levels) else levels, TIGHT_SPEECH_PERCENTILE)
+    )
+
+
+def take_noise(samples: np.ndarray, sr: int, *, relative: bool) -> Literal["quiet", "hot", "noisy"]:
+    """How the tight pass treats a take's background.
+
+    ``quiet``: the room floor is at or below ``TIGHT_MAX_FLOOR_DBFS`` (unchanged path). Above it
+    the take is ``noisy`` (no tight cuts), unless ``relative`` (KRI-1524) and its speech rises at
+    least ``TIGHT_MIN_SPEECH_OVER_FLOOR_DB`` above that floor: then it is ``hot``, a clean take
+    recorded loud, cut with the same floor-relative protections and measured against its own
+    floor (``relative_silence_spans``)."""
+
+    floor_db = _room_floor_db(samples, sr)
+    if floor_db <= TIGHT_MAX_FLOOR_DBFS:
+        return "quiet"
+    if relative and _speech_level_db(samples, sr) - floor_db >= TIGHT_MIN_SPEECH_OVER_FLOOR_DB:
+        return "hot"
+    return "noisy"
+
+
+def relative_silence_spans(
+    samples: np.ndarray, sr: int, duration_s: float | None = None
+) -> list[tuple[float, float]]:
+    """A hot take's pauses (KRI-1524), measured against its own floor.
+
+    ``samples`` are the take high-passed at 90 Hz (``_hot_take_silences`` decodes them so). A
+    pause is a run of 20 ms RMS frames (10 ms hop) under the floor (5th percentile of those
+    frames, gate-closed frames left out) + ``TIGHT_MEASURE_ABOVE_FLOOR_DB``, at least 0.12 s
+    long. A span covers the 10 ms cells whose frame centres are quiet; one that touches the
+    start of the audio opens at 0 and one that touches its end closes at ``duration_s``."""
+
+    starts, level, win = _frame_levels(samples, sr)
+    if not len(starts):
+        return []
+    hop = int(sr * _LOUD_HOP_S)
+    open_level = level[level > TIGHT_GATE_CLOSED_DBFS]
+    floor_db = float(np.percentile(open_level if len(open_level) else level, FLOOR_PERCENTILE))
+    quiet = level < floor_db + TIGHT_MEASURE_ABOVE_FLOOR_DB
+    end_s = max(len(samples) / sr, duration_s or 0.0)
+    spans: list[tuple[float, float]] = []
+    first: int | None = None
+    for i, flag in enumerate([*quiet.tolist(), False]):
+        if flag and first is None:
+            first = i
+        elif not flag and first is not None:
+            lo = 0.0 if first == 0 else (starts[first] + (win - hop) / 2) / sr
+            hi = end_s if i == len(starts) else (starts[i - 1] + (win + hop) / 2) / sr
+            if hi - lo >= _MEASURE_MIN_S - _EPS:
+                spans.append((float(lo), float(hi)))
+            first = None
+    return spans
 
 
 def _drop_detached_faint(
@@ -431,6 +514,51 @@ def measure_silence_spans(
     return spans
 
 
+def _hot_take_silences(
+    media_path: str, duration_s: float | None
+) -> list[tuple[float, float]] | None:
+    """``relative_silence_spans`` of ``media_path`` high-passed at 90 Hz, or None when that audio
+    cannot be decoded (then nothing is measured: never today's deaf -38 dB measure on a hot
+    take, which would report every pause as gone)."""
+
+    try:
+        samples = audio_pcm.decode_pcm_f32(media_path, highpass_hz=_MEASURE_HIGHPASS_HZ)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if len(samples) < int(SAMPLE_RATE * _LOUD_WIN_S):
+        return None
+    return relative_silence_spans(samples, SAMPLE_RATE, duration_s)
+
+
+def measure_take_silences(
+    media_path: str,
+    *,
+    duration_s: float | None = None,
+    relative_noise: bool = False,
+    samples: np.ndarray | None = None,
+) -> list[tuple[float, float]] | None:
+    """Pauses by the acceptance definition, for every caller that measures a take.
+
+    With ``relative_noise`` (KRI-1524) a hot take (``take_noise``) is measured against its own
+    floor; every other take, and every take with the switch off, gets ``measure_silence_spans``
+    unchanged. ``samples`` (the take's 16 kHz mono PCM) saves a decode; when the take cannot be
+    decoded to tell, it gets today's measure."""
+
+    if relative_noise:
+        if samples is None:
+            try:
+                samples = audio_pcm.decode_pcm_f32(media_path)
+            except (subprocess.SubprocessError, OSError):
+                samples = None
+        if (
+            samples is not None
+            and len(samples) >= int(SAMPLE_RATE * FRAME_S)
+            and take_noise(samples, SAMPLE_RATE, relative=True) == "hot"
+        ):
+            return _hot_take_silences(media_path, duration_s)
+    return measure_silence_spans(media_path, duration_s=duration_s)
+
+
 def _enforce_fragments(
     consented: list[Removal],
     new: list[Removal],
@@ -523,7 +651,10 @@ def tighten_pauses(
     trim_tail: bool = False,
     max_keep_segments: int = TIGHT_MAX_KEEP_SEGMENTS,
     min_cut_s: float = TIGHT_MIN_CUT_S,
+    relative_noise: bool = False,
 ) -> tuple[CutPlan, TightPauseReport]:
+    """``relative_noise`` (KRI-1524): a take above ``TIGHT_MAX_FLOOR_DBFS`` is noisy only when
+    its speech does not rise far above its floor (``take_noise``); off, every such take is."""
     long_mode = min_pause_s is not None
     mode: Literal["tight", "long"] = "long" if long_mode else "tight"
     limit_s = min_pause_s if min_pause_s is not None else TIGHT_PAUSE_LIMIT_S
@@ -540,12 +671,11 @@ def tighten_pauses(
 
     audio_ok = samples is not None and len(samples) >= int(sr * FRAME_S)
     if audio_ok:
-        floor_db = _room_floor_db(samples, sr)
-        if floor_db > TIGHT_MAX_FLOOR_DBFS:
+        if take_noise(samples, sr, relative=relative_noise) == "noisy":
             return plan, TightPauseReport(
                 "no_change", 0, 0.0, None, None, None, 0, 0, False, "noisy_take", mode, limit_s
             )
-        floor_db = max(floor_db, TIGHT_MIN_FLOOR_DBFS)
+        floor_db = max(_room_floor_db(samples, sr), TIGHT_MIN_FLOOR_DBFS)
         loud = _loud_runs(samples, sr, floor_db)
         stamps = _soft_zones(normalized, spans)
         in_stamp = _loud_runs(samples, sr, floor_db, TIGHT_QUIET_IN_STAMP_ABOVE_FLOOR_DB)
@@ -709,8 +839,12 @@ def apply_tight_pauses(
     trim_tail: bool = False,
     max_keep_segments: int = TIGHT_MAX_KEEP_SEGMENTS,
     min_cut_s: float = TIGHT_MIN_CUT_S,
+    relative_noise: bool = False,
 ) -> tuple[CutPlan, TightPauseReport]:
-    """``tighten_pauses`` for the media the plan was built from (detects + decodes itself)."""
+    """``tighten_pauses`` for the media the plan was built from (detects + decodes itself).
+
+    ``relative_noise`` (KRI-1524, ``TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED``): a hot take is cut and
+    measured against its own floor (``measure_take_silences``); off, byte-identical."""
 
     mode: Literal["tight", "long"] = "long" if min_pause_s is not None else "tight"
     limit_s = min_pause_s if min_pause_s is not None else TIGHT_PAUSE_LIMIT_S
@@ -729,7 +863,9 @@ def apply_tight_pauses(
     if samples is None or len(samples) < int(SAMPLE_RATE * FRAME_S):
         return _unavailable(plan, "audio_unavailable", mode, limit_s)
     kria_spans = [tuple(s) for s in result.spans]
-    measured = measure_silence_spans(media_path, duration_s=duration_s)
+    measured = measure_take_silences(
+        media_path, duration_s=duration_s, relative_noise=relative_noise, samples=samples
+    )
     return tighten_pauses(
         plan,
         words,
@@ -743,4 +879,5 @@ def apply_tight_pauses(
         trim_tail=trim_tail,
         max_keep_segments=max_keep_segments,
         min_cut_s=min_cut_s,
+        relative_noise=relative_noise,
     )

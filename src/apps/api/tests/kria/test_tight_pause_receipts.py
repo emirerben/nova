@@ -16,6 +16,9 @@ Prod/kit: the render cut only pauses >= 0.6 s and the finished receipt said a ba
 10. (review #2102) The video and the receipt disagree: the cutter's OWN report for a failed
     pause measurement maps to "I didn't shorten the shorter pauses", so that render must hold
     no tight cuts.
+11. (KRI-1524) The draft promises 0.3 s with no condition, but the render skips the tight cut
+    on a take with loud background sound: every draft promise, in every reply language, names
+    that exception before approval.
 """
 
 from __future__ import annotations
@@ -197,17 +200,18 @@ def _draft(**over) -> PlanFacts:
 DRAFT_CASES = [
     (
         {},
-        "Speech cleanup cuts every pause down to about 0.3 s, and I'll tell you after if any "
-        "stay longer",
+        "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you "
+        "after if any stay longer",
     ),
     (
         {"speech_cleanup_enabled": False, "speech_cleanup_offered": True},
-        "Choose Clean up speech when you approve and every pause is cut down to about 0.3 s",
+        "Choose Clean up speech when you approve: every pause is cut to about 0.3 s unless a take "
+        "is noisy",
     ),
     (
         {"speech_cleanup_enabled": False},
-        "If Clean up speech is offered when you approve, choose it and every pause is cut down "
-        "to about 0.3 s",
+        "If Clean up speech is offered when you approve, choose it: every pause is cut to about "
+        "0.3 s unless a take is noisy",
     ),
     (
         {"speech_cleanup_enabled": False, "speech_cleanup_offered": False},
@@ -246,6 +250,40 @@ def test_turkish_twins_exist_for_every_static_line():
         assert brief_checks._REASON_TR[text] != text
         assert brief_checks.is_format_limit(text)
         assert brief_checks.is_format_limit(brief_checks._REASON_TR[text])
+
+
+# KRI-1524: the condition as each reply language writes it (Cusco DJI T1 was promised 0.3 s, then
+# both takes were skipped as noisy after a 10-minute render).
+_NOISY_EXCEPTION = {
+    "en": "0.3 s unless a take is noisy",
+    "tr": "0,3 sn'ye kadar kısal",  # ... "(gürültülü çekimler hariç)" follows
+    "de": "0,3 s",  # ... "außer in einem lauten Take" follows
+}
+_NOISY_WORDS = {
+    "en": "unless a take is noisy",
+    "tr": "(gürültülü çekimler hariç)",
+    "de": "außer in einem lauten Take",
+}
+
+
+@pytest.mark.parametrize(
+    "line",
+    [brief_checks._TIGHT_PLANNED, brief_checks._TIGHT_AT_APPROVAL, brief_checks._TIGHT_IF_OFFERED],
+)
+def test_kri1524_every_draft_promise_names_the_loud_background_exception(line):
+    texts = dict(zip(("en", "tr", "de"), brief_checks.reason_in_every_language(line), strict=True))
+    for language, text in texts.items():
+        assert _NOISY_EXCEPTION[language] in text and _NOISY_WORDS[language] in text, text
+        assert text in brief_checks.RENDER_PROMISE_TEXTS
+
+
+@pytest.mark.parametrize("language", ["en", "tr", "de"])
+def test_kri1524_the_draft_a_creator_reads_carries_the_condition(flag_on, monkeypatch, language):
+    monkeypatch.setattr(settings, "kria_german_replies_enabled", True, raising=False)
+    with reply_language_for(language):
+        for over, _ in DRAFT_CASES[:3]:
+            receipt = check_requirement(_req(), _draft(**over))
+            assert _NOISY_WORDS[language] in receipt.reason, (language, receipt.reason)
 
 
 def test_turkish_dynamic_and_draft_receipts(flag_on):

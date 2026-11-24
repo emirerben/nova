@@ -1695,6 +1695,10 @@
       "source": "default",
       "value": false
     },
+    "tight_pause_relative_floor_enabled": {
+      "source": "default",
+      "value": true
+    },
     "tiktok_content_posting_audited": {
       "source": "default",
       "value": false
