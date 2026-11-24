@@ -53,7 +53,7 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
 | `nova.compose.narrated_clip_alignment` | ✓ | `rubrics/narrated_clip_alignment.md` | live-captured goldens (cacio e pepe, locked + free order; Cappadocia pinned-last, re-sorted from prod 38caaebd) | — |
-| `nova.kria.story_sequencer` | ✓ | — | hand-authored replay goldens (a placed ending the answer must not rank; "cannot decide"); held-out set `story_sequencer/heldout.json` (14 cases, upload-order baseline 0.47) re-scored from a recorded run when one exists; no live run yet (KRI-1593) | — |
+| `nova.kria.story_sequencer` | ✓ | — | hand-authored replay goldens (a placed ending the answer must not rank; "cannot decide"); held-out set `story_sequencer/heldout.json` (14 cases) re-scored from the recorded live run of 2026-11-24 (model 1.00 vs upload order 0.47, $0.025) (KRI-1593) | — |
 | `nova.compose.spoken_cue_resolver` | ✓ | — | hand-authored replay golden (de1 "Null zu null" → "0 zu 0", "1. FC Nürnberg" → "FC Nürnberg", a cue never said → null); no live capture yet (KRI-1356) | — |
 
 ## Layer-2 text-overlay pipeline eval
@@ -464,12 +464,18 @@ by the replay goldens (those are hand-authored and only prove the parse and stru
   played backwards scores 0 (the wrong-content control), and the baseline leaves room to be beaten.
 - **The comparison:** `test_recorded_run_beats_upload_order` re-scores
   `baselines/story_sequencer/heldout_run.json` and requires the model's mean to clear the baseline
-  by 0.25 with no creator-placed clip moved. It is skipped while no run is recorded, and it fails
-  when the recorded run is for another `prompt_version`.
-- **Recording a run is paid and needs approval** (about 15 Gemini Flash calls, well under the $2
-  cap): the live command above with `-k test_live_heldout_run`. It writes the run file; commit it
-  with the PR that turns the flag on. Do not tune `prompts/story_sequencer.txt` against the
-  held-out cases: a prompt change is judged on them, then a new run is recorded.
+  by 0.25 with no creator-placed clip moved. It fails when the recorded run is for another
+  `prompt_version` (and is skipped only if the run file is removed).
+- **Recorded run (2026-11-24, approved by the owner):** 15 Gemini Flash calls, $0.025 settled.
+  Model 1.00, upload order 0.47, no refused answer, no placed clip moved. On the `restraint` case
+  it did NOT leave the clips alone (it moved the one described as "a little closer" to the end),
+  so restraint is not shown. The cases are clean and hand-written; this is not a measure of real,
+  thin clip records.
+- **Recording a new run is paid and needs approval** (about 15 Gemini Flash calls, a few cents,
+  well under the $2 cap): the live command above with `-k test_live_heldout_run`, a migrated
+  `DATABASE_URL` for the cost ledger and `--max-cost-usd`. It rewrites the run file; commit it
+  with the prompt change. Do not tune `prompts/story_sequencer.txt` against the held-out cases: a
+  prompt change is judged on them, then a new run is recorded.
 
 ## CI
 

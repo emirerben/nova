@@ -1625,9 +1625,19 @@ native program are untouched. The Main Creator writes its own summary before the
 A restated-strategy suggestion tap (`plan_pinned_suggestion_turn`) re-plans without the order keys
 (`restate_judgment.plan_media` copies only the length-plan keys; the same gap a creator's own order
 has), so after a story-ordered render it would re-render from upload order: close it before the
-flag is turned on. Whether the live model's orders beat upload order is NOT measured yet:
-`tests/evals/test_story_sequencer_evals.py` holds the held-out set (14 cases, upload-order baseline
-0.47) and re-scores a recorded run, but recording one is a paid run that needs approval. Keep the
-flag off until that run is recorded and passes. Guards: `tests/kria/test_story_order.py` (the
+flag is turned on.
+
+**Measured (2026-11-24, one live run, 15 Gemini Flash calls, $0.025).** On the held-out set
+(`tests/evals/story_sequencer/heldout.json`: 14 hand-written cases, clips listed in the order they
+were added, with the precedence pairs a story order must satisfy) the played order satisfied every
+pair: mean 1.00 against 0.47 for upload order, no creator-placed clip moved, no answer refused. The
+run is recorded in `tests/evals/baselines/story_sequencer/heldout_run.json` and
+`test_recorded_run_beats_upload_order` re-scores it on every CI run (it fails if the prompt version
+moves without a new run). What this does not show: the cases are short, clean, hand-written clip
+records with an obvious chronology, so it says the model follows a clear story (also in German and
+Turkish, and inside a creator's groups), not how it does on real, thin or noisy clip records. On
+the one "nothing to decide" case it did not hold back: it moved the clip described as "a little
+closer" to the end. No device render of a story-ordered draft has been inspected. Guards:
+`tests/kria/test_story_order.py` (the
 failure-mode list is its docstring; it runs the real contract, readiness and
 `preflight_montage_plan`, with hand-written rankings).

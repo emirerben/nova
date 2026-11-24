@@ -752,6 +752,7 @@
         "src/apps/api/prompts/story_sequencer.txt",
         "src/apps/api/tests/fixtures/agent_evals/story_sequencer/",
         "src/apps/api/tests/evals/story_sequencer/",
+        "src/apps/api/tests/evals/baselines/story_sequencer/",
         "src/apps/api/tests/evals/test_story_sequencer_evals.py",
         "src/apps/api/tests/kria/test_story_order.py"
       ]

@@ -12,8 +12,9 @@ Three layers, each saying only what it can:
 * The comparison itself ("the model beats upload order") needs the live model. A paid run
   (`--eval-mode=live`, an approved development-ledger run) records its answers to
   `baselines/story_sequencer/heldout_run.json`; `test_recorded_run_beats_upload_order` then
-  re-scores that file on every CI run. Until a run is recorded that test is skipped, and
-  `KRIA_STORY_SEQUENCER_ENABLED` stays off.
+  re-scores that file on every CI run, and fails when the prompt version has moved since.
+  The recorded run is one sample of clean, hand-written cases: it does not measure real, thin
+  clip records, and a new prompt needs a new run.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from app.agents._runtime import SchemaError
 from app.agents.story_sequencer import StorySequencerAgent
 
 from .runners.eval_runner import (
+    RecordingModelClient,
     build_eval_run_context,
     discover_fixtures,
     load_fixture,
@@ -166,8 +168,8 @@ def _score_run(run: dict) -> tuple[float, float, list[str]]:
 def test_recorded_run_beats_upload_order() -> None:
     if not scoring.RECORDED_RUN.exists():
         pytest.skip(
-            "no recorded held-out run yet: it needs an approved paid live run "
-            "(tests/evals/README.md, story sequencer); KRIA_STORY_SEQUENCER_ENABLED stays off"
+            "no recorded held-out run: it needs an approved paid live run "
+            "(tests/evals/README.md, story sequencer)"
         )
     run = json.loads(scoring.RECORDED_RUN.read_text(encoding="utf-8"))
     assert run["prompt_version"] == StorySequencerAgent.spec.prompt_version, (
@@ -176,6 +178,18 @@ def test_recorded_run_beats_upload_order() -> None:
     model, baseline, problems = _score_run(run)
     assert not [p for p in problems if "moved" in p or "no recorded" in p], problems
     assert model >= baseline + scoring.REQUIRED_MARGIN, (model, baseline, problems)
+
+
+def _left_alone(case: dict, raw: str | None) -> bool:
+    """Whether the played order for ``raw`` is the order the clips were added in."""
+    if raw is None:
+        return True
+    try:
+        output = StorySequencerAgent(None).parse(raw, scoring.case_input(case))  # type: ignore[arg-type]
+    except SchemaError:
+        return True
+    played = scoring.played_order(case, output.order if output.decided else None)
+    return played == scoring.upload_order(case)
 
 
 def _git_sha() -> str:
@@ -192,21 +206,15 @@ def test_live_heldout_run(eval_mode: str, live_model_client) -> None:
     spec = StorySequencerAgent.spec
     answers: dict[str, dict] = {}
     for case in [*CASES, *HELDOUT["restraint"]]:
-
-        class _Recording:
-            raw: str | None = None
-
-            def invoke(self, **kwargs):  # noqa: ANN003, ANN202
-                result = live_model_client.invoke(**kwargs)
-                _Recording.raw = result.raw_text
-                return result
-
+        recorder = RecordingModelClient(live_model_client)
         ctx = build_eval_run_context(f"story-sequencer-heldout/{case['id']}", is_live=True)
+        error = None
         try:
-            StorySequencerAgent(_Recording()).run(scoring.case_input(case), ctx=ctx)  # type: ignore[arg-type]
-            answers[case["id"]] = {"raw_text": _Recording.raw}
+            StorySequencerAgent(recorder).run(scoring.case_input(case), ctx=ctx)
         except Exception as exc:  # noqa: BLE001 - a failed call is data, not a crash
-            answers[case["id"]] = {"raw_text": _Recording.raw, "error": f"{type(exc).__name__}"}
+            error = type(exc).__name__
+        raw = recorder.invocations[-1].raw_text if recorder.invocations else None
+        answers[case["id"]] = {"raw_text": raw, **({"error": error} if error else {})}
     run = {
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "git_sha": _git_sha(),
@@ -218,6 +226,11 @@ def test_live_heldout_run(eval_mode: str, live_model_client) -> None:
     model, baseline, problems = _score_run(run)
     run["scores"] = {"model": round(model, 3), "upload_order": round(baseline, 3)}
     run["problems"] = problems
+    # Clips with no reason to prefer an order: did it leave them as they were?
+    run["restraint"] = {
+        case["id"]: _left_alone(case, answers[case["id"]].get("raw_text"))
+        for case in HELDOUT["restraint"]
+    }
     scoring.RECORDED_RUN.parent.mkdir(parents=True, exist_ok=True)
     scoring.RECORDED_RUN.write_text(json.dumps(run, ensure_ascii=False, indent=1) + "\n")
     assert model >= baseline + scoring.REQUIRED_MARGIN, (model, baseline, problems)
