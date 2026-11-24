@@ -701,6 +701,7 @@ struct NativeEditorView: View {
                                     onAdjust: { inspector = .adjust },
                                     onCrop: { inspector = .crop(selection) },
                                     onTilt: { inspector = .tilt(selection) },
+                                    onDim: { inspector = .dim(selection) },
                                     onRange: { inspector = .sourceWindow(selection) },
                                     onTransition: { inspector = .selection(selection) }
                                 )
@@ -1199,6 +1200,8 @@ private enum NativeEditorInspector: Identifiable {
     case crop(EditorSelection)
     /// KRI-1136: turn the selected clip to any angle and pick its corner background.
     case tilt(EditorSelection)
+    /// Darken the selected clip's picture, or every clip's.
+    case dim(EditorSelection)
     /// KRI-717: the Range picker for the selected clip's source window.
     case sourceWindow(EditorSelection)
     /// KRI-306: Vertical / Landscape and Black bars / Crop for the finished video.
@@ -1211,6 +1214,7 @@ private enum NativeEditorInspector: Identifiable {
         case .adjust: return "adjust"
         case .crop(let selection): return "crop-\(selection.kind.rawValue)-\(selection.id)"
         case .tilt(let selection): return "tilt-\(selection.kind.rawValue)-\(selection.id)"
+        case .dim(let selection): return "dim-\(selection.kind.rawValue)-\(selection.id)"
         case .sourceWindow(let selection): return "range-\(selection.kind.rawValue)-\(selection.id)"
         case .videoShape: return "video-shape"
         }
@@ -1237,6 +1241,7 @@ private enum NativeEditorInspector: Identifiable {
         case .adjust: return String(localized: "Adjust", comment: "Editor inspector title")
         case .crop: return String(localized: "Crop", comment: "Editor inspector title")
         case .tilt: return String(localized: "Tilt", comment: "Editor inspector title")
+        case .dim: return String(localized: "Dim", comment: "Editor inspector title: darken a clip's picture")
         case .sourceWindow: return String(localized: "Range", comment: "Editor inspector title: the part of the source clip used")
         case .videoShape: return String(localized: "Video shape")
         }
@@ -1268,6 +1273,7 @@ private struct NativeEditorInspectorView: View {
                 case .adjust: NativeAdjustInspector(session: session)
                 case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
                 case .tilt(let selection): NativeTiltSheet(session: session, uploads: uploads, projectID: projectID, selection: selection)
+                case .dim(let selection): NativeDimSheet(session: session, selection: selection)
                 case .sourceWindow(let selection): NativeSourceWindowSheet(session: session, selection: selection, embedded: true)
                 case .videoShape: NativeVideoShapeInspector(session: session)
                 }

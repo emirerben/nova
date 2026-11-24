@@ -231,6 +231,8 @@ enum NativeEditorUITestFixtures {
     static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
     /// KRI-1136: the first timeline slot's saved `tilt`, kept across relaunches by the stub commit transport.
     static let savedTiltKey = "kria.ui-test.saved-tilt.v1"
+    /// Every timeline slot's saved `dim` by slot id, kept across relaunches by the stub commit transport.
+    static let savedDimsKey = "kria.ui-test.saved-dims.v1"
 
     /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
     static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
@@ -1423,6 +1425,13 @@ enum NativeEditorUITestCommitTransport {
                     } else if first["tilt"] != nil {
                         UserDefaults.standard.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
                     }
+                }
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim"), let slots = fields["timeline_slots"]?.arrayValue {
+                    var dims: [String: JSONValue] = [:]
+                    for slot in slots.compactMap(\.objectValue) {
+                        if let id = slot["slot_id"]?.stringValue, case .number? = slot["dim"] { dims[id] = slot["dim"] }
+                    }
+                    if let saved = try? JSONEncoder().encode(dims) { UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDimsKey) }
                 }
                 if let slots = fields["timeline_slots"]?.arrayValue,
                    slots.contains(where: { $0.objectValue?["slot_id"]?.stringValue?.hasPrefix("native-phone-talking-source") == true }),
