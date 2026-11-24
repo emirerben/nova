@@ -131,6 +131,7 @@ from app.services.length_policy import (
 )
 from app.services.order_mode import order_mode, seeded_permutation, unstated_order_default_on
 from app.services.phone_noise_reduction import engine_noise_reduction_available
+from app.services.sfx_capability import FORMAT_LIMIT_LINES as _SFX_FORMAT_LIMIT_LINES
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
 
@@ -4581,6 +4582,13 @@ _UNSTATED_ORDER_KEPT = "where you didn't say, the clips play in the order you ha
 # KRIA_CLIP_ORDER_LEDGER_ENABLED: an order the creator described earlier was applied then, and a
 # later order of theirs (a drag, an edit, a message) replaced it; the newest statement stands.
 _ORDER_SET_SINCE = "you set the order yourself since, and the order you set is the one that plays"
+# KRI-1592: with `KRIA_UNSTATED_ORDER_DEFAULT_ENABLED` an order ask that nothing in the draft
+# commits to (no writer vouches for it before render, the render contract pins none) is a limit of
+# that kind of video, said plainly, never a hold (`approval_readiness._order_not_promised`). It
+# names no order on purpose: the Talking, voiceover and Visuals writers each play their own.
+_ORDER_NOT_PROMISED = (
+    "I can't promise the clip order on this kind of video yet, so it may not match what you asked"
+)
 _PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
 
 
@@ -7537,6 +7545,10 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     Talking or Voiceover render with no receipt had no ask to serve. A draft promises the
     effects while the writer's gate is open and names the gate when it is not. Any other
     format has no way to judge it here (neutral, as before).
+
+    Only a worker writes the receipt, so one present is read on every writer (KRI-1598): the
+    montage with a voiceover and the speech-cut writers set neither rendered flag, and their
+    receipts were never read.
     """
     from app.services.sfx_capability import (  # noqa: PLC0415
         guided_sfx_limit,
@@ -7547,7 +7559,7 @@ def _check_sfx_ask(req: BriefRequirement, facts: PlanFacts) -> RequirementReceip
     from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
     choice = facts.sfx_choice
-    if (facts.rendered_variant or facts.rendered_montage) and choice is not None:
+    if choice is not None:
         placed = choice.get("placed")
         if isinstance(placed, list) and placed:
             return _receipt(req, "met", _sfx_placed(len(placed)), stage="checked")
@@ -8579,6 +8591,12 @@ _REASON_TR: dict[str, str] = {
         "video ekli değil. Onları Visuals'a ekle"
     ),
 }
+# KRI-1592: after the literal (its first entries are pinned in order by test_copy_routing), and
+# before the format-limit list below reads it (`reasons_in_every_language`).
+_REASON_TR[_ORDER_NOT_PROMISED] = (
+    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi "
+    "olmayabilir"
+)
 
 
 def _loc(reason: str) -> str:
@@ -8689,6 +8707,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _MOMENTS_NOT_LOCATED,
     _MOMENTS_CREATOR_CALL,
     _MOMENT_NOT_IN_CLIP,
+    # KRI-1592: an order the kind of video can't promise is its limit, never a simpler plan.
+    _ORDER_NOT_PROMISED,
     _FREEZE_NEEDS_FRAME,
     _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
@@ -8712,6 +8732,9 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     *_MUSIC_MISSING,
     # KRI-1561: that a finished video has no sound effects is the writer's, not a simpler plan.
     _SFX_NOT_PLACED,
+    # KRI-1598: why the chooser placed none (a closed gate, an old app, no catalogue, the footage)
+    # is the format's too (`sfx_capability.FORMAT_LIMIT_LINES`; "you asked for none" is not).
+    *(en for en, _tr in _SFX_FORMAT_LIMIT_LINES),
     _VOICEOVER_SPOKEN_TEXT_PLAN,
     # KRI-1465: that a Voiceover edit always captions is the format's, never a simpler plan.
     _NARRATED_CAPTIONS_PLAN,
@@ -8720,7 +8743,11 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NARRATED_ORDER_PLAN,
     *_SB_FORMAT_LIMITS,
 )
-_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = reasons_in_every_language(_FORMAT_LIMIT_EN)
+_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
+    *reasons_in_every_language(_FORMAT_LIMIT_EN),
+    # Their Turkish is `limit_line`'s own `tr=` text, not a `_REASON_TR` twin.
+    *(tr for _en, tr in _SFX_FORMAT_LIMIT_LINES),
+)
 
 
 def is_format_limit(reason: str | None) -> bool:
@@ -15515,13 +15542,14 @@ def _check_title(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         return _receipt(req, "partial", _CANT_CHECK_TITLE)
     if facts.title_source in _TITLE_SOURCES_THE_CREATOR_OWNS:
         return _receipt(req, "met", None)
-    return _receipt(
-        req,
-        "partial",
-        say(
-            en="I used a plain default title because none was given.",
-            tr="Başlık vermediğin için sade bir varsayılan başlık kullandım.",
-        ),
+    return _receipt(req, "partial", default_title_reason())
+
+
+def default_title_reason() -> str:
+    """`_check_title`'s reason for a default title, in the turn's language (KRI-1563 reads it)."""
+    return say(
+        en="I used a plain default title because none was given.",
+        tr="Başlık vermediğin için sade bir varsayılan başlık kullandım.",
     )
 
 

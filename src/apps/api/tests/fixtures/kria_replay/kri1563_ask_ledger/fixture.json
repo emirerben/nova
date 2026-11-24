@@ -1,0 +1,854 @@
+{
+  "fixture_id": "kri1563_ask_ledger",
+  "incident": "KRI-1563, prod job fa10c4a4 / thread 1b8974a0 (2026-11-19, Talking, Turkish); rows for KRI-1476, KRI-1472, KRI-1355",
+  "source": {
+    "recorded": [
+      "turn 2 ops (draft_applied 21:15:58 UTC): add_text 'Renk Kavgası', set_background_sequence, set_speaker_frame small_bottom_right, set_caption_meta entrance pop",
+      "turn 3 ops (21:17:56 UTC): clear_speaker_frame, set_caption_meta (font Montserrat Bold, colour #FFFFFF, y_frac 0.82), patch_caption_line (all lines, y 0.82)",
+      "turn 4 (21:19:15 UTC): no ops",
+      "the creator's words per turn, as quoted in the Linear issue"
+    ],
+    "reconstructed": [
+      "the draft: the phone Talking editor harness (tests/routes/test_speaker_background_editor.py) with its two pool pictures, not her footage",
+      "the requirement split per turn (turn 3's merged pictures+corner requirement as production had it)",
+      "the copilot's unmet reasons (production's prose was not kept in the record)",
+      "the English rows: the same turns asked in English",
+      "the KRI-1476/1472/1355 rows: those asks made as chat edits on a ready draft",
+      "the typed facts the brief writer records for these asks (caption_position, audio_intent, title 'off'): production's brief rows were not in the record, so they are assumed as the brief prompt types them (KRI-1177, KRI-1164, KRI-1355)",
+      "the mixed-one-unsupported rows (Tadic's #prs hold on #2485): no production turn; the requirements, the caption op and the copilot's unmet reason are written as the brief writer and copilot produce them"
+    ]
+  },
+  "cases": [
+    {
+      "id": "alanur-t2-tr",
+      "incident": "KRI-1563 turn 2",
+      "language": "tr",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "text",
+          "scope": "title",
+          "description": "başlık koy"
+        },
+        {
+          "id": "r2",
+          "kind": "style",
+          "description": "görseller koy"
+        }
+      ],
+      "ops": [
+        {
+          "op": "add_text",
+          "text": "Renk Kavgası",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "op": "set_background_sequence",
+          "asset_ids": [
+            "PHOTO",
+            "VIDEO"
+          ]
+        },
+        {
+          "op": "set_speaker_frame",
+          "preset": "small_bottom_right"
+        },
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "animation_phases": {
+              "entrance": "pop"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "done",
+          "r2": "done"
+        },
+        "status": {
+          "r1": "met",
+          "r2": "partial"
+        },
+        "line_has": {
+          "r1": [
+            "Renk Kavgası"
+          ],
+          "r2": [
+            "Arkana 2 görsel kondu",
+            "Sağ alt köşede küçük gösteriliyorsun"
+          ]
+        },
+        "reply_has": [
+          "Sağ alt köşede küçük gösteriliyorsun"
+        ],
+        "reply_lacks": [
+          "Başlık eklemedim"
+        ],
+        "prod_reply_gaps": [
+          "speaker_background.windows",
+          "speaker_background.speaker_frame"
+        ]
+      },
+      "prod_reply": "- Kısmen: başlık koy (Başlık eklemedim, çünkü … bir bilgi yoktu)\n- Bir göz at: görseller koy (… 'Renk Kavgası' eklendi; Altyazılar artık pop ile giriyor)"
+    },
+    {
+      "id": "alanur-t2-en",
+      "incident": "KRI-1563 turn 2, asked in English",
+      "language": "en",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "text",
+          "scope": "title",
+          "description": "add a title"
+        },
+        {
+          "id": "r2",
+          "kind": "style",
+          "description": "add pictures"
+        }
+      ],
+      "ops": [
+        {
+          "op": "add_text",
+          "text": "Colour Fight",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "op": "set_background_sequence",
+          "asset_ids": [
+            "PHOTO",
+            "VIDEO"
+          ]
+        },
+        {
+          "op": "set_speaker_frame",
+          "preset": "small_bottom_right"
+        },
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "animation_phases": {
+              "entrance": "pop"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "done",
+          "r2": "done"
+        },
+        "status": {
+          "r1": "met",
+          "r2": "partial"
+        },
+        "line_has": {
+          "r1": [
+            "Colour Fight"
+          ],
+          "r2": [
+            "Put 2 pictures behind you",
+            "Made you small in the bottom-right corner"
+          ]
+        },
+        "reply_has": [
+          "Made you small in the bottom-right corner"
+        ],
+        "reply_lacks": [
+          "I didn't add a title"
+        ]
+      }
+    },
+    {
+      "id": "alanur-t3-tr",
+      "incident": "KRI-1563 turn 3",
+      "language": "tr",
+      "harness": "talking",
+      "start_background": {
+        "fill": "PHOTO",
+        "speaker_frame": {
+          "width_fraction": 0.42,
+          "x_fraction": 0.76,
+          "y_fraction": 0.8
+        }
+      },
+      "requirements": [
+        {
+          "id": "r3",
+          "kind": "style",
+          "description": "altyazı ortada ve daha güzel bir yazı stiliyle olsun",
+          "facts": {
+            "caption_position": "middle"
+          }
+        },
+        {
+          "id": "r4",
+          "kind": "style",
+          "description": "görseller alakasız olmasın ve köşede ufak kalmasın"
+        }
+      ],
+      "unmet_requests": [
+        {
+          "request": "görseller alakasız olmasın",
+          "reason": "arkandaki görselleri metne göre seçemiyorum"
+        }
+      ],
+      "ops": [
+        {
+          "op": "clear_speaker_frame"
+        },
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "font": "Montserrat Bold",
+            "color": "#FFFFFF",
+            "y_frac": 0.82
+          }
+        },
+        {
+          "op": "patch_caption_line",
+          "all": true,
+          "position_y_frac": 0.82
+        }
+      ],
+      "expect": {
+        "states": {
+          "r3": "declined",
+          "r4": "declined"
+        },
+        "status": {
+          "r3": "partial",
+          "r4": "partial"
+        },
+        "line_has": {
+          "r3": [
+            "Altyazılar alt konuma taşındı, ama istediğin bu değil",
+            "Altyazı yazı tipi Montserrat Bold oldu"
+          ],
+          "r4": [
+            "Tekrar tam ekrandasın",
+            "metne göre seçemiyorum"
+          ]
+        },
+        "reply_lacks": [
+          "Yapıldı: Altyazı yazı tipi"
+        ],
+        "prod_reply_gaps": [
+          "speaker_background.speaker_frame",
+          "caption_meta.y_frac"
+        ]
+      },
+      "prod_reply": "- Yapıldı: Altyazı yazı tipi Montserrat Bold oldu; Altyazı rengi değişti\n- Yapamadım: görseller alakasız olmasın ve köşede ufak kalmasın"
+    },
+    {
+      "id": "alanur-t3-en",
+      "incident": "KRI-1563 turn 3, asked in English",
+      "language": "en",
+      "harness": "talking",
+      "start_background": {
+        "fill": "PHOTO",
+        "speaker_frame": {
+          "width_fraction": 0.42,
+          "x_fraction": 0.76,
+          "y_fraction": 0.8
+        }
+      },
+      "requirements": [
+        {
+          "id": "r3",
+          "kind": "style",
+          "description": "captions in the middle and in a nicer style",
+          "facts": {
+            "caption_position": "middle"
+          }
+        },
+        {
+          "id": "r4",
+          "kind": "style",
+          "description": "pictures that fit what I say and I'm not small in the corner"
+        }
+      ],
+      "unmet_requests": [
+        {
+          "request": "pictures that fit what I say",
+          "reason": "I can't pick the pictures behind you by what you say"
+        }
+      ],
+      "ops": [
+        {
+          "op": "clear_speaker_frame"
+        },
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "font": "Montserrat Bold",
+            "color": "#FFFFFF",
+            "y_frac": 0.82
+          }
+        },
+        {
+          "op": "patch_caption_line",
+          "all": true,
+          "position_y_frac": 0.82
+        }
+      ],
+      "expect": {
+        "states": {
+          "r3": "declined",
+          "r4": "declined"
+        },
+        "status": {
+          "r3": "partial",
+          "r4": "partial"
+        },
+        "line_has": {
+          "r3": [
+            "Moved the captions to the bottom",
+            "isn't what you asked for"
+          ],
+          "r4": [
+            "Put you back full screen",
+            "pick the pictures"
+          ]
+        },
+        "reply_lacks": [
+          "Done: Changed the caption font"
+        ]
+      }
+    },
+    {
+      "id": "alanur-t3-tr-middle-control",
+      "incident": "KRI-1563 turn 3, the right placement (control: the check is not just strict)",
+      "language": "tr",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r3",
+          "kind": "style",
+          "description": "altyazı ortada ve daha güzel bir yazı stiliyle olsun",
+          "facts": {
+            "caption_position": "middle"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "font": "Montserrat Bold",
+            "y_frac": 0.5
+          }
+        },
+        {
+          "op": "patch_caption_line",
+          "all": true,
+          "position_y_frac": 0.5
+        }
+      ],
+      "expect": {
+        "states": {
+          "r3": "done"
+        },
+        "status": {
+          "r3": "met"
+        },
+        "line_has": {
+          "r3": [
+            "Altyazılar orta konuma taşındı"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kri1476-captions-middle-en-moved-down",
+      "incident": "KRI-1476 as a chat edit; wrong-content control: captions moved down when the ask says middle",
+      "language": "en",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "description": "Captions in the middle of the screen",
+          "facts": {
+            "caption_position": "middle",
+            "caption_color": "#FFFFFF"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "font": "Montserrat Bold",
+            "y_frac": 0.86
+          }
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "declined"
+        },
+        "status": {
+          "r1": "partial"
+        },
+        "line_has": {
+          "r1": [
+            "Moved the captions to the bottom",
+            "isn't what you asked for",
+            "Changed the caption font to Montserrat Bold"
+          ]
+        },
+        "reply_lacks": [
+          "Done:"
+        ]
+      }
+    },
+    {
+      "id": "kri1476-captions-middle-tr-moved-to-band",
+      "incident": "KRI-1476 as a chat edit: the free band under her face (0.62) is the middle",
+      "language": "tr",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "description": "Altyazılar ekranın ortasında olsun",
+          "facts": {
+            "caption_position": "middle"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "patch_caption_line",
+          "all": true,
+          "position_y_frac": 0.62
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "done"
+        },
+        "status": {
+          "r1": "met"
+        },
+        "line_has": {
+          "r1": [
+            "Altyazılar orta konuma taşındı"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kri1472-only-my-voice-en",
+      "incident": "KRI-1472 as a chat edit: 'Only my voice, no music.' split in two by the brief (r7 typed voice_only, as production filed it)",
+      "language": "en",
+      "variant": {
+        "music_track_id": "track-1",
+        "mix": {
+          "music_level": 0.3
+        }
+      },
+      "requirements": [
+        {
+          "id": "r7",
+          "kind": "audio",
+          "description": "Only my voice.",
+          "facts": {
+            "voice_only": true
+          }
+        },
+        {
+          "id": "r8",
+          "kind": "audio",
+          "description": "No music.",
+          "facts": {
+            "audio_intent": "no_music"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "remove_music"
+        }
+      ],
+      "expect": {
+        "states": {
+          "r7": "done",
+          "r8": "done"
+        },
+        "status": {
+          "r7": "met",
+          "r8": "met"
+        },
+        "line_has": {
+          "r7": [
+            "Removed the music"
+          ],
+          "r8": [
+            "Removed the music"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kri1472-only-my-voice-tr",
+      "incident": "KRI-1472 as a chat edit, Turkish",
+      "language": "tr",
+      "variant": {
+        "music_track_id": "track-1",
+        "mix": {
+          "music_level": 0.3
+        }
+      },
+      "requirements": [
+        {
+          "id": "r7",
+          "kind": "audio",
+          "description": "Sadece benim sesim olsun.",
+          "facts": {
+            "voice_only": true
+          }
+        },
+        {
+          "id": "r8",
+          "kind": "audio",
+          "description": "Müzik olmasın.",
+          "facts": {
+            "audio_intent": "no_music"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "remove_music"
+        }
+      ],
+      "expect": {
+        "states": {
+          "r7": "done",
+          "r8": "done"
+        },
+        "status": {
+          "r7": "met",
+          "r8": "met"
+        },
+        "line_has": {
+          "r7": [
+            "Müzik kaldırıldı"
+          ],
+          "r8": [
+            "Müzik kaldırıldı"
+          ]
+        }
+      }
+    },
+    {
+      "id": "kri1355-kein-titel-de",
+      "incident": "KRI-1355 as a chat edit: 'Kein Titel.' with the typed no-title fact",
+      "language": "de",
+      "requirements": [
+        {
+          "id": "r8",
+          "kind": "text",
+          "scope": "title",
+          "description": "Kein Titel.",
+          "facts": {
+            "title": "off"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "remove_texts",
+          "selector": {
+            "ids": [
+              "title-1"
+            ]
+          },
+          "target_ids": [
+            "title-1"
+          ],
+          "expected_count": 1
+        }
+      ],
+      "expect": {
+        "states": {
+          "r8": "done"
+        },
+        "status": {
+          "r8": "met"
+        },
+        "reply_lacks": [
+          "I didn't add a title"
+        ]
+      }
+    },
+    {
+      "id": "kri1355-no-title-en",
+      "incident": "KRI-1355 as a chat edit: 'No title' typed as title off",
+      "language": "en",
+      "requirements": [
+        {
+          "id": "r8",
+          "kind": "text",
+          "scope": "title",
+          "description": "No title",
+          "facts": {
+            "title": "off"
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "remove_texts",
+          "selector": {
+            "ids": [
+              "title-1"
+            ]
+          },
+          "target_ids": [
+            "title-1"
+          ],
+          "expected_count": 1
+        }
+      ],
+      "expect": {
+        "states": {
+          "r8": "done"
+        },
+        "status": {
+          "r8": "met"
+        },
+        "reply_lacks": [
+          "I didn't add a title"
+        ]
+      }
+    },
+    {
+      "id": "alanur-t4-no-ops-tr",
+      "incident": "KRI-1563 turn 4 shape: a three-part ask the copilot answered with no ops",
+      "language": "tr",
+      "requirements": [
+        {
+          "id": "r5",
+          "kind": "style",
+          "description": "görseller metinle alakalı olmalı"
+        },
+        {
+          "id": "r6",
+          "kind": "style",
+          "description": "sürekli arka planda görsel olmamalı"
+        }
+      ],
+      "copilot": {
+        "outcome": "unsupported",
+        "reply": "Bu tür bir düzenleme bu taslakta henüz yapılamıyor.",
+        "unmet_requests": [
+          {
+            "request": "görseller metinle alakalı olmalı",
+            "reason": "havuzunda metinle eşleşen başka görsel yok"
+          }
+        ]
+      },
+      "expect": {
+        "states": {
+          "r5": "declined",
+          "r6": "declined"
+        },
+        "line_has": {
+          "r5": [
+            "havuzunda metinle eşleşen başka görsel yok"
+          ],
+          "r6": [
+            "Yapamadım"
+          ]
+        }
+      }
+    },
+    {
+      "id": "no-ops-question-en",
+      "incident": "KRI-1563 step 5: a turn that asks a question still gives each part a state",
+      "language": "en",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "description": "make the title pop"
+        },
+        {
+          "id": "r2",
+          "kind": "timing",
+          "description": "shorter"
+        }
+      ],
+      "copilot": {
+        "outcome": "clarification",
+        "reply": "How much shorter should the video be?",
+        "unmet_requests": []
+      },
+      "expect": {
+        "states": {
+          "r1": "needs_choice",
+          "r2": "needs_choice"
+        },
+        "reply_has": [
+          "Your call: make the title pop",
+          "How much shorter should the video be?"
+        ]
+      }
+    },
+    {
+      "id": "mixed-one-unsupported-en",
+      "incident": "Tadic's #prs hold on #2485: a mixed chat edit with one supported and one unsupported part. The caption size op applies; only the voice part is declined, with its reason.",
+      "language": "en",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "description": "Make the captions bigger",
+          "facts": {
+            "caption_size": "large"
+          }
+        },
+        {
+          "id": "r2",
+          "kind": "audio",
+          "description": "Make my voice sound deeper"
+        }
+      ],
+      "ops": [
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "size_px": 96
+          }
+        }
+      ],
+      "unmet_requests": [
+        {
+          "request": "make my voice sound deeper",
+          "reason": "I can't change how your voice sounds"
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "done",
+          "r2": "declined"
+        },
+        "status": {
+          "r1": "met",
+          "r2": "not_possible"
+        },
+        "changes": {
+          "caption_meta.size_px": [
+            "r1"
+          ]
+        },
+        "line_has": {
+          "r1": [
+            "Done:",
+            "Changed the caption size"
+          ],
+          "r2": [
+            "Couldn't: Make my voice sound deeper",
+            "I can't change how your voice sounds"
+          ]
+        },
+        "line_lacks": {
+          "r1": [
+            "Couldn't",
+            "Partly",
+            "voice"
+          ]
+        },
+        "reply_lacks": [
+          "fresh version",
+          "isn't available",
+          "unchanged",
+          "Also changed"
+        ]
+      }
+    },
+    {
+      "id": "mixed-one-unsupported-tr",
+      "incident": "The same mixed edit asked in Turkish.",
+      "language": "tr",
+      "harness": "talking",
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "style",
+          "description": "Altyazıları büyüt",
+          "facts": {
+            "caption_size": "large"
+          }
+        },
+        {
+          "id": "r2",
+          "kind": "audio",
+          "description": "Sesimi daha kalın yap"
+        }
+      ],
+      "ops": [
+        {
+          "op": "set_caption_meta",
+          "patch": {
+            "size_px": 96
+          }
+        }
+      ],
+      "unmet_requests": [
+        {
+          "request": "sesimi daha kalın yap",
+          "reason": "Sesinin tonunu değiştiremiyorum"
+        }
+      ],
+      "expect": {
+        "states": {
+          "r1": "done",
+          "r2": "declined"
+        },
+        "status": {
+          "r1": "met",
+          "r2": "not_possible"
+        },
+        "changes": {
+          "caption_meta.size_px": [
+            "r1"
+          ]
+        },
+        "line_has": {
+          "r1": [
+            "Yapıldı:",
+            "Altyazı boyutu değişti"
+          ],
+          "r2": [
+            "Yapamadım: Sesimi daha kalın yap",
+            "Sesinin tonunu değiştiremiyorum"
+          ]
+        },
+        "line_lacks": {
+          "r1": [
+            "Yapamadım",
+            "Kısmen",
+            "Ses"
+          ]
+        },
+        "reply_lacks": [
+          "yeniden yap",
+          "değişmedi",
+          "Ayrıca"
+        ]
+      }
+    }
+  ]
+}

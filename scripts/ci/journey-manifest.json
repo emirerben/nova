@@ -1652,7 +1652,7 @@
     {
       "id": "troya-footage-research",
       "needs_native": true,
-      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py tests/evals/request_following/test_research_feeds_text_sequences.py tests/kria/test_approved_long_sequence_copy.py tests/kria/test_legacy_overflow_literal_recovery.py tests/kria/test_legacy_overflow_retry_planner.py tests/kria/test_legacy_overflow_retry_postgres.py",
+      "api_tests": "tests/evals/request_following/test_troya_context_journey.py tests/evals/request_following/test_researched_text.py tests/evals/request_following/test_kri1595_edited_draft_research.py tests/evals/request_following/test_kri816_talking_research.py tests/evals/request_following/test_kri816_historical_journey.py tests/evals/request_following/test_kri881_research_before_approval.py tests/services/test_kria_editor_clip_context.py tests/evals/request_following/test_research_feeds_text_sequences.py tests/kria/test_approved_long_sequence_copy.py tests/kria/test_legacy_overflow_literal_recovery.py tests/kria/test_legacy_overflow_retry_planner.py tests/kria/test_legacy_overflow_retry_postgres.py",
       "xctests": [
         "KriaTests/NativeResearchSourcesTests/testSourcesSurviveDocumentSaveAndFlagChangedCopy",
         "KriaTests/NativeResearchSourcesTests/testUnsafeSourceSchemesAndPrivateHostsCannotOpen",
@@ -1666,6 +1666,8 @@
         "src/apps/api/app/services/kria_editor_ops_text.py",
         "src/apps/api/tests/evals/request_following/test_troya_context_journey.py",
         "src/apps/api/tests/evals/request_following/test_researched_text.py",
+        "src/apps/api/tests/evals/request_following/test_kri1595_edited_draft_research.py",
+        "src/apps/api/tests/fixtures/kri1595_edited_draft/prod_timeline.json",
         "src/apps/api/tests/evals/request_following/test_research_feeds_text_sequences.py",
         "src/apps/api/tests/kria/test_approved_long_sequence_copy.py",
         "src/apps/api/app/kria/text_sequence.py",
@@ -2888,7 +2890,7 @@
     {
       "id": "reference-style-save",
       "needs_native": true,
-      "api_tests": "tests/routes/test_authored_empty_caption_metadata.py tests/kria/test_reference_style_receipts.py tests/integration/test_reference_style_save_postgres.py",
+      "api_tests": "tests/routes/test_authored_empty_caption_metadata.py tests/kria/test_reference_style_receipts.py tests/integration/test_reference_style_save_postgres.py tests/kria/test_kri1563_ask_ledger.py",
       "xctests": [
         "KriaTests/ReferenceStyleSaveTests/testSavedReferenceStyleAndLocalUndoRecipesPreviewAndExport"
       ],
@@ -2899,6 +2901,10 @@
         "src/apps/api/tests/routes/test_authored_empty_caption_metadata.py",
         "src/apps/api/tests/kria/test_reference_style_receipts.py",
         "src/apps/api/tests/kria/test_kri558_editor_receipts.py",
+        "src/apps/api/app/kria/ask_ledger.py",
+        "src/apps/api/tests/kria/test_kri1563_ask_ledger.py",
+        "src/apps/api/tests/kria/kri1563_ledger_cases.py",
+        "src/apps/api/tests/fixtures/kria_replay/kri1563_ask_ledger/",
         "src/apps/api/tests/integration/test_reference_style_save_postgres.py",
         "src/apps/ios/Tests/KriaTests/ReferenceStyleSaveTests.swift",
         "src/apps/ios/Tests/Fixtures/ReferenceStyleSave.json"
@@ -4000,7 +4006,7 @@
     {
       "id": "kri-1585-informative-text",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py tests/pipeline/test_kri1580_kyoto_research_copy.py tests/pipeline/test_kri1583_readability.py tests/kria/test_kri1583_intent_review_legibility.py tests/kria/test_kri1582_design_picker.py",
+      "api_tests": "tests/pipeline/test_kri1585_kyoto_fixture.py tests/pipeline/test_kri1581_text_shapes.py tests/pipeline/test_kri1580_kyoto_research_copy.py tests/pipeline/test_kri1583_readability.py tests/kria/test_kri1583_intent_review_legibility.py tests/kria/test_kri1582_design_picker.py tests/pipeline/test_kri1579_creator_edits_win.py tests/pipeline/test_kri1584_font_owner.py tests/pipeline/test_kri1585_writer_text_language.py",
       "paths": [
         "src/apps/api/tests/fixtures/kri1585_kyoto/plan.json",
         "src/apps/api/tests/fixtures/kri1585_kyoto/text_rows.json",
@@ -4014,6 +4020,8 @@
         "src/apps/api/tests/pipeline/test_kri1580_kyoto_research_copy.py",
         "src/apps/api/tests/pipeline/test_kri1585_kyoto_fixture.py",
         "src/apps/api/tests/pipeline/test_kri1579_creator_edits_win.py",
+        "src/apps/api/tests/pipeline/test_kri1584_font_owner.py",
+        "src/apps/api/tests/pipeline/test_kri1585_writer_text_language.py",
         "src/apps/api/app/pipeline/informative_text.py",
         "src/apps/api/app/pipeline/text_designs.py",
         "scripts/kri1585_kyoto_fixture.py",

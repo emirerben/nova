@@ -2497,6 +2497,11 @@
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
   ],
   [
+   "app/services/sfx_capability.py",
+   "You named a sound effect, so I played that one and added no others",
+   "Bir ses efekti söyledin, o yüzden onu çaldım ve başka efekt eklemedim"
+  ],
+  [
    "app/kria/brief_checks.py",
    "I couldn't pick a song from the music library, so the video has no music",
    "Müzik kütüphanesinden bir şarkı seçemedim, o yüzden videoda müzik yok"
@@ -2682,9 +2687,109 @@
    "Şarkını sesinin altında kısık çalacağım."
   ],
   [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed how the pictures behind you are framed",
+   "Arkandaki görsellerin kadrajı değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the background behind you",
+   "Arkandaki arka plan değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the colour moments",
+   "Renk anları değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the pictures behind you",
+   "Arkandaki görseller değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed when you're shown full screen",
+   "Tam ekran göründüğün anlar değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed where you sit on screen",
+   "Ekrandaki yerin değişti"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Couldn't: {ask}",
+   "Yapamadım: {ask}"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Couldn't: {ask} ({reason})",
+   "Yapamadım: {ask} ({reason})"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-left corner",
+   "Sol alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-right corner",
+   "Sağ alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-left corner",
+   "Sol üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-right corner",
+   "Sağ üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put a new picture behind you",
+   "Arkana yeni bir görsel kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put a plain colour behind you",
+   "Arkana düz bir renk kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put you back full screen",
+   "Tekrar tam ekrandasın"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put {what} behind you",
+   "Arkana {what} kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the background behind you",
+   "Arkandaki arka plan kaldırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the changing pictures behind you",
+   "Arkandaki değişen görseller kaldırıldı"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Your call: {ask}",
+   "Karar senin: {ask}"
+  ],
+  [
    "app/services/researched_text.py",
    "No sourced line for {count} of the clips.",
    "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı."
+  ],
+  [
+   "app/services/researched_text.py",
+   "I couldn't tell where clip {number} plays in your video, because it has no usable length. Your video is unchanged. I can still add titles without researched facts.",
+   "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü kullanılabilir bir uzunluğu yok. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
   ],
   [
    "app/kria/brief_checks.py",
@@ -2760,6 +2865,11 @@
    "app/kria/text_design_ask.py",
    "One line on every clip, as if you were telling it",
    "Her klipte sanki sen anlatıyormuşsun gibi bir satır"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
+   "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
   ]
  ],
  "retired": [

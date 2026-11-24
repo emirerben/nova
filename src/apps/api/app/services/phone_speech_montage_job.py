@@ -45,6 +45,7 @@ from app.services.creator_render_contract import (
     read_render_contract,
     verify_phone_recipe,
 )
+from app.services.phone_sfx_choice import RECEIPT_FIELD as SFX_CHOICE_FIELD
 from app.services.phone_text_styling import (
     generation_resolved_rows,
     generation_style_fields,
@@ -65,6 +66,26 @@ _MAX_REQUEST_CHARS = 9000
 
 class SpeechMontageClarification(UnsupportedPhonePlan):
     """The creator must answer one specific question before this edit can render."""
+
+
+def _sfx_ask_receipt(snapshot: dict, strategy: Any) -> dict | None:
+    """KRI-1598: the receipt for a general sound-effect ask (`sfx_ask`) on this writer, or None.
+
+    These writers have no sound-effect lane, and the manifest opens the ask by format before the
+    route is known, so a montage cut from what the creator says can carry it. It is declined on
+    the variant's receipt with its reason (the creator's live "no sound effects" first, else
+    `format_unsupported`), which the finished-video review reads, never dropped without a line.
+    A named effect never gets here: `generative_build._refuse_sfx_on_speech_writer` refuses it.
+    """
+    from app.services.phone_sfx_choice import declined_receipt, read_sfx_ask  # noqa: PLC0415
+    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+    from app.tasks import generative_build as gb  # noqa: PLC0415
+
+    if read_sfx_ask(strategy) is None:
+        return None
+    if gb._no_sound_effects_asked(snapshot):
+        return declined_receipt(SfxLimit.creator_said_no)
+    return declined_receipt(SfxLimit.format_unsupported)
 
 
 def _request_text(job_id: str, brief: Any, first_message: str) -> str:
@@ -219,6 +240,7 @@ def run_phone_speech_montage_job(
             )
 
     strategy = all_candidates.get("creator_strategy")
+    sfx_receipt = _sfx_ask_receipt(snapshot, strategy)
     voice_ids = contract.audio_source_ids if contract else _strategy_voice_ids(strategy)
     target = contract.duration_s if contract else None
     order_by_capture = False
@@ -449,6 +471,7 @@ def run_phone_speech_montage_job(
                 ],
                 "orientation": "portrait",
                 "ok": False,
+                **({SFX_CHOICE_FIELD: sfx_receipt} if sfx_receipt is not None else {}),
             }
         ]
         current[SPEECH_MONTAGE_FIELD] = record
@@ -702,6 +725,7 @@ def run_phone_voice_behind_footage_job(
             )
 
     strategy = all_candidates.get("creator_strategy")
+    sfx_receipt = _sfx_ask_receipt(snapshot, strategy)
     margin = EXPORT_SAFETY_MARGIN_S
     with pipeline_trace_for(job_id):
         words, _language = load_words(voice)
@@ -880,6 +904,7 @@ def run_phone_voice_behind_footage_job(
                 ],
                 "orientation": "portrait",
                 "ok": False,
+                **({SFX_CHOICE_FIELD: sfx_receipt} if sfx_receipt is not None else {}),
             }
         ]
         current[SPEECH_MONTAGE_FIELD] = record

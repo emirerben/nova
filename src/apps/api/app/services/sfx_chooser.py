@@ -44,6 +44,9 @@ class SfxLimit(StrEnum):
     format_unsupported = "format_unsupported"
     no_timed_evidence = "no_timed_evidence"
     creator_said_no = "creator_said_no"
+    # KRI-1598: a guided montage plays the effect the creator named and adds no chosen ones
+    # (its named-effect check refuses any other row on the next Save).
+    named_effect = "named_effect"
     nothing_fit = "nothing_fit"
 
 

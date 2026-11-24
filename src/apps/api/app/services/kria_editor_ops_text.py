@@ -1440,6 +1440,8 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
     )
     if isinstance(op.get("research"), dict):
         row["source_params"] = {**(row.get("source_params") or {}), "research": op["research"]}
+        if op["research"].get("text_language"):
+            row["text_language"] = op["research"]["text_language"]
         if (op["research"].get("design") or {}).get("level") == "hook":
             # KRI-1580: the hook title's role (`informative_text.HOOK_ROLE`), styled apart
             # from the facts under it.

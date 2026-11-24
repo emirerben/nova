@@ -1,0 +1,40 @@
+{
+ "_source": "KRI-1585 acceptance finding 1. Text only (no footage): scripts/ios/kri-1581-text-designs-e2e.py prepare --writer, then DeviceInformativeTextRenderE2ETests on the iOS 27.2 simulator (iPhone 17 Pro) exporting cases/R-A1; the A1 heading frame read at 28.2 s. 'before' ran on origin/main 50e6d5b505, 'after' on this branch. Strings are the compiled phone layers' runs joined (line breaks drop their space).",
+ "frame_t_s": 28.2,
+ "before": {
+  "a1_layers": [
+   "İşte Kyoto'daki 25dakikalık trenyolculuğu",
+   "7.3 KILOMETRELIK HAT",
+   "Yolculuk Torokko Sagaİstasyonu'nda başlıyor.",
+   "RETRO TASARIM",
+   "Trenin kapalı ve açık olmaküzere toplam beş vagonu var.",
+   "AHŞAP BANKLAR",
+   "İçerisi eski tarz ahşap banklarladonatılmış.",
+   "HOZUKYO GEÇIDI",
+   "Güzergahımız tam olarak bugeçit boyunca uzanıyor.",
+   "SONBAHAR YAPRAKLARI",
+   "İlkbaharda kiraz çiçekleri,şimdi ise sonbahar yapraklarıgörülebiliyor."
+  ],
+  "phone_mp4_sha256": "d5d78d141a62863eba62674ce36e9828baf8cac92e14a2bf56052ab86b8dbd7b",
+  "frame_png_sha256": "f08e31a786070fbe0254db5b751046caaa89afa4627b31abdd4d21357971e940",
+  "frame_read_by_eye": "HOZUKYO GEÇIDI"
+ },
+ "after": {
+  "a1_layers": [
+   "İşte Kyoto'daki 25dakikalık trenyolculuğu",
+   "7.3 KİLOMETRELİK HAT",
+   "Yolculuk Torokko Sagaİstasyonu'nda başlıyor.",
+   "RETRO TASARIM",
+   "Trenin kapalı ve açık olmaküzere toplam beş vagonu var.",
+   "AHŞAP BANKLAR",
+   "İçerisi eski tarz ahşap banklarladonatılmış.",
+   "HOZUKYO GEÇİDİ",
+   "Güzergahımız tam olarak bugeçit boyunca uzanıyor.",
+   "SONBAHAR YAPRAKLARI",
+   "İlkbaharda kiraz çiçekleri,şimdi ise sonbahar yapraklarıgörülebiliyor."
+  ],
+  "phone_mp4_sha256": "0c98d47f741bc8c6e014806afe1efba7704d84c8fb2a069efb4337136b01a3ce",
+  "frame_png_sha256": "2473cc0e4b65b0d201e484ab654a4f6e6b0e0714ebbe45daca7089771300b75a",
+  "frame_read_by_eye": "HOZUKYO GEÇİDİ"
+ }
+}
