@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.5.0] - 2026-11-24
+
+### Changed
+- feat(intro): reference intake and a variety report in CI (KRI-1614) (#2503) <!-- release-pr: 2503 -->
+
 ## [0.90.4.0] - 2026-11-24
 
 ### Changed
