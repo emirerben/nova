@@ -4049,6 +4049,19 @@
         "src/apps/api/app/pipeline/intro_scene_pick.py",
         "src/apps/api/tests/pipeline/test_intro_scene_pick.py"
       ]
+    },
+    {
+      "id": "kri-1614-intro-variety-intake",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_variety.py tests/pipeline/test_intro_intake.py tests/pipeline/test_intro_scene.py",
+      "paths": [
+        "src/apps/api/app/cli/intro_variety_report.py",
+        "src/apps/api/app/cli/intro_intake.py",
+        "src/apps/api/app/pipeline/intro_teardowns.py",
+        "src/apps/api/tests/fixtures/intro_intake/sixth_reference_reply.json",
+        "src/apps/api/tests/pipeline/test_intro_variety.py",
+        "src/apps/api/tests/pipeline/test_intro_intake.py"
+      ]
     }
   ]
 }

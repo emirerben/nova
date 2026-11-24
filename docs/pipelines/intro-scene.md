@@ -87,3 +87,49 @@ written back, so "recent looks" are the first stamped candidate of each earlier 
   same shape for her typed " / " stacks.
 * **Evidence**: `make verify-intro-scenes` (prod image) now reads the compiled text layers and
   checks every issued pair in EN and TR.
+
+## Taste intake and the variety report (KRI-1614)
+
+Two dev-time tools keep the taste growing and keep the picker honest. Neither runs at request time.
+
+**Reference intake**: `python -m app.cli.intro_intake` (`draft`, `review`, `approve`), modelled on
+the `overlay_examples` library. A person gives a screenshot or short video and the two example
+titles; a model DRAFTS a teardown under the closed schema (option ids and one voice per word, plus
+short prose notes); the engine reviews it; a person approves it into
+`prompts/intro_teardowns.json`. Details live in the module docstring. Rules worth knowing:
+
+* `draft` without `--live` or `--replay` is a dry run. `--live` is one paid vision call (a few
+  frames, Gemini Flash); run it only under an approved development spend. It does not go through the
+  cost ledger. Tests use `tests/fixtures/intro_intake/sixth_reference_reply.json`, a hand-written
+  reply, not a recorded one.
+* `review` recomputes the checks: schema (`app/pipeline/intro_teardowns.py`), then per language the
+  compile, the Skia render measured like `make verify-intro-scenes`, and the approval check. It
+  draws `preview.png` (reference frame, EN, TR). `approve` re-runs it, asks y/N and records
+  `approved_by` / `approved_on`. The file keeps its exact format, so an approval is one new entry and
+  a new `version` (`<date>-intake-<id>`).
+* A move the contract lacks is never added to a prompt. `review` lists the moves no teardown or
+  engine limit names yet; `approve` writes them to `engine-tickets.json` in `save_issue` shape
+  (project, owner, labels). `--file-tickets` files them through Linear's API with `LINEAR_API_KEY`
+  (skips a title already in the project); that path has not run against a real workspace.
+* The intake files land in `.intro-intake/` (gitignored).
+
+**Variety report**: `cd src/apps/api && python -m app.cli.intro_variety_report` runs the real picker
+over many seeds, five hand-written titles per language (EN, TR) and the light and dark plates, and
+fails when one option dominates. Two layers: `pool` (the footage-free pick, 1000 seeds a language, no
+Skia: dominance and starvation) and `realized` (fitted with the real placement and inked on the
+plate: dominance, top-3 looks, decline rate). The rules, with their reasons, are in the module
+docstring (V1-V10). Four things to know: ink is judged per plate (on the light wall only oxblood
+reads, so it is listed as an exemption with the contrast it was computed from, not skipped); a
+dominance verdict uses the 95 percent lower bound of the share, so a small sample's luck does not
+fail it; six negative controls (a picker that ignores its seed, never picks one entrance, mostly
+declines, or collapses in Turkish only) must FAIL, and a control that passes exits 1; nothing asserts
+an exact count. Outputs `.intro-variety/{report.json,montage.png}`; the montage is the first seeds
+of one title per language, drawn through the real renderer and measured.
+
+**In CI** it is `tests/pipeline/test_intro_variety.py` and `test_intro_intake.py`, inside the
+existing `test-api` shards on the free runners (they install libegl1/libgl1 for skia, and the tests
+import skia, so a missing library fails instead of skipping). Journey `kri-1614-intro-variety-intake`
+maps the paths. About 25 s for the variety run.
+
+Not covered: the report judges the picker's realized scene, not whether the model picks well (step 3
+plugs its pick in as a `Picker`, a callable `(language, title, seed, plate) -> Look | None`).
