@@ -14,6 +14,101 @@ import UIKit
     private static var held = 0
     private static var quiet = 0
     private static var keyboardSeen = false
+    /// UIKit animation groups (one `UIViewAnimationState` each) whose animations reported more starts than stops.
+    /// XCTest counts the same two calls (it hooks `UIViewAnimationState animationDidStart:` and
+    /// `animationDidStop:finished:`) and calls the app idle only at zero.
+    private final class OpenState {
+        let state: AnyObject
+        let since = CACurrentMediaTime()
+        var balance = 0
+        var total = 0
+        var sample = ""
+        init(_ state: AnyObject) { self.state = state }
+    }
+    private static var open: [ObjectIdentifier: OpenState] = [:]
+    private static var starts = 0
+    private static var stops = 0
+    private static var strayStops = 0
+    private static var balance = 0
+
+    private static func hookAnimationState() {
+        guard let stateClass = NSClassFromString("UIViewAnimationState") else { NSLog("KBDPROBE hook no UIViewAnimationState"); return }
+        let startSelector = NSSelectorFromString("animationDidStart:")
+        let stopSelector = NSSelectorFromString("animationDidStop:finished:")
+        guard let startMethod = class_getInstanceMethod(stateClass, startSelector),
+              let stopMethod = class_getInstanceMethod(stateClass, stopSelector) else { NSLog("KBDPROBE hook methods missing"); return }
+        typealias Start = @convention(c) (AnyObject, Selector, CAAnimation?) -> Void
+        typealias Stop = @convention(c) (AnyObject, Selector, CAAnimation?, Bool) -> Void
+        let originalStart = unsafeBitCast(method_getImplementation(startMethod), to: Start.self)
+        let originalStop = unsafeBitCast(method_getImplementation(stopMethod), to: Stop.self)
+        let startBlock: @convention(block) (AnyObject, CAAnimation?) -> Void = { state, animation in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    starts += 1; balance += 1
+                    let entry = open[ObjectIdentifier(state)] ?? OpenState(state)
+                    open[ObjectIdentifier(state)] = entry
+                    entry.balance += 1; entry.total += 1
+                    if entry.sample.isEmpty, animation == nil { entry.sample = "no animation object" }
+                    if entry.sample.isEmpty, let animation {
+                        entry.sample = String(format: "class=%@ keyPath=%@ duration=%.2f repeat=%.0f removed=%d fill=%@",
+                                              String(describing: type(of: animation)), (animation as? CAPropertyAnimation)?.keyPath ?? "-",
+                                              animation.duration, Double(animation.repeatCount), animation.isRemovedOnCompletion ? 1 : 0,
+                                              animation.fillMode.rawValue)
+                    }
+                }
+            } else { NSLog("KBDPROBE hook start off the main thread") }
+            originalStart(state, startSelector, animation)
+        }
+        let stopBlock: @convention(block) (AnyObject, CAAnimation?, Bool) -> Void = { state, animation, finished in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    stops += 1; balance -= 1
+                    if let entry = open[ObjectIdentifier(state)] {
+                        entry.balance -= 1
+                        if entry.balance <= 0 { open[ObjectIdentifier(state)] = nil }
+                    } else { strayStops += 1 }
+                }
+            } else { NSLog("KBDPROBE hook stop off the main thread") }
+            originalStop(state, stopSelector, animation, finished)
+        }
+        method_setImplementation(startMethod, imp_implementationWithBlock(startBlock))
+        method_setImplementation(stopMethod, imp_implementationWithBlock(stopBlock))
+        NSLog("KBDPROBE hook installed")
+    }
+
+    /// XCTest's own answer to "is an animation in progress", when its support code is loaded in the app.
+    private static func xctestSaysAnimating() -> Int {
+        guard let notifier = NSClassFromString("XCTAnimationsIdleNotifier") else { return -1 }
+        let selector = NSSelectorFromString("isAnimationInProgress")
+        guard let method = class_getClassMethod(notifier, selector) else { return -2 }
+        typealias Function = @convention(c) (AnyClass, Selector) -> Bool
+        return unsafeBitCast(method_getImplementation(method), to: Function.self)(notifier, selector) ? 1 : 0
+    }
+
+    private static func logOpenAnimations(_ windows: [UIWindow]) {
+        let now = CACurrentMediaTime()
+        var owners: [ObjectIdentifier: [String]] = [:]
+        for window in windows {
+            var stack: [CALayer] = [window.layer]
+            while let layer = stack.popLast() {
+                if let sublayers = layer.sublayers { stack.append(contentsOf: sublayers) }
+                for key in layer.animationKeys() ?? [] {
+                    guard let delegate = layer.animation(forKey: key)?.delegate else { continue }
+                    let id = ObjectIdentifier(delegate as AnyObject)
+                    guard open[id] != nil, (owners[id]?.count ?? 0) < 3 else { continue }
+                    owners[id, default: []].append("\(String(describing: type(of: window))) key=\(key) layer=\(Self.owners(of: layer))")
+                }
+            }
+        }
+        NSLog("KBDPROBE open groups=%d balance=%d", open.count, balance)
+        for (id, entry) in open.sorted(by: { $0.value.since < $1.value.since }).prefix(12) {
+            NSLog(
+                "KBDPROBE open %.1fs unfinished=%d of %d state=%@ first[%@] on=%@",
+                now - entry.since, entry.balance, entry.total, String(describing: entry.state), entry.sample,
+                owners[id]?.joined(separator: " ; ") ?? "no layer in any window"
+            )
+        }
+    }
 
     /// Counts one main-thread event (a layout pass, a caret scroll, a run-loop wake) since the last beat.
     static func count(_ key: String) { counts[key, default: 0] += 1 }
@@ -55,6 +150,7 @@ import UIKit
             MainActor.assumeIsolated { count("wakes") }
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        hookAnimationState()
         NSLog("KBDPROBE started")
     }
 
@@ -138,6 +234,8 @@ import UIKit
                 "KBDPROBE work wakes=%d layout=%d caret=%d update=%d selection=%d change=%d field[%@] outer[%@]",
                 seen["wakes"] ?? 0, seen["layout"] ?? 0, seen["caret"] ?? 0, seen["update"] ?? 0, seen["selection"] ?? 0, seen["change"] ?? 0, inner, outer
             )
+            NSLog("KBDPROBE uikit starts=%d stops=%d strayStops=%d groups=%d balance=%d xctestAnimating=%d", starts, stops, strayStops, open.count, balance, xctestSaysAnimating())
+            starts = 0; stops = 0; strayStops = 0
             held = responder is ExplicitLineTextView ? held + 1 : 0
             if held == 4 || held == 8 { NSLog("KBDPROBE stall held=%d", held) }
             // While a UI test drives the app the run loop wakes hundreds of times per beat. In both hangs of
@@ -145,6 +243,7 @@ import UIKit
             quiet = keyboardSeen && (seen["wakes"] ?? 0) < 60 ? quiet + 1 : 0
             if quiet == 2 || quiet == 6 {
                 NSLog("KBDPROBE stall quiet=%d wakes=%d state=%d", quiet, seen["wakes"] ?? 0, UIApplication.shared.applicationState.rawValue)
+                logOpenAnimations(windows)
                 for window in windows {
                     var animatedLayers = 0
                     var stack: [CALayer] = [window.layer]
