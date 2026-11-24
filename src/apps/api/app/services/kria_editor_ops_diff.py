@@ -605,6 +605,89 @@ def _scalar(lane: str, field_name: str, label: str, old: Any, new: Any) -> DiffE
     return DiffEntry(lane, field_name, (DiffTarget(field_name, label, None, label, old, new),))
 
 
+def _fill_of(document: Mapping[str, Any] | None) -> tuple[Any, ...] | None:
+    if not isinstance(document, Mapping):
+        return None
+    if document.get("color"):
+        return ("color", document.get("color"))
+    if document.get("media_id"):
+        return (document.get("kind"), document.get("media_id"))
+    return None
+
+
+def _window_pictures(document: Mapping[str, Any] | None) -> tuple[str, ...]:
+    windows = document.get("windows") if isinstance(document, Mapping) else None
+    return tuple(
+        str(window.get("media_id"))
+        for window in windows or ()
+        if isinstance(window, Mapping) and window.get("media_id")
+    )
+
+
+def _focuses(document: Mapping[str, Any] | None) -> list[Any]:
+    if not isinstance(document, Mapping):
+        return []
+    return [document.get("focus")] + [
+        window.get("focus") for window in document.get("windows") or () if isinstance(window, dict)
+    ]
+
+
+def _background_entries(job: Any, variant: dict[str, Any], state: Any) -> list[DiffEntry]:
+    """KRI-1563: what the bundle changed behind a Talking speaker. The pictures behind them, the
+    fill, the corner they sit in and the full-screen windows reach the video, so each one has an
+    entry (the reply named none of them, so turn 2 of thread 1b8974a0 never said it shrank her)."""
+    if "speaker_background" not in (getattr(state, "changed", None) or ()):
+        return []
+    from app.services.kria_editor_ops import (  # noqa: PLC0415 - the compiler imports this module
+        background_current,
+        background_frame_preset,
+    )
+
+    before = background_current(job, variant)
+    after = getattr(state, "speaker_background", None)
+    if not isinstance(after, Mapping) or not _fill_of(after):
+        after = None
+
+    def entry(name: str, old: Any, new: Any) -> DiffEntry:
+        return DiffEntry(
+            "speaker_background", name, (DiffTarget(name, "speaker", None, "you", old, new),)
+        )
+
+    if before is not None and after is None:
+        return [entry("removed", _fill_of(before), None)]
+    out: list[DiffEntry] = []
+    old_windows, new_windows = _window_pictures(before), _window_pictures(after)
+    if old_windows != new_windows:
+        out.append(entry("windows", len(set(old_windows)), len(set(new_windows))))
+    if _fill_of(before) != _fill_of(after) and not (before is None and new_windows):
+        # A first set of timed pictures picks its own fill: the windows entry already says it.
+        out.append(entry("fill", _fill_of(before), _fill_of(after)))
+    old_frame = background_frame_preset((before or {}).get("speaker_frame"))
+    new_frame = background_frame_preset((after or {}).get("speaker_frame"))
+    if old_frame != new_frame or (
+        new_frame == "custom"
+        and (before or {}).get("speaker_frame") != (after or {}).get("speaker_frame")
+    ):
+        out.append(entry("speaker_frame", old_frame, new_frame))
+    if _focuses(before) != _focuses(after) and old_windows == new_windows:
+        out.append(entry("focus", None, None))
+    if (before or {}).get("full_screen_windows") != (after or {}).get("full_screen_windows"):
+        out.append(entry("full_screen", None, None))
+    return out
+
+
+def _color_moment_entries(state: Any) -> list[DiffEntry]:
+    if "color_moments" not in (getattr(state, "changed", None) or ()):
+        return []
+    return [
+        DiffEntry(
+            "color_moments",
+            "changed",
+            (DiffTarget("color_moments", "video", None, "the video", None, None),),
+        )
+    ]
+
+
 def diff_compiled_state(
     job: Any,
     variant: dict[str, Any],
@@ -651,6 +734,8 @@ def diff_compiled_state(
                 ignore=frozenset({"z"}),
             ),
         ),
+        ("speaker_background", lambda: _background_entries(job, variant, state)),
+        ("color_moments", lambda: _color_moment_entries(state)),
     ]
     for name, build in lanes:
         try:
@@ -690,6 +775,15 @@ def diff_compiled_state(
             "audio", "remove_music", (DiffTarget("music", "music", None, "music", None, None),)
         )
         if state.remove_music
+        else None,
+        # KRI-1563: a phone Talking song added, swapped or removed (KRI-1562) reaches the video
+        # through `background_track_id`, which no other entry reads.
+        DiffEntry(
+            "audio",
+            "remove_music" if state.background_track_id is None else "music_track",
+            (DiffTarget("music", "music", None, "music", None, state.background_track_id),),
+        )
+        if getattr(state, "song_changed", False)
         else None,
         _scalar("title", "title", "title", None, state.title)
         if state.title is not None
@@ -1084,6 +1178,7 @@ _LANE_WORDS = {
     "user_song.volume": ("Changed the volume of your song", "Şarkının ses düzeyi değişti"),
     "user_song.window": ("Changed where your song plays", "Şarkının çalan kısmı değişti"),
     "layers.order": ("Changed which picture is on top", "Hangi görselin üstte olduğu değişti"),
+    "color_moments.changed": ("Changed the colour moments", "Renk anları değişti"),
     "video.orientation": ("Changed the video's shape", "Videonun biçimi değişti"),
     "video.landscape_fit": (
         "Changed how sideways clips fill the frame",
@@ -1106,6 +1201,11 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
     is_number = isinstance(after, (int, float)) and not isinstance(after, bool)
     if name == "y_frac" and is_number:
         _horizontal, vertical = _where(None, float(after))
+        return say(en=_CAPTIONS_MOVED_TO[vertical][0], tr=_CAPTIONS_MOVED_TO[vertical][1])
+    placed = _num(after.get("position_y_frac")) if isinstance(after, Mapping) else None
+    if name == "appearance" and placed is not None:
+        # KRI-1563: every line moved to one place reads as where, not "changed where".
+        _horizontal, vertical = _where(None, placed)
         return say(en=_CAPTIONS_MOVED_TO[vertical][0], tr=_CAPTIONS_MOVED_TO[vertical][1])
     if name == "enabled" and isinstance(after, bool):
         if after:
@@ -1150,6 +1250,70 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
         en, tr = _CAPTION_META_WORDS[name]
         return say(en=en, tr=tr)
     return say(en="Updated the captions", tr="Altyazılar güncellendi")
+
+
+_SPEAKER_CORNERS = {
+    "small_bottom_right": (
+        "Made you small in the bottom-right corner",
+        "Sağ alt köşede küçük gösteriliyorsun",
+    ),
+    "small_bottom_left": (
+        "Made you small in the bottom-left corner",
+        "Sol alt köşede küçük gösteriliyorsun",
+    ),
+    "small_top_right": (
+        "Made you small in the top-right corner",
+        "Sağ üst köşede küçük gösteriliyorsun",
+    ),
+    "small_top_left": (
+        "Made you small in the top-left corner",
+        "Sol üst köşede küçük gösteriliyorsun",
+    ),
+}
+
+
+def _describe_background(entry: DiffEntry) -> str:
+    """KRI-1563: the background behind a Talking speaker, in creator words."""
+    name, first = entry.field, entry.targets[0]
+    if name == "removed":
+        return say(en="Removed the background behind you", tr="Arkandaki arka plan kaldırıldı")
+    if name == "windows":
+        before, after = _num(first.before) or 0, _num(first.after) or 0
+        if after and not before:
+            return say(
+                en="Put {what} behind you",
+                tr="Arkana {what} kondu",
+                what=_plural(int(after), "picture", "görsel"),
+            )
+        if before and not after:
+            return say(
+                en="Removed the changing pictures behind you",
+                tr="Arkandaki değişen görseller kaldırıldı",
+            )
+        return say(en="Changed the pictures behind you", tr="Arkandaki görseller değişti")
+    if name == "fill":
+        after = first.after
+        if isinstance(after, tuple) and after and after[0] == "color":
+            return say(en="Put a plain colour behind you", tr="Arkana düz bir renk kondu")
+        return say(en="Put a new picture behind you", tr="Arkana yeni bir görsel kondu")
+    if name == "speaker_frame":
+        if first.after is None:
+            return say(en="Put you back full screen", tr="Tekrar tam ekrandasın")
+        corner = _SPEAKER_CORNERS.get(str(first.after))
+        if corner is not None:
+            return say(en=corner[0], tr=corner[1])
+        return say(en="Changed where you sit on screen", tr="Ekrandaki yerin değişti")
+    if name == "focus":
+        return say(
+            en="Changed how the pictures behind you are framed",
+            tr="Arkandaki görsellerin kadrajı değişti",
+        )
+    if name == "full_screen":
+        return say(
+            en="Changed when you're shown full screen",
+            tr="Tam ekran göründüğün anlar değişti",
+        )
+    return say(en="Changed the background behind you", tr="Arkandaki arka plan değişti")
 
 
 def _describe_tilt(entry: DiffEntry, who: str) -> str:
@@ -1376,6 +1540,8 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
             tr=_ADDED_REMOVED[verb][1],
             what=_plural(len(entry.targets), "picture", "görsel"),
         )
+    if lane == "speaker_background":
+        return _describe_background(entry)
     if lane == "visual_media":
         return say(en="Removed visual items", tr="Görsel öğeler kaldırıldı")
     if lane == "speech_cut":
@@ -1388,7 +1554,7 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
 
 
 def describe_diff(
-    entries: Iterable[DiffEntry], *, live_text_count: int = 0, limit: int = 4
+    entries: Iterable[DiffEntry], *, live_text_count: int = 0, limit: int | None = 4
 ) -> list[str]:
     """Short sentences for the deliberate entries (derived side effects are left out)."""
     out: list[str] = []

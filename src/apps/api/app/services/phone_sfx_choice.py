@@ -71,6 +71,11 @@ def _receipt(
     return out
 
 
+def declined_receipt(limit: SfxLimit) -> dict[str, Any]:
+    """The receipt of an ask a writer declined before choosing anything (KRI-1598)."""
+    return _receipt((), limit)
+
+
 def demote_receipt(receipt: dict[str, Any], dropped_ids: Sequence[str]) -> dict[str, Any]:
     """The receipt after some chosen rows were dropped (a catalogue row gone, a compile refusal):
     they are no longer placed, and nothing left means nothing fit."""
