@@ -21,7 +21,7 @@ build 2016, 2026-11-17). Two Turkish Talking takes from a DJI action camera; the
   in-stamp +10 dB, voice guard +3 dB, fragment and clip-budget rules).
 - `relative_silence_spans` / `measure_take_silences`: a hot take's pauses are measured against its
   own floor (90 Hz high-passed, 20 ms RMS at a 10 ms hop, under floor + 10 dB, ≥ 0.12 s). Used for
-  the tight / long reports and the several-take join gaps and join trims.
+  the tight / long reports and the several-take join gaps. The fallback join trim (`_trim_take_joins`) cuts with no voice guard, so it keeps the old measure.
 - `TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED` (default on): off is byte-identical to before. Takes at or
   below -45 dBFS never change.
 - The three 0.3 s draft promises now say "unless a take is noisy" (EN, TR "gürültülü çekimler

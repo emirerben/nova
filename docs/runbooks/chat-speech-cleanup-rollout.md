@@ -75,7 +75,7 @@ An action camera records hot, so an ordinary outdoor take's room floor sits near
 `TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED` (default **on**, bug-fix kill switch) a take above -45 dBFS
 is noisy only when its speech (95th percentile of 40 ms frames) rises less than 25 dB above its
 floor; otherwise the tight / long pass cuts it with the same floor-relative protections, and its
-pauses and the several-take join gaps are measured against its own floor (90 Hz high-passed
+pauses and the several-take join gaps are measured against its own floor (the unguarded fallback join trim keeps the old measure) (90 Hz high-passed
 20 ms RMS under floor + 10 dB, 0.12 s), not the -38 dB bar that heard no pause in it. Takes at or
 below -45 dBFS are unchanged. Measured on the kit and fixture clips: Cusco DJI / Qendresa
 talking takes 28-34 dB (now cut), restaurant / café / crowd takes 17-25 dB (still noisy). The

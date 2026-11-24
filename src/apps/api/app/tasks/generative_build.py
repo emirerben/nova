@@ -14974,7 +14974,7 @@ def _trim_take_joins(
     trim.
     """
     from app.pipeline.silence_cut import REASON_SILENCE, Removal  # noqa: PLC0415
-    from app.pipeline.tight_pause_cut import measure_take_silences  # noqa: PLC0415
+    from app.pipeline.tight_pause_cut import measure_silence_spans  # noqa: PLC0415
 
     plans = [plan for plan, _path, _duration in takes]
     rows: list[dict[str, Any]] = []
@@ -14996,11 +14996,10 @@ def _trim_take_joins(
         return replace(plan, keep_segments=keep, removed=removed, time_saved_s=saved)
 
     for index, (_plan, path, duration_s) in enumerate(takes):
-        spans = measure_take_silences(
-            path,
-            duration_s=duration_s,
-            relative_noise=settings.tight_pause_relative_floor_enabled,
-        )
+        # Unchanged by KRI-1524: this trim cuts by measured spans with no voice guard, so a take
+        # recorded loud keeps the old (deaf, so trim-nothing) measure here; only the guarded
+        # tight / long pass cuts it.
+        spans = measure_silence_spans(path, duration_s=duration_s)
         if not spans:
             continue
         plan = plans[index]
