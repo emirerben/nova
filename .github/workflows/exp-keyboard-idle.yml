@@ -1,0 +1,47 @@
+name: exp-keyboard-idle
+on:
+  push:
+    branches: [codex/exp-keyboard-idle]
+permissions:
+  contents: read
+env:
+  TESTS: >-
+    SlidePostUITests/testAddStyleAndApplyTextToAllSlides
+    SlidePostUITests/testAddTextStaysHittableWithKeyboardUpAndStagePinnedTo120
+    SlidePostUITests/testTypedLongLineWrapsInsideTheFrameAndShrinksToFewerRows
+    NativeEditorInspectorUITests/testPanelDragDownClosesLikeDone
+    GeneratedMediaUITests/testTwoOverlaysEachWithTheirOwnPromptAreUsedTogether
+jobs:
+  capture:
+    runs-on: macos-15
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: idle
+            busy: 0
+          - label: busy
+            busy: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: brew install xcodegen
+      - name: Project and simulator
+        run: |
+          set -euo pipefail
+          bash scripts/ios/generate-project.sh
+          SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 scripts/exp-select-sim.py)
+          echo "SIM=$SIM" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIM" || true
+          xcrun simctl bootstatus "$SIM" -b || true
+      - name: Five keyboard-heavy tests, one xcodebuild call per pass, 10 passes (${{ matrix.label }})
+        run: bash scripts/exp-kbd.sh "${{ matrix.label }}" 10 "${{ matrix.busy }}" $TESTS
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: kbd-logs-${{ matrix.label }}
+          path: src/apps/ios/*.log
+          retention-days: 3

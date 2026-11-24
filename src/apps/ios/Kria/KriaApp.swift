@@ -12,6 +12,7 @@ import UserNotifications
         // Launch ends when the first transcript row is visible (`ChatWorkspaceView`); `launch.init` is the
         // synchronous setup in this initializer and `AppModel.init`.
         Perf.mark("app.init")
+        Task { @MainActor in ExpAnimationProbe.start() }
         Perf.begin("launch.toTranscript")
         Perf.begin("launch.toPixels")
         Perf.begin("launch.init")
