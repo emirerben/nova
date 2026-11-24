@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.109.0] - 2026-11-24
+
+### Changed
+- KRI-1598: say why no sound effects were placed on every montage writer (#2495) <!-- release-pr: 2495 -->
+
 ## [0.89.108.0] - 2026-11-23
 
 ### Changed
