@@ -546,6 +546,7 @@
     "I couldn't find {name} in your Visuals for the small card": "Küçük kart için {name} görsellerinde bulamadım",
     "I couldn't find {shown} in your clips. Tap the clip that shows it, or tell me there isn't one.": "{shown} kliplerinde bulamadım. Onu gösteren klibe dokun ya da olmadığını söyle.",
     "I couldn't find {shown}{more} in your clips. Tap the clip for each one, or mark the ones that aren't there.": "Şunları kliplerinde bulamadım: {shown}{more}. Her biri için klibe dokun ya da olmayanları işaretle.",
+    "I couldn't find {v1} in the finished voiceover; the clip you named plays at {shown_at} s": "Bitmiş seslendirmede {v1} sözünü bulamadım; söylediğin klip {shown_at} sn arasında oynuyor",
     "I couldn't keep something you asked for in this edit.": "İstediğin bir şeyi bu düzenlemede koruyamadım.",
     "I couldn't keep the clip order you asked for.": "İstediğin klip sırasını koruyamadım.",
     "I couldn't keep the speaker's face in one vertical crop": "Konuşan kişinin yüzünü tek bir dikey kadrajda tutamadım",
