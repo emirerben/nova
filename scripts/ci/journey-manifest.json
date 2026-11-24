@@ -1156,8 +1156,10 @@
     {
       "id": "kri-708-caption-correction",
       "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri1520_caption_rewording_replay.py tests/pipeline/test_caption_correct.py",
       "paths": [
-        "src/apps/api/app/pipeline/caption_correct.py"
+        "src/apps/api/app/pipeline/caption_correct.py",
+        "src/apps/api/tests/fixtures/kri1520_caption_rewording/incident.json"
       ]
     },
     {
