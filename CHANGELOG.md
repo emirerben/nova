@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.11.0] - 2026-11-24
+
+### Changed
+- test(ios): UI tests tap a format card only once it accepts taps (KRI-1604) (#2507) <!-- release-pr: 2507 -->
+
 ## [0.90.10.0] - 2026-11-24
 
 ### Changed
