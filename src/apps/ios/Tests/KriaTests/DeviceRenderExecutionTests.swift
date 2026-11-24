@@ -24,10 +24,47 @@ import UIKit
         try await assertStopDuringRetryCleanup(stoppingAll: false, publishAfterStop: true)
     }
 
-    private func assertStopDuringRetryCleanup(stoppingAll: Bool, stopBeforeAcknowledgement: Bool = false, reportFails: Bool = false, publishAfterStop: Bool = false) async throws {
+    /// KRI-1605: the read that follows an accepted Stop report was still in flight when the
+    /// test went on, so every later step queued behind it and Resume was checked too early.
+    func testStopHoldsWhileTheReadAfterItsReportIsStillInFlight() async throws {
+        try await assertStopDuringRetryCleanup(stoppingAll: false, stopBeforeAcknowledgement: true, holdReadAfterStopReport: true)
+    }
+
+    func testIdleWaitCoversAReadQueuedBehindAnother() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let first = renderRequest(revision: 1), gate = RetryCleanupGate(), mutation = RetryCleanupGate(), exporter = RetryHeldExport()
+        let request = renderRequest(revision: 1), remote = RetryRemote(request), gate = ReadGate(), idle = ExpirationCounter()
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            let status = await remote.status()
+            await gate.pass()
+            return status
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: directory, exporter: RetryExport(), sources: RetrySources(), publisher: RetryPublisher())
+        }, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+        let key = DeviceRenderKey(projectID: UUID(), jobID: request.identity.jobID, variantID: "first")
+        let capabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+        await gate.arm()
+        let first = Task { await sessions.reconcile(key, capabilities: capabilities) }
+        await gate.waitEntered()
+        await remote.publish()
+        await sessions.reconcile(key, capabilities: capabilities)
+        await gate.arm()
+        await gate.release()
+        await first.value
+        let waiting = Task { await sessions.waitUntilIdle(); idle.increment() }
+        await gate.waitEntered()
+        XCTAssertEqual(idle.count, 0, "The session is not idle while the read it queued is in flight")
+        XCTAssertNotEqual(sessions.presentations[key]?.phase, .synced)
+        await gate.release()
+        await waiting.value
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced, "The queued read is applied by the time the session is idle")
+        await sessions.stopAll()
+    }
+
+    private func assertStopDuringRetryCleanup(stoppingAll: Bool, stopBeforeAcknowledgement: Bool = false, reportFails: Bool = false, publishAfterStop: Bool = false, holdReadAfterStopReport: Bool = false) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = renderRequest(revision: 1), gate = RetryCleanupGate(), mutation = RetryCleanupGate(), exporter = RetryHeldExport(), readGate = ReadGate()
         let reported: XCTestExpectation? = stoppingAll ? nil : expectation(description: "Stop reports acknowledged retry identity")
         reported?.assertForOverFulfill = false
         let second = renderRequest(job: first.identity.jobID, revision: 2)
@@ -40,7 +77,11 @@ import UIKit
             DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in await gate.clean() }, completionBarrier: { _ in }, finishRequested: { await gate.requested() })
         })
         var coordinators: [DeviceRenderCoordinator] = []
-        let sessions = DeviceRenderSessions(fetch: { _, _ in await remote.status() }, factory: { _, _ in
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            let status = await remote.status()
+            await readGate.pass()
+            return status
+        }, factory: { _, _ in
             let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: RetrySources(), publisher: RetryPublisher(), backgroundExecution: background)
             coordinators.append(coordinator)
             return coordinator
@@ -50,6 +91,7 @@ import UIKit
             return try Self.ack(second.identity)
         }, reportDecline: { _, identity, reason, _ in
             await remote.recordStop(identity, reason: reason, accepted: !reportFails)
+            if holdReadAfterStopReport { await readGate.armOnce() }
             reported?.fulfill()
             if reportFails { throw URLError(.notConnectedToInternet) }
         }, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
@@ -75,6 +117,16 @@ import UIKit
         await stop.value
         let retried = await retry.value
         await exporter.release()
+        if holdReadAfterStopReport {
+            await fulfillment(of: [try XCTUnwrap(reported)], timeout: 2)
+            let idle = ExpirationCounter()
+            let waiting = Task { await sessions.waitUntilIdle(); idle.increment() }
+            await readGate.waitEntered()
+            XCTAssertEqual(idle.count, 0, "The session is not idle while the read after its Stop report is in flight")
+            await readGate.release()
+            await waiting.value
+        }
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         let exports = await exporter.calls
         XCTAssertFalse(retried, "Stop must invalidate the retry while its old coordinator cleans up")
@@ -82,12 +134,14 @@ import UIKit
         XCTAssertEqual(exports, 1)
         XCTAssertEqual(scheduler.submissions, 0)
         if !stoppingAll {
-            await fulfillment(of: [try XCTUnwrap(reported)], timeout: 2)
+            if !holdReadAfterStopReport { await fulfillment(of: [try XCTUnwrap(reported)], timeout: 2) }
+            await sessions.waitUntilIdle()
             let reports = await remote.stopReports
             XCTAssertEqual(reports.first?.0, second.identity)
             XCTAssertEqual(reports.first?.1, DeviceRenderSessions.pausedReason)
             await sessions.reconcile(key, capabilities: capabilities)
             await sessions.resumeParked()
+            await sessions.waitUntilIdle()
             for coordinator in coordinators { await coordinator.waitUntilIdle() }
             let afterPoll = await exporter.calls
             XCTAssertEqual(coordinators.count, 1, "A later automatic poll must not restart the acknowledged retry after Stop")
@@ -97,6 +151,7 @@ import UIKit
             await sessions.reconcile(key, capabilities: capabilities)
             await remote.replace(second)
             await sessions.reconcile(key, capabilities: capabilities)
+            await sessions.waitUntilIdle()
             for coordinator in coordinators { await coordinator.waitUntilIdle() }
             let afterStaleReads = await exporter.calls
             XCTAssertEqual(afterStaleReads, 1, "A stale r1 read must not erase the pause for r2")
@@ -107,10 +162,12 @@ import UIKit
             } else {
                 // Relink completion uses this generic retry flag; it is not creator consent.
                 await sessions.reconcile(key, capabilities: capabilities, retry: true)
+                await sessions.waitUntilIdle()
                 for coordinator in coordinators { await coordinator.waitUntilIdle() }
                 let afterRelink = await exporter.calls
                 XCTAssertEqual(afterRelink, 1)
                 await sessions.resumeFromUser(key)
+                await sessions.waitUntilIdle()
                 for coordinator in coordinators { await coordinator.waitUntilIdle() }
                 let resumed = await exporter.calls
                 XCTAssertEqual(resumed, 2, "Only typed explicit Resume may release this stopped generation")
@@ -147,6 +204,7 @@ import UIKit
         await gate.release()
         await automatic.value
         await fulfillment(of: [started], timeout: 2)
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         XCTAssertEqual(try store.load(storageKey)?.state, .released)
         XCTAssertEqual(coordinators.count, 1)
@@ -174,6 +232,7 @@ import UIKit
             let key = DeviceRenderKey(projectID: UUID(), jobID: request.identity.jobID, variantID: "first")
             let capabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
             await sessions.reconcile(key, capabilities: capabilities, retry: true)
+            await sessions.waitUntilIdle()
             let automaticExports = await exporter.calls
             XCTAssertEqual(automaticExports, 0)
             XCTAssertEqual(mutations.count, 0, "Automatic relink must preserve a Stop written by an older client")
@@ -181,6 +240,7 @@ import UIKit
             await sessions.resumeFromUser(key)
             await exporter.waitStarted()
             await exporter.release()
+            await sessions.waitUntilIdle()
             await coordinator.waitUntilIdle()
             XCTAssertEqual(mutations.count, 1)
             let resumedExports = await exporter.calls
@@ -229,9 +289,11 @@ import UIKit
         await sessions.cancel(key)
         try FileManager.default.removeItem(at: root)
         await exporter.release()
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         await sessions.reconcile(key, capabilities: capabilities, retry: true)
         await sessions.resumeParked()
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         let calls = await exporter.calls
         XCTAssertEqual(calls, 1)
@@ -269,6 +331,7 @@ import UIKit
         XCTAssertEqual(scheduler.submissions, 0)
         let retried = await sessions.retryNeedsAttentionFromUser(key)
         XCTAssertTrue(retried)
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         XCTAssertEqual(scheduler.submissions, 1)
         XCTAssertEqual(delivered.completions, [true])
@@ -535,6 +598,25 @@ private final class ExpirationCounter: @unchecked Sendable {
     private var value = 0
     var count: Int { lock.withLock { value } }
     func increment() { lock.withLock { value += 1 } }
+}
+
+/// Holds the next status read after `arm()` until `release()`.
+private actor ReadGate {
+    private var armed = false
+    private var entered = false
+    private var entry: CheckedContinuation<Void, Never>?
+    private var held: CheckedContinuation<Void, Never>?
+    func arm() { armed = true; entered = false }
+    private var everArmed = false
+    /// A Stop is reported once per identity; only the first report's read is held.
+    func armOnce() { if !everArmed { everArmed = true; arm() } }
+    func pass() async {
+        guard armed else { return }
+        armed = false; entered = true; entry?.resume(); entry = nil
+        await withCheckedContinuation { held = $0 }
+    }
+    func waitEntered() async { if !entered { await withCheckedContinuation { entry = $0 } } }
+    func release() { held?.resume(); held = nil }
 }
 
 private actor RetryCleanupGate {
