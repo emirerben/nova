@@ -35,12 +35,16 @@ final class NativeEditorTestRun: NSObject, XCTestObservation, @unchecked Sendabl
     /// True when `request` comes from a client made during the test that is running now,
     /// or from a session this file did not stamp.
     func admits(_ request: URLRequest) -> Bool {
-        lock.withLock {
-            guard let made = request.value(forHTTPHeaderField: Self.header), made != String(number) else { return true }
+        let refused: String? = lock.withLock {
+            guard let made = request.value(forHTTPHeaderField: Self.header), made != String(number) else { return nil }
             let sender = Int(made).flatMap { names.indices.contains($0) ? names[$0] : nil } ?? "an unknown test"
-            late["from \(sender) during \(names[number])", default: 0] += 1
-            return false
+            let tests = "from \(sender) during \(names[number])"
+            late[tests, default: 0] += 1
+            return tests
         }
+        // Printed as it happens too: the end-of-bundle list is lost when the test process is stopped early.
+        if let refused { print("Request from an earlier test, refused: \(refused)") }
+        return refused == nil
     }
 }
 
