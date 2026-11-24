@@ -6,15 +6,16 @@ for, three runs after the Green 4/5 asked-only rule shipped.
 * Cusco T2 "list 1" (Talking; asked: four labels in the creator's words, Turkish captions):
   the opening hook idea.
 * Roasted carrots "Tahini" (Voiceover; asked: a title in the creator's words, their own opening
-  order): the opening hook idea and "I can't follow the planned story structure".
+  order): the opening hook idea (its story-structure line stays: see 3).
 
 Ways the fix could fail (written before the fix):
 1. A title or label the creator wrote word for word still counts as asking for Kria's hook
    idea, so the hook line stays (T2, T5, Tahini, and the original Q1/Q2 title runs).
 2. The story-structure line still reaches the card through the "story will be built" path,
    which skipped the asked-only rule (T5).
-3. The creator's own clip order still counts as asking for Kria's planned story structure, so
-   "I can't follow the planned story structure" stays although their order is kept (Tahini).
+3. Over-suppression: a route that ignores the story structure may drop a clip order the
+   creator asked for, so with a live order ask the line must stay (Tahini; the route-replay
+   scorer's own control holds the same rule).
 4. The story archetype (a planner field nobody can ask for by type) still has a line on the
    draft and, as the last one left, on the approval card (T5).
 5. Over-suppression: an opening text the creator asks Kria to write (no words given) loses the
@@ -47,6 +48,8 @@ from app.kria.route_disclosure import (
 FIXTURE = json.loads((Path(__file__).parent / "kri1474_unasked_headsups.json").read_text())
 RUNS = ("cusco_t5", "cusco_t2", "tahini")
 UNASKED = {"intro_hook", "story_structure", "archetype"}
+# Tahini's creator asked for an order: its story-structure line is the one that must stay.
+KEPT = {"cusco_t5": set(), "cusco_t2": set(), "tahini": {"story_structure"}}
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +72,8 @@ def _replay(name: str, strategy_patch: dict | None = None, extra: list[dict] | N
 @pytest.mark.parametrize("name", RUNS)
 def test_the_draft_names_none_of_kria_s_own_ideas(name: str) -> None:
     disclosures = _replay(name)
-    assert not {d.subject for d in disclosures} & UNASKED, card_text(disclosures)
+    subjects = {d.subject for d in disclosures}
+    assert subjects & UNASKED == KEPT[name], card_text(disclosures)
 
 
 def test_t5_approval_card_has_no_archetype_line() -> None:

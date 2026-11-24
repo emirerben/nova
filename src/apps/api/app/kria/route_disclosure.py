@@ -98,15 +98,18 @@ def asked_only() -> bool:
 
 
 def creator_asked_for(field: str, requirements: Sequence[BriefRequirement] | None) -> bool:
-    """A live typed ask the planner-owned ``field`` carries: opening words the creator asks Kria
-    to write ("add a catchy opening line") for the hook idea.
+    """A live typed ask the planner-owned ``field`` carries: a clip order for the story structure
+    (a route that ignores the structure may drop the order, so it is said), opening words the
+    creator asks Kria to write ("add a catchy opening line") for the hook idea.
 
     KRI-1474: words the creator wrote themselves (a title, a label: ``literal``) and per-clip
-    texts are not the hook idea, and the creator's own clip order is not the planner's story
-    structure; each has its own receipt line, so a heads-up about Kria's idea only reads as Kria
-    failing at something they asked. Pacing, direction and the archetype have no typed ask: an
-    untyped one ("make it fast") is the creator's own requirement and gets its own receipt."""
+    texts are not the hook idea; they have their own receipt line, so a heads-up about Kria's
+    hook only reads as Kria failing at something they asked. Pacing, direction and the archetype
+    have no typed ask: an untyped one ("make it fast") is the creator's own requirement and gets
+    its own receipt."""
     live = [req for req in requirements or () if req.live]
+    if field == "story_structure":
+        return any(req.kind in {"order", "text_sequence"} for req in live)
     if field == "intro_hook":
         return any(
             req.kind == "text" and not req.literal and req.scope != "per_clip" for req in live
