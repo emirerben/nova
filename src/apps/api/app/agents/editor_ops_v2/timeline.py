@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agents.editor_ops_v2 import OpSpec
+from app.kria.clip_dim import parse_row_dim, stored_row_dim
 from app.kria.clip_tilt import MAX_ZOOM, MIN_ZOOM, ClipTilt, clamp_zoom, wrap_degrees
 from app.kria.recipes import ClipBackdrop
 from app.kria.reply_language import say
@@ -58,6 +59,7 @@ _PATCH_KEYS = frozenset(
         "transition_duration_s",
         "source_crop",
         "tilt",
+        "dim",
         "removed",
         "muted",
         "source_audio_volume",
@@ -273,6 +275,20 @@ def _zoom_limit_note() -> str:
     )
 
 
+def _clean_dim(value: object, state: Any) -> tuple[bool, float | None]:
+    """(valid, dim). ``None`` (or 0) removes the dim; otherwise a strength 0.01..1."""
+    try:
+        return True, parse_row_dim(value)
+    except ValueError:
+        state.invalid_value(
+            say(
+                en="A dim is a strength from 0 to 1: 0.4 is 40% darker, 1 is black.",
+                tr="Karartma 0 ile 1 arasında bir güçtür: 0.4 yüzde 40 daha koyu, 1 siyahtır.",
+            )
+        )
+        return False, None
+
+
 def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
     from app.agents import edit_copilot as ec  # noqa: PLC0415
 
@@ -302,6 +318,13 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             cleaned = value if isinstance(value, bool) else None
         elif key == "source_audio_volume":
             cleaned = _num(value, 0.0, 2.0)
+        elif key == "dim":
+            # None removes the dim, so it cannot ride the check below either.
+            valid, dim = _clean_dim(value, state)
+            if not valid:
+                return None
+            clean[key] = dim
+            continue
         elif key == "tilt":
             # None is a valid value here ("straighten"), so it cannot ride the check below.
             valid, tilt = _clean_tilt(value, state, snapshot)
@@ -331,6 +354,14 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
         unavailable = say(
             en="I can't tilt clips on this edit.",
             tr="Bu videoda klipleri eğemiyorum.",
+        )
+        state.reject(op=name, reason="capability_unavailable", detail=unavailable)
+        state.reply_notes.append(unavailable)
+        return None
+    if "dim" in clean and not (isinstance(capabilities, dict) and capabilities.get("dim") is True):
+        unavailable = say(
+            en="I can't dim clips on this edit.",
+            tr="Bu videoda klipleri karartamıyorum.",
         )
         state.reject(op=name, reason="capability_unavailable", detail=unavailable)
         state.reply_notes.append(unavailable)
@@ -773,6 +804,8 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
         raise _err("Cropping is not available for this edit")
     if "tilt" in patch and not _clip_capability(state, "tilt", default=False):
         raise _err("Tilting clips isn't available for this edit")
+    if "dim" in patch and not _clip_capability(state, "dim", default=False):
+        raise _err("Dimming clips isn't available for this edit")
     if (
         isinstance(patch.get("tilt"), dict)
         and any(key in patch["tilt"] for key in _TILT_ZOOM_KEYS)
@@ -790,6 +823,7 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
     last_active = active[-1] if active else -1
     applied = 0
     tilt_unchanged = False
+    dim_unchanged = False
     duration_only_on_cut = False
     for index in indexes:
         row = rows[index]
@@ -913,6 +947,12 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
                 raise _err("A photo shown as a card can't be cropped")
             row["source_crop"] = patch["source_crop"]
             applied += 1
+        if "dim" in patch and row.get("media_kind") != "blank":
+            if patch["dim"] == stored_row_dim(row.get("dim")):
+                dim_unchanged = True
+            else:
+                row["dim"] = patch["dim"]
+                applied += 1
         if "tilt" in patch:
             tilted = _tilted(row, patch, clip_number=active.index(index) + 1)
             if tilted == ClipTilt.from_row(row.get("tilt")).row():
@@ -951,6 +991,12 @@ def _op_patch_slots(state: Any, op: dict[str, Any]) -> None:
 
         layout_split_timeline(rows, state.split_screen_sections)
     if not applied:
+        if dim_unchanged:
+            raise _err(
+                "Those clips have no dim to remove"
+                if patch["dim"] is None
+                else "Those clips are already dimmed that much"
+            )
         if tilt_unchanged:
             raise _err(
                 "Those clips are already upright"

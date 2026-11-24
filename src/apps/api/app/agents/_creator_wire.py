@@ -276,6 +276,7 @@ def _copilot_operations():
         "window_end_s",
         "position_x_frac",
         "position_y_frac",
+        "dim",
     }
     list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
@@ -465,6 +466,7 @@ def _copilot_operations():
             "transition_duration_s",
             "playback_rate",
             "tilt",
+            "dim",
             "rotation_delta_deg",
             "muted",
             "source_audio_volume",
@@ -474,7 +476,7 @@ def _copilot_operations():
         {
             k: (
                 {"anyOf": [field(k), {"type": "null"}]}
-                if k in {"background_color", "tilt"}
+                if k in {"background_color", "tilt", "dim"}
                 else field(k)
             )
             for k in sorted(patch_names)
