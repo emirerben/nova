@@ -713,6 +713,15 @@
       ]
     },
     {
+      "id": "kri-1517-voiceover-whole-set-review",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri1517_voiceover_fill_rest_review.py tests/kria/test_kri1515_montage_sentence_once.py tests/tasks/test_narrated_alignment_receipts.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/narrated_alignment/kri1517_cusco_t4_moments.json",
+        "src/apps/api/tests/tasks/test_kri1517_voiceover_fill_rest_review.py"
+      ]
+    },
+    {
       "id": "kri-598-voiceover-planner",
       "needs_native": false,
       "api_tests": "tests/agents/test_n2_fullscreen_contract.py tests/kria/test_brief_marathon_receipts.py tests/pipeline/test_phone_narrated_fullscreen.py tests/routes/test_phone_narrated_editor_commit.py tests/services/test_n2_fullscreen_grounding.py tests/tasks/test_n2_fullscreen_dispatch.py",
