@@ -1,8 +1,8 @@
 """KRI-1612: the model arm through the REAL `_run_phone_subtitled_job` and the approval check.
 
 The harness of `test_intro_scene_worker.py`: the real worker, the real agent, its real parser and
-the real compiler and placement. Only the provider transport is replayed (a stub answers the
-intro-scene prompt and passes every other prompt through).
+the real compiler and placement. Only the provider transport is replayed: a stub answers the
+intro-scene prompt and refuses every other prompt (no test here reaches a real provider).
 
 Ways it could fail (written before the wiring; a test each):
 M1 the model arm is not stamped, yet the model is asked, or the seeded scene changes;
@@ -42,15 +42,14 @@ COMPOSE = {
 
 
 class Routing(ModelClient):
-    def __init__(self, delegate: ModelClient, answer: str | Exception) -> None:
-        self.delegate = delegate
+    def __init__(self, answer: str | Exception) -> None:
         self.answer = answer
         self.intro_calls = 0
         self.prompts: list[str] = []
 
     def invoke(self, **kwargs: Any) -> ModelInvocation:
         if MARK not in kwargs["prompt"]:
-            return self.delegate.invoke(**kwargs)
+            raise RuntimeError("no provider in tests")
         self.intro_calls += 1
         self.prompts.append(kwargs["prompt"])
         if isinstance(self.answer, Exception):
@@ -61,7 +60,7 @@ class Routing(ModelClient):
 @pytest.fixture
 def route(monkeypatch):
     def install(answer: str | Exception) -> Routing:
-        client = Routing(_model_client.default_client(), answer)
+        client = Routing(answer)
         monkeypatch.setattr(_model_client, "default_client", lambda: client)
         return client
 
