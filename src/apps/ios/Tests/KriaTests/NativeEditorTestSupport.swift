@@ -10,7 +10,8 @@ final class NativeEditorTestRun: NSObject, XCTestObservation, @unchecked Sendabl
     static let header = "X-Kria-Test-Case"
     private let lock = NSLock()
     private var number = 0
-    private var name = ""
+    /// Test names by number; 0 is "before any test".
+    private var names = ["before the first test"]
     private var late: [String: Int] = [:]
 
     private override init() {
@@ -22,13 +23,13 @@ final class NativeEditorTestRun: NSObject, XCTestObservation, @unchecked Sendabl
     /// Requests refused so far because their client was made by an earlier test.
     var lateRequests: Int { lock.withLock { late.values.reduce(0, +) } }
 
-    func testCaseWillStart(_ testCase: XCTestCase) { lock.withLock { number += 1; name = testCase.name } }
+    func testCaseWillStart(_ testCase: XCTestCase) { lock.withLock { number += 1; names.append(testCase.name) } }
 
     func testBundleDidFinish(_ testBundle: Bundle) {
         let seen = lock.withLock { late }
         guard !seen.isEmpty else { return }
         print("Requests from an earlier test, refused (\(seen.values.reduce(0, +))):")
-        for (test, count) in seen.sorted(by: { $0.key < $1.key }) { print("  \(count) during \(test)") }
+        for (tests, count) in seen.sorted(by: { $0.key < $1.key }) { print("  \(count) \(tests)") }
     }
 
     /// True when `request` comes from a client made during the test that is running now,
@@ -36,7 +37,8 @@ final class NativeEditorTestRun: NSObject, XCTestObservation, @unchecked Sendabl
     func admits(_ request: URLRequest) -> Bool {
         lock.withLock {
             guard let made = request.value(forHTTPHeaderField: Self.header), made != String(number) else { return true }
-            late[name, default: 0] += 1
+            let sender = Int(made).flatMap { names.indices.contains($0) ? names[$0] : nil } ?? "an unknown test"
+            late["from \(sender) during \(names[number])", default: 0] += 1
             return false
         }
     }
