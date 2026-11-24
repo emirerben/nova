@@ -4854,7 +4854,8 @@ A Talking speaker's person mask is found on the undimmed picture. `LivePreviewCo
 place, so the editor slider updates the paused preview without a rebuild.
 
 Editor: `clips.dim` in `editor_capabilities` (same edits as `clips.tilt`: device render, an authored timeline, a
-guided/montage edit with its revision, or a phone Voiceover cut). The clip strip's Dim button opens
+guided/montage edit with its revision, or a phone Voiceover cut), and only to a build at the protocol: a chat
+worker judges the build that sent the message. The clip strip's Dim button opens
 `NativeDimSheet` (slider, -/+ 5%, Remove, Apply to all). Save refusals: 422 `clip_dim_unavailable` for a new dim
 while the gate is closed (removing one is always allowed) and 426 `client_update_required` (`clip_dim`) for an older
 build replacing the timeline of a dimmed edit or polling a dimmed recipe.

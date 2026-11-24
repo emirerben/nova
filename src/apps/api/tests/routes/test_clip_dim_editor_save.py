@@ -82,6 +82,25 @@ def test_the_capability_needs_flag_token_protocol_and_a_device_render(monkeypatc
     assert _dim_capability(job, variant) is None
 
 
+def test_a_chat_worker_offers_dim_only_to_a_sender_that_can_draw_it(monkeypatch):
+    from app.services.client_protocol import bind_sending_build, unbind_sending_build
+
+    _enable(monkeypatch)
+    job, _ = voiceover_job()
+    _open_dim(monkeypatch)
+    clear_request_context()
+    assert _dim_capability(job, _variant(job)) is None
+    for protocol, offered in (
+        (CLIP_DIM_PROTOCOL - 1, None),
+        (CLIP_DIM_PROTOCOL, {"editable": True, "reason": None}),
+    ):
+        token = bind_sending_build(protocol)
+        try:
+            assert _dim_capability(job, _variant(job)) == offered
+        finally:
+            unbind_sending_build(token)
+
+
 def test_clip_dim_flag_off_is_byte_identical(monkeypatch):
     _enable(monkeypatch)
     job, _ = voiceover_job()

@@ -8131,10 +8131,14 @@ def _clip_tilt_capability(job: Job, variant: dict, capabilities: dict) -> bool:
 
 def _clip_dim_capability(job: Job, variant: dict, capabilities: dict) -> bool:
     """May the app dim a clip (``editor_capabilities.clips.dim``)? The same edits as a tilt
-    (the cloud has no ``clipDim``), while `clip_dim_supported` holds."""
+    (the cloud has no ``clipDim``), while `clip_dim_supported` holds for the build asking: in a
+    chat worker that is the build that sent the message, so an older build is never offered a
+    dim by chat that it could not draw or Save."""
     from app.services.phone_rollout import clip_dim_supported  # noqa: PLC0415
 
-    return _recompiles_clip_rows(job, variant, capabilities) and clip_dim_supported()
+    return _recompiles_clip_rows(job, variant, capabilities) and clip_dim_supported(
+        require_client=True
+    )
 
 
 def _recompiles_clip_rows(job: Job, variant: dict, capabilities: dict) -> bool:

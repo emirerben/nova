@@ -29,3 +29,12 @@ its middle half went from 153.2 to 83.5 (ratio 0.545; the region includes the br
 clip 2 at 0%.
 
 `montage.png` shows the three export frames and the editor before and at 50%.
+
+## Negative control
+
+The dim must multiply ENCODED values. With the two tone-curve conversions removed from
+`RecipeVideoCompositor.dimmed` (a multiply in the compositor's linear light),
+`swift test --filter ClipDimCompositionTests` fails: at 50% the clip pixel `[200, 120, 40]` reads
+`[146, …]` instead of `[100, 60, 20]`, the tilt backdrop and the 25% and 75% cases miss by 26 to 56
+levels, and the dimmed Talking speaker reads green 191 instead of 128. With the conversions in
+place all six tests pass. Run on macOS (`swift test`), 2026-11-24.
