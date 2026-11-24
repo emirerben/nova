@@ -1746,6 +1746,10 @@ enum EditorOpenIntent { case warm, open }
         Task { await save() }
     }
 
+    /// The creator chose "Discard changes" on the leave prompt: a Save kept for the end of the load must not run
+    /// after it.
+    func forgetSaveKeptForLoad() { saveRequestedDuringLoad = false }
+
     private var pendingRenderRetrySections: Set<EditorSection> = []
     /// Pending render intent survives a failed commit without becoming an authored edit.
     var hasPendingRenderRetry: Bool { !pendingRenderRetrySections.isEmpty }

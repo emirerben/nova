@@ -4921,6 +4921,21 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(headerSaveControl(held.session), .unsaved)
     }
 
+    /// "Discard changes" on the leave prompt is her later answer. A Save kept for the load must not run after it.
+    func testASaveKeptForALoadIsNotSentAfterSheDiscardsHerChanges() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        await held.session.save()
+        XCTAssertEqual(headerSaveControl(held.session), .saving)
+        held.session.forgetSaveKeptForLoad()
+        XCTAssertNotEqual(headerSaveControl(held.session), .saving, "she chose to discard, so no save is coming")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(held.spy.commitCount, 0, "a discarded edit must not be saved")
+    }
+
     private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>, threadID: UUID) {
         let jobID = UUID(), threadID = UUID()
         let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
