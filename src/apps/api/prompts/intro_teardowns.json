@@ -1,0 +1,229 @@
+{
+  "version": "2026-11-24-kri-1610-1",
+  "_note": "footage_plate names the synthetic footage the render check draws the reference on (light_wall or dark_room), chosen to match footage_fit. Five creator intros, torn down as data (KRI-1609 / KRI-1610). Not a template list: a reference is evidence of taste, and each scene is the closest IntroScene today's engine can compile. The example titles are fixtures for the render check (make verify-intro-scenes) and are never used as on-screen text at runtime. Scenes are option ids and one voice per title word, nothing else. Source of the look: the approved taste board https://claude.ai/artifact/QjPSuSE4RGWZDq681BXqiT (2026-11-24).",
+  "engine_limits": [
+    {
+      "piece": "staggered entrance (the accent word lands after the solid rows)",
+      "move": "rows need their own start time; stacked_title_matches requires every row to start together within one frame, so the approval check must read a per-row delay first"
+    },
+    {
+      "piece": "flash cover (about 0.1 s) and moment sounds timed to each element",
+      "move": "a cover/flash element and per-element sound cues; the scene carries one sound id for the whole intro"
+    },
+    {
+      "piece": "pen-stroke reveal in a face other than Patrick Hand",
+      "move": "the handwriting effect draws Patrick Hand centerlines whatever font the row names, so the pen entrance is issued only with a Patrick Hand accent; Zeyada and Over the Rainbow reveal with the ink wipe instead"
+    },
+    {
+      "piece": "an ink picked from the footage",
+      "move": "the menu offers every ink; contrast against the footage is left to the existing legibility outline until the engine ranks inks per footage"
+    }
+  ],
+  "teardowns": [
+    {
+      "id": "ref1",
+      "name": "Title on the empty wall",
+      "reference_image": "taste board media/ref1.jpg",
+      "expressible": "yes",
+      "footage_fit": "A talking head with plain empty wall above the head, on a light wall where one saturated ink reads.",
+      "footage_plate": "light_wall",
+      "why_it_works": "Bold caps plus one handwritten word, both in the same red, placed in the space above the head.",
+      "missing_moves": [],
+      "approximations": [
+        {
+          "piece": "handwritten accent enters after the title",
+          "move": "staggered entrance (see engine_limits); here both rows enter together, the accent with the ink wipe"
+        }
+      ],
+      "examples": {
+        "en": {
+          "title": "the biggest design trend right now",
+          "scene": {
+            "decision": "compose",
+            "voices": ["solid", "solid", "solid", "solid", "accent", "accent"],
+            "font_pair": "grotesk_hand",
+            "ink": "oxblood",
+            "zone": "above_head",
+            "entrance": "ink",
+            "sound": "accent-pop"
+          }
+        },
+        "tr": {
+          "title": "bu yılın en büyük tasarım trendi şu an",
+          "scene": {
+            "decision": "compose",
+            "voices": ["solid", "solid", "solid", "solid", "solid", "solid", "accent", "accent"],
+            "font_pair": "grotesk_hand",
+            "ink": "oxblood",
+            "zone": "above_head",
+            "entrance": "ink",
+            "sound": "accent-pop"
+          }
+        }
+      }
+    },
+    {
+      "id": "ref2",
+      "name": "Folder sticker with an illustration",
+      "reference_image": "taste board media/ref2.jpg",
+      "expressible": "no",
+      "footage_fit": "A topic the creator can name as an object (a language, a recipe, a tool), with the lower third free for the object.",
+      "footage_plate": "dark_room",
+      "why_it_works": "The topic becomes an object: a labelled folder and one flat picture.",
+      "missing_moves": [
+        {
+          "piece": "folder sticker (deer-print prop)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "label written on the folder",
+          "move": "a title row anchored to a sticker and layered above it; title rows are stacked by the title placement and know no other element"
+        },
+        {
+          "piece": "illustration card beside the folder",
+          "move": "a card option in the scene; cards exist as overlay cards but are not an IntroScene choice yet"
+        }
+      ],
+      "examples": {}
+    },
+    {
+      "id": "ref3",
+      "name": "Photo collage around the speaker",
+      "reference_image": "taste board media/ref3.jpg",
+      "expressible": "partial",
+      "footage_fit": "A speaker centred with clear space above and below, on a topic the creator has photos for.",
+      "footage_plate": "dark_room",
+      "why_it_works": "Topic photos frame the speaker and the title sits in the band between them, a plain line then one big loopy handwritten word in one chartreuse.",
+      "missing_moves": [
+        {
+          "piece": "five topic photo cards around the speaker",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        },
+        {
+          "piece": "cards running past the canvas edge",
+          "move": "edge bleed: card position and scale beyond the canvas are unverified on phone"
+        },
+        {
+          "piece": "title laid out together with the cards (between them)",
+          "move": "a title zone aware of the card positions; the title zones offered are above the head, top left and mid frame"
+        }
+      ],
+      "examples": {
+        "en": {
+          "title": "how am i using pinterest",
+          "scene": {
+            "decision": "compose",
+            "voices": ["solid", "solid", "solid", "solid", "accent"],
+            "font_pair": "grotesk_loop",
+            "ink": "chartreuse",
+            "zone": "above_head",
+            "entrance": "ink",
+            "sound": "soft-pop"
+          }
+        },
+        "tr": {
+          "title": "pinterest’i nasıl kullanıyorum",
+          "scene": {
+            "decision": "compose",
+            "voices": ["solid", "solid", "accent"],
+            "font_pair": "grotesk_loop",
+            "ink": "chartreuse",
+            "zone": "above_head",
+            "entrance": "ink",
+            "sound": "soft-pop"
+          }
+        }
+      }
+    },
+    {
+      "id": "ref4",
+      "name": "Scrapbook title with stickers",
+      "reference_image": "taste board media/ref4.jpg",
+      "expressible": "partial",
+      "footage_fit": "A casual, playful selfie with room under the chin; a challenge or a confession as the title.",
+      "footage_plate": "dark_room",
+      "why_it_works": "Heavy cream serif in two lines with craft stars around it; the stars are what makes it feel handmade.",
+      "missing_moves": [
+        {
+          "piece": "five craft stars (denim, polka, button, navy)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "title under the chin (lower third)",
+          "move": "a lower-third title zone; place_title_look offers top, top left and middle only"
+        }
+      ],
+      "examples": {
+        "en": {
+          "title": "If Nobody Watches / Your Test Videos",
+          "scene": {
+            "decision": "compose",
+            "voices": ["solid", "solid", "solid", "solid", "solid", "solid"],
+            "font_pair": "young_serif",
+            "ink": "butter",
+            "zone": "above_head",
+            "entrance": "pop",
+            "sound": "accent-pop"
+          }
+        },
+        "tr": {
+          "title": "Deneme Videolarınız / İzlenmiyorsa",
+          "scene": {
+            "decision": "compose",
+            "voices": ["solid", "solid", "solid"],
+            "font_pair": "young_serif",
+            "ink": "butter",
+            "zone": "above_head",
+            "entrance": "pop",
+            "sound": "accent-pop"
+          }
+        }
+      }
+    },
+    {
+      "id": "ref5",
+      "name": "Script title over a photo grid",
+      "reference_image": "taste board media/ref5.jpg",
+      "expressible": "partial",
+      "footage_fit": "A guide or series topic (a city, a day one) with the speaker centred and room above and below.",
+      "footage_plate": "dark_room",
+      "why_it_works": "A script label overlapping a serif subject, two photos above and two below.",
+      "missing_moves": [
+        {
+          "piece": "script label overlapping the serif subject",
+          "move": "row overlap: title rows always stack with a gap, they never overlap"
+        },
+        {
+          "piece": "2 + 2 photo grid",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        }
+      ],
+      "examples": {
+        "en": {
+          "title": "city guide: lisbon, day one",
+          "scene": {
+            "decision": "compose",
+            "voices": ["accent", "accent", "solid", "solid", "solid"],
+            "font_pair": "script_serif",
+            "ink": "white",
+            "zone": "above_head",
+            "entrance": "fade",
+            "sound": "whoosh-fast"
+          }
+        },
+        "tr": {
+          "title": "şehir rehberi: lizbon, ilk gün",
+          "scene": {
+            "decision": "compose",
+            "voices": ["accent", "accent", "solid", "solid", "solid"],
+            "font_pair": "script_serif",
+            "ink": "white",
+            "zone": "above_head",
+            "entrance": "fade",
+            "sound": "whoosh-fast"
+          }
+        }
+      }
+    }
+  ]
+}

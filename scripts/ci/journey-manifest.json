@@ -4019,6 +4019,18 @@
       ]
     },
     {
+      "id": "kri-1610-intro-scene",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_scene_schema.py tests/pipeline/test_intro_scene.py",
+      "paths": [
+        "src/apps/api/app/pipeline/intro_scene.py",
+        "src/apps/api/prompts/intro_teardowns.json",
+        "src/apps/api/app/cli/verify_intro_scenes.py",
+        "src/apps/api/tests/pipeline/test_intro_scene_schema.py",
+        "src/apps/api/tests/pipeline/test_intro_scene.py"
+      ]
+    },
+    {
       "id": "kri-1560-opening-titles",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri1560_opening_titles_postgres.py tests/services/test_creative_copy_decisions.py tests/kria/test_creative_copy_planner.py",
