@@ -30,6 +30,12 @@ Ways this could go wrong, and the guard for each (tests/pipeline/test_intro_scen
 * S6: a failure breaks the render. Everything is caught; the caller gets today's title.
 * S7: Turkish caps (``text_language`` rides on the row so "trendi" caps to "TRENDİ").
 * S8: more than one ink. Every row takes the scene's single ink.
+* S11: rows that compile but cannot sit clear: a long accent run at 250px, a long caps row that
+  rises above the title safe zone, a row whose ink box covers the face box. `preflight_rows`
+  places the rows on a typical speaker (the same `place_title_look`), renders them, and measures
+  the ink, so `compile_intro_scene` declines them (`placement_unclean`, `ink_off_zone`). The
+  typical face is a stand-in: the caller still holds the real placement receipt and MUST gate on
+  `placement_is_clean(receipt)` before using the rows.
 """
 
 from __future__ import annotations
@@ -40,6 +46,8 @@ from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+
+from app.pipeline.render_geometry import NormalizedBox
 
 log = structlog.get_logger(__name__)
 
@@ -247,6 +255,104 @@ def check_scene(scene: IntroScene, title: str, menu: IntroMenu) -> str | None:
     return None
 
 
+# --- the placement preflight --------------------------------------------------------------
+
+# A typical speaker (head with clear wall above it) and the captions under it, normalized 0-1.
+# Stand-ins: compile has no footage, so it asks "could these rows sit clear of a typical head?".
+TYPICAL_FACE = NormalizedBox(0.27, 0.29, 0.74, 0.73)
+TYPICAL_CAPTIONS = NormalizedBox(0.12, 0.81, 0.88, 0.87)
+# The title safe zone `phone_title_look` places inside (x 3-97%, y 6-95%).
+SAFE_ZONE = NormalizedBox(0.03, 0.06, 0.97, 0.95)
+CLEAN_STATUSES = frozenset({"preset", "moved", "moved_below_face", "shrunk", "squeezed"})
+MAX_INK_COVERAGE = 0.05  # the title placement's own face-coverage limit, here on the ink box
+
+
+def placement_is_clean(receipt: dict[str, Any]) -> bool:
+    """True when a `place_title_look` receipt is a clean spot: not ``best_effort`` / ``error``
+    and no face or text collision. The caller MUST check its real receipt with this."""
+    return (
+        str(receipt.get("status")) in CLEAN_STATUSES
+        and not receipt.get("face_collision")
+        and not receipt.get("text_overlap")
+    )
+
+
+def ink_box_problems(
+    box: NormalizedBox, *, face: NormalizedBox, captions: NormalizedBox
+) -> list[str]:
+    """Why a row's measured ink box is not acceptable (empty when it is)."""
+    problems = []
+    if (
+        box.left < SAFE_ZONE.left - 1e-6
+        or box.right > SAFE_ZONE.right + 1e-6
+        or box.top < SAFE_ZONE.top - 1e-6
+        or box.bottom > SAFE_ZONE.bottom + 1e-6
+    ):
+        problems.append(f"ink outside the title safe zone {box.as_dict()}")
+    if box.coverage_by(face) > MAX_INK_COVERAGE:
+        problems.append(f"ink covers the face ({box.coverage_by(face):.2f})")
+    if box.coverage_by(captions) > MAX_INK_COVERAGE:
+        problems.append(f"ink covers the captions ({box.coverage_by(captions):.2f})")
+    return problems
+
+
+def overlay_for_row(row: dict[str, Any]) -> dict[str, Any]:
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
+
+    [overlay] = build_overlays_from_text_elements(
+        [TextElement.model_validate(row)],
+        video_duration_s=max(float(row["end_s"]), 0.1),
+        independent_box_alignment=True,
+    )
+    return overlay
+
+
+def place_on_typical_face(
+    rows: list[dict[str, Any]], position: str | None, canvas: Any
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    from app.pipeline.phone_title_look import place_title_look  # noqa: PLC0415
+    from app.pipeline.render_geometry import ProtectedRegion  # noqa: PLC0415
+
+    region = ProtectedRegion(0.0, 1e6, TYPICAL_FACE, kind="face")
+
+    def sample(_path, anchors, **_kwargs):  # noqa: ANN001, ANN202 - a fixed stand-in speaker
+        return [region], {"attempted": len(anchors), "decoded": 1, "detected": 1}
+
+    return place_title_look(
+        rows,
+        clip_path="typical-speaker.mp4",
+        keep_segments=[(0.0, 1e6)],
+        display_width=canvas.width,
+        display_height=canvas.height,
+        canvas=canvas,
+        sample=sample,
+        position=position,
+        avoid=[TYPICAL_CAPTIONS],
+    )
+
+
+def preflight_rows(rows: list[dict[str, Any]], position: str | None, canvas: Any) -> str | None:
+    """Place ``rows`` on a typical speaker, draw them, and measure the ink. Returns the decline
+    reason, or ``None`` when they sit clear."""
+    from app.pipeline import overlay_verify as ov  # noqa: PLC0415
+
+    placed, receipt = place_on_typical_face(rows, position, canvas)
+    if not placement_is_clean(receipt):
+        return "placement_unclean"
+    for row in placed:
+        bare = ov.render_overlay_frame({**overlay_for_row(row), "shadow_enabled": False})
+        bbox = ov.text_bbox(bare)
+        if bbox is None:
+            return "ink_off_zone"
+        box = NormalizedBox(
+            bbox[0] / bare.width, bbox[1] / bare.height, bbox[2] / bare.width, bbox[3] / bare.height
+        )
+        if ink_box_problems(box, face=TYPICAL_FACE, captions=TYPICAL_CAPTIONS):
+            return "ink_off_zone"
+    return None
+
+
 # --- compile ------------------------------------------------------------------------------
 
 
@@ -405,6 +511,9 @@ def compile_intro_scene(
         if typed is None or split_title_lines(typed) != [run.text for run in runs]:
             return IntroCompile(None, "stack_mismatch")
         assert scene.zone and scene.sound
+        unsat = preflight_rows(rows, ZONES[scene.zone], canvas)
+        if unsat:
+            return IntroCompile(None, unsat)
         return IntroCompile(
             rows, "ok", typed_title=typed, sound=scene.sound, position=ZONES[scene.zone]
         )

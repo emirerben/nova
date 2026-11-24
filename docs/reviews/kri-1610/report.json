@@ -4,6 +4,14 @@
   "skia": "144.0.post2",
   "overall": "PASS",
   "failed": [],
+  "sweep": {
+    "compiled": 197,
+    "declined": {
+      "placement_unclean": 15,
+      "ink_off_zone": 4
+    },
+    "failed": []
+  },
   "blind_controls": [],
   "inexpressible": [
     {

@@ -45,21 +45,16 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont  # noqa: E402
 
 from app.pipeline import intro_scene as scene_mod  # noqa: E402
 from app.pipeline import overlay_verify as ov  # noqa: E402
-from app.pipeline import phone_subtitled_title as title_mod  # noqa: E402
 from app.pipeline.canvas import PORTRAIT  # noqa: E402
-from app.pipeline.phone_title_look import place_title_look  # noqa: E402
-from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion  # noqa: E402
+from app.pipeline.render_geometry import NormalizedBox  # noqa: E402
 
 _TEARDOWNS = Path(__file__).resolve().parents[2] / "prompts" / "intro_teardowns.json"
 LANGUAGES = ("en", "tr")
-# The speaker on the synthetic plate: a head with clear wall above it (normalized 0-1).
-FACE_BOX = NormalizedBox(0.27, 0.29, 0.74, 0.73)
-# Where the speaker's own captions sit, so the title is also kept clear of them.
-CAPTION_BOX = NormalizedBox(0.12, 0.81, 0.88, 0.87)
+# The speaker on the synthetic plate IS the compiler's typical speaker, so a scene the compiler
+# accepts is judged here against the same head and captions.
+FACE_BOX = scene_mod.TYPICAL_FACE
+CAPTION_BOX = scene_mod.TYPICAL_CAPTIONS
 _FONTS = Path(__file__).resolve().parents[2] / "assets" / "fonts"
-# The title safe zone `phone_title_look` places inside (x 3-97%, y 6-95%).
-SAFE = NormalizedBox(0.03, 0.06, 0.97, 0.95)
-_OK_STATUS = {"preset", "moved", "moved_below_face", "shrunk", "squeezed"}
 _OVERLAP_MAX = 0.02
 _VERDICT_COLOR = {
     "PASS": (46, 160, 67),
@@ -123,28 +118,10 @@ def plate(kind: str = "light_wall") -> Image.Image:
     return im
 
 
-def _stub_sampler(*faces: NormalizedBox):
-    regions = [ProtectedRegion(0.0, 30.0, face, kind="face") for face in faces]
-
-    def sample(_path, anchors, **_kwargs):
-        return list(regions), {"attempted": len(anchors), "decoded": 6, "detected": len(regions)}
-
-    return sample
-
-
 # --- measuring ----------------------------------------------------------------------------
 
 
-def _overlay_for(row: dict[str, Any]) -> dict[str, Any]:
-    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
-    from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
-
-    [overlay] = build_overlays_from_text_elements(
-        [TextElement.model_validate(row)],
-        video_duration_s=max(float(row["end_s"]), 0.1),
-        independent_box_alignment=True,
-    )
-    return overlay
+_overlay_for = scene_mod.overlay_for_row
 
 
 def _rgb(hex_color: str) -> tuple[int, int, int]:
@@ -175,11 +152,12 @@ def verify_rows(
     reasons: list[str] = []
     pair = scene_mod.FONT_PAIRS[scene.font_pair or ""]
     ink_hex = scene_mod.INKS[scene.ink or ""]
-    status = str(receipt.get("status"))
-    if status not in _OK_STATUS:
-        reasons.append(f"placement status {status!r} is not a clean spot")
-    if receipt.get("face_collision") or receipt.get("text_overlap"):
-        reasons.append("placement reports a face or text collision")
+    if not scene_mod.placement_is_clean(receipt):
+        reasons.append(
+            f"placement is not a clean spot (status {receipt.get('status')!r}, "
+            f"face_collision {receipt.get('face_collision')}, text_overlap "
+            f"{receipt.get('text_overlap')})"
+        )
     if len({str(r.get("color")).upper() for r in rows}) != 1:
         reasons.append(f"more than one ink: {sorted({str(r.get('color')) for r in rows})}")
     if any(str(r.get("color")).upper() != ink_hex for r in rows):
@@ -219,19 +197,10 @@ def verify_rows(
         ratio = (max(lum_a, lum_b) + 0.05) / (min(lum_a, lum_b) + 0.05)
         if ratio < _MIN_CONTRAST:
             reasons.append(f"row {index}: ink does not read on the footage ({ratio:.1f}:1)")
-        if (
-            box.left < SAFE.left - 1e-6
-            or box.right > SAFE.right + 1e-6
-            or box.top < SAFE.top - 1e-6
-            or box.bottom > SAFE.bottom + 1e-6
-        ):
-            reasons.append(f"row {index}: ink outside the title safe zone {box.as_dict()}")
-        if box.coverage_by(face) > title_mod._MAX_FACE_COVERAGE:
-            reasons.append(f"row {index}: ink covers the face ({box.coverage_by(face):.2f})")
-        if box.coverage_by(CAPTION_BOX) > title_mod._MAX_FACE_COVERAGE:
-            reasons.append(
-                f"row {index}: ink covers the captions ({box.coverage_by(CAPTION_BOX):.2f})"
-            )
+        reasons.extend(
+            f"row {index}: {problem}"
+            for problem in scene_mod.ink_box_problems(box, face=face, captions=CAPTION_BOX)
+        )
     for a, b in zip(masks, masks[1:], strict=False):
         # Real ink on ink (loopy ascenders may share a box with the row above without touching).
         touching = ImageChops.darker(a, b).histogram()[255]
@@ -242,17 +211,7 @@ def verify_rows(
 
 
 def _place(rows: list[dict[str, Any]], position: str | None) -> tuple[list[dict], dict]:
-    return place_title_look(
-        rows,
-        clip_path="plate.mp4",
-        keep_segments=[(0.0, 30.0)],
-        display_width=PORTRAIT.width,
-        display_height=PORTRAIT.height,
-        canvas=PORTRAIT,
-        sample=_stub_sampler(FACE_BOX),
-        position=position,
-        avoid=[CAPTION_BOX],
-    )
+    return scene_mod.place_on_typical_face(rows, position, PORTRAIT)
 
 
 # --- the cases ----------------------------------------------------------------------------
@@ -334,6 +293,76 @@ def _controls(teardowns: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             )
         )
     return cases
+
+
+# Titles that stress the faces: a long English one, and Turkish ones with dotted capitals, a
+# long first line and a trailing one-word line.
+SWEEP_TITLES = (
+    ("en", "how am i / really loving this"),
+    ("tr", "bu yılın en büyük tasarım trendi şu an"),
+    ("tr", "bir tasarımcı olarak bir günde ne yiyorum / dürüstçe"),
+)
+
+
+def _sweep_voices(n: int, *, thorough: bool) -> list[tuple[str, ...]]:
+    half = max(1, n // 2)
+    splits = [
+        ("solid",) * (n - 1) + ("accent",),
+        ("solid",) * half + ("accent",) * (n - half),
+    ]
+    if thorough:
+        splits += [
+            ("accent",) + ("solid",) * (n - 1),
+            ("accent",) * half + ("solid",) * (n - half),
+        ]
+    return splits
+
+
+def sweep_issued_menu(*, thorough: bool = True) -> dict[str, Any]:
+    """Every issued font pair x zone over the stress titles and four voice splits (two when not
+    ``thorough``): whatever
+    the compiler lets through must PASS the same render check; the rest must be declined with
+    a reason. Nothing is hand-picked, so this is the claim "the issued menu is safe"."""
+    compiled = 0
+    declined: dict[str, int] = {}
+    failed: list[dict[str, Any]] = []
+    for language, title in SWEEP_TITLES:
+        menu = scene_mod.issue_menu(title)
+        words = len(scene_mod.title_words(title))
+        for pair in menu.font_pairs:
+            for zone in menu.zones:
+                for voices in _sweep_voices(words, thorough=thorough):
+                    scene = scene_mod.IntroScene(
+                        decision="compose",
+                        voices=voices,
+                        font_pair=pair,
+                        ink="oxblood",
+                        zone=zone,
+                        entrance="fade",
+                        sound="none",
+                    )
+                    out = scene_mod.compile_intro_scene(
+                        scene, title, canvas=PORTRAIT, timeline_duration_s=30.0, language=language
+                    )
+                    if out.rows is None:
+                        declined[out.reason] = declined.get(out.reason, 0) + 1
+                        continue
+                    compiled += 1
+                    placed, receipt = _place(out.rows, out.position)
+                    verdict, reasons, _ = verify_rows(
+                        placed, receipt, face=FACE_BOX, scene=scene, footage="light_wall"
+                    )
+                    if verdict != "PASS":
+                        failed.append(
+                            {
+                                "title": title,
+                                "font_pair": pair,
+                                "zone": zone,
+                                "voices": "".join(v[0] for v in voices),
+                                "reasons": reasons,
+                            }
+                        )
+    return {"compiled": compiled, "declined": declined, "failed": failed}
 
 
 def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -474,7 +503,7 @@ def build_montage(cases: list[dict[str, Any]], out_path: str) -> None:
 # --- run ----------------------------------------------------------------------------------
 
 
-def run(*, out_dir: str) -> dict[str, Any]:
+def run(*, out_dir: str, sweep: bool = True) -> dict[str, Any]:
     import skia  # noqa: PLC0415
 
     os.makedirs(out_dir, exist_ok=True)
@@ -486,12 +515,14 @@ def run(*, out_dir: str) -> dict[str, Any]:
     checked = [c for c in public if not c["control"] and c["rendered"]]
     blind = [c["control"] for c in public if c["control"] and c["verdict"] != "FAIL"]
     failed = [f"{c['id']}/{c['language']}" for c in checked if c["verdict"] != "PASS"]
+    sweep_report = sweep_issued_menu() if sweep else {"compiled": 0, "declined": {}, "failed": []}
     report = {
         "teardowns_version": data["version"],
         "environment": "prod-image" if os.environ.get("NOVA_IN_PROD_IMAGE") else "host",
         "skia": getattr(skia, "__version__", "unknown"),
-        "overall": "PASS" if not failed and not blind else "FAIL",
+        "overall": "PASS" if not failed and not blind and not sweep_report["failed"] else "FAIL",
         "failed": failed,
+        "sweep": sweep_report,
         "blind_controls": blind,
         "inexpressible": [
             {"id": t["id"], "expressible": t["expressible"], "missing_moves": t["missing_moves"]}
@@ -520,6 +551,13 @@ def main(argv: list[str] | None = None) -> int:
             f"  [{_status(case)}] {label} {case['id']}/{case['language']}: "
             f"{'; '.join(case['reasons']) or 'ok'}"
         )
+    sweep = report["sweep"]
+    print(
+        f"  sweep: {sweep['compiled']} issued scene(s) rendered, {len(sweep['failed'])} failed; "
+        f"declined {sweep['declined']}"
+    )
+    for bad in sweep["failed"][:10]:
+        print(f"    FAIL {bad['font_pair']}/{bad['zone']} {bad['voices']}: {bad['reasons']}")
     print(
         f"  rendered {sum(1 for c in cases if c['rendered'])} case(s); "
         f"{len(report['inexpressible'])} reference(s) name a missing move"

@@ -34,28 +34,47 @@ def _compose(voices, **over: Any) -> mod.IntroScene:
 
 
 def free_leaves(model: type[BaseModel]) -> list[str]:
-    """Every schema leaf that is a free string, integer or number (not a closed enum)."""
+    """Every schema leaf that could carry free text or a number: a string, integer or number
+    that is not a closed enum, and any node that says nothing about its type (``Any``,
+    ``object``). Follows refs, combinators, object properties, open ``additionalProperties`` /
+    ``patternProperties`` (dicts), ``items`` and ``prefixItems`` (lists, tuples)."""
     schema = model.model_json_schema()
     defs = schema.get("$defs", {})
     found: list[str] = []
+    combinators = ("anyOf", "oneOf", "allOf")
+    closed = ("enum", "const", "$ref", *combinators)
 
     def walk(node: Any, path: str) -> None:
+        if node is True or node == {}:
+            found.append(f"{path}:untyped")
+            return
         if not isinstance(node, dict):
             return
         if "$ref" in node:
             walk(defs[node["$ref"].split("/")[-1]], path)
             return
-        for key in ("anyOf", "oneOf", "allOf"):
+        for key in combinators:
             for index, branch in enumerate(node.get(key, [])):
                 walk(branch, f"{path}|{index}")
         if "enum" not in node and "const" not in node:
             kind = node.get("type")
             if kind in ("string", "integer", "number"):
                 found.append(f"{path}:{kind}")
+            elif kind is None and not any(key in node for key in closed):
+                found.append(f"{path}:untyped")
         for name, child in (node.get("properties") or {}).items():
             walk(child, f"{path}.{name}")
+        for name, child in (node.get("patternProperties") or {}).items():
+            walk(child, f"{path}.{{{name}}}")
+        extra = node.get("additionalProperties")
+        if extra is True:
+            found.append(f"{path}.*:untyped")
+        elif isinstance(extra, dict):
+            walk(extra, f"{path}.*")
         if "items" in node:
             walk(node["items"], f"{path}[]")
+        for index, child in enumerate(node.get("prefixItems") or []):
+            walk(child, f"{path}[{index}]")
 
     walk(schema, "scene")
     return found
@@ -65,12 +84,49 @@ def test_schema_has_no_free_text_or_number():
     assert free_leaves(mod.IntroScene) == []
 
 
-def test_schema_walker_catches_a_free_string():
-    class Bad(BaseModel):
-        headline: str
-        size: int
+class _FreeStrings(BaseModel):
+    headline: str
+    size: int
 
-    assert len(free_leaves(Bad)) == 2
+
+class _FreeDict(BaseModel):
+    labels: dict[str, str] = {}
+
+
+class _FreeTuple(BaseModel):
+    pair: tuple[str, int]
+
+
+class _FreeList(BaseModel):
+    names: list[str] = []
+
+
+class _FreeAny(BaseModel):
+    blob: Any = None
+
+
+class _FreeObject(BaseModel):
+    note: object = None
+
+
+class _FreeNumberInUnion(BaseModel):
+    size: float | None = None
+
+
+@pytest.mark.parametrize(
+    ("model", "at_least"),
+    [
+        (_FreeStrings, 2),
+        (_FreeDict, 1),
+        (_FreeTuple, 2),
+        (_FreeList, 1),
+        (_FreeAny, 1),
+        (_FreeObject, 1),
+        (_FreeNumberInUnion, 1),
+    ],
+)
+def test_schema_walker_catches_every_way_text_could_get_in(model, at_least):
+    assert len(free_leaves(model)) >= at_least
 
 
 def test_scene_rejects_unknown_fields():

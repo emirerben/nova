@@ -21,6 +21,11 @@ Written before the module. Each test is a way the scene could go wrong:
   (`test_teardowns_*`).
 * S10: the render check passes something it should not: two inks, a title on the face, a face
   swapped for another (`test_render_check_*`; the negative controls MUST fail).
+* S11: the issued menu lets through a scene the normal placement puts on the face or above the
+  safe zone: a long accent run at 250px, a long caps row, a top-left row over the head. The
+  compiler declines them (`test_compile_declines_*_that_cannot_sit_clear`) and the check sweeps
+  every issued pair and zone over stress titles, so the claim is not 8 hand-picked fixtures
+  (`test_issued_menu_sweep_*`).
 """
 
 from __future__ import annotations
@@ -370,6 +375,85 @@ def test_sounds_are_in_the_seed_sfx_catalogue():
     assert {s for s in mod.SOUNDS if s != "none"} <= known
 
 
+# --- S11: scenes that compile but cannot sit clear ----------------------------------------
+
+
+def _compile_clear(title, voices, lang, pair, zone, ink="oxblood"):
+    from app.pipeline.canvas import PORTRAIT  # noqa: PLC0415
+
+    scene = _compose(voices, font_pair=pair, zone=zone, ink=ink, sound="none")
+    return mod.compile_intro_scene(
+        scene, title, canvas=PORTRAIT, timeline_duration_s=30.0, language=lang
+    )
+
+
+def test_compile_declines_a_long_loop_accent_that_cannot_sit_clear():
+    out = _compile_clear(
+        "how am i / really loving this",
+        ["solid"] * 3 + ["accent"] * 3,
+        "en",
+        "grotesk_loop",
+        "above_head",
+    )
+    assert out.rows is None
+    assert out.reason == "placement_unclean"
+
+
+@pytest.mark.parametrize("pair", ["grotesk_hand", "script_serif", "young_serif"])
+def test_compile_declines_a_top_left_row_that_covers_the_face_box(pair):
+    out = _compile_clear(TITLE_TR, ["solid"] * 6 + ["accent"] * 2, "tr", pair, "top_left")
+    assert out.rows is None
+    assert out.reason == "ink_off_zone"
+
+
+@pytest.mark.parametrize("pair", ["grotesk_hand", "grotesk_pen"])
+def test_compile_declines_a_long_caps_row_that_rises_above_the_safe_zone(pair):
+    out = _compile_clear(
+        "bir tasarımcı olarak bir günde ne yiyorum / dürüstçe",
+        ["solid"] * 7 + ["accent"],
+        "tr",
+        pair,
+        "above_head",
+        ink="cream",
+    )
+    assert out.rows is None
+    assert out.reason == "ink_off_zone"
+
+
+def test_a_scene_that_sits_clear_still_compiles():
+    out = _compile_clear(TITLE_EN, EN_VOICES, "en", "serif_italic", "above_head")
+    assert out.reason == "ok"
+
+
+def test_ink_box_problems_name_each_way_a_row_is_off():
+    face, captions = mod.TYPICAL_FACE, mod.TYPICAL_CAPTIONS
+    clear = mod.NormalizedBox(0.2, 0.1, 0.8, 0.2)
+    assert mod.ink_box_problems(clear, face=face, captions=captions) == []
+    assert mod.ink_box_problems(
+        mod.NormalizedBox(0.2, 0.054, 0.8, 0.2), face=face, captions=captions
+    )
+    assert mod.ink_box_problems(mod.NormalizedBox(0.3, 0.3, 0.7, 0.4), face=face, captions=captions)
+    assert mod.ink_box_problems(
+        mod.NormalizedBox(0.2, 0.82, 0.8, 0.86), face=face, captions=captions
+    )
+
+
+@pytest.mark.parametrize(
+    ("receipt", "clean"),
+    [
+        ({"status": "preset"}, True),
+        ({"status": "squeezed", "face_collision": False}, True),
+        ({"status": "best_effort"}, False),
+        ({"status": "error"}, False),
+        ({"status": "shrunk", "face_collision": True}, False),
+        ({"status": "shrunk", "text_overlap": True}, False),
+        ({}, False),
+    ],
+)
+def test_placement_is_clean_reads_the_receipt(receipt, clean):
+    assert mod.placement_is_clean(receipt) is clean
+
+
 # --- S10: the render check ----------------------------------------------------------------
 
 from app.cli import verify_intro_scenes as check  # noqa: E402
@@ -378,7 +462,7 @@ from app.cli import verify_intro_scenes as check  # noqa: E402
 @pytest.fixture(scope="module")
 def report(tmp_path_factory):
     out = tmp_path_factory.mktemp("intro-verify")
-    return {**check.run(out_dir=str(out)), "out": out}
+    return {**check.run(out_dir=str(out), sweep=False), "out": out}
 
 
 def test_render_check_passes_every_expressible_reference_in_both_languages(report):
@@ -400,6 +484,14 @@ def test_render_check_lists_what_it_could_not_render(report):
 def test_render_check_negative_controls_must_fail(report, control):
     case = next(c for c in report["cases"] if c["control"] == control)
     assert case["verdict"] == "FAIL", case
+
+
+@pytest.mark.timeout(300)
+def test_issued_menu_sweep_renders_clean_or_declines():
+    sweep = check.sweep_issued_menu(thorough=False)
+    assert sweep["compiled"] > 50, sweep  # not vacuous: most of the menu does compile
+    assert sweep["declined"], sweep  # and the risky corner is declined, not rendered
+    assert sweep["failed"] == [], sweep["failed"][:3]
 
 
 def test_render_check_writes_the_montage_and_report(report):
