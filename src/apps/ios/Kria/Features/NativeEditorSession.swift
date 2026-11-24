@@ -205,8 +205,9 @@ enum EditorOpenIntent { case warm, open }
     var showsSavingIndicator: Bool { (isSaving && !isLoadingEditor) || saveRequestedDuringLoad }
     /// KRI-1617: Save was tapped while the editor was still loading. A load holds `isSaving`, so the tap used to
     /// return with nothing sent while the button still read "Save changes". It is kept and runs when the load ends.
+    /// It belongs to the edit it was tapped for: when that edit is gone (a reload replaced the document), so is it.
     @Published private(set) var saveRequestedDuringLoad = false
-    @Published var hasUnsavedChanges = false
+    @Published var hasUnsavedChanges = false { didSet { if !hasUnsavedChanges { saveRequestedDuringLoad = false } } }
     @Published var saveState: NativeEditorSaveState = .idle
     @Published var splitScreenActionError: String?
     /// "Top ends at 4.2s · aligned" while the end handle of a split clip is dragged; nil otherwise.

@@ -4892,7 +4892,36 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(headerSaveControl(held.session), .unsaved)
     }
 
-    private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>) {
+    /// A Save kept for one load does not ride into the next. A reload that replaces the document drops the edit the
+    /// Save was for, so an edit made after it is saved only when she taps Save again.
+    func testASaveKeptForALoadThatIsReplacedDoesNotSaveALaterEdit() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        await held.session.save()
+        XCTAssertEqual(headerSaveControl(held.session), .saving)
+        held.spy.suspendNextDraft = true
+        let reload = Task { @MainActor in await held.session.load(api: held.spy, threadID: held.threadID) }
+        let reloadBegan = await waitUntil { held.spy.draftIsSuspended }
+        XCTAssertTrue(reloadBegan, "the reload is held at its draft read, so the first load is already replaced")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        held.spy.suspendNextSourcePool = true
+        held.spy.resumeDraft()
+        let documentReplaced = await waitUntil { held.spy.sourcePoolIsSuspended }
+        XCTAssertTrue(documentReplaced)
+        XCTAssertFalse(held.session.hasUnsavedChanges, "the reload replaced the document, so the first edit is gone")
+        XCTAssertNotEqual(headerSaveControl(held.session), .saving, "nothing is left to save, so the button does not say a save is coming")
+        held.session.addText(content: "Typed after the reload, never saved")
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+        held.spy.resumeSourcePool()
+        _ = await reload.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(held.spy.commitCount, 0, "the earlier Save tap must not save an edit made after the reload")
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+    }
+
+    private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>, threadID: UUID) {
         let jobID = UUID(), threadID = UUID()
         let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         var stale = variant(duration: 2, generation: "g1")
@@ -4918,7 +4947,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let loading = Task { @MainActor in await session.load(api: spy, threadID: threadID) }
         _ = await waitUntil { spy.sourcePoolIsSuspended }
         XCTAssertTrue(spy.sourcePoolIsSuspended)
-        return (session, spy, loading)
+        return (session, spy, loading, threadID)
     }
 
     /// What NativeEditorProjectHeader renders for its Save button.
