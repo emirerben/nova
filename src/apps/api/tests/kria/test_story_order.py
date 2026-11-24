@@ -37,7 +37,23 @@ Ways this can fail, written before the code (each is pinned below; "FM" = failur
  FM10 a media id, UUID or file name reaches the model as a clip's name, or the model's own
       ``reason`` text reaches anything the creator sees.
  FM11 a clip added after the story order is never placed, or placing it moves a clip the
-      creator placed.
+      creator placed, or reshuffles the order an earlier run gave (and the creator saw, or
+      confirmed) instead of only seating the new clip.
+ FM12 the creator later picks the upload order (the order-basis answer "use the order I added
+      the clips"), or the draft changes to a shape that cannot carry a story order, and the AI's
+      order still plays; or taking it back moves a clip the creator placed.
+ FM13 the creator gave text by position (per-shot labels in on-screen order, a route's start /
+      end labels) and the re-order puts their words on other footage.
+ FM14 the contract pins the story order while the worker's own plan plays another one (a
+      dropped filming-order ask it still honours; a subset the worker does not honour): an
+      approved draft that cannot render.
+ FM15 the story order is written on a turn that ends in a question, so it becomes the thread's
+      order for a draft nobody saw.
+ FM16 a valid ranking is thrown away over a field nobody reads (a long note, a stray key, a
+      missing ``decided``), or the same clips and words on a later turn are refused by the
+      paid-call ledger as "already settled".
+
+FM12 to FM16 were found by an independent review of the first version of this change.
 
 Not pinned here: a continued run of the same turn paying twice (the call goes through
 `turn_checkpoint.checkpointed`, which has its own guard) and whether the live model's orders are
@@ -147,8 +163,22 @@ def _plain_strategy() -> dict[str, Any]:
     return incident._strategy_dict([])
 
 
-def _story(strategy, snapshot, state=None, *, brief, **kw: Any):
-    return story_order.plan_story(strategy, snapshot, state or _state(), brief=brief, **kw)
+def _story(strategy, snapshot, state=None, *, brief, attach=None, **kw: Any):
+    return story_order.review_story(
+        strategy,
+        snapshot,
+        state or _state(),
+        brief=brief,
+        creator_id=incident.CREATOR,
+        attachment_ids=attach or ATTACHMENT,
+        **kw,
+    )
+
+
+def _settle(plan, ranking, strategy, snapshot, *, brief):
+    return story_order.settle_story(
+        plan, ranking, strategy, snapshot, brief=brief, creator_id=incident.CREATOR
+    )
 
 
 def _worker_order(brief, strategy, snapshot) -> list[str]:
@@ -185,7 +215,7 @@ def test_the_incident_replay_gets_a_story_order_the_contract_readiness_and_worke
         _ids(UNMENTIONED),
     ]
 
-    result = story_order.settle_story(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
+    result = _settle(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
     after = list(result.entry.after_ids)
     assert result.changed and result.entry.actor == AI_STORY
     assert after == [
@@ -197,7 +227,6 @@ def test_the_incident_replay_gets_a_story_order_the_contract_readiness_and_worke
     ]
     assert set(result.entry.story_ids) == set(ATTACHMENT) - {MAP_CLIP}
     stamped = result.snapshot
-    assert stamped is not None
     assert stamped[SNAPSHOT_KEY] == after and stamped[STORY_SNAPSHOT_KEY] is True
 
     contract = build_render_contract(
@@ -222,7 +251,7 @@ def test_a_request_that_says_nothing_about_order_gets_the_whole_order_from_the_s
     assert plan is not None and plan.fixed == frozenset()
     assert [list(span) for span in plan.spans] == [ATTACHMENT]
     ranking = list(reversed(ATTACHMENT))
-    result = story_order.settle_story(plan, ranking, strategy, snapshot, brief=brief)
+    result = _settle(plan, ranking, strategy, snapshot, brief=brief)
     assert list(result.entry.after_ids) == ranking
     contract = build_render_contract(
         strategy, generation_id="story", brief=brief, media_snapshot=result.snapshot
@@ -245,7 +274,7 @@ def test_fm2_fm3_a_hostile_ranking_cannot_move_a_placed_clip_or_break_a_group(
     snapshot = incident._snapshot()
     plan = _story(strategy, snapshot, brief=brief)
     hostile = [*reversed(EXPECTED[1:]), MAP_CLIP]
-    result = story_order.settle_story(plan, hostile, strategy, snapshot, brief=brief)
+    result = _settle(plan, hostile, strategy, snapshot, brief=brief)
     after = list(result.entry.after_ids)
     assert result.changed
     assert after[0] == MAP_CLIP
@@ -268,9 +297,7 @@ def test_fm2_a_clip_the_creator_moved_keeps_its_exact_position(story_on: None, a
     plan = _story(strategy, snapshot, state, brief=brief)
     assert plan is not None and plan.fixed == {moved}
     assert moved not in plan.open_ids
-    result = story_order.settle_story(
-        plan, list(reversed(dragged)), strategy, snapshot, brief=brief
-    )
+    result = _settle(plan, list(reversed(dragged)), strategy, snapshot, brief=brief)
     after = list(result.entry.after_ids)
     assert result.changed and after.index(moved) == 1
     assert after == [dragged[-1], moved, *reversed(dragged[2:-1]), dragged[0]]
@@ -295,10 +322,8 @@ def test_fm2_a_ranking_that_would_move_a_fixed_clip_through_a_bad_span_is_discar
     broken = story_order.StoryPlan(
         plan.before, ((MAP_CLIP, *plan.spans[0]), *plan.spans[1:]), plan.fixed, plan.played
     )
-    result = story_order.settle_story(
-        broken, [*reversed(plan.spans[0]), MAP_CLIP], strategy, snapshot, brief=brief
-    )
-    assert not result.changed and result.snapshot is None
+    result = _settle(broken, [*reversed(plan.spans[0]), MAP_CLIP], strategy, snapshot, brief=brief)
+    assert not result.changed and result.snapshot == snapshot
 
 
 # ── FM5: an unusable answer is the order the clips were added in ───────────────────────────────
@@ -348,8 +373,8 @@ def test_fm5_the_fixed_clip_is_not_a_valid_answer_and_cannot_decide_returns_noth
     )
     assert undecided.decided is False and undecided.order == []
     # "cannot decide" leaves the order alone and is remembered, so the next turn does not ask
-    result = story_order.settle_story(plan, None, strategy, snapshot, brief=brief)
-    assert not result.changed and result.snapshot is None
+    result = _settle(plan, None, strategy, snapshot, brief=brief)
+    assert not result.changed and result.snapshot == snapshot
     assert set(result.entry.story_ids) == set(plan.open_ids)
 
 
@@ -443,7 +468,7 @@ def test_fm6_the_sequencer_is_not_asked_twice_about_the_same_clips(story_on: Non
     snapshot = incident._snapshot()
     plan = _story(strategy, snapshot, brief=brief)
     for ranking in (list(reversed(ATTACHMENT)), None):  # it chose an order / it could not decide
-        result = story_order.settle_story(plan, ranking, strategy, snapshot, brief=brief)
+        result = _settle(plan, ranking, strategy, snapshot, brief=brief)
         state = _state(result.entry)
         later = ledger.with_clip_order_ids(incident._snapshot(), state)
         assert _story(strategy, later, state, brief=brief) is None
@@ -459,7 +484,7 @@ def test_fm7_the_story_order_is_the_order_on_the_next_turn_and_is_taken_back_wit
     strategy = incident._drafted(brief)
     snapshot = incident._snapshot()
     plan = _story(strategy, snapshot, brief=brief)
-    result = story_order.settle_story(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
+    result = _settle(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
     after = list(result.entry.after_ids)
     seated = ledger.seated_entry(
         ATTACHMENT, strategy["resolved_clip_intents"], actor=CREATOR_TEXT, turn_id="t1"
@@ -491,7 +516,7 @@ def _story_card(story_on: None = None) -> tuple[dict[str, Any], ledger.ClipOrder
     strategy = incident._drafted(brief)
     snapshot = incident._snapshot()
     plan = _story(strategy, snapshot, brief=brief)
-    result = story_order.settle_story(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
+    result = _settle(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
     seated = ledger.seated_entry(
         ATTACHMENT, strategy["resolved_clip_intents"], actor=CREATOR_TEXT, turn_id="t1"
     )
@@ -611,9 +636,7 @@ def test_fm9_a_drag_after_the_story_order_is_the_creators_and_is_never_moved_aga
     strategy = _plain_strategy()
     snapshot = incident._snapshot()
     plan = _story(strategy, snapshot, brief=brief)
-    story = story_order.settle_story(
-        plan, list(reversed(ATTACHMENT)), strategy, snapshot, brief=brief
-    ).entry
+    story = _settle(plan, list(reversed(ATTACHMENT)), strategy, snapshot, brief=brief).entry
     after = list(story.after_ids)
     pulled = after[10]
     dragged = [pulled, *(m for m in after if m != pulled)]
@@ -639,6 +662,9 @@ def test_fm10_the_model_sees_aliases_and_the_creators_words_never_an_id_or_file_
     snapshot = incident._snapshot()
     snapshot["clip_assignments"][0]["user_note"] = "IMG_0412.MOV"
     snapshot["clip_assignments"][6]["user_note"] = "the ticket office"
+    # a note that is exactly ANOTHER clip's file stem, in a shape no pattern knows
+    snapshot["clip_assignments"][10]["source_filename"] = "PXL_20261101_101010123.mp4"
+    snapshot["clip_assignments"][13]["user_note"] = "PXL_20261101_101010123"
     plan = _story(strategy, snapshot, brief=brief)
     clips, alias_to_id = story_order.sequencer_clips(
         plan, snapshot, groups=ledger.group_words_by_clip(strategy["resolved_clip_intents"])
@@ -649,12 +675,13 @@ def test_fm10_the_model_sees_aliases_and_the_creators_words_never_an_id_or_file_
     assert clips[1]["group"] == "trene giriş kısımları"
     notes = [c.get("note") for c in clips]
     assert "the ticket office" in notes and "IMG_0412.MOV" not in notes
+    assert "PXL_20261101_101010123" not in notes
     agent_input = StorySequencerInput(request="x", clips=clips)
     prompt = StorySequencerAgent(None).render_prompt(agent_input)  # type: ignore[arg-type]
     assert not _ID_LEAK.search(prompt), _ID_LEAK.search(prompt)
     assert story_order.ranking_ids(["c2", "nope", "c1"], alias_to_id) == [EXPECTED[1], EXPECTED[0]]
     # the entry holds ids and nothing the model wrote
-    result = story_order.settle_story(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
+    result = _settle(plan, _reverse_each(plan), strategy, snapshot, brief=brief)
     assert set(result.entry.to_payload()) == {
         "actor",
         "before_ids",
@@ -667,24 +694,31 @@ def test_fm10_the_model_sees_aliases_and_the_creators_words_never_an_id_or_file_
 # ── FM11: a clip added later ───────────────────────────────────────────────────────────────────
 
 
-def test_fm11_a_clip_added_later_is_placed_and_the_creators_clip_still_does_not_move(
+def test_fm11_a_clip_added_later_is_seated_without_reshuffling_what_was_already_placed(
     story_on: None,
 ) -> None:
     brief = _no_order_brief()
     strategy = {**_plain_strategy(), "selected_media_ids": list(ATTACHMENT)}
     first_clips = ATTACHMENT[:-1]
     base = incident._snapshot()
+    length = base["length_plan"]
     earlier = {
         **base,
         "clip_assignments": base["clip_assignments"][:-1],
         "clip_paths": base["clip_paths"][:-1],
+        # the length plan of the 18 clips that existed then
+        "length_plan": {
+            **length,
+            "sources": length["sources"][:-1],
+            "windows": length["windows"][:-1],
+        },
     }
     early_strategy = {**strategy, "selected_media_ids": list(first_clips)}
-    plan = story_order.plan_story(early_strategy, earlier, _state(attach=first_clips), brief=brief)
-    assert plan is not None
-    story = story_order.settle_story(
-        plan, list(reversed(first_clips)), early_strategy, earlier, brief=brief
-    ).entry
+    plan = _story(
+        early_strategy, earlier, _state(attach=first_clips), brief=brief, attach=first_clips
+    )
+    assert isinstance(plan, story_order.StoryPlan)
+    story = _settle(plan, list(reversed(first_clips)), early_strategy, earlier, brief=brief).entry
     placed = list(story.after_ids)
     drag = LedgerEntry(CREATOR_DRAG, tuple(placed), (placed[3], *placed[:3], *placed[4:]), "t2")
     # the 19th clip arrives: it sits last, and it is the only clip nobody has looked at
@@ -693,15 +727,190 @@ def test_fm11_a_clip_added_later_is_placed_and_the_creators_clip_still_does_not_
     assert list(state.order)[-1] == newcomer
     snapshot = ledger.with_clip_order_ids(base, state)
     again = _story(strategy, snapshot, state, brief=brief)
-    assert again is not None and newcomer in again.open_ids
+    assert isinstance(again, story_order.StoryPlan) and newcomer in again.open_ids
     assert placed[3] in again.fixed
-    result = story_order.settle_story(
-        again, [newcomer, *again.open_ids], strategy, snapshot, brief=brief
-    )
+    assert again.placed == set(again.open_ids) - {newcomer}
+    # the model puts the newcomer first and (wrongly) reverses everything it placed before
+    hostile = [newcomer, *reversed([m for m in again.open_ids if m != newcomer])]
+    result = _settle(again, hostile, strategy, snapshot, brief=brief)
     after = list(result.entry.after_ids)
     assert result.changed and after[0] == placed[3]  # the dragged clip is still first
-    assert after[1] == newcomer  # the newcomer leads the open stretch
+    assert after[1] == newcomer  # the newcomer leads the open stretch, as ranked
+    # ... and the clips the earlier run placed still play in the order the creator has seen
+    seen = [m for m in state.order if m not in {placed[3], newcomer}]
+    assert [m for m in after if m not in {placed[3], newcomer}] == seen
     assert _worker_order(brief, strategy, result.snapshot) == after
+
+
+def test_fm11_placed_clips_keep_their_order_among_themselves() -> None:
+    order = ["a", "b", "c", "n1", "n2"]
+    span = [("a", "b", "c", "n1", "n2")]
+    # the ranks the placed clips took go back to them in the order they already play
+    assert story_order.apply_ranking(
+        order, span, ["n1", "c", "a", "n2", "b"], placed={"a", "b", "c"}
+    ) == ["n1", "a", "b", "n2", "c"]
+    # with nothing placed before, the ranking is the order
+    assert story_order.apply_ranking(order, span, ["n1", "c", "a", "n2", "b"]) == [
+        "n1",
+        "c",
+        "a",
+        "n2",
+        "b",
+    ]
+
+
+# ── FM12: the creator's later choice takes the AI's order back ─────────────────────────────────
+
+
+def _upload_order_answer() -> dict[str, Any]:
+    from app.services.choice_questions import CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER
+
+    return {
+        "conflict": CONFLICT_ORDER_BASIS,
+        "kind": "order",
+        "option": OPT_ATTACHMENT_ORDER,
+        "input_digest": "d" * 16,
+        "requirement_ids": [],
+        "source": "creator",
+    }
+
+
+def test_fm12_choosing_the_upload_order_puts_the_ais_clips_back_and_keeps_the_creators_own(
+    story_on: None,
+) -> None:
+    brief = _no_order_brief()
+    strategy = _plain_strategy()
+    snapshot = incident._snapshot()
+    plan = _story(strategy, snapshot, brief=brief)
+    story = _settle(plan, list(reversed(ATTACHMENT)), strategy, snapshot, brief=brief).entry
+    after = list(story.after_ids)
+    pulled = after[10]
+    dragged = [pulled, *(m for m in after if m != pulled)]
+    state = _state(story, LedgerEntry(CREATOR_DRAG, tuple(after), tuple(dragged), "t2"))
+    carried = ledger.with_clip_order_ids(snapshot, state)
+    assert carried[STORY_SNAPSHOT_KEY] is True
+
+    # control: the same later draft with no such answer keeps the story order, asks nothing
+    assert _story(strategy, carried, state, brief=brief) is None
+
+    chose_upload = {**strategy, "choice_answers": [_upload_order_answer()]}
+    assert story_order.states_order(chose_upload, brief) is True
+    result = _story(chose_upload, carried, state, brief=brief)
+    assert isinstance(result, story_order.StoryResult)
+    assert result.entry.actor == ledger.SERVER_DEFAULT and not result.entry.story_ids
+    back = list(result.entry.after_ids)
+    assert back == [pulled, *(m for m in ATTACHMENT if m != pulled)]  # her clip stays first
+    # the snapshot carries her order and no longer says any of it is the AI's
+    assert result.snapshot[SNAPSHOT_KEY] == back and STORY_SNAPSHOT_KEY not in result.snapshot
+    settled = _state(*state.entries, result.entry)
+    assert settled.story_ids == frozenset() and list(settled.order) == back
+    assert AI_STORY not in settled.source.values()
+    assert settled.source_of(pulled) == CREATOR_DRAG
+    # the next draft has nothing left to take back, and nothing is asked twice
+    assert _story(chose_upload, result.snapshot, settled, brief=brief) is None
+
+
+def test_fm12_with_no_creator_order_left_the_snapshot_carries_no_order_at_all(
+    story_on: None,
+) -> None:
+    brief = _no_order_brief()
+    strategy = _plain_strategy()
+    snapshot = incident._snapshot()
+    plan = _story(strategy, snapshot, brief=brief)
+    story = _settle(plan, list(reversed(ATTACHMENT)), strategy, snapshot, brief=brief).entry
+    state = _state(story)
+    carried = ledger.with_clip_order_ids(snapshot, state)
+    # the draft became a Talking edit: not a shape that can carry a story order
+    result = _story({**strategy, "edit_format": "subtitled"}, carried, state, brief=brief)
+    assert isinstance(result, story_order.StoryResult)
+    assert list(result.entry.after_ids) == ATTACHMENT
+    assert result.snapshot == snapshot  # byte for byte the snapshot of a thread with no story
+    assert _state(story, result.entry).story_ids == frozenset()
+
+
+# ── FM13: text given by position ───────────────────────────────────────────────────────────────
+
+
+def test_fm13_text_given_by_position_keeps_the_order_the_creator_wrote_it_against(
+    story_on: None,
+) -> None:
+    brief = _no_order_brief()
+    snapshot = incident._snapshot()
+    labelled = {**_plain_strategy(), "shot_labels": ["DAY 1 FOOD", "DAY 2 ART", "DAY 3 NIGHTS"]}
+    assert story_order.states_order(labelled, brief) is True
+    assert _story(labelled, snapshot, brief=brief) is None
+    route = CreativeBrief.model_validate(
+        {
+            "version": 1,
+            "requirements": [
+                {
+                    "id": "r1",
+                    "kind": "text",
+                    "facts": {"start": "Istanbul", "end": "Cappadocia"},
+                    "scope": "global",
+                    "status": "open",
+                    "literal": None,
+                    "description": "Label where the trip starts and ends",
+                    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2",
+                }
+            ],
+        }
+    )
+    assert story_order.states_order(_plain_strategy(), route) is True
+    # a described sequence and a "narrative" key name no basis: the incident still qualifies
+    assert story_order.states_order(_plain_strategy(), incident._brief()) is False
+    assert story_order.states_order(_plain_strategy(), incident._brief(key="narrative")) is False
+    for key in ("attachment", "capture_time", "random", "any_order", "route"):
+        assert story_order.states_order(_plain_strategy(), incident._brief(key=key)) is True, key
+
+
+# ── FM14: the worker's own plan has to play it too ─────────────────────────────────────────────
+
+
+def test_fm14_a_dropped_filming_order_ask_the_worker_still_honours_gets_no_story_order(
+    story_on: None,
+) -> None:
+    """The brief let go of a filming-order ask (a server waiver), so no LIVE ask names a basis
+    and the contract would pin a carried order, but the worker's plan still plays filming order.
+    Pinning the story order there is an approved draft the phone refuses after rendering."""
+    raw = _no_order_brief().model_dump(mode="json")
+    raw["requirements"].append(
+        {
+            "id": "r9",
+            "kind": "order",
+            "facts": {"key": "capture_time"},
+            "scope": "global",
+            "status": "superseded",
+            "literal": None,
+            "description": "In the order I filmed them",
+            "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2",
+        }
+    )
+    brief = CreativeBrief.model_validate(raw)
+    strategy = _plain_strategy()
+    snapshot = incident._snapshot()
+    # (not the reverse of the upload order: in this fixture that IS the filming order)
+    story = [*ATTACHMENT[3:], *ATTACHMENT[:3]]
+    carried = ledger.with_order(snapshot, story, story=True)
+    contract = build_render_contract(
+        strategy, generation_id="story", brief=brief, media_snapshot=carried
+    )
+    # the control that makes this case real: the contract alone WOULD pin the carried order
+    assert contract is not None and list(contract.order_ids) == story
+    assert _worker_order(brief, strategy, carried) == list(reversed(ATTACHMENT))  # filming order
+    assert (
+        story_order.one_order(
+            strategy, brief, snapshot, story, played=None, creator_id=incident.CREATOR
+        )
+        is False
+    )
+    assert _story(strategy, snapshot, brief=brief) is None
+
+
+def test_fm14_a_subset_the_worker_does_not_honour_gets_no_story_order(story_on: None) -> None:
+    brief = _no_order_brief()
+    subset = {**_plain_strategy(), "selected_media_ids": ATTACHMENT[:6], "media_scope": "all"}
+    assert _story(subset, incident._snapshot(), brief=brief) is None
 
 
 # ── FM1 + FM5: the planner hook, with the provider's answer replayed ───────────────────────────
@@ -751,6 +960,10 @@ def _hook(
     brief: CreativeBrief,
     strategy: dict[str, Any],
     client: _Scripted,
+    *,
+    state: ledger.ClipOrderState | None = None,
+    snapshot: dict[str, Any] | None = None,
+    planned: PlannedKriaTurn | None = None,
     **turn_kw: Any,
 ) -> tuple[PlannedKriaTurn, PlannedKriaTurn]:
     async def _latest(_db, _thread):  # noqa: ANN001, ANN202
@@ -758,10 +971,16 @@ def _hook(
 
     monkeypatch.setattr(planner_module, "load_latest_brief", _latest)
     monkeypatch.setattr(planner_module, "default_client", lambda: client)
+    # the admin run record is the runtime's own concern; no database in this module
+    monkeypatch.setattr("app.agents._persistence.persist_agent_run", lambda **_kw: None)
     turn = ledger.TurnClipOrder(
-        state=_state(), attachment_ids=tuple(ATTACHMENT), rendered=False, labels={}, **turn_kw
+        state=state or _state(),
+        attachment_ids=tuple(ATTACHMENT),
+        rendered=False,
+        labels={},
+        **turn_kw,
     )
-    planned = _draft_turn(strategy, incident._snapshot())
+    planned = planned or _draft_turn(strategy, snapshot or incident._snapshot())
     out = asyncio.run(
         planner_module._with_story_order(
             _Db(),  # type: ignore[arg-type]
@@ -851,3 +1070,118 @@ def test_fm2_the_hook_asks_nothing_once_the_creator_confirmed_the_order(
         monkeypatch, brief, incident._drafted(brief), client, confirmed_ids=tuple(EXPECTED)
     )
     assert client.calls == 0 and out is planned
+
+
+# ── FM12 at the hook: taking the order back needs no model, and no flag ────────────────────────
+
+
+def _story_in_force(brief: CreativeBrief, strategy: dict[str, Any]):
+    snapshot = incident._snapshot()
+    plan = _story(strategy, snapshot, brief=brief)
+    story = _settle(plan, list(reversed(ATTACHMENT)), strategy, snapshot, brief=brief).entry
+    state = _state(story)
+    return state, ledger.with_clip_order_ids(snapshot, state)
+
+
+@pytest.mark.parametrize("flag_on", [True, False], ids=["flag-on", "flag-off"])
+def test_fm12_the_hook_takes_the_story_order_back_when_the_creator_picks_the_upload_order(
+    monkeypatch: pytest.MonkeyPatch, flag_on: bool
+) -> None:
+    """Also with the sequencer switched off afterwards: an order an earlier turn wrote must
+    still give way to the creator's choice, and no model is asked."""
+    monkeypatch.setattr(settings, "kria_story_sequencer_enabled", True)
+    brief = _no_order_brief()
+    strategy = _plain_strategy()
+    state, carried = _story_in_force(brief, strategy)
+    monkeypatch.setattr(settings, "kria_story_sequencer_enabled", flag_on)
+    client = _Scripted(_answer([f"c{n}" for n in range(19, 0, -1)]))
+
+    # control: a later draft that says nothing new keeps the story order, untouched
+    planned, out = _hook(monkeypatch, brief, strategy, client, state=state, snapshot=carried)
+    assert out is planned and client.calls == 0
+
+    chose_upload = {**strategy, "choice_answers": [_upload_order_answer()]}
+    planned, out = _hook(monkeypatch, brief, chose_upload, client, state=state, snapshot=carried)
+    assert client.calls == 0
+    [payload] = out.clip_order_entries
+    assert payload["actor"] == ledger.SERVER_DEFAULT and payload["after_ids"] == ATTACHMENT
+    assert SNAPSHOT_KEY not in out.media_snapshot and STORY_SNAPSHOT_KEY not in out.media_snapshot
+    assert _worker_order(brief, chose_upload, out.media_snapshot) == ATTACHMENT
+
+
+# ── FM15: a turn that ends in a question writes nothing ────────────────────────────────────────
+
+
+def test_fm15_a_turn_that_ends_in_a_question_asks_no_model_and_writes_no_order(
+    story_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    brief = incident._brief()
+    client = _Scripted(_answer([f"c{n}" for n in range(19, 1, -1)]))
+    question = PlannedKriaTurn(
+        plan=KriaTurnPlan(mode="respond", turn_value="question", response="Which order?"),
+        manifest_hash=None,
+        context_hash=None,
+        media_snapshot=incident._snapshot(),
+    )
+    planned, out = _hook(monkeypatch, brief, incident._drafted(brief), client, planned=question)
+    assert out is planned and client.calls == 0
+
+
+def test_fm15_the_story_step_runs_after_the_choice_gate() -> None:
+    """The order is decided on the draft the gate lets through (its answers, its snapshot)."""
+    import inspect
+
+    source = inspect.getsource(planner_module.plan_live_turn)
+    assert source.index("_gate_unresolved_choices(") < source.index("_with_story_order(")
+
+
+# ── FM16: a usable ranking is used; a later turn is a new paid call ────────────────────────────
+
+
+def test_fm16_a_ranking_is_not_thrown_away_over_fields_nobody_reads() -> None:
+    brief = _no_order_brief()
+    snapshot = incident._snapshot()
+    plan = _story(_plain_strategy(), snapshot, brief=brief)
+    agent_input = _agent_input(plan, snapshot)
+    agent = StorySequencerAgent(None)  # type: ignore[arg-type]
+    order = list(reversed(agent_input.open_ids()))
+    wordy = agent.parse(
+        json.dumps({"decided": True, "order": order, "reason": "x" * 900, "confidence": 0.7}),
+        agent_input,
+    )
+    assert wordy.decided is True and wordy.order == order and len(wordy.reason) == 240
+    # a full ranking with no ``decided`` at all is a ranking
+    assert agent.parse(json.dumps({"order": order}), agent_input).decided is True
+    # "cannot decide" needs nothing else
+    bare = agent.parse(json.dumps({"decided": False}), agent_input)
+    assert bare.decided is False and bare.order == []
+    assert agent.parse(json.dumps({}), agent_input).decided is False
+    assert agent.required_fields() == []
+
+
+def test_fm16_the_paid_call_is_keyed_by_the_turn_not_only_the_thread(
+    story_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import uuid
+
+    from app.services.turn_checkpoint import turn_run_id
+
+    seen: list[str | None] = []
+    real = planner_module.StorySequencerAgent.run
+
+    def _run(self, value, *, ctx=None):  # noqa: ANN001, ANN202
+        seen.append(ctx.request_id)
+        return real(self, value, ctx=ctx)
+
+    monkeypatch.setattr(planner_module.StorySequencerAgent, "run", _run)
+    monkeypatch.setattr(settings, "kria_turn_checkpoint_enabled", False)
+    brief = incident._brief()
+    for turn in (uuid.UUID(int=1), uuid.UUID(int=2)):
+        token = turn_run_id.set(turn)
+        try:
+            client = _Scripted(_answer([f"c{n}" for n in range(19, 1, -1)]))
+            _hook(monkeypatch, brief, incident._drafted(brief), client)
+        finally:
+            turn_run_id.reset(token)
+    assert len(seen) == 2 and seen[0] != seen[1]
+    assert all(str(incident.THREAD) in key and "story-order" in key for key in seen)

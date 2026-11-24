@@ -16,7 +16,14 @@ from __future__ import annotations
 import json
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
@@ -47,12 +54,23 @@ class StorySequencerInput(BaseModel):
         return [str(clip["id"]) for clip in self.clips if clip.get("span")]
 
 
-class StorySequencerOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+REASON_CHARS = 240
 
-    decided: bool = False
+
+class StorySequencerOutput(BaseModel):
+    # Only ``order`` matters. A stray key or a long note must never cost a usable ranking (a
+    # refused answer is upload order and one more paid call on the next draft).
+    model_config = ConfigDict(extra="ignore")
+
+    # None = the model did not say: a full ranking then counts as decided (`parse`).
+    decided: bool | None = None
     order: list[str] = Field(default_factory=list, max_length=200)
-    reason: str = Field(default="", max_length=240)
+    reason: str = ""
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _short_reason(cls, value: object) -> str:
+        return " ".join(str(value or "").split())[:REASON_CHARS]
 
 
 class StorySequencerAgent(Agent[StorySequencerInput, StorySequencerOutput]):
@@ -76,7 +94,8 @@ class StorySequencerAgent(Agent[StorySequencerInput, StorySequencerOutput]):
     Output = StorySequencerOutput
 
     def required_fields(self) -> list[str]:
-        return ["order"]
+        # "Cannot decide" may come with no order at all; `parse` owns the contract.
+        return []
 
     def render_prompt(self, input: StorySequencerInput) -> str:  # noqa: A002
         return load_prompt(
@@ -92,9 +111,11 @@ class StorySequencerAgent(Agent[StorySequencerInput, StorySequencerOutput]):
         except (TypeError, ValueError, ValidationError) as exc:
             raise SchemaError(f"story_sequencer: malformed output: {exc}") from exc
         open_ids = input.open_ids()
-        if not output.decided:
+        decided = bool(output.order) if output.decided is None else output.decided
+        if not decided:
             # "Cannot decide" is an answer: the clips stay as they are, whatever else it wrote.
-            return output.model_copy(update={"order": []})
+            return output.model_copy(update={"decided": False, "order": []})
+        output = output.model_copy(update={"decided": True})
         known = set(open_ids)
         unknown = [item for item in output.order if item not in known]
         if unknown:

@@ -351,6 +351,10 @@ def _replay(
     source: dict[str, str] = {}
     history: list[tuple[str, ...]] = []
     for entry in entries:
+        if entry.actor == SERVER_DEFAULT:
+            # The server put the story sequencer's clips back in upload order
+            # (`story_order.withdraw_story`): no clip reads as its choice any more, moved or not.
+            source = {item: actor for item, actor in source.items() if actor != _STORY}
         updated = apply_order(order, entry.after_ids, known=entry.before_ids or entry.after_ids)
         if updated == order:
             continue
@@ -687,6 +691,20 @@ def labels_for(
         else f"{label} ({position})"
         for position, (media_id, label) in enumerate(out.items(), start=1)
     }
+
+
+def file_tokens(order: Sequence[str], rows: Iterable[Mapping[str, Any]]) -> frozenset[str]:
+    """Every clip's own identifiers (media id, file names, storage file), casefolded, whole and
+    without the extension: what `names_a_file` checks a creator's words against."""
+    rows = [row for row in rows if isinstance(row, Mapping)]
+    return _id_tokens([*order, *(token for row in rows for token in _row_tokens(row))])
+
+
+def names_a_file(text: object, tokens: Collection[str]) -> bool:
+    """Whether ``text`` is exactly one of the project's clip ids, file names or file stems
+    (``tokens``: `file_tokens`). Such words name a file, not what a clip shows."""
+    folded = " ".join(str(text or "").casefold().split())
+    return bool(folded) and folded in tokens
 
 
 def _row_tokens(row: Mapping[str, Any]) -> list[str]:
