@@ -257,12 +257,12 @@ def test_turkish_twins_exist_for_every_static_line():
 _NOISY_EXCEPTION = {
     "en": "0.3 s unless a take is noisy",
     "tr": "0,3 sn'ye kadar kısal",  # ... "(gürültülü çekimler hariç)" follows
-    "de": "0,3 s",  # ... "außer in einem lauten Take" follows
+    "de": "0,3 s",  # ... "außer bei starkem Hintergrundlärm" follows
 }
 _NOISY_WORDS = {
     "en": "unless a take is noisy",
     "tr": "(gürültülü çekimler hariç)",
-    "de": "außer in einem lauten Take",
+    "de": "außer bei starkem Hintergrundlärm",
 }
 
 

@@ -25,7 +25,7 @@ build 2016, 2026-11-17). Two Turkish Talking takes from a DJI action camera; the
 - `TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED` (default on): off is byte-identical to before. Takes at or
   below -45 dBFS never change.
 - The three 0.3 s draft promises now say "unless a take is noisy" (EN, TR "gürültülü çekimler
-  hariç", DE "außer in einem lauten Take"). Drafts stored with the old wording stay render
+  hariç", DE "außer bei starkem Hintergrundlärm"). Drafts stored with the old wording stay render
   promises (`_TIGHT_*_PRE_1524`), so approving an older draft after deploy never holds.
 
 ## Gate calibration (299 local kit and fixture files, many duplicates; `_room_floor_db` + 95th percentile)
@@ -70,6 +70,7 @@ pauses".
 
 ## Remaining gaps
 
+- **Measure the shipped export:** the post-deploy iPhone check measures pauses on the final export with the same independent check. With KRI-1523 it plays only the good take, so the two-take replay numbers here are not its expected values.
 - **Native export:** not run. The phone applies the server's cut ranges; check after deploy on an
   iPhone with the Cusco T1 kit (KRI-1522).
 - **0.3 s is not always reached on a loud take:** the cut sources there are Kria's ambient spans,
