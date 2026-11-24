@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.14.0] - 2026-11-24
+
+### Changed
+- fix(ci): an editor change also runs the UI tests from other groups that enter the editor (KRI-1632) (#2520) <!-- release-pr: 2520 -->
+
 ## [0.90.13.0] - 2026-11-24
 
 ### Changed
