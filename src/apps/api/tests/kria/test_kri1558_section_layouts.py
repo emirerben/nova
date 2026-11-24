@@ -16,7 +16,10 @@ Failure modes these runs guard (docs/reviews/kri-1558-section-layout-failure-mod
 * "keep me in the corner the whole time" leaves per-section layouts behind;
 * a layout swapped between two sections passes the check against the section list;
 * changing one section's framing is missing from the chat's "Done: ..." reply, or the reply
-  names another section or the whole video.
+  names another section or the whole video;
+* "make me smaller in part 1" asked as a checked requirement: the per-request summary (the ask
+  ledger) does not count the part's layout change as that ask, so the line reads as not done (or
+  "partly") and the change is listed under "also changed" instead.
 """
 
 from __future__ import annotations
@@ -116,6 +119,7 @@ def _turn(
         # over the compiled diff, every change named).
         "said": describe_diff(diff.entries, live_text_count=diff.live_text_count, limit=None),
         "diff": diff,
+        "compiled": built["compiled"],
     }
 
 
@@ -293,3 +297,94 @@ def test_one_section_framing_change_is_named_in_the_chat_reply(prod_profile) -> 
     with reply_language_for("tr"):
         said_tr = describe_diff(turn["diff"].entries, limit=None)
     assert "1. bölümde sol alt köşede küçük gösteriliyorsun" in said_tr, said_tr
+
+
+ASKS = {
+    "en": (
+        "make me smaller in part 1",
+        "Done: Made you small in the bottom-right corner in part 1",
+    ),
+    "tr": ("beni 1. bölümde küçült", "Yapıldı: 1. bölümde sağ alt köşede küçük gösteriliyorsun"),
+}
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_make_me_smaller_in_part_1_is_done_in_the_per_request_summary(
+    language: str, prod_profile
+) -> None:
+    """Tadic's hold: the asked change is the receipt, never "failed + changed as an extra"."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from app.kria.ask_ledger import editor_ledger  # noqa: PLC0415
+    from app.kria.brief import BriefRequirement  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        build_receipts,
+        plan_facts_from_editor_payload,
+    )
+    from app.kria.editor_receipts import reply_from_editor_receipts  # noqa: PLC0415
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+
+    ask, done_line = ASKS[language]
+    setup = _talk(language)
+    arranged = _turn(setup, None, {"op": "arrange_sections", "asset_ids": ["bg-1", "bg-2"]})
+    assert arranged["background"]["layout_windows"][0]["layout"] == "own"
+    # The op a model answers "make me smaller in part 1" with (no model call).
+    turn = _turn(
+        setup,
+        arranged["background"],
+        {"op": "set_section_layout", "speaker_layout": "small", "section_numbers": [1]},
+    )
+    compiled = turn["compiled"]
+    reqs = [BriefRequirement(id="r1", kind="style", scope="global", description=ask)]
+    with reply_language_for(language):
+        payload = compiled.payload.model_dump(mode="json", exclude_none=True)
+        facts = plan_facts_from_editor_payload(
+            payload, compiled.text_diff or None, compiled.changes
+        )
+        facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
+        receipts = build_receipts(reqs, facts, include_unchecked=True)
+        ledger = editor_ledger(reqs, receipts, compiled.diff, facts.text_styles or ())
+        reply = reply_from_editor_receipts(reqs, list(ledger.receipts), unbound=ledger.extras)
+
+    (receipt,) = ledger.receipts
+    # On 434f19085: status "not_possible", reply "Couldn't: make me smaller in part 1 (Nothing
+    # changed for this). Also changed: Made you small in the bottom-right corner in part 1".
+    assert (receipt.status, receipt.verification) == ("met", "checked"), (receipt, reply)
+    assert not ledger.extras, reply
+    assert reply.startswith(done_line), reply
+    for wrong in ("Couldn't", "Also changed", "Partly", "Yapamadım", "Ayrıca değişti", "Kısmen"):
+        assert wrong not in reply, reply
+    assert ledger.gaps(["r1"], reply) == [], reply
+
+
+def test_make_me_bigger_in_part_1_answered_by_making_her_small_is_not_done(prod_profile) -> None:
+    """Red control: the size ask is checked for its direction, not just for any layout change."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from app.kria.ask_ledger import editor_ledger  # noqa: PLC0415
+    from app.kria.brief import BriefRequirement  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        build_receipts,
+        plan_facts_from_editor_payload,
+    )
+
+    setup = _talk("en")
+    arranged = _turn(setup, None, {"op": "arrange_sections", "asset_ids": ["bg-1", "bg-2"]})
+    turn = _turn(
+        setup,
+        arranged["background"],
+        {"op": "set_section_layout", "speaker_layout": "small", "section_numbers": [1]},
+    )
+    compiled = turn["compiled"]
+    reqs = [
+        BriefRequirement(
+            id="r1", kind="style", scope="global", description="make me bigger in part 1"
+        )
+    ]
+    payload = compiled.payload.model_dump(mode="json", exclude_none=True)
+    facts = plan_facts_from_editor_payload(payload, compiled.text_diff or None, compiled.changes)
+    facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
+    receipts = build_receipts(reqs, facts, include_unchecked=True)
+    ledger = editor_ledger(reqs, receipts, compiled.diff, facts.text_styles or ())
+    (receipt,) = ledger.receipts
+    assert receipt.status != "met", receipt

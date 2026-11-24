@@ -288,7 +288,11 @@ _ORDINALS = {
     "dorduncu": 4,
     "son": -1,
 }
-_SPEAKER_SIZE: Alts = _alts(("speaker_background", ["speaker_frame"]))
+# KRI-1558: "make me smaller in part 1" changes that part's layout, not the whole-video corner.
+_SPEAKER_SIZE: Alts = _alts(("speaker_background", ["speaker_frame", "layout"]))
+# How big each part layout draws the speaker (her own take and the full-size cut-out are both
+# full size; the picture alone hides her), so a size ask's direction can be checked.
+_SPEAKER_LAYOUT_SIZE = {"own": 2, "full": 2, "small": 1, "picture": 0}
 # KRI-1563: a caption field named inside a caption ask, and the cue that proves it.
 _CAPTION_FIELD_CUES = {
     "position": "caption_position",
@@ -609,6 +613,13 @@ def _destination_ok(field_name: str, after: Any, wanted: frozenset[str]) -> bool
     return True
 
 
+def _speaker_size(state: Any) -> int | None:
+    """The size rank of a part-layout diff value ``(layout, corner)``."""
+    if isinstance(state, tuple) and state:
+        return _SPEAKER_LAYOUT_SIZE.get(str(state[0]))
+    return None
+
+
 def _sign_ok(before: Any, after: Any, direction: int) -> bool:
     b, a = _num(before), _num(after)
     return b is None or a is None or (a - b) * direction > 0
@@ -749,6 +760,12 @@ def _violation(entry: DiffEntry, t: DiffTarget, shape: AskShape) -> str | None:
     elif lane == "speaker_background":
         if name == "removed" and pol == "add":
             return "polarity"
+        if (
+            name == "layout"
+            and shape.size_dir
+            and not _sign_ok(_speaker_size(t.before), _speaker_size(after), shape.size_dir)
+        ):
+            return "direction"
     elif lane == "visual_media":
         if pol == "add":
             return "polarity"
