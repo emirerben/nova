@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.2.0] - 2026-11-24
+
+### Changed
+- test(ios): phone-render tests wait for the session's own reads before each check (KRI-1605) (#2510) <!-- release-pr: 2510 -->
+
 ## [0.90.1.0] - 2026-11-24
 
 ### Changed
