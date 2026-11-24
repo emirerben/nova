@@ -2235,6 +2235,12 @@
     "A fact's heading": "Die Überschrift einer Info",
     "Its detail sits right under it, on one short line": "Das Detail steht direkt darunter, in einer kurzen Zeile",
     "One line on every clip, as if you were telling it": "Eine Zeile auf jedem Clip, als würdest du es erzählen",
-    "You named a sound effect, so I played that one and added no others": "Du hast einen Soundeffekt genannt, deshalb habe ich diesen abgespielt und keine weiteren hinzugefügt"
+    "You named a sound effect, so I played that one and added no others": "Du hast einen Soundeffekt genannt, deshalb habe ich diesen abgespielt und keine weiteren hinzugefügt",
+    "Clip {n} still plays too": "Clip {n} läuft trotzdem auch",
+    "I can't tell which clip you mean: remove the clips you don't want from this chat and I'll make it from the rest": "Ich weiß nicht, welchen Clip du meinst: Entferne die Clips, die du nicht willst, aus diesem Chat, dann mache ich es aus den übrigen",
+    "Only clip {n} of your {total} is used": "Nur Clip {n} von deinen {total} wird verwendet",
+    "Only the {count} clips you picked of your {total} are used": "Nur die {count} Clips, die du gewählt hast, von deinen {total} werden verwendet",
+    "The clip you picked isn't in this edit": "Der Clip, den du gewählt hast, ist nicht in diesem Schnitt",
+    "{count} other clips still play too": "{count} andere Clips laufen trotzdem auch"
   }
 }

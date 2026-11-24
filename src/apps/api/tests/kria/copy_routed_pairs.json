@@ -2890,6 +2890,36 @@
    "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clip {n} still plays too",
+   "{n}. klip de hâlâ oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't tell which clip you mean: remove the clips you don't want from this chat and I'll make it from the rest",
+   "Hangi klibi kastettiğini anlayamadım: istemediğin klipleri bu sohbetten çıkar, kalanlardan yapayım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Only clip {n} of your {total} is used",
+   "{total} klibinden sadece {n}. klip kullanılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Only the {count} clips you picked of your {total} are used",
+   "{total} klibinden sadece seçtiğin {count} klip kullanılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The clip you picked isn't in this edit",
+   "Seçtiğin klip bu düzenlemede yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} other clips still play too",
+   "{count} klip daha hâlâ oynuyor"
   ]
  ],
  "retired": [

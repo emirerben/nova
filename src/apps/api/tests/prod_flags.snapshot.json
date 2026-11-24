@@ -157,6 +157,10 @@
       "source": "default",
       "value": 50
     },
+    "chosen_clips_ask_enabled": {
+      "source": "default",
+      "value": true
+    },
     "clip_exposure_fact_enabled": {
       "source": "default",
       "value": false

@@ -108,11 +108,14 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for KRI-1561 PR 5b (the general sound-effect section also names what each clip shows,
 # taught for a montage with no voiceover); replacing that one section with its previous text
 # reproduces the values before it, for all four prompts.
+# Re-pinned for KRI-1523 (these several-clip Talking manifests are taught the typed
+# `selected_media_ids` select fact, `CHOSEN_VIDEOS_BRIEF_SENTENCE`); masking that one sentence
+# reproduces the values before it: 5df476e6 / 6e96cdb6 / 3ffcb200 / f40fa3c9.
 MAIN_PROMPT_SHA = {
-    "neither": "5df476e68bfa87c214bb88fbc8ea5f1ca06f666be72803f9d5ce08f2a1e0e2f7",
-    (True, True): "6e96cdb69cae787deeac795d7a40281f93417419c4a4dc69c09b5bcac5c82cbe",
-    (True, False): "3ffcb2009f72cce3e3df09b8d2956b3bc57bd0ea04a840f16011b4f4801192d9",
-    (False, True): "f40fa3c94192871eadc445224a98622a703921387aff00ef10288ee41459aba4",
+    "neither": "66d7bab46943cab2ba51d1a624a7fc665fa9c83737dc7ccec052944aa4d808de",
+    (True, True): "b61b7e0ac62326a6b5671aa8dddbfdf8e1e4291c77a2ed9018e12c6dee1f4d41",
+    (True, False): "eb16825caf0e34102efc774286700a61a4ddd6de1e3dd0a0a0ead6b8b6126127",
+    (False, True): "7e226e28cee9c85e3e3597d3e1483f4c1d8a24b5cefeac09b00c65ad52313cbb",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (
