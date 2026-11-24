@@ -4042,6 +4042,15 @@
         "src/apps/api/tests/kria/test_kri1560_opening_titles_postgres.py",
         "src/apps/api/tests/fixtures/kria_replay/kri1560_opening_titles/"
       ]
+    },
+    {
+      "id": "kri-1611-intro-scene-pick",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_scene_pick.py tests/pipeline/test_intro_scene.py tests/pipeline/test_phone_title_look.py",
+      "paths": [
+        "src/apps/api/app/pipeline/intro_scene_pick.py",
+        "src/apps/api/tests/pipeline/test_intro_scene_pick.py"
+      ]
     }
   ]
 }

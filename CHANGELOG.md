@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.4.0] - 2026-11-24
+
+### Changed
+- feat(intro): server-issued options and a seeded pick for Talking intro scenes (KRI-1611) (#2501) <!-- release-pr: 2501 -->
+
+## [0.90.3.0] - 2026-11-24
+
+### Changed
+- test(ios): a request from an earlier test never reaches the next test's fake server (KRI-1607) (#2511) <!-- release-pr: 2511 -->
+
+## [0.90.2.0] - 2026-11-24
+
+### Changed
+- test(ios): phone-render tests wait for the session's own reads before each check (KRI-1605) (#2510) <!-- release-pr: 2510 -->
+
 ## [0.90.1.0] - 2026-11-24
 
 ### Changed
