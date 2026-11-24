@@ -12,6 +12,8 @@ import UIKit
     private static var ticks = 0
     private static var counts: [String: Int] = [:]
     private static var held = 0
+    private static var quiet = 0
+    private static var keyboardSeen = false
 
     /// Counts one main-thread event (a layout pass, a caret scroll, a run-loop wake) since the last beat.
     static func count(_ key: String) { counts[key, default: 0] += 1 }
@@ -42,6 +44,7 @@ import UIKit
                 let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .null
                 let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? -1
                 let local = (note.userInfo?[UIResponder.keyboardIsLocalUserInfoKey] as? Bool) ?? false
+                MainActor.assumeIsolated { keyboardSeen = true }
                 NSLog("KBDPROBE keyboard %@ endY=%.0f endH=%.0f duration=%.2f local=%d", label, end.minY, end.height, duration, local ? 1 : 0)
             })
         }
@@ -137,6 +140,26 @@ import UIKit
             )
             held = responder is ExplicitLineTextView ? held + 1 : 0
             if held == 4 || held == 8 { NSLog("KBDPROBE stall held=%d", held) }
+            // While a UI test drives the app the run loop wakes hundreds of times per beat. In both hangs of
+            // the second capture it woke 10 to 31 times: nothing was asking the app anything.
+            quiet = keyboardSeen && (seen["wakes"] ?? 0) < 60 ? quiet + 1 : 0
+            if quiet == 2 || quiet == 6 {
+                NSLog("KBDPROBE stall quiet=%d wakes=%d state=%d", quiet, seen["wakes"] ?? 0, UIApplication.shared.applicationState.rawValue)
+                for window in windows {
+                    var animatedLayers = 0
+                    var stack: [CALayer] = [window.layer]
+                    while let layer = stack.popLast() {
+                        if let sublayers = layer.sublayers { stack.append(contentsOf: sublayers) }
+                        if !(layer.animationKeys() ?? []).isEmpty { animatedLayers += 1 }
+                    }
+                    NSLog(
+                        "KBDPROBE window %@ hidden=%d alpha=%.2f level=%.0f key=%d frame=%@ animatedLayers=%d root=%@",
+                        String(describing: type(of: window)), window.isHidden ? 1 : 0, window.alpha, window.windowLevel.rawValue,
+                        window.isKeyWindow ? 1 : 0, NSCoder.string(for: window.frame), animatedLayers,
+                        window.rootViewController.map { String(describing: type(of: $0)) } ?? "none"
+                    )
+                }
+            }
         }
     }
 

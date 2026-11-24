@@ -22,8 +22,14 @@ stream=$!
       echo "$day $clock" >> "stalls-$label.txt"
       number=$(wc -l < "stalls-$label.txt" | tr -d ' ')
       pid=$(pgrep -x Kria | head -1)
-      if [ -n "$pid" ]; then sample "$pid" 3 -file "sample-$label-$number.txt" > /dev/null 2>&1; fi
-      echo "[$label] stall at $clock: sampled app pid ${pid:-none} as sample-$label-$number.txt ($(date -u +%H:%M:%S))"
+      runner=$(pgrep -f "KriaUITests-Runner" | head -1)
+      daemon=$(pgrep -f "CoreSimulator.*testmanagerd" | head -1)
+      if [ -n "$pid" ]; then sample "$pid" 2 -file "sample-$label-$number-app.txt" > /dev/null 2>&1; fi
+      if [ -n "$runner" ]; then sample "$runner" 2 -file "sample-$label-$number-runner.txt" > /dev/null 2>&1; fi
+      if [ -n "$daemon" ]; then sample "$daemon" 2 -file "sample-$label-$number-testmanagerd.txt" > /dev/null 2>&1; fi
+      xcrun simctl spawn "$SIM" log show --last 50s --info --debug --style compact --predicate 'process == "Kria" OR process == "KriaUITests-Runner" OR process == "testmanagerd" OR process == "backboardd" OR process == "SpringBoard"' > "hang-$label-$number.log" 2>&1
+      tail -3 "$label-pass.log" | cut -c1-160 | sed "s/^/[$label] test log now: /"
+      echo "[$label] stall at $clock ($rest): sampled app ${pid:-none}, runner ${runner:-none}, testmanagerd ${daemon:-none}; hang-$label-$number.log $(wc -l < "hang-$label-$number.log" | tr -d ' ') lines ($(date -u +%H:%M:%S))"
     done
   done
 ) &
@@ -37,6 +43,7 @@ for pass in $(seq "$passes"); do
   xcodebuild "${common[@]}" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 "${only[@]}" test-without-building > "$label-pass.log" 2>&1
   status=$?
   cat "$label-pass.log" >> "$label.log"
+  if [ "$pass" = 1 ]; then xcrun simctl spawn "$SIM" log show --last 50s --info --debug --style compact --predicate 'process == "Kria" OR process == "KriaUITests-Runner" OR process == "testmanagerd" OR process == "backboardd" OR process == "SpringBoard"' > "baseline-$label.log" 2>&1; fi
   echo "=== PASS $pass exit $status" >> "$label.log"
   echo "[$label] pass $pass exit $status in $(( $(date +%s) - began ))s; passed $(grep -c "\]' passed" "$label-pass.log" || true), failed $(grep -c "\]' failed" "$label-pass.log" || true), 60 s waits $(grep -c "App animations complete notification not received" "$label-pass.log" || true)"
 done
