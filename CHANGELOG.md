@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.8.0] - 2026-11-24
+
+### Changed
+- fix(kria): tight pauses work on a take recorded loud, and the 0.3 s promise names the noisy-take exception (KRI-1524) (#2509) <!-- release-pr: 2509 -->
+
 ## [0.90.7.0] - 2026-11-24
 
 ### Changed
