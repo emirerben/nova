@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.113.0] - 2026-11-24
+
+### Changed
+- test(ios): camera-roll UI tests hold each request until the test lets it go (KRI-1604) (#2498) <!-- release-pr: 2498 -->
+
 ## [0.89.112.0] - 2026-11-24
 
 ### Changed
