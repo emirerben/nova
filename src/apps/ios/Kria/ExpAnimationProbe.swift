@@ -10,6 +10,25 @@ import UIKit
     private static var timer: Timer?
     private static var tokens: [NSObjectProtocol] = []
     private static var ticks = 0
+    private static var counts: [String: Int] = [:]
+    private static var held = 0
+
+    /// Counts one main-thread event (a layout pass, a caret scroll, a run-loop wake) since the last beat.
+    static func count(_ key: String) { counts[key, default: 0] += 1 }
+
+    private static func flag(_ view: UIScrollView, _ name: String) -> Int {
+        let selector = NSSelectorFromString(name)
+        guard view.responds(to: selector), let method = class_getInstanceMethod(type(of: view), selector) else { return -1 }
+        typealias Function = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(method_getImplementation(method), to: Function.self)(view, selector) ? 1 : 0
+    }
+
+    private static func describe(_ view: UIScrollView) -> String {
+        String(format: "off=%.1f,%.1f content=%.1fx%.1f bounds=%.1fx%.1f drag=%d decel=%d track=%d animScroll=%d keys=%d",
+               view.contentOffset.x, view.contentOffset.y, view.contentSize.width, view.contentSize.height,
+               view.bounds.width, view.bounds.height, view.isDragging ? 1 : 0, view.isDecelerating ? 1 : 0, view.isTracking ? 1 : 0,
+               flag(view, "_isAnimatingScroll"), view.layer.animationKeys()?.count ?? 0)
+    }
 
     static func start() {
         guard timer == nil, ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("-ui-testing") }) else { return }
@@ -29,6 +48,10 @@ import UIKit
         let made = Timer(timeInterval: 1, repeats: true) { _ in MainActor.assumeIsolated { tick() } }
         RunLoop.main.add(made, forMode: .common)
         timer = made
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue, true, 0) { _, _ in
+            MainActor.assumeIsolated { count("wakes") }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         NSLog("KBDPROBE started")
     }
 
@@ -99,6 +122,21 @@ import UIKit
                 "KBDPROBE beat windows=%d layers=%d animating=%d responder=%@ animationsEnabled=%d",
                 windows.count, layerCount, animated, responder.map { String(describing: type(of: $0)) } ?? "none", UIView.areAnimationsEnabled ? 1 : 0
             )
+            let seen = counts
+            counts = [:]
+            var inner = "-", outer = "-"
+            if let field = responder as? UIScrollView {
+                inner = describe(field)
+                var parent = field.superview
+                while let next = parent, !(next is UIScrollView) { parent = next.superview }
+                if let found = parent as? UIScrollView { outer = describe(found) }
+            }
+            NSLog(
+                "KBDPROBE work wakes=%d layout=%d caret=%d update=%d selection=%d change=%d field[%@] outer[%@]",
+                seen["wakes"] ?? 0, seen["layout"] ?? 0, seen["caret"] ?? 0, seen["update"] ?? 0, seen["selection"] ?? 0, seen["change"] ?? 0, inner, outer
+            )
+            held = responder is ExplicitLineTextView ? held + 1 : 0
+            if held == 4 || held == 8 { NSLog("KBDPROBE stall held=%d", held) }
         }
     }
 

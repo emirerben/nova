@@ -812,6 +812,7 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ view: ExplicitLineTextView, context: Context) {
+        ExpAnimationProbe.count("update")
         context.coordinator.parent = self
         view.lineActions = actions
         view.onLineCount = onLineCount
@@ -840,12 +841,14 @@ struct NativeExplicitLineTextEditor: UIViewRepresentable {
         var parent: NativeExplicitLineTextEditor
         init(_ parent: NativeExplicitLineTextEditor) { self.parent = parent }
         func textViewDidChange(_ textView: UITextView) {
+            ExpAnimationProbe.count("change")
             (textView as? ExplicitLineTextView)?.updateLineWidth()
             parent.text = textView.text
             (textView as? ExplicitLineTextView)?.reportLineCount()
             (textView as? ExplicitLineTextView)?.scrollCaretIntoView()
         }
         func textViewDidChangeSelection(_ textView: UITextView) {
+            ExpAnimationProbe.count("selection")
             (textView as? ExplicitLineTextView)?.scrollCaretIntoView()
         }
         func textViewDidBeginEditing(_ textView: UITextView) { parent.focused.wrappedValue = true }
@@ -897,6 +900,7 @@ final class ExplicitLineTextView: UITextView {
         if window != nil && wantsKeyboardFocus { becomeFirstResponder() }
     }
     override func layoutSubviews() {
+        ExpAnimationProbe.count("layout")
         updateLineWidth()
         super.layoutSubviews()
         keepWidestLineReachable()
@@ -922,6 +926,7 @@ final class ExplicitLineTextView: UITextView {
         layoutIfNeeded()
         let caret = caretRect(for: end).insetBy(dx: -12, dy: 0)
         guard caret.minX.isFinite, caret.maxX.isFinite else { return }
+        ExpAnimationProbe.count("caret")
         scrollRectToVisible(caret, animated: false)
     }
 
