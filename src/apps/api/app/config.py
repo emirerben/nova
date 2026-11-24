@@ -857,6 +857,23 @@ class Settings(BaseSettings):
         allowed = {value.strip() for value in self.creator_editorial_taste_user_ids}
         return "*" in allowed or str(user_id) in allowed
 
+    # KRI-1611: a fitted intro scene (`pipeline/intro_scene_pick.py`) on Talking edits. Read once at
+    # dispatch (`stamp_intro_scene`); workers branch on the stamp. Per-account JSON list of ids,
+    # ["*"] admits every account (ENABLED stays the kill switch). Off = today's title rows.
+    intro_scene_enabled: bool = False
+    intro_scene_user_ids: list[str] = []
+    # KRI-1612: its own kill switch for the model that picks the scene
+    # (`agents/intro_scene_designer`) instead of the seeded pick. Needs the two flags above;
+    # read once at dispatch and stamped, so a worker never re-reads it. Off = the seeded pick,
+    # byte-identical to KRI-1611.
+    intro_scene_model_enabled: bool = False
+
+    def intro_scene_for(self, user_id: object) -> bool:
+        if not self.intro_scene_enabled or user_id is None:
+            return False
+        allowed = {value.strip() for value in self.intro_scene_user_ids}
+        return "*" in allowed or str(user_id) in allowed
+
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.
@@ -2258,6 +2275,20 @@ class Settings(BaseSettings):
         "Default off: no extra cuts and every receipt is byte-identical to before. "
         "Kill switch: `fly secrets set TIGHT_PAUSE_CUT_ENABLED=false --app nova-video` + api "
         "and worker restart.",
+    )
+
+    tight_pause_relative_floor_enabled: bool = Field(
+        default=True,
+        description="KRI-1524 bug-fix kill switch for the tight / long pause passes and the "
+        "several-take join measures. An action camera records hot, so an ordinary outdoor take's "
+        "room floor sits above -45 dBFS: the pass called every such take noisy and cut nothing, "
+        "and the -38 dB pause measure heard no pause in it at all (join gaps of 0.0 s). On: a take "
+        "above -45 dBFS is noisy only when its speech rises less than 25 dB above its floor; "
+        "otherwise it is cut with the same floor-relative protections and its pauses are measured "
+        "against its own floor (`tight_pause_cut.take_noise`, `measure_take_silences`). Takes at "
+        "or below -45 dBFS are unchanged. Off: every plan, report and receipt is byte-identical "
+        "to before. Kill switch: `fly secrets set TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED=false --app "
+        "nova-video` + api and worker restart.",
     )
 
     speech_cleanup_slate_cut_enabled: bool = Field(

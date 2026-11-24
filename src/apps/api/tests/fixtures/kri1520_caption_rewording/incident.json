@@ -1,0 +1,79 @@
+{
+  "_about": "KRI-1520: two prod caption_correction passes (gpt-4o, legacy proofreader) on Turkish phone jobs, 2026-11-17, server 80c96b04c. Per line: the whisper words with their prod timings (caption_cues of job_debug.json; correction keeps word timings), the line gpt-4o returned (pipeline_trace caption_correction changes[].after for an all-accepted line, reverted_examples[].proposed otherwise), what prod showed, and what the guard must keep. Lines the model returned unchanged are left out: the guard judges each line alone. 'spoken' is the independent truth from the run notes (two independent transcripts of the voiceover file and of the finished video), not whisper-1.",
+  "passes": [
+    {
+      "id": "t4_altinin_yolu",
+      "issue": "KRI-1517",
+      "job_id": "91270ec0-ab9a-4d66-912b-46a4b4da9255",
+      "language": "tr",
+      "prod_trace": {"changed": 4, "accepted_words": 5, "reverted_words": 1, "reverted_lines": 1},
+      "lines": [
+        {
+          "words": [["Şimdi", 0.0, 0.28], ["konuyu", 0.28, 0.58], ["Osmanlı'ya", 0.58, 2.3], ["bağlanıyor", 2.3, 2.66], ["demiştim.", 2.66, 3.06]],
+          "model_line": "Şimdi konuyu Osmanlı'ya bağlayacağımı söylemiştim.",
+          "prod_shown": "Şimdi konuyu Osmanlı'ya bağlayacağımı söylemiştim.",
+          "spoken": "Şimdi konuyu Osmanlı'ya bağlanıyor demiştim.",
+          "expected": "Şimdi konuyu Osmanlı'ya bağlanıyor demiştim."
+        },
+        {
+          "words": [["inkalar", 15.957, 16.277], ["için", 16.277, 16.477], ["altın", 16.477, 17.097], ["kutsal", 17.097, 17.477], ["bir", 17.477, 17.617], ["şeydi.", 17.617, 17.957]],
+          "model_line": "İnkalar için altın kutsal bir şeydi.",
+          "prod_shown": "İnkalar için altın kutsal bir şeydi.",
+          "expected": "İnkalar için altın kutsal bir şeydi."
+        },
+        {
+          "words": [["hepsini", 20.477, 21.257], ["Armada", 21.257, 23.457], ["Española,", 23.457, 24.177], ["yani", 24.477, 24.817], ["bu", 24.817, 25.757], ["meşhur", 25.757, 25.937], ["İspanyol", 25.937, 26.777], ["deniz", 26.777, 27.297], ["donanmasını", 27.297, 28.677], ["kurup,", 28.677, 29.937]],
+          "model_line": "Hepsini Armada Española, yani bu meşhur İspanyol deniz donanmasını kurup,",
+          "prod_shown": "Hepsini Armada Española, yani bu meşhur İspanyol deniz donanmasını kurup,",
+          "expected": "Hepsini Armada Española, yani bu meşhur İspanyol deniz donanmasını kurup,"
+        },
+        {
+          "words": [["maalesef", 30.197, 30.917], ["Osmanlı", 30.917, 32.617], ["donanmasını", 32.617, 33.157], ["İnebahta", 33.157, 33.617], ["Deniz", 33.617, 33.917], ["Savaşı'nda", 33.917, 34.337], ["mağlup", 34.337, 34.657], ["ettiler.", 34.657, 34.977]],
+          "model_line": "maalesef Osmanlı donanmasını İnebahtı Deniz Savaşı'nda mağlup ettiler.",
+          "prod_shown": "maalesef Osmanlı donanmasını İnebahtı Deniz Savaşı'nda mağlup ettiler.",
+          "expected": "maalesef Osmanlı donanmasını İnebahtı Deniz Savaşı'nda mağlup ettiler."
+        },
+        {
+          "words": [["Burada", 34.977, 35.597], ["bizim", 35.597, 35.917], ["tabii", 35.917, 36.097], ["biz", 36.097, 36.317], ["çok", 36.317, 36.477], ["daha", 36.477, 36.717], ["iyi", 36.717, 37.037], ["tecrübeliyiz", 37.037, 37.477], ["deniz", 37.477, 37.717], ["konusunda", 37.717, 38.017], ["normalde", 38.017, 38.617], ["ama", 38.617, 39.337], ["hem", 39.337, 40.377], ["lojistik,", 40.377, 40.957]],
+          "model_line": "Burada bizim tabii biz çok daha tecrübeliyiz deniz konusunda normalde ama hem lojistik,",
+          "prod_shown": "Burada bizim tabii biz çok daha iyi tecrübeliyiz deniz konusunda normalde ama hem lojistik,",
+          "expected": "Burada bizim tabii biz çok daha iyi tecrübeliyiz deniz konusunda normalde ama hem lojistik,"
+        }
+      ]
+    },
+    {
+      "id": "t1_good_take",
+      "issue": "KRI-1520 comment (Cusco DJI T1)",
+      "job_id": "d988bb99-bf5c-4bc5-9e83-aa2ffae1ca76",
+      "language": "tr",
+      "prod_trace": {"changed": 2, "accepted_words": 2, "reverted_words": 3, "reverted_lines": 2},
+      "lines": [
+        {
+          "words": [["Coricancha'nın", 9.573, 11.513], ["artık", 11.513, 11.873], ["son,", 11.873, 12.293]],
+          "model_line": "Coricancha'nın artık son",
+          "prod_shown": "Coricancha'nın artık son",
+          "expected": "Coricancha'nın artık son"
+        },
+        {
+          "words": [["son", 12.293, 13.093], ["kısımlarındayız", 13.093, 13.713], ["şimdi,", 13.713, 13.873], ["son", 14.073, 14.073]],
+          "model_line": "kısımlarındayız şimdi, son",
+          "prod_shown": "son kısımlarındayız şimdi, son",
+          "expected": "son kısımlarındayız şimdi, son"
+        },
+        {
+          "words": [["hikayeyle", 14.073, 14.673], ["sizi", 14.673, 15.333], ["de", 15.333, 15.453], ["buraya", 15.453, 15.613], ["bitireceğim.", 15.613, 16.013]],
+          "model_line": "hikayeyle sizi de buraya getireceğim.",
+          "prod_shown": "hikayeyle sizi de buraya getireceğim.",
+          "spoken": "hikayeyle size burayı bitireceğim.",
+          "expected": "hikayeyle sizi de buraya bitireceğim."
+        },
+        {
+          "words": [["artık", 1.877, 2.257], ["son", 2.257, 3.017], ["kısmındayız.", 3.017, 3.437]],
+          "model_line": "artık sonundayız.",
+          "prod_shown": "artık son kısmındayız.",
+          "expected": "artık son kısmındayız."
+        }
+      ]
+    }
+  ]
+}

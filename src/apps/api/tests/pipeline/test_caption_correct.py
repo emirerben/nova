@@ -636,6 +636,33 @@ def test_kri1263_a_brand_swapped_for_an_unrelated_name_is_refused(monkeypatch) -
     assert out[1]["text"] == "send it to Gonzales"
 
 
+def test_kri1520_a_word_that_starts_with_another_sound_is_another_word(monkeypatch) -> None:
+    # "bat" -> "cat" is one letter but a different word; "kat" -> "cat" keeps the sound.
+    # Cyrillic has no Latin sound key: its first letter decides ("превет" is a misspelling
+    # of "привет", "мама" -> "папа" is another word).
+    out = _correct(
+        monkeypatch,
+        ["the bat flew home", "the kat sat down", "превет мама"],
+        ["the cat flew home", "the cat sat down", "привет папа"],
+    )
+    assert [c["text"] for c in out] == ["the bat flew home", "the cat sat down", "привет мама"]
+
+
+def test_kri1520_a_long_rewrite_sharing_letters_is_refused(monkeypatch) -> None:
+    # The KRI-1263 ratio fallback let these through on shared stems and endings.
+    out = _correct(
+        monkeypatch,
+        ["ben geliyorum dedim", "ona söyledim", "konuyu bağlanıyor demiştim"],
+        ["ben geleceğim dedim", "ona dedim", "konuyu bağlayacağımı söylemiştim"],
+        language="tr",
+    )
+    assert [c["text"] for c in out] == [
+        "ben geliyorum dedim",
+        "ona söyledim",
+        "konuyu bağlanıyor demiştim",
+    ]
+
+
 def test_kri1263_a_refused_change_does_not_move_punctuation_onto_neighbours(monkeypatch) -> None:
     [after] = _correct(
         monkeypatch,

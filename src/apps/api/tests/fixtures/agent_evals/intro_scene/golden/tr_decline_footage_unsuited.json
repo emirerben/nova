@@ -1,0 +1,109 @@
+{
+  "agent": "nova.compose.intro_scene",
+  "prompt_version": "is-5b06f2dd33f5",
+  "prompt_sha": "4d23f55e870dfcf0",
+  "input": {
+    "language": "tr",
+    "splits": [
+      [
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "accent"
+      ]
+    ],
+    "font_pairs": [
+      "grotesk_hand",
+      "serif_italic",
+      "grotesk_loop",
+      "script_serif",
+      "young_serif",
+      "grotesk_pen"
+    ],
+    "inks": [
+      "oxblood",
+      "chartreuse",
+      "cream",
+      "butter",
+      "white"
+    ],
+    "zones": [
+      "above_head",
+      "top_left",
+      "mid_frame"
+    ],
+    "entrances": [
+      "fade",
+      "rise",
+      "pop",
+      "ink"
+    ],
+    "brightness": "unknown",
+    "title_words": [
+      "bugün",
+      "çok",
+      "şey",
+      "oldu"
+    ],
+    "footage_notes": "kalabalık bir sokakta konuşan adam, kafanın üstünde tabelalar ve insanlar"
+  },
+  "raw_text": "{\"decision\": \"decline\", \"decline_reason\": \"footage_unsuited\"}",
+  "output": {
+    "decision": "decline",
+    "decline_reason": "footage_unsuited"
+  },
+  "meta": {
+    "source": "hand_authored",
+    "note": "A hand-authored answer, NOT recorded model output (no paid run, KRI-1612). Input is what build_input issues for the title today.",
+    "expect": "decline",
+    "language": "tr"
+  }
+}

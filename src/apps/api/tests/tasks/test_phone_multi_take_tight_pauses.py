@@ -12,6 +12,9 @@ T5/T6 a noisy / unmeasured take is summed away instead of reported on its own.
 T8  the outcome and the receipts see only the first take.
 T10 a take with no plan (footage ending) sits between two cut takes.
 T11 flag off / one take: byte-identical to before.
+KRI-1524 a take recorded hot (room floor above -45 dBFS, speech far above it) was called noisy
+    and its joins measured as 0.0 s; with TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED it is tightened and
+    measured against its own floor, and switched off it is today's noisy report.
 """
 
 from __future__ import annotations
@@ -51,7 +54,14 @@ TAKE_GAPS = {
 TIGHT_LIMIT = 0.355
 
 
-def _write_take(tmp_path: Path, name: str, gaps: list[float], *, floor_amp: float = 3e-4):
+def _write_take(
+    tmp_path: Path,
+    name: str,
+    gaps: list[float],
+    *,
+    floor_amp: float = 3e-4,
+    word_amp: float = 0.3,
+):
     """A take file: 0.5 s lead, 0.4 s words separated by ``gaps``, 0.8 s tail. Returns the
     path, words (dicts) and duration."""
     rng = np.random.default_rng(7)
@@ -60,7 +70,7 @@ def _write_take(tmp_path: Path, name: str, gaps: list[float], *, floor_amp: floa
     pieces = [_floor(int(0.5 * SR), rng, floor_amp)]
     for i in range(len(gaps) + 1):
         words.append({"text": f"{name}w{i}", "start_s": t, "end_s": t + 0.4})
-        pieces.append(_word_tone(0.4))
+        pieces.append(_word_tone(0.4, amp=word_amp))
         t += 0.4
         if i < len(gaps):
             pieces.append(_floor(int(gaps[i] * SR), rng, floor_amp))
@@ -144,9 +154,14 @@ def _snapshot_for(takes: list[tuple[str, str, bool, list[dict], float, str]]) ->
     }
 
 
-def _setup(monkeypatch, tmp_path, *, noisy=(), brief=None, tight=True, long=False):
+def _setup(
+    monkeypatch, tmp_path, *, noisy=(), hot=(), brief=None, tight=True, long=False, relative=True
+):
     files = {}
     for name, gaps in TAKE_GAPS.items():
+        if name in hot:  # KRI-1524: a -40 dBFS room, speech ~31 dB above it (Cusco DJI)
+            files[name] = _write_take(tmp_path, name, gaps, floor_amp=0.01, word_amp=0.8)
+            continue
         files[name] = _write_take(tmp_path, name, gaps, floor_amp=0.03 if name in noisy else 3e-4)
     clips = [(name, f[2], 12) for name, f in files.items()]
     job, snapshot, bindings = _setup_talking_multi(monkeypatch, clips=clips)
@@ -168,6 +183,7 @@ def _setup(monkeypatch, tmp_path, *, noisy=(), brief=None, tight=True, long=Fals
     monkeypatch.setattr(gb.settings, "talking_multi_take_cleanup_enabled", True)
     monkeypatch.setattr(gb.settings, "tight_pause_cut_enabled", tight)
     monkeypatch.setattr(gb.settings, "speech_cleanup_long_pauses_enabled", long)
+    monkeypatch.setattr(gb.settings, "tight_pause_relative_floor_enabled", relative)
     analysed = [
         (
             cid,
@@ -340,3 +356,49 @@ def test_one_take_plain_keeps_the_long_only_rule(monkeypatch, tmp_path):
     assert gb._phone_tight_pause_cut(
         gb_snapshot, plan, [], clip_path="/nope.wav", duration_s=1.0
     ) == (plan, None)
+
+
+def test_hot_takes_are_cut_tight_and_their_joins_measured(monkeypatch, tmp_path):
+    """KRI-1524 (Cusco DJI T1): every take recorded hot, the switch on. A hot take's cut sources
+    (Kria's ambient spans) stay clear of sound by their own edge guard, so a pause can end a
+    little over the 0.35 s limit: what matters is that every long pause is shortened, none stays
+    near half a second, and each report counts exactly the pauses the render kept over the limit
+    (the receipt then says so)."""
+    hot = tuple(TAKE_GAPS)
+    job, snapshot, files = _setup(monkeypatch, tmp_path, hot=hot)
+    variant = _run(job, snapshot)
+
+    reports = [variant["tight_pauses"], *variant["tight_pauses_other_takes"]]
+    assert all(r["status"] == "applied" and r["reason"] is None for r in reports), reports
+    assert all(r["added_cuts"] > 0 for r in reports), reports
+    for name, report in zip(TAKE_GAPS, reports, strict=True):
+        kept, words = _kept(job, name), files[name][1]
+        out = [
+            _out_gap(kept, a["end_s"], b["start_s"]) for a, b in zip(words, words[1:], strict=False)
+        ]
+        for before, after in zip(TAKE_GAPS[name], out, strict=True):
+            assert after <= 0.45, (name, out)
+            if before >= 0.45:
+                assert after < before - 0.04, (name, before, after)
+        assert report["pauses_over_limit"] == sum(1 for g in out if g > TIGHT_LIMIT), (name, out)
+        assert report["longest_pause_s"] == pytest.approx(max(out), abs=0.05), (name, out)
+        for w in words:  # no word is cut into
+            assert any(lo <= w["start_s"] + 1e-3 and w["end_s"] <= hi + 1e-3 for lo, hi in kept)
+    gaps = variant["take_join_gaps"]
+    assert [row["after_take"] for row in gaps] == [0, 1]
+    for left, right, row in (("take1", "take2", gaps[0]), ("take2", "take3", gaps[1])):
+        actual = _join_gap(job, files, left, right)
+        assert actual <= 0.45
+        # Measured, not the 0.0 of a measure that cannot hear the take's silence.
+        assert row["gap_s"] is not None and row["gap_s"] == pytest.approx(actual, abs=0.05)
+
+
+def test_hot_takes_switch_off_are_todays_noisy_reports(monkeypatch, tmp_path):
+    """KRI-1524 red control: the switch off keeps today's behaviour on the same takes."""
+    hot = tuple(TAKE_GAPS)
+    job, snapshot, files = _setup(monkeypatch, tmp_path, hot=hot, relative=False)
+    variant = _run(job, snapshot)
+
+    reports = [variant["tight_pauses"], *variant["tight_pauses_other_takes"]]
+    assert all(r["reason"] == "noisy_take" and r["added_cuts"] == 0 for r in reports), reports
+    assert [row["gap_s"] for row in variant["take_join_gaps"]] == [0.0, 0.0]

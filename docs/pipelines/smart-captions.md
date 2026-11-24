@@ -283,6 +283,20 @@ missed Turkish case errors 4 times out of 4, so it is not a safe cost swap.
 `SUBTITLED_ARCHETYPE_ENABLED` itself has been ON in production since 2026-07-02
 even though the code default is `false`.
 
+Captions show the words that were said. The proofreader (`_LEGACY_SYSTEM_PROMPT`)
+is told to fix only transcription errors (spelling, a misheard letter or one-letter
+ending, capitals, punctuation, mangled names) and never the speaker's grammar or
+word choice. `_is_word_edit` enforces that per word, whatever the model returns: a
+changed word must keep its first sound (`caption_spelling._sound`, so "kat" ->
+"cat" is fine, "bitireceğim" -> "getireceğim" is not) and stay within two letters
+(one for words of three letters or fewer). KRI-1520 removed the KRI-1263 fallback
+that also accepted any change sharing half its letters, which let "bağlanıyor
+demiştim" become "bağlayacağımı söylemiştim". A longer respelling of a name still
+lands when the creator's own media spells it (`spelling_hints`, KRI-1361). Known
+gap: a one- or two-letter swap to another real word with the same first sound
+("yaptım" -> "yaptık") passes the guard; only the prompt keeps it out. Replay pin:
+`tests/pipeline/test_kri1520_caption_rewording_replay.py`.
+
 ### Creator spellings (phone Talking + Voiceover writers; KRI-631, KRI-793, KRI-961)
 
 After correction and the sentence re-split, `_run_phone_subtitled_job` and (KRI-961)

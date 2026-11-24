@@ -2865,6 +2865,11 @@ def _dispatch_item_render(
 
         # Qendresa item 20: her stacked title's look asks, pinned once (no-op with it off).
         stamp_title_look(job)
+        from app.pipeline.intro_scene_pick import stamp_intro_scene  # noqa: PLC0415
+
+        # KRI-1611: a fitted intro scene's candidates, pinned from the two stamps above (no-op
+        # with INTRO_SCENE_ENABLED off, an account not in INTRO_SCENE_USER_IDS, or her own look).
+        stamp_intro_scene(job, session=session)
     except ValueError as exc:
         log.warning(
             "plan_item_render.invalid_clips",

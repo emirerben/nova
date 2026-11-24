@@ -4,7 +4,14 @@ from functools import lru_cache
 from pathlib import Path
 
 _SKILLS = frozenset(
-    {"grounded-hook", "edit-story", "social-caption", "meaningful-moment", "edit-improver"}
+    {
+        "grounded-hook",
+        "edit-story",
+        "social-caption",
+        "meaningful-moment",
+        "edit-improver",
+        "intro-design",
+    }
 )
 _ROOT = Path(__file__).with_name("skills")
 

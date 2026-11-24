@@ -319,6 +319,10 @@ enum DeviceRenderGate: Equatable {
         let action: IntentAction
     }
     @ObservationIgnored private var rereads: [DeviceRenderKey: PendingRead] = [:]
+    /// Reads and reports running now that no caller awaits: a queued reread, a decline
+    /// report with the read after it, a timer's read once it fires.
+    @ObservationIgnored private var unawaitedWork = 0
+    @ObservationIgnored private var idleWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private var delayedReads: [DeviceRenderKey: PendingRead] = [:]
     private struct ResumeTarget: Equatable {
         let identity: DeviceRenderIdentity
@@ -452,6 +456,21 @@ enum DeviceRenderGate: Equatable {
         presentations[key] = held
     }
 
+    private func beginUnawaited() { unawaitedWork += 1 }
+    private func endUnawaited() {
+        unawaitedWork -= 1
+        guard unawaitedWork == 0 else { return }
+        let waiters = idleWaiters
+        idleWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    /// Returns once every read and report this object started on its own has finished.
+    /// A sleeping timer does not count, and coordinators have their own `waitUntilIdle`.
+    func waitUntilIdle() async {
+        while unawaitedWork > 0 { await withCheckedContinuation { idleWaiters.append($0) } }
+    }
+
     /// True while a durable Stop, an unconfirmed retry or an unreadable intent holds this render.
     func isPausedByCreator(_ key: DeviceRenderKey) -> Bool {
         presentations[key]?.phase == .cancelled && presentations[key]?.reasonCode == Self.pausedReason
@@ -581,8 +600,11 @@ enum DeviceRenderGate: Equatable {
                 if let again = rereads.removeValue(forKey: key) {
                     let operation = keyOperations[key]
                     let owner = activeOwner
+                    beginUnawaited()
                     Task { [weak self] in
-                        guard let self, self.activeOwner == owner, self.ownerIsCurrent,
+                        guard let self else { return }
+                        defer { self.endUnawaited() }
+                        guard self.activeOwner == owner, self.ownerIsCurrent,
                               self.keyOperations[key] == operation,
                               let capabilities = self.capabilities[key] else { return }
                         await self.reconcile(key, capabilities: capabilities, retry: again.retry, origin: .automaticRecovery, intentAction: again.action)
@@ -1085,7 +1107,10 @@ enum DeviceRenderGate: Equatable {
         retryTokens[key] = token
         retryTasks[key] = Task { [weak self] in
             do { try await sleep(pause) } catch { return }
-            guard !Task.isCancelled, let self, self.retryTokens[key] == token,
+            guard !Task.isCancelled, let self else { return }
+            self.beginUnawaited()
+            defer { self.endUnawaited() }
+            guard self.retryTokens[key] == token,
                   self.activeOwner == owner, self.ownerIsCurrent, self.keyOperations[key] == operation else { return }
             self.retryTasks[key] = nil
             self.retryTokens[key] = nil
@@ -1127,7 +1152,11 @@ enum DeviceRenderGate: Equatable {
         declines[key]?.task?.cancel()
         let send = reportDecline, sleep = self.sleep, operation = UUID()
         declines[key] = DeclineReport(identity: identity, reasonCode: reasonCode, owner: owner, operation: operation, state: .sending)
+        beginUnawaited()
         declines[key]?.task = Task { [weak self] in
+            // Counted while a report or the read after it runs, not while it sleeps before a retry.
+            var counted = true
+            defer { if counted { self?.endUnawaited() } }
             var attempt = 0
             while !Task.isCancelled {
                 guard let self, self.ownerIdentity() == owner, self.activeOwner == owner,
@@ -1149,7 +1178,11 @@ enum DeviceRenderGate: Equatable {
                         self.declines[key]?.task = nil
                         return
                     }
+                    self.endUnawaited()
+                    counted = false
                     do { try await sleep(Self.retryDelay(attempt: attempt)) } catch { return }
+                    self.beginUnawaited()
+                    counted = true
                 }
             }
         }
@@ -1342,8 +1375,11 @@ enum DeviceRenderGate: Equatable {
             retryTokens[key] = nil
             retryAttempts[key] = nil
             let owner = activeOwner, operation = keyOperations[key]
+            beginUnawaited()
             Task { [weak self] in
-                guard let self, self.ownerIsCurrent, self.activeOwner == owner,
+                guard let self else { return }
+                defer { self.endUnawaited() }
+                guard self.ownerIsCurrent, self.activeOwner == owner,
                       self.keyOperations[key] == operation, self.capabilities[key] != nil,
                       self.resetOperation == nil else { return }
                 let deferred = self.delayedReads.removeValue(forKey: key)
@@ -1603,7 +1639,12 @@ enum DeviceRenderGate: Equatable {
         guard followedSuperseded[key] != identity, let capabilities = capabilities[key] else { return false }
         followedSuperseded[key] = identity
         presentations[key] = DeviceRenderPresentation(phase: .preparing)
-        Task { [weak self] in await self?.reconcile(key, capabilities: capabilities) }
+        beginUnawaited()
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.endUnawaited() }
+            await self.reconcile(key, capabilities: capabilities)
+        }
         return true
     }
 

@@ -52,6 +52,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "OverlayFormatMatcherAgent",
     ),
     ("nova.compose.intro_writer", "app.agents.intro_writer", "IntroTextWriterAgent"),
+    # KRI-1612: composes a Talking edit's intro scene from server-issued option ids, or declines
+    # (behind INTRO_SCENE_MODEL_ENABLED; failure-isolated: today's title rows).
+    ("nova.compose.intro_scene", "app.agents.intro_scene_designer", "IntroSceneDesignerAgent"),
     # KRI-1171: frame review of a finished generation against the creator's request. Sent
     # through the bounded image transport, never the dispatcher; see app/agents/intent_review.py.
     ("nova.kria.intent_review", "app.agents.intent_review", "IntentReviewAgent"),
