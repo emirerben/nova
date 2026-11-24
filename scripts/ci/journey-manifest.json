@@ -3309,7 +3309,7 @@
     {
       "id": "kri-1558-speaker-sections",
       "needs_native": true,
-      "api_tests": "tests/kria/test_kri1558_section_layouts.py tests/kria/test_speaker_sections_contract.py tests/routes/test_speaker_sections_editor.py tests/tasks/test_speaker_sections_worker.py tests/pipeline/test_speaker_sections_text_placement.py tests/kria/test_editor_capability_parity.py tests/kria/test_brief_checks_speaker_background.py",
+      "api_tests": "tests/kria/test_kri1558_section_layouts.py tests/kria/test_kri1558_saved_split_unchanged.py tests/kria/test_speaker_sections_contract.py tests/routes/test_speaker_sections_editor.py tests/tasks/test_speaker_sections_worker.py tests/pipeline/test_speaker_sections_text_placement.py tests/kria/test_editor_capability_parity.py tests/kria/test_brief_checks_speaker_background.py",
       "xctests": [
         "KriaTests/SpeakerLayoutWindowsEditorTests/testLayoutWindowsRoundTripAndCompileToTheLayerTheExportDraws",
         "KriaTests/SpeakerLayoutWindowsEditorTests/testAnOldShapeLaneEncodesAndCompilesWithoutAnyTraceOfSections",
@@ -3322,6 +3322,8 @@
         "src/apps/api/app/pipeline/talking_sections.py",
         "src/apps/api/prompts/edit_copilot_ops/speaker_sections.txt",
         "src/apps/api/tests/kria/test_kri1558_section_layouts.py",
+        "src/apps/api/tests/kria/test_kri1558_saved_split_unchanged.py",
+        "src/apps/api/tests/fixtures/kri1558_saved_split_request_main.json",
         "src/apps/api/tests/kria/test_speaker_sections_contract.py",
         "src/apps/api/tests/routes/test_speaker_sections_editor.py",
         "src/apps/api/tests/tasks/test_speaker_sections_worker.py",
