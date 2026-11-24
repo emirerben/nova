@@ -1,0 +1,50 @@
+name: exp-save-during-load
+on:
+  push:
+    branches: [codex/exp-save-during-load]
+permissions:
+  contents: read
+env:
+  PICK: DesignPickerUITests/testFourDesignsRenderOnThePhoneThePickRendersAndHerHeadingColourSticks
+jobs:
+  compare:
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: brew install xcodegen
+      - name: Project and simulator
+        run: |
+          set -euo pipefail
+          bash scripts/ios/generate-project.sh
+          SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 scripts/exp-select-sim.py)
+          echo "SIM=$SIM" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIM" || true
+          /usr/bin/python3 scripts/exp-patch.py
+      - name: Main's editor, the design-picker test 10 times idle (first, as it is first in a real run)
+        if: ${{ !cancelled() }}
+        run: |
+          git checkout "$(git merge-base HEAD origin/main)" -- src/apps/ios/Kria/Features/NativeEditorSession.swift src/apps/ios/Tests/KriaTests/NativeEditorSessionTests.swift
+          bash scripts/exp-run.sh main-idle 10 0 "$PICK"
+      - name: Main's editor, 10 times with 6 busy processes
+        if: ${{ !cancelled() }}
+        run: bash scripts/exp-run.sh main-busy 10 6 "$PICK"
+      - name: This branch, 10 times idle
+        if: ${{ !cancelled() }}
+        run: |
+          git checkout HEAD -- src/apps/ios/Kria/Features/NativeEditorSession.swift src/apps/ios/Tests/KriaTests/NativeEditorSessionTests.swift
+          bash scripts/exp-run.sh fix-idle 10 0 "$PICK"
+      - name: This branch, 10 times with 6 busy processes
+        if: ${{ !cancelled() }}
+        run: bash scripts/exp-run.sh fix-busy 10 6 "$PICK"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: ui-logs
+          path: src/apps/ios/*.log
+          retention-days: 3
