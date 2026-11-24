@@ -473,6 +473,18 @@
       "source": "default",
       "value": false
     },
+    "intro_scene_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "intro_scene_model_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "intro_scene_user_ids": {
+      "source": "default",
+      "value": []
+    },
     "ios_device_only_mode": {
       "source": "decisions-md:2026-11-02",
       "value": true
@@ -1698,6 +1710,10 @@
     "tight_pause_cut_enabled": {
       "source": "default",
       "value": false
+    },
+    "tight_pause_relative_floor_enabled": {
+      "source": "default",
+      "value": true
     },
     "tiktok_content_posting_audited": {
       "source": "default",

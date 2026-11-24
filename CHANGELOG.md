@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.10.0] - 2026-11-24
+
+### Changed
+- test(notifications): notification delivery tests no longer collide across test workers (KRI-1630) (#2517) <!-- release-pr: 2517 -->
+
+## [0.90.9.0] - 2026-11-24
+
+### Changed
+- fix(captions): caption correction keeps the words that were said (KRI-1520) (#2505) <!-- release-pr: 2505 -->
+
+## [0.90.8.0] - 2026-11-24
+
+### Changed
+- fix(kria): tight pauses work on a take recorded loud, and the 0.3 s promise names the noisy-take exception (KRI-1524) (#2509) <!-- release-pr: 2509 -->
+
+## [0.90.7.0] - 2026-11-24
+
+### Changed
+- fix(overlays): the intro render check no longer sits at the 60 s test limit (KRI-1629) (#2516) <!-- release-pr: 2516 -->
+
+## [0.90.6.0] - 2026-11-24
+
+### Changed
+- feat(intro): a bounded agent picks the intro scene from issued option ids, or declines (KRI-1612) (#2504) <!-- release-pr: 2504 -->
+
+## [0.90.5.0] - 2026-11-24
+
+### Changed
+- feat(intro): reference intake and a variety report in CI (KRI-1614) (#2503) <!-- release-pr: 2503 -->
+
+## [0.90.4.0] - 2026-11-24
+
+### Changed
+- feat(intro): server-issued options and a seeded pick for Talking intro scenes (KRI-1611) (#2501) <!-- release-pr: 2501 -->
+
+## [0.90.3.0] - 2026-11-24
+
+### Changed
+- test(ios): a request from an earlier test never reaches the next test's fake server (KRI-1607) (#2511) <!-- release-pr: 2511 -->
+
+## [0.90.2.0] - 2026-11-24
+
+### Changed
+- test(ios): phone-render tests wait for the session's own reads before each check (KRI-1605) (#2510) <!-- release-pr: 2510 -->
+
+## [0.90.1.0] - 2026-11-24
+
+### Changed
+- feat(intro): IntroScene schema, compiler to title rows, five teardowns, render check (KRI-1610) (#2500) <!-- release-pr: 2500 -->
+
 ## [0.90.0.0] - 2026-11-24
 
 ### Added

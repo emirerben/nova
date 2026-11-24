@@ -691,6 +691,23 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
+def _collapse_stacked_title(state: _DraftState, rows: list[dict]) -> list[dict]:
+    """New wording for EVERY line of a stacked title (an intro scene, her typed stack) replaces
+    the title: line 1 carries it and the other lines go, instead of the same words on each line
+    or her old words left on lines 2-N. A rewrite of some lines stays a line edit."""
+    from app.pipeline.phone_title_look import collapse_title_look  # noqa: PLC0415
+
+    live = [r for r in state.text if not r.get("removed") and id(r) not in state.removed_text_bars]
+    collapsed = collapse_title_look(live, rows)
+    if collapsed is None:
+        return rows
+    first, rest = collapsed
+    state.removed_text_bars.update(id(row) for row in rest)
+    state.text = [row for row in state.text if id(row) not in state.removed_text_bars]
+    gone = {id(row) for row in rest}
+    return [row for row in rows if id(row) not in gone]
+
+
 def op_rewrite_text(state: _DraftState, op: dict[str, Any]) -> None:
     replace = op.get("replace") if isinstance(op.get("replace"), dict) else None
     text = op.get("text")
@@ -698,6 +715,8 @@ def op_rewrite_text(state: _DraftState, op: dict[str, Any]) -> None:
         raise KriaEditorOpError("Rewrite needs exactly one of text or replace")
     find = str(replace.get("find")) if replace else None
     rows = _targets(state, op, find=find)
+    if replace is None:
+        rows = _collapse_stacked_title(state, rows)
     changed = 0
     for row in rows:
         if replace is not None:

@@ -135,7 +135,7 @@ def _stub_cutter(monkeypatch) -> None:
     """A cutter that adds one 0.2 s silence cut at 5.0 s (the full-job fixture's audio is not
     a real file; the cutter itself is proven in tests/pipeline/test_tight_pause_cut.py)."""
 
-    def apply(plan, _path, _words, _duration):
+    def apply(plan, _path, _words, _duration, *, relative_noise=False):
         added = sc.Removal(5.0, 5.2, sc.REASON_SILENCE)
         keeps = [
             seg

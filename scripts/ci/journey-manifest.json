@@ -1156,8 +1156,10 @@
     {
       "id": "kri-708-caption-correction",
       "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri1520_caption_rewording_replay.py tests/pipeline/test_caption_correct.py",
       "paths": [
-        "src/apps/api/app/pipeline/caption_correct.py"
+        "src/apps/api/app/pipeline/caption_correct.py",
+        "src/apps/api/tests/fixtures/kri1520_caption_rewording/incident.json"
       ]
     },
     {
@@ -3460,7 +3462,7 @@
     {
       "id": "qendresa-13-tight-pauses",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_tight_pause_cut.py tests/pipeline/test_tight_pause_cut_gated_take.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/kria/test_tight_pause_ask.py tests/kria/test_tight_pause_receipts.py tests/tasks/test_phone_tight_pauses.py tests/routes/test_creation_thread_cleanup_requested.py",
+      "api_tests": "tests/pipeline/test_tight_pause_cut.py tests/pipeline/test_tight_pause_cut_gated_take.py tests/pipeline/test_tight_pause_cut_hot_take.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/kria/test_tight_pause_ask.py tests/kria/test_tight_pause_receipts.py tests/tasks/test_phone_tight_pauses.py tests/tasks/test_phone_multi_take_tight_pauses.py tests/routes/test_creation_thread_cleanup_requested.py",
       "paths": [
         "src/apps/api/app/pipeline/tight_pause_cut.py",
         "src/apps/api/app/kria/tight_pause_ask.py",
@@ -3472,7 +3474,10 @@
         "scripts/ios/qendresa-13-tight-pauses-e2e.py",
         "src/apps/api/tests/pipeline/test_tight_pause_cut_gated_take.py",
         "src/apps/api/tests/fixtures/kri1288_q2_run2_take.m4a",
-        "src/apps/api/tests/fixtures/kri1288_q2_run2_tight_pauses.json"
+        "src/apps/api/tests/fixtures/kri1288_q2_run2_tight_pauses.json",
+        "src/apps/api/app/pipeline/audio_pcm.py",
+        "src/apps/api/tests/pipeline/test_tight_pause_cut_hot_take.py",
+        "scripts/dev/kri1524_tight_pause_replay.py"
       ]
     },
     {
@@ -4019,6 +4024,18 @@
       ]
     },
     {
+      "id": "kri-1610-intro-scene",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_scene_schema.py tests/pipeline/test_intro_scene.py",
+      "paths": [
+        "src/apps/api/app/pipeline/intro_scene.py",
+        "src/apps/api/prompts/intro_teardowns.json",
+        "src/apps/api/app/cli/verify_intro_scenes.py",
+        "src/apps/api/tests/pipeline/test_intro_scene_schema.py",
+        "src/apps/api/tests/pipeline/test_intro_scene.py"
+      ]
+    },
+    {
       "id": "kri-1560-opening-titles",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri1560_opening_titles_postgres.py tests/services/test_creative_copy_decisions.py tests/kria/test_creative_copy_planner.py",
@@ -4027,6 +4044,51 @@
         "src/apps/api/app/services/opening_titles.py",
         "src/apps/api/tests/kria/test_kri1560_opening_titles_postgres.py",
         "src/apps/api/tests/fixtures/kria_replay/kri1560_opening_titles/"
+      ]
+    },
+    {
+      "id": "kri-1611-intro-scene-pick",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_scene_pick.py tests/pipeline/test_intro_scene.py tests/pipeline/test_phone_title_look.py",
+      "paths": [
+        "src/apps/api/app/pipeline/intro_scene_pick.py",
+        "src/apps/api/tests/pipeline/test_intro_scene_pick.py"
+      ]
+    },
+    {
+      "id": "kri-1614-intro-variety-intake",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_variety.py tests/pipeline/test_intro_intake.py tests/pipeline/test_intro_scene.py",
+      "paths": [
+        "src/apps/api/app/cli/intro_variety_report.py",
+        "src/apps/api/app/cli/intro_intake.py",
+        "src/apps/api/app/pipeline/intro_teardowns.py",
+        "src/apps/api/tests/fixtures/intro_intake/sixth_reference_reply.json",
+        "src/apps/api/tests/pipeline/test_intro_variety.py",
+        "src/apps/api/tests/pipeline/test_intro_intake.py"
+      ]
+    },
+    {
+      "id": "kri-1612-intro-scene-model",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_scene_model.py tests/pipeline/test_compare_intro_scenes.py tests/evals/test_intro_scene_agent_evals.py tests/tasks/test_intro_scene_model_worker.py tests/pipeline/test_intro_scene_pick.py",
+      "paths": [
+        "src/apps/api/app/agents/intro_scene_designer.py",
+        "src/apps/api/app/agents/skills/intro-design/SKILL.md",
+        "src/apps/api/prompts/intro_scene.txt",
+        "src/apps/api/app/cli/verify_intro_scene_model.py",
+        "src/apps/api/app/cli/compare_intro_scenes.py",
+        "src/apps/api/tests/pipeline/test_intro_scene_model.py",
+        "src/apps/api/tests/pipeline/test_compare_intro_scenes.py",
+        "src/apps/api/tests/evals/test_intro_scene_agent_evals.py",
+        "src/apps/api/tests/tasks/test_intro_scene_model_worker.py",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_compose_dark_room.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_compose_hand_lettered.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_compose_light_wall.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_decline_title_unsuited.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_light_wall.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_mid.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_decline_footage_unsuited.json"
       ]
     }
   ]

@@ -167,6 +167,23 @@ LEGACY_CASES = [
         "model_line": "Bu nereyi çalıştırıyor",
         "expected": "Bu nereyi çalıştırıyor",
     },
+    # KRI-1520 (Cusco DJI T4 + T1, 2026-11-17): gpt-4o's recorded answers. The speaker said
+    # "bağlanıyor demiştim" and "bitireceğim"; the proofreader made the sentence read
+    # "better" with other words. The words said stay; the capital letter still lands.
+    {
+        "id": "tr_reworded_verbs_keep_what_was_said",
+        "language": "tr",
+        "text": "şimdi konuyu Osmanlı'ya bağlanıyor demiştim.",
+        "model_line": "Şimdi konuyu Osmanlı'ya bağlayacağımı söylemiştim.",
+        "expected": "Şimdi konuyu Osmanlı'ya bağlanıyor demiştim.",
+    },
+    {
+        "id": "tr_real_word_swap_keeps_what_was_said",
+        "language": "tr",
+        "text": "hikayeyle sizi de buraya bitireceğim.",
+        "model_line": "hikayeyle sizi de buraya getireceğim.",
+        "expected": "hikayeyle sizi de buraya bitireceğim.",
+    },
     {
         "id": "good_fix_beside_a_rewording",
         "language": "en",

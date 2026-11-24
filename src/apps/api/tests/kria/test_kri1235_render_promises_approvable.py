@@ -231,17 +231,32 @@ def _rows(report: dict) -> dict[str, dict]:
 # ------------------------------------------------------------------ 1. the prod replay
 
 
+def _kri1524_reworded(reason: str | None) -> str | None:
+    """Prod's line as KRI-1524 rewords the tight-pause promise on purpose (it now names the
+    noisy-take exception the render applies); everything else in the line stays prod's."""
+    if reason is None:
+        return None
+    for old, new in (
+        (bc._TIGHT_IF_OFFERED_PRE_1524, bc._TIGHT_IF_OFFERED),
+        (bc._TIGHT_AT_APPROVAL_PRE_1524, bc._TIGHT_AT_APPROVAL),
+        (bc._TIGHT_PLANNED_PRE_1524, bc._TIGHT_PLANNED),
+    ):
+        reason = reason.replace(old, new)
+    return reason
+
+
 def test_q1_turn1_replay_says_what_prod_said(q1_prod, monkeypatch):
     """The replay reaches prod's own reasons, so the verdicts below are about prod's input.
 
     r4 (the cards) matched prod word for word when this was written; KRI-1237 changes its
     verdict on purpose, so it is not pinned here. KRI-1480 moves labels named by their own
-    trigger (r5-r9) to the list-label promise; prod then ran without it."""
+    trigger (r5-r9) to the list-label promise; prod then ran without it. KRI-1524 rewords the
+    tight-pause promise (r1)."""
     monkeypatch.setattr(settings, "list_label_example_ask_enabled", False)
     rows = _rows(_assess())
     for rid, (_disposition, reason) in PROD_TURN_1.items():
         if rid != "r4":
-            assert rows[rid]["reason"] == reason, rid
+            assert rows[rid]["reason"] == _kri1524_reworded(reason), rid
 
 
 def test_q1_turn1_holds_nothing_kria_promised(q1_prod):
