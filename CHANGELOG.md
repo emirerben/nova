@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.110.0] - 2026-11-24
+
+### Changed
+- feat(kria): an order ask nothing pins is declined plainly on Visuals, voiceover and Talking edits instead of held (KRI-1592) (#2481) <!-- release-pr: 2481 -->
+
 ## [0.89.109.0] - 2026-11-24
 
 ### Changed
