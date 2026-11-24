@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.6.0] - 2026-11-24
+
+### Changed
+- feat(intro): a bounded agent picks the intro scene from issued option ids, or declines (KRI-1612) (#2504) <!-- release-pr: 2504 -->
+
 ## [0.90.5.0] - 2026-11-24
 
 ### Changed
