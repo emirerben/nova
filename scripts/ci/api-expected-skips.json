@@ -17,6 +17,11 @@
       "why": "Needs a paid live model call; replay CI never makes one."
     },
     {
+      "file": "tests/evals/test_story_sequencer_evals.py",
+      "reason": "the held-out run needs --eval-mode=live",
+      "why": "Needs a paid live model call; replay CI never makes one. The recorded run it writes is re-scored in CI by test_recorded_run_beats_upload_order."
+    },
+    {
       "file": "tests/evals/test_edit_director_evals.py",
       "reason": "requires --eval-mode=live --with-judge",
       "why": "Needs a paid live model call; replay CI never makes one."
