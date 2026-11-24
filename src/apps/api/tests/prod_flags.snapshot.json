@@ -1215,6 +1215,10 @@
       "source": "default",
       "value": 3
     },
+    "phone_voiceover_montage_sound_cues_enabled": {
+      "source": "default",
+      "value": false
+    },
     "phone_voiceover_reaction_beats_enabled": {
       "source": "default",
       "value": true
