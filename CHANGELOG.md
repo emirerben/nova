@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.9.0] - 2026-11-24
+
+### Changed
+- fix(captions): caption correction keeps the words that were said (KRI-1520) (#2505) <!-- release-pr: 2505 -->
+
 ## [0.90.8.0] - 2026-11-24
 
 ### Changed
