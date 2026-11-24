@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.13.0] - 2026-11-24
+
+### Changed
+- fix(kria): Cusco T4 review judges each named moment on a Voiceover and says when its words are gone (KRI-1517) (#2513) <!-- release-pr: 2513 -->
+
 ## [0.90.12.0] - 2026-11-24
 
 ### Changed
