@@ -2740,6 +2740,11 @@
    "app/kria/text_design_ask.py",
    "One line on every clip, as if you were telling it",
    "Her klipte sanki sen anlatıyormuşsun gibi bir satır"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
+   "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
   ]
  ],
  "retired": [

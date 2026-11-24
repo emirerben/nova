@@ -3298,8 +3298,9 @@ class Settings(BaseSettings):
     # Unstated clip order never blocks (PR 1): what the creator did not say about the order
     # INSIDE a group they described defaults to the order the clips were added, disclosed on the
     # card, instead of holding the draft behind "tell me the order". Honoured exactly: anything
-    # they did say. false = the previous hold, byte-identical. Apply: fly secret + restart
-    # api and worker.
+    # they did say. KRI-1592: where nothing pins an order (Visuals, voiceover, Talking writers) the
+    # order ask is declined with a plain line, never held. false = the previous hold,
+    # byte-identical. Apply: fly secret + restart api and worker.
     kria_unstated_order_default_enabled: bool = False
     # Clip order is one live, AI-aware state (PR 2): every order change (the creator's message,
     # a drag, a manual timeline edit, the AI's own story order) is one ledger entry; the chat
