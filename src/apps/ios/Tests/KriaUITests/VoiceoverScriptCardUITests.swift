@@ -15,7 +15,7 @@ final class VoiceoverScriptCardUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_VOICEOVER_SCRIPT"] = capability
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()

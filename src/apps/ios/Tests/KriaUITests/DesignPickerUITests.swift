@@ -50,7 +50,7 @@ final class DesignPickerUITests: XCTestCase {
         XCTAssertTrue(waitFor(newChat, "enabled == true", timeout: 20))
         newChat.tap()
         XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
         send.tap()
