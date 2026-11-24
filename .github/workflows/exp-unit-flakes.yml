@@ -10,7 +10,11 @@ env:
 jobs:
   compare:
     runs-on: macos-15
-    timeout-minutes: 240
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [fix, main, main-92s]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,24 +26,22 @@ jobs:
       - name: Project and simulator
         run: |
           set -euo pipefail
+          if [ "${{ matrix.arm }}" != "fix" ]; then
+            git checkout "$(git merge-base HEAD origin/main)" -- src/apps/ios/Kria/Core/DeviceRenderSessions.swift src/apps/ios/Tests/KriaTests
+          fi
           bash scripts/ios/generate-project.sh
           SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 scripts/exp-select-sim.py)
           echo "SIM=$SIM" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM" || true
-      - name: Fixes, the session class once per call, 120 calls, with 6 busy processes (counts stray requests by sender)
-        if: ${{ !cancelled() }}
-        run: bash scripts/exp-class-loop.sh fix-loop 120 6 NotificationAtomicSessionTests
-      - name: Main, the session class once per call, 120 calls, with 6 busy processes
-        if: ${{ !cancelled() }}
-        run: |
-          git checkout "$(git merge-base HEAD origin/main)" -- src/apps/ios/Kria/Core/DeviceRenderSessions.swift src/apps/ios/Tests/KriaTests
-          bash scripts/exp-class-loop.sh main-loop 120 6 NotificationAtomicSessionTests
+      - name: The session class once per call, 30 calls, with 6 busy processes (${{ matrix.arm }})
+        if: ${{ matrix.arm != 'main-92s' }}
+        run: bash scripts/exp-class-loop.sh ${{ matrix.arm }}-loop 30 6 NotificationAtomicSessionTests
       - name: Main, the one test that hit the 2-minute limit in the fix arm's whole suite (CI's unit job skips it)
-        if: ${{ !cancelled() }}
+        if: ${{ matrix.arm == 'main-92s' }}
         run: bash scripts/exp-unit.sh main-92s 1 0 SlidePostVideoRenderTests/testNinetyTwoSecondSourceTrimsVideoAndAudioAtNinetySeconds
       - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
-          name: unit-logs
+          name: unit-logs-${{ matrix.arm }}
           path: src/apps/ios/*.log
           retention-days: 3
