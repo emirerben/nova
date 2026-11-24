@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.12.0] - 2026-11-24
+
+### Changed
+- docs(ci): failure-log rows for the five failures fixed on 2026-11-24 (#2519) <!-- release-pr: 2519 -->
+
 ## [0.90.11.0] - 2026-11-24
 
 ### Changed
