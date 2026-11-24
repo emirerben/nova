@@ -26,9 +26,17 @@ jobs:
           SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 scripts/exp-select-sim.py)
           echo "SIM=$SIM" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM" || true
-      - name: Fixes, the whole unit suite once, naming any test that hits the time limit
+      - name: Fixes, the session class once per call, 120 calls, with 6 busy processes (counts stray requests by sender)
         if: ${{ !cancelled() }}
-        run: bash scripts/exp-unit.sh fix-suite 1 0
+        run: bash scripts/exp-class-loop.sh fix-loop 120 6 NotificationAtomicSessionTests
+      - name: Main, the session class once per call, 120 calls, with 6 busy processes
+        if: ${{ !cancelled() }}
+        run: |
+          git checkout "$(git merge-base HEAD origin/main)" -- src/apps/ios/Kria/Core/DeviceRenderSessions.swift src/apps/ios/Tests/KriaTests
+          bash scripts/exp-class-loop.sh main-loop 120 6 NotificationAtomicSessionTests
+      - name: Main, the one test that hit the 2-minute limit in the fix arm's whole suite (CI's unit job skips it)
+        if: ${{ !cancelled() }}
+        run: bash scripts/exp-unit.sh main-92s 1 0 SlidePostVideoRenderTests/testNinetyTwoSecondSourceTrimsVideoAndAudioAtNinetySeconds
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
