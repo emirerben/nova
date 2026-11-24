@@ -2762,6 +2762,11 @@
    "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı."
   ],
   [
+   "app/services/researched_text.py",
+   "I couldn't tell where clip {number} plays in your video, because it has no usable length. Your video is unchanged. I can still add titles without researched facts.",
+   "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü kullanılabilir bir uzunluğu yok. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
+  ],
+  [
    "app/kria/brief_checks.py",
    "I'll place sound effects on the cuts where your clips change",
    "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım"
