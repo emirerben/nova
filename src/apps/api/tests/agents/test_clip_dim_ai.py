@@ -35,6 +35,7 @@ from app.services.kria_editor_ops import (
     compile_editor_ops,
 )
 from app.services.kria_editor_ops_diff import describe_diff
+from tests.kria.test_kri558_editor_receipts import _req
 from tests.services.test_kria_editor_ops import _job, _variant
 
 OPEN = {
@@ -189,3 +190,24 @@ def test_a_closed_gate_also_stops_an_op_that_skips_the_parser(monkeypatch):
     _caps(monkeypatch, CLOSED)
     with pytest.raises(KriaEditorOpError, match="isn't available"):
         compile_editor_ops(_job(variant), variant, [_dim({"all": True}, 0.4)])
+
+
+def test_the_chat_receipt_names_the_dim_it_made(monkeypatch):
+    from dataclasses import replace
+
+    from app.kria.brief_checks import build_receipts, plan_facts_from_editor_payload
+    from app.kria.editor_receipts import bind_editor_receipts, reply_from_editor_receipts
+
+    variant = _three_clips()
+    _caps(monkeypatch, OPEN)
+    compiled = compile_editor_ops(_job(variant), variant, [_dim({"all": True}, 0.4)])
+    payload = compiled.payload.model_dump(mode="json", exclude_none=True)
+    facts = plan_facts_from_editor_payload(payload, compiled.text_diff or None, compiled.changes)
+    facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
+    reqs = [_req("style", "dim all clips 40%")]
+    receipts = build_receipts(reqs, facts, include_unchecked=True)
+    receipts, unbound = bind_editor_receipts(reqs, receipts, compiled.diff, facts.text_styles or ())
+    assert receipts[0].reason == "Dimmed 3 clips 40%"
+    assert reply_from_editor_receipts(reqs, receipts, unbound=[]) == (
+        "Have a look: dim all clips 40% (I changed: Dimmed 3 clips 40%)."
+    )

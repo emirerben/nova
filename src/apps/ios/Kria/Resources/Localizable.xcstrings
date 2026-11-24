@@ -13270,6 +13270,38 @@
         }
       }
     },
+    "Darken this clip's picture" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Bild dieses Clips abdunkeln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu klibin görüntüsünü karart"
+          }
+        }
+      }
+    },
+    "Darkens the picture. Text, captions and stickers stay bright." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dunkelt das Bild ab. Text, Untertitel und Sticker bleiben hell."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Görüntüyü karartır. Yazılar, altyazılar ve çıkartmalar parlak kalır."
+          }
+        }
+      }
+    },
     "Day vlog" : {
       "localizations" : {
         "de" : {
@@ -13826,6 +13858,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kaydedilmedi"
+          }
+        }
+      }
+    },
+    "Dim" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abdunkeln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Karart"
+          }
+        }
+      }
+    },
+    "Dim isn’t available for this edit." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abdunkeln ist für diese Bearbeitung nicht verfügbar."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu düzenlemede karartma kullanılamıyor."
+          }
+        }
+      }
+    },
+    "Dim isn’t available right now. Remove the dim on that clip and save again. Your edits are still here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abdunkeln ist gerade nicht verfügbar. Entferne die Abdunkelung bei diesem Clip und speichere erneut. Deine Änderungen sind noch da."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Karartma şu anda kullanılamıyor. O klipteki karartmayı kaldırıp tekrar kaydet. Düzenlemelerin hâlâ burada."
           }
         }
       }
@@ -21157,6 +21237,22 @@
         }
       }
     },
+    "Less dim" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Weniger abdunkeln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Daha az karart"
+          }
+        }
+      }
+    },
     "Let Kria choose" : {
       "localizations" : {
         "de" : {
@@ -22892,6 +22988,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daha fazla klip"
+          }
+        }
+      }
+    },
+    "More dim" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stärker abdunkeln"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Daha çok karart"
           }
         }
       }
@@ -31028,6 +31140,22 @@
         }
       }
     },
+    "Removed the dim from %lld clips." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abdunkelung von %lld Clips entfernt."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld klipten karartma kaldırıldı."
+          }
+        }
+      }
+    },
     "Removes this clip" : {
       "localizations" : {
         "de" : {
@@ -33609,6 +33737,22 @@
         }
       }
     },
+    "Select a clip to dim it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle einen Clip aus, um ihn abzudunkeln."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Karartmak için bir klip seç."
+          }
+        }
+      }
+    },
     "Select a clip to tilt it." : {
       "localizations" : {
         "de" : {
@@ -34041,6 +34185,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ayarla"
+          }
+        }
+      }
+    },
+    "Set %lld%% on %lld clips." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld %% auf %2$lld Clips gesetzt."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$lld klibe %%%1$lld uygulandı."
           }
         }
       }

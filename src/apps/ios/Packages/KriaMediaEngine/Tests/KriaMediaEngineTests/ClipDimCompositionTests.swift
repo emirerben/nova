@@ -125,6 +125,24 @@ final class ClipDimCompositionTests: XCTestCase {
         XCTAssertEqual(undone.bytes, plain.bytes)
     }
 
+    /// The speaker's person mask is found on the undimmed picture: `GreenPersonSegmenter` only sees a person brighter
+    /// than green 150, so a 50% dimmed speaker (green about 128) would lose its cut-out if the mask read the dimmed frame.
+    @MainActor func testADimmedSpeakerKeepsItsCutOutOverTheBackground() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let canvas = Canvas(width: 120, height: 200)
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (canvas.width, canvas.height), seconds: 2)
+        var scene = try speakerRecipe(canvas: canvas, speaker: speaker, duration: 2,
+                                      background: SpeakerTestBackground(url: try solidSpeakerTestImage(directory: directory)))
+        scene.recipe.tracks[0].clips[0].dim = 0.5
+        try scene.recipe.validate()
+        let frame = try await KriaMediaEngineTests.previewFrame(scene.recipe, urls: scene.urls, at: 1)
+        let person = frame.rgb(fx: 0.5, fy: 0.6)
+        XCTAssertEqual(person[1], 128, accuracy: 12, "the speaker is kept and dimmed: \(person)")
+        XCTAssertLessThan(max(person[0], person[2]), 30, "the speaker is still green, not the background: \(person)")
+        XCTAssertTrue(isColor(frame.rgb(fx: 0.04, fy: 0.04), SpeakerColor.background), "the background is not dimmed: \(frame.rgb(fx: 0.04, fy: 0.04))")
+    }
+
     func testADimOnAnOverlayClipOrOutsideZeroToOneIsRefused() throws {
         let overlay = EditRecipe(canvas: Canvas(width: width, height: height), assets: [MediaAsset(id: "scene", relativePath: "scene")], tracks: [
             TimelineTrack(id: "photos", kind: .video, clips: [TimelineClip(id: "clip", sourceAssetID: "scene", sourceDuration: 1)]),

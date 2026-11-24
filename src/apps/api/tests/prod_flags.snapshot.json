@@ -157,6 +157,14 @@
       "source": "default",
       "value": 50
     },
+    "clip_dim_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "clip_dim_min_client_protocol": {
+      "source": "default",
+      "value": 57
+    },
     "clip_exposure_fact_enabled": {
       "source": "default",
       "value": false

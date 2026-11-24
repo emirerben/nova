@@ -257,14 +257,18 @@ def _authored_session(monkeypatch):
             job, "original_text"
         ).request.recipe
 
-    return save
+    return save, job
 
 
 def test_an_authored_save_keeps_an_omitted_dim_and_removes_a_null_one(monkeypatch):
-    save = _authored_session(monkeypatch)
+    save, job = _authored_session(monkeypatch)
     row, recipe = save(gj.TimelineSlotEdit(clip_index=1, in_s=2, duration_s=3, dim=0.6))
     assert row["dim"] == 0.6
     assert recipe.tracks[0].clips[0].dim == 0.6
+    reopened = gj.dispatch_get_timeline(
+        job, "original_text", sign_url=lambda path, ttl: f"https://s/{path}"
+    )
+    assert [slot.get("dim") for slot in reopened["slots"]] == [0.6]
 
     def again(**fields):
         return gj.TimelineSlotEdit(

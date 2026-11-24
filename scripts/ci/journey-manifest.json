@@ -3810,6 +3810,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_add_remove__visual_media.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_audio.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_crop.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_clip_dim.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_duplicate.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look__custom_effect.json",
