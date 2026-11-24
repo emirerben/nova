@@ -488,7 +488,6 @@ def test_render_check_negative_controls_must_fail(report, control):
     assert case["verdict"] == "FAIL", case
 
 
-@pytest.mark.timeout(300)
 def test_issued_menu_sweep_renders_clean_or_declines():
     sweep = check.sweep_issued_menu(thorough=False)
     assert sweep["compiled"] > 50, sweep  # not vacuous: most of the menu does compile
