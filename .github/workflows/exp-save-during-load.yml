@@ -25,10 +25,22 @@ jobs:
           SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 scripts/exp-select-sim.py)
           echo "SIM=$SIM" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM" || true
-      - name: This branch, the three save-during-load unit tests, 20 times each
+      - name: This branch, the four save-during-load unit tests, 20 times each
         if: ${{ !cancelled() }}
         run: bash scripts/exp-unit3.sh unit-fix 20
-      - name: Main's editor with this branch's tests, 20 times each (the two save tests should fail, the third pass)
+      - name: Control, the kept Save is not dropped with its edit (only the reload test should fail)
+        if: ${{ !cancelled() }}
+        run: |
+          /usr/bin/python3 scripts/exp-control.py untied
+          bash scripts/exp-unit3.sh control-untied 5
+          git checkout HEAD -- src/apps/ios/Kria/Features/NativeEditorSession.swift
+      - name: Control, the end of a load saves an edit nobody asked to save (the unasked test should fail)
+        if: ${{ !cancelled() }}
+        run: |
+          /usr/bin/python3 scripts/exp-control.py unasked
+          bash scripts/exp-unit3.sh control-unasked 5
+          git checkout HEAD -- src/apps/ios/Kria/Features/NativeEditorSession.swift
+      - name: Main's editor with this branch's tests, 20 times each (only the unasked test should pass)
         if: ${{ !cancelled() }}
         run: |
           git checkout "$(git merge-base HEAD origin/main)" -- src/apps/ios/Kria/Features/NativeEditorSession.swift
