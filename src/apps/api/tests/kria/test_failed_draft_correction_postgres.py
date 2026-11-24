@@ -291,9 +291,12 @@ async def test_failed_correction_keeps_revision_and_owner_admission_guards(monke
 
 
 @pytest.mark.asyncio
-async def test_unsupported_part_of_a_correction_does_not_apply_a_subset(monkeypatch):
+async def test_unsupported_part_of_a_correction_does_not_apply_a_subset_with_the_ledger_off(
+    monkeypatch,
+):
     case, item_id = _seed()
     copilot, creator = _agents(monkeypatch, item_id)
+    monkeypatch.setattr(settings, "kria_ask_ledger_enabled", False)
     copilot.return_value.unmet_requests = [
         {"request": "remove the person from the footage", "reason": "not available"}
     ]
@@ -307,6 +310,37 @@ async def test_unsupported_part_of_a_correction_does_not_apply_a_subset(monkeypa
         )
     assert result.plan.mode == "respond" and not result.plan.intents
     assert "Nothing was changed" in result.plan.response
+    creator.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_part_of_a_correction_keeps_the_ops_for_the_other_parts(monkeypatch):
+    """KRI-1563: the part the copilot could not do is declined on the receipt; the in-place op
+    it made for the title still applies on the recovery basis."""
+    case, item_id = _seed()
+    copilot, creator = _agents(monkeypatch, item_id)
+    monkeypatch.setattr(settings, "kria_ask_ledger_enabled", True)
+    copilot.return_value.unmet_requests = [
+        {"request": "remove the person from the footage", "reason": "not available"}
+    ]
+    async with session_factory() as db:
+        result = await planner.plan_live_turn(
+            db,
+            thread_id=case.thread_id,
+            item_id=item_id,
+            creator_id=case.user_id,
+            user_message="Change the title and remove the person from the footage",
+        )
+    assert result.plan.mode == "act"
+    (intent,) = result.plan.intents
+    assert intent.tool_name == "draft.apply_editor_ops"
+    assert intent.arguments["operations"] == [
+        {"op": "edit_text", "bar_index": 0, "text": "Keep every word"}
+    ]
+    assert intent.arguments["unmet_requests"] == [
+        {"request": "remove the person from the footage", "reason": "not available"}
+    ]
+    assert result.plan.diagnostics["editor_recovery_basis"]["draft_id"] == str(case.draft_id)
     creator.assert_not_called()
 
 

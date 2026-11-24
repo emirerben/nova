@@ -493,6 +493,10 @@
       "source": "default",
       "value": []
     },
+    "kria_ask_ledger_enabled": {
+      "source": "default",
+      "value": true
+    },
     "kria_brief_binding_enabled": {
       "source": "job-data:creator_brief_binding-2026-11-14",
       "value": true

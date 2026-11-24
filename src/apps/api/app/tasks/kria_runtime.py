@@ -28,6 +28,7 @@ from app.agents._runtime import ProviderOutcomeUnknownError
 from app.config import settings
 from app.database import sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.ask_ledger import ask_ledger_enabled, editor_ledger
 from app.kria.brief import (
     BriefRequirement,
     BriefUpdate,
@@ -3529,16 +3530,33 @@ def _complete_draft_turn(
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
                         try:
-                            bound_receipts, unbound = bind_editor_receipts(
-                                checked,
-                                receipts,
-                                compiled.diff,
-                                facts.text_styles or (),
-                                unmet=[item.model_dump() for item in arguments.unmet_requests],
-                            )
-                            also_changed = describe_diff(
-                                unbound, live_text_count=compiled.diff.live_text_count, limit=2
-                            )
+                            unmet_items = [item.model_dump() for item in arguments.unmet_requests]
+                            ledger = None
+                            if ask_ledger_enabled():
+                                # KRI-1563: every part ends done / declined / waiting, and
+                                # every change is named under its ask or as an extra.
+                                ledger = editor_ledger(
+                                    checked,
+                                    receipts,
+                                    compiled.diff,
+                                    facts.text_styles or (),
+                                    unmet=unmet_items,
+                                )
+                                bound_receipts = list(ledger.receipts)
+                                also_changed = list(ledger.extras)
+                            else:
+                                bound_receipts, unbound = bind_editor_receipts(
+                                    checked,
+                                    receipts,
+                                    compiled.diff,
+                                    facts.text_styles or (),
+                                    unmet=unmet_items,
+                                )
+                                also_changed = describe_diff(
+                                    unbound,
+                                    live_text_count=compiled.diff.live_text_count,
+                                    limit=2,
+                                )
                             reply_text = reply_from_editor_receipts(
                                 checked,
                                 bound_receipts,
@@ -3552,6 +3570,13 @@ def _complete_draft_turn(
                                 notes=arguments.notes,
                             )
                             receipts, bound = bound_receipts, True
+                            if ledger is not None:
+                                gaps = ledger.gaps([req.id for req in checked], reply_text)
+                                if gaps:
+                                    # Lane names and requirement ids only, never creator text.
+                                    log.warning(
+                                        "kria_ask_ledger_gap", turn_id=str(turn.id), gaps=gaps[:12]
+                                    )
                         except Exception:  # noqa: BLE001 - receipts must never fail a good edit
                             log.exception("kria_editor_receipts_failed", turn_id=str(turn.id))
                     if not bound:
@@ -3587,7 +3612,10 @@ def _complete_draft_turn(
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
                 elif editor_turn:
                     phrases = describe_diff(
-                        compiled.diff.entries, live_text_count=compiled.diff.live_text_count
+                        compiled.diff.entries,
+                        live_text_count=compiled.diff.live_text_count,
+                        # KRI-1563: every change is named, not the first four.
+                        limit=None if ask_ledger_enabled() else 4,
                     )
                     if phrases:
                         reply_text = reply_from_diff(
@@ -6289,6 +6317,14 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     ),
                     pinned_spend=(
                         planned_pin_spend(planned.plan) if pinned_tap is not None else None
+                    ),
+                    # KRI-1563: a chat edit that changed nothing answers each part of the ask.
+                    # Pinned to the brief version this response persists; a refused tap rolls
+                    # that version back, so it keeps none.
+                    requirement_receipts=(
+                        _refusal_receipts(planned, planned.plan.requirement_receipts)
+                        if planned.brief_updates
+                        else None
                     ),
                 )
             else:

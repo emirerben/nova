@@ -2888,7 +2888,7 @@
     {
       "id": "reference-style-save",
       "needs_native": true,
-      "api_tests": "tests/routes/test_authored_empty_caption_metadata.py tests/kria/test_reference_style_receipts.py tests/integration/test_reference_style_save_postgres.py",
+      "api_tests": "tests/routes/test_authored_empty_caption_metadata.py tests/kria/test_reference_style_receipts.py tests/integration/test_reference_style_save_postgres.py tests/kria/test_kri1563_ask_ledger.py",
       "xctests": [
         "KriaTests/ReferenceStyleSaveTests/testSavedReferenceStyleAndLocalUndoRecipesPreviewAndExport"
       ],
@@ -2899,6 +2899,10 @@
         "src/apps/api/tests/routes/test_authored_empty_caption_metadata.py",
         "src/apps/api/tests/kria/test_reference_style_receipts.py",
         "src/apps/api/tests/kria/test_kri558_editor_receipts.py",
+        "src/apps/api/app/kria/ask_ledger.py",
+        "src/apps/api/tests/kria/test_kri1563_ask_ledger.py",
+        "src/apps/api/tests/kria/kri1563_ledger_cases.py",
+        "src/apps/api/tests/fixtures/kria_replay/kri1563_ask_ledger/",
         "src/apps/api/tests/integration/test_reference_style_save_postgres.py",
         "src/apps/ios/Tests/KriaTests/ReferenceStyleSaveTests.swift",
         "src/apps/ios/Tests/Fixtures/ReferenceStyleSave.json"

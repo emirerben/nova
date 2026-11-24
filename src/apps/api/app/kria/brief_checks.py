@@ -15515,13 +15515,14 @@ def _check_title(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         return _receipt(req, "partial", _CANT_CHECK_TITLE)
     if facts.title_source in _TITLE_SOURCES_THE_CREATOR_OWNS:
         return _receipt(req, "met", None)
-    return _receipt(
-        req,
-        "partial",
-        say(
-            en="I used a plain default title because none was given.",
-            tr="Başlık vermediğin için sade bir varsayılan başlık kullandım.",
-        ),
+    return _receipt(req, "partial", default_title_reason())
+
+
+def default_title_reason() -> str:
+    """`_check_title`'s reason for a default title, in the turn's language (KRI-1563 reads it)."""
+    return say(
+        en="I used a plain default title because none was given.",
+        tr="Başlık vermediğin için sade bir varsayılan başlık kullandım.",
     )
 
 
