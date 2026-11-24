@@ -22,7 +22,7 @@ import structlog
 from app.agents.model_registry import CAPTION_CORRECTION
 from app.config import settings
 from app.pipeline.caption_language import LANGUAGE_NAMES
-from app.pipeline.caption_spelling import _merge_words, _split_word
+from app.pipeline.caption_spelling import _merge_words, _sound, _split_word
 from app.services.openai_metering import CAPTION_CORRECTION_FEATURE, metered_chat_completion
 from app.text_fold import fold_case
 
@@ -56,18 +56,23 @@ _TRUSTED_SYSTEM_PROMPT = (
     '0, "start_word_index": 0, "end_word_index": 0, "original_span": '
     '"...", "target_alias": "..."}]}. Word indices are inclusive.'
 )
+# KRI-1520: captions show the words that were said. The proofreader fixes what the
+# transcriber got wrong, never the speaker's grammar or word choice ("bağlanıyor demiştim"
+# must not become "bağlayacağımı söylemiştim"); `_is_word_edit` enforces it per word.
 _LEGACY_SYSTEM_PROMPT = (
-    "You fix errors in auto-generated subtitle lines. The spoken language is given. Make "
-    "each line grammatically correct, natural {language} as actually spoken. Fix "
-    "mishearings and spelling, AND wrong word forms — especially WRONG CASE/SUFFIX endings "
-    "that don't fit the sentence. For example, in Turkish fix a wrong case ending like "
-    "'nereye' -> 'nereyi' when the sentence needs the object (accusative), or a mis-heard "
-    "vowel like 'Kaçer' -> 'Kaçar'. Restore mangled brand names, product names, and proper "
-    "nouns to canonical spelling when phonetics clearly match a well-known brand, e.g. "
-    "'Kokokolu' -> 'Coca-Cola', while keeping the surrounding language. You MAY change "
-    "words within a line to make it correct, but you MUST: keep the SAME number of lines "
-    "in the SAME order, never move words "
-    "between lines, never translate, never add commentary or punctuation-only lines. "
+    "You fix transcription errors in auto-generated subtitle lines. The spoken language is "
+    "given. Keep each line in the speaker's own words and grammar, the {language} actually "
+    "spoken, even when it is informal or not textbook-correct. Fix only what the transcriber "
+    "got wrong: misspellings, a mis-heard letter or vowel like 'Kaçer' -> 'Kaçar', a "
+    "mis-heard one-letter case ending like Turkish 'nereye' -> 'nereyi' when the sentence "
+    "needs the object (accusative), capital letters and punctuation. Restore mangled brand "
+    "names, product names, and proper nouns to canonical spelling when phonetics clearly "
+    "match a well-known brand, e.g. 'Kokokolu' -> 'Coca-Cola', while keeping the surrounding "
+    "language. NEVER replace a word the speaker said with a different word or a synonym, "
+    "never change a verb's tense, person or mood, never rephrase or reorder a line to make "
+    "it read better, and never add or drop words. You MUST keep the SAME number of lines in "
+    "the SAME order, never move words between lines, never translate, never add commentary "
+    "or punctuation-only lines. "
     'Return ONLY JSON: {{"lines": [...]}} with exactly the same length as the input.'
 )
 # KRI-1361: appended only when the request carries spelling_hints, so a request without
@@ -247,7 +252,6 @@ def _llm_correct_lines(
 
 # A word the proofreader changes is judged on its own, never with the rest of its line
 # (KRI-1263): an accepted edit lands, a refused one keeps the spoken word.
-_WORD_EDIT_MIN_RATIO = 0.5
 _WORD_EDIT_MAX_DISTANCE = 2
 _MAX_LINE_WORD_DELTA = 2
 _WORD_RE = re.compile(r"[\W_]+", re.UNICODE)
@@ -568,12 +572,23 @@ def _edit_distance(left: str, right: str) -> int:
     return rows[-1][-1]
 
 
+def _first_sound(key: str) -> str:
+    """The sound a folded word key starts with: "cat" and "kat" share "k" (the creator
+    spellings' sound key). A word with no Latin letter (Cyrillic, Greek) starts with its
+    first folded letter."""
+
+    return _sound(key)[:1] or key[:1]
+
+
 def _is_word_edit(old: str, new: str) -> bool:
     """True when ``new`` reads as the spoken ``old`` spelled or inflected correctly.
 
     Numbers never change ("10" -> "11" rewrites what was said). Dropping or adding a
     suffix of two or more letters ("Arabası" -> "Araba") rewords it (KRI-708), a
-    one-letter ending ("your" -> "you're", "nereye" -> "nereyi") does not.
+    one-letter ending ("your" -> "you're", "nereye" -> "nereyi") does not. A word that
+    starts with another sound is another word ("bitireceğim" -> "getireceğim"), and so
+    is one more than two letters away, however many letters it shares ("bağlanıyor" ->
+    "bağlayacağımı", "demiştim" -> "söylemiştim"; KRI-1520).
     """
 
     if not old or not new or _has_numeric_content(old + new):
@@ -581,12 +596,9 @@ def _is_word_edit(old: str, new: str) -> bool:
     longer, shorter = (old, new) if len(old) >= len(new) else (new, old)
     if longer.startswith(shorter) and len(longer) - len(shorter) >= 2:
         return False
-    if len(longer) < 2:
+    if len(longer) < 2 or _first_sound(old) != _first_sound(new):
         return False
-    distance = _edit_distance(old, new)
-    if distance <= (1 if len(longer) <= 3 else _WORD_EDIT_MAX_DISTANCE):
-        return True
-    return len(shorter) >= 4 and SequenceMatcher(None, old, new).ratio() >= _WORD_EDIT_MIN_RATIO
+    return _edit_distance(old, new) <= (1 if len(longer) <= 3 else _WORD_EDIT_MAX_DISTANCE)
 
 
 def _is_respacing(old: str, new: str) -> bool:
