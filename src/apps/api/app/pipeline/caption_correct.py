@@ -70,7 +70,8 @@ _LEGACY_SYSTEM_PROMPT = (
     "match a well-known brand, e.g. 'Kokokolu' -> 'Coca-Cola', while keeping the surrounding "
     "language. NEVER replace a word the speaker said with a different word or a synonym, "
     "never change a verb's tense, person or mood, never rephrase or reorder a line to make "
-    "it read better, and never add or drop words. You MUST keep the SAME number of lines in "
+    "it read better, and never add or drop a word (writing one misspelt word as two, or two "
+    "as one, is fine: 'alot' -> 'a lot'). You MUST keep the SAME number of lines in "
     "the SAME order, never move words between lines, never translate, never add commentary "
     "or punctuation-only lines. "
     'Return ONLY JSON: {{"lines": [...]}} with exactly the same length as the input.'
