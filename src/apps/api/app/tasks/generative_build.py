@@ -14777,7 +14777,12 @@ def _phone_tight_pause_cut(
             else {}
         )
         new_plan, report = apply_tight_pauses(
-            cut_plan, clip_path, list(words), duration_s, **take_kwargs
+            cut_plan,
+            clip_path,
+            list(words),
+            duration_s,
+            relative_noise=settings.tight_pause_relative_floor_enabled,
+            **take_kwargs,
         )
         receipt = report.to_variant()
     except Exception as exc:  # noqa: BLE001 - the consented plan stands
@@ -14868,9 +14873,17 @@ def _measure_take_join_gaps(
     One row per pair of neighbours: ``gap_s`` = the tail the first still plays + the lead-in the
     next still plays (``None`` when either take's audio could not be measured). An uncut take
     (``plan`` None) plays whole."""
-    from app.pipeline.tight_pause_cut import measure_silence_spans  # noqa: PLC0415
+    from app.pipeline.tight_pause_cut import measure_take_silences  # noqa: PLC0415
 
-    spans = [measure_silence_spans(path, duration_s=duration) for _plan, path, duration in takes]
+    # KRI-1524: a take recorded hot is measured against its own floor (0.0 s otherwise).
+    spans = [
+        measure_take_silences(
+            path,
+            duration_s=duration,
+            relative_noise=settings.tight_pause_relative_floor_enabled,
+        )
+        for _plan, path, duration in takes
+    ]
     rows: list[dict[str, Any]] = []
     for index in range(len(takes) - 1):
         left, right = spans[index], spans[index + 1]
@@ -15001,6 +15014,9 @@ def _trim_take_joins(
         return replace(plan, keep_segments=keep, removed=removed, time_saved_s=saved)
 
     for index, (_plan, path, duration_s) in enumerate(takes):
+        # Unchanged by KRI-1524: this trim cuts by measured spans with no voice guard, so a take
+        # recorded loud keeps the old (deaf, so trim-nothing) measure here; only the guarded
+        # tight / long pass cuts it.
         spans = measure_silence_spans(path, duration_s=duration_s)
         if not spans:
             continue
@@ -15081,7 +15097,12 @@ def _phone_long_pause_cut(
         from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
 
         new_plan, report = apply_tight_pauses(
-            cut_plan, clip_path, list(words), duration_s, min_pause_s=MAX_PAUSE_S
+            cut_plan,
+            clip_path,
+            list(words),
+            duration_s,
+            min_pause_s=MAX_PAUSE_S,
+            relative_noise=settings.tight_pause_relative_floor_enabled,
         )
         receipt = report.to_variant()
     except Exception as exc:  # noqa: BLE001 - the consented plan stands

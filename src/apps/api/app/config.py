@@ -2277,6 +2277,20 @@ class Settings(BaseSettings):
         "and worker restart.",
     )
 
+    tight_pause_relative_floor_enabled: bool = Field(
+        default=True,
+        description="KRI-1524 bug-fix kill switch for the tight / long pause passes and the "
+        "several-take join measures. An action camera records hot, so an ordinary outdoor take's "
+        "room floor sits above -45 dBFS: the pass called every such take noisy and cut nothing, "
+        "and the -38 dB pause measure heard no pause in it at all (join gaps of 0.0 s). On: a take "
+        "above -45 dBFS is noisy only when its speech rises less than 25 dB above its floor; "
+        "otherwise it is cut with the same floor-relative protections and its pauses are measured "
+        "against its own floor (`tight_pause_cut.take_noise`, `measure_take_silences`). Takes at "
+        "or below -45 dBFS are unchanged. Off: every plan, report and receipt is byte-identical "
+        "to before. Kill switch: `fly secrets set TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED=false --app "
+        "nova-video` + api and worker restart.",
+    )
+
     speech_cleanup_slate_cut_enabled: bool = Field(
         default=False,
         description="Speech cleanup also cuts off-script pre-roll that opens a take: the first "
