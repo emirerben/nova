@@ -1626,6 +1626,7 @@
     "You gave me the words \"{clean_name_str_req_literal}\" for one shot.": "Bir sahne için \"{clean_name_str_req_literal}\" yazısını verdin.",
     "You marked {named} on a different clip than the one I put the text on; mark it on the speaking clip": "{named_tr} yazının olduğu klipte değil başka bir klipte işaretledin; konuşan klipte işaretle",
     "You moved the clips yourself, so your own order is kept.": "Klipleri kendin taşıdığın için senin sıran korundu.",
+    "You named a sound effect, so I played that one and added no others": "Bir ses efekti söyledin, o yüzden onu çaldım ve başka efekt eklemedim",
     "You never talk about {ref}, so I left it out": "{ref} hakkında hiç konuşmuyorsun, o yüzden dışarıda bıraktım",
     "You picked Lip-sync, so I'll sync your takes to your song, placing each one where it fits the music.": "Dudak senkronu seçtin, o yüzden çekimlerini şarkına senkronluyorum; her birini müziğe uyduğu yere koyuyorum.",
     "You picked only photos. A montage needs at least one of your video clips too. Pick a clip, or add footage.": "Yalnızca fotoğraf seçtin. Bir montaj için videolarından en az biri de gerekiyor. Bir klip seç ya da çekim ekle.",

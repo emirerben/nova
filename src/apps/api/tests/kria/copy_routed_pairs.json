@@ -2472,6 +2472,11 @@
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
   ],
   [
+   "app/services/sfx_capability.py",
+   "You named a sound effect, so I played that one and added no others",
+   "Bir ses efekti söyledin, o yüzden onu çaldım ve başka efekt eklemedim"
+  ],
+  [
    "app/kria/brief_checks.py",
    "I couldn't pick a song from the music library, so the video has no music",
    "Müzik kütüphanesinden bir şarkı seçemedim, o yüzden videoda müzik yok"
