@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.4.0] - 2026-11-24
+
+### Changed
+- feat(intro): server-issued options and a seeded pick for Talking intro scenes (KRI-1611) (#2501) <!-- release-pr: 2501 -->
+
 ## [0.90.3.0] - 2026-11-24
 
 ### Changed
