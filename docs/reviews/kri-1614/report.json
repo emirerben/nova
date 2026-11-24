@@ -344,7 +344,7 @@
           "top": "above_head",
           "top_share": 0.883,
           "top_share_lower": 0.798,
-          "cap": 0.95
+          "cap": 0.9
         },
         {
           "stratum": "realized/en",
@@ -506,7 +506,7 @@
           "top": "above_head",
           "top_share": 0.617,
           "top_share_lower": 0.511,
-          "cap": 0.95
+          "cap": 0.9
         },
         {
           "stratum": "realized/tr",
@@ -690,6 +690,16 @@
         "realized/tr/light_wall top3_looks collapse",
         "realized/tr/dark_room ink dominance",
         "realized/tr/dark_room top3_looks collapse"
+      ]
+    },
+    {
+      "name": "realized_places_everything_above_the_head",
+      "expect": "dominance:zone",
+      "stratum": "realized/en",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "realized/en zone dominance"
       ]
     },
     {

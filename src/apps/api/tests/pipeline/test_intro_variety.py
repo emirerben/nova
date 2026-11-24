@@ -24,6 +24,7 @@ import json
 from itertools import cycle, islice
 from pathlib import Path
 
+import pytest
 import skia  # noqa: F401  - required, not optional: see the module docstring
 
 from app.cli import intro_variety_report as rep
@@ -165,6 +166,14 @@ def test_a_lucky_small_sample_does_not_fail_but_a_collapse_does():
     assert rep.wilson_lower(0, 0) == 0.0
 
 
+def test_the_realized_zone_cap_is_not_blind():
+    """A 60-pick realized stratum must fail well before every pick is the same: the cap sits
+    between today's 53 of 60 and a collapse, with room either side."""
+    cap = rep.cap_for(3, "zone", realized=True)
+    assert rep.wilson_lower(55, 60) < cap  # a few picks over today: noise
+    assert rep.wilson_lower(58, 60) > cap  # all but two the same: a collapse
+
+
 def test_the_cap_gets_looser_with_fewer_options_but_never_past_the_ceiling():
     caps = [rep.cap_for(k) for k in range(1, 9)]
     assert caps == sorted(caps, reverse=True)
@@ -178,6 +187,7 @@ def test_the_cap_gets_looser_with_fewer_options_but_never_past_the_ceiling():
     )
 
 
+@pytest.mark.timeout(300)  # real Skia, two languages, two plates: 25 s here, slower on a runner
 def test_the_report_runs_on_todays_picker_and_every_control_fails(tmp_path: Path):
     """The real end to end check CI runs: the real picker, the real placement and Skia, EN and TR,
     a light and a dark plate. No exact counts: only verdicts."""

@@ -295,7 +295,12 @@ def draft(
         names.append(f"frame-{index}.jpg")
     if drafter is None:
         return None
-    reply = parse_reply(drafter(prompt, frames))
+    raw = drafter(prompt, frames)
+    # Kept before it is parsed: a paid reply that misses the closed schema must not be lost.
+    (target / "reply.json").write_text(
+        raw if isinstance(raw, str) else json.dumps(raw, indent=2), encoding="utf-8"
+    )
+    reply = parse_reply(raw)
     examples: dict[str, Any] = {}
     if reply.expressible != "no":
         for language, title, scene in (

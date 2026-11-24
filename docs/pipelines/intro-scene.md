@@ -121,15 +121,17 @@ plate: dominance, top-3 looks, decline rate). The rules, with their reasons, are
 docstring (V1-V10). Four things to know: ink is judged per plate (on the light wall only oxblood
 reads, so it is listed as an exemption with the contrast it was computed from, not skipped); a
 dominance verdict uses the 95 percent lower bound of the share, so a small sample's luck does not
-fail it; six negative controls (a picker that ignores its seed, never picks one entrance, mostly
-declines, or collapses in Turkish only) must FAIL, and a control that passes exits 1; nothing asserts
+fail it; seven negative controls (a picker that ignores its seed, never picks one entrance, mostly
+declines, collapses in Turkish only, or has the placement put every scene above the head) must FAIL, and a control that passes exits 1; nothing asserts
 an exact count. Outputs `.intro-variety/{report.json,montage.png}`; the montage is the first seeds
 of one title per language, drawn through the real renderer and measured.
 
 **In CI** it is `tests/pipeline/test_intro_variety.py` and `test_intro_intake.py`, inside the
 existing `test-api` shards on the free runners (they install libegl1/libgl1 for skia, and the tests
 import skia, so a missing library fails instead of skipping). Journey `kri-1614-intro-variety-intake`
-maps the paths. About 25 s for the variety run.
+maps the paths. The variety run is about 25 s on a laptop and projected at 70-110 s on a runner (3-4x slower),
+so its end-to-end test carries `@pytest.mark.timeout(300)` like the sweep test, and
+`scripts/ci/api-test-timings.json` holds a hand estimate for both files until CI measures them.
 
 Not covered: the report judges the picker's realized scene, not whether the model picks well (step 3
 plugs its pick in as a `Picker`, a callable `(language, title, seed, plate) -> Look | None`).

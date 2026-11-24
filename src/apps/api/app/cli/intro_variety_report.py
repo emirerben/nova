@@ -56,6 +56,7 @@ control fails.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -101,9 +102,11 @@ MONTAGE_SEEDS = 6  # per language, on the dark plate
 MIN_SAMPLE = 30
 ZONE_CAP = 0.85
 # On the realized layer the engine's own placement also decides the zone: with a centred speaker
-# most scenes only sit clear above the head, and a measurement that shifts a little between macOS
-# and Linux moves a few picks there. So it only fails when the zone has collapsed to one.
-REALIZED_ZONE_CAP = 0.95
+# most scenes only sit clear above the head (53 of 60 today in English), and a measurement that
+# shifts a little between macOS and Linux moves a few picks there. With the Wilson bound a 60-pick
+# stratum fails from 58 above the head; 0.95 failed only at 60 of 60 and let a collapse through
+# (`realized_places_everything_above_the_head` is the control that holds this).
+REALIZED_ZONE_CAP = 0.9
 TOP3_CAP = 1 / 3
 DECLINE_CAP = 0.25
 MIN_INK_CONTRAST = 4.5  # the picker's own bar (`intro_scene_pick._MIN_INK_CONTRAST`)
@@ -512,6 +515,19 @@ def hash_bucket(seed: str) -> int:
     return sum(seed.encode()) % 10
 
 
+def _places_everything_above_the_head(picker: Picker) -> Picker:
+    """The zone collapse the pool layer cannot see: the picker is fine, the placement is not.
+    English only, so the verdict has to stay in its language."""
+
+    def wrapped(language: str, title: str, seed: str, plate: str) -> Look | None:
+        look = picker(language, title, seed, plate)
+        if look is None or language != "en":
+            return look
+        return dataclasses.replace(look, zone="above_head")
+
+    return wrapped
+
+
 def _collapses_in_turkish(picker: Picker) -> Picker:
     def wrapped(language: str, title: str, seed: str, plate: str) -> Look | None:
         return picker(language, title, CONSTANT_SEED if language == "tr" else seed, plate)
@@ -563,6 +579,15 @@ def controls(pool: Picker, realized: Picker | None) -> list[dict[str, Any]]:
                 PLATES,
             ),
             (
+                "realized_places_everything_above_the_head",
+                "dominance:zone",
+                "realized/en",
+                _places_everything_above_the_head(realized),
+                "realized",
+                REALIZED_SEEDS,
+                PLATES,
+            ),
+            (
                 "realized_collapses_in_turkish",
                 "dominance",
                 "realized/tr",
@@ -575,10 +600,11 @@ def controls(pool: Picker, realized: Picker | None) -> list[dict[str, Any]]:
     out = []
     for name, expect, stratum, picker, layer, seeds, plates in cases:
         report = judge_picker(picker, layer=layer, seeds=seeds, plates=plates)
+        check, _, axis = expect.partition(":")
         hit = [
             f
             for f in report["failures"]
-            if f["check"] == expect and f["stratum"].startswith(stratum)
+            if f["check"] == check and f["stratum"].startswith(stratum) and axis in ("", f["axis"])
         ]
         other_language = [
             f

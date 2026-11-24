@@ -17,6 +17,8 @@ Written before the script. Each test is a way the intake could go wrong:
   labels (`test_engine_tickets_*`).
 * I7 the intake only works on five references (`test_a_sixth_reference_*`): the end to end run goes
   from a screenshot to an approved sixth teardown in a copy of the file and draws it.
+* I9 a paid reply that misses the schema is lost (`test_a_reply_that_misses_the_schema_is_kept`):
+  the raw reply is written before it is parsed.
 * I8 the video path cannot read a frame (`test_a_video_gives_frames`).
 """
 
@@ -38,13 +40,18 @@ from app.pipeline import intro_teardowns as td
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "intro_intake"
 REPLY = FIXTURES / "sixth_reference_reply.json"
+SEED_REFERENCES = 5
 EN, TR = "how i stopped overthinking", "düşünmeyi nasıl bıraktım"
 
 
 @pytest.fixture
 def file_copy(tmp_path: Path) -> Path:
+    """The five seed references only, so the next id is always ref6 whatever a person has approved
+    into the shipped file since."""
+    data = td.load()
+    data["teardowns"] = data["teardowns"][:SEED_REFERENCES]
     target = tmp_path / "intro_teardowns.json"
-    shutil.copy(td.TEARDOWNS_PATH, target)
+    target.write_text(td.dumps(data), encoding="utf-8")
     return target
 
 
@@ -209,6 +216,17 @@ def test_review_refuses_an_id_that_is_not_the_next_free_one(tmp_path, screenshot
     intake.approve(draft, by="emir", teardowns_path=file_copy, confirm=lambda _q: True)
     with pytest.raises(SystemExit, match="id"):  # the same draft again: ref6 is taken
         intake.approve(draft, by="emir", teardowns_path=file_copy, confirm=lambda _q: True)
+
+
+def test_a_reply_that_misses_the_schema_is_kept(tmp_path, screenshot, file_copy):
+    reply = json.loads(REPLY.read_text(encoding="utf-8")) | {"approximations": None}
+    bad = tmp_path / "bad-reply.json"
+    bad.write_text(json.dumps(reply), encoding="utf-8")
+    with pytest.raises(ValidationError):
+        _draft(tmp_path, screenshot, file_copy, reply=bad)
+    kept = tmp_path / "intake" / "ref6"
+    assert json.loads((kept / "reply.json").read_text(encoding="utf-8")) == reply
+    assert not (kept / "draft.json").exists()
 
 
 # --- I5: the file stays byte-stable --------------------------------------------------------
