@@ -4062,6 +4062,29 @@
         "src/apps/api/tests/pipeline/test_intro_variety.py",
         "src/apps/api/tests/pipeline/test_intro_intake.py"
       ]
+    },
+    {
+      "id": "kri-1612-intro-scene-model",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_scene_model.py tests/pipeline/test_compare_intro_scenes.py tests/evals/test_intro_scene_agent_evals.py tests/tasks/test_intro_scene_model_worker.py tests/pipeline/test_intro_scene_pick.py",
+      "paths": [
+        "src/apps/api/app/agents/intro_scene_designer.py",
+        "src/apps/api/app/agents/skills/intro-design/SKILL.md",
+        "src/apps/api/prompts/intro_scene.txt",
+        "src/apps/api/app/cli/verify_intro_scene_model.py",
+        "src/apps/api/app/cli/compare_intro_scenes.py",
+        "src/apps/api/tests/pipeline/test_intro_scene_model.py",
+        "src/apps/api/tests/pipeline/test_compare_intro_scenes.py",
+        "src/apps/api/tests/evals/test_intro_scene_agent_evals.py",
+        "src/apps/api/tests/tasks/test_intro_scene_model_worker.py",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_compose_dark_room.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_compose_hand_lettered.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_compose_light_wall.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/en_decline_title_unsuited.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_light_wall.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_mid.json",
+        "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_decline_footage_unsuited.json"
+      ]
     }
   ]
 }

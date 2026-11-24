@@ -135,3 +135,60 @@ so its end-to-end test carries `@pytest.mark.timeout(300)` like the sweep test, 
 
 Not covered: the report judges the picker's realized scene, not whether the model picks well (step 3
 plugs its pick in as a `Picker`, a callable `(language, title, seed, plate) -> Look | None`).
+
+## The model arm (KRI-1612): `agents/intro_scene_designer.py`
+
+A small Gemini flash agent (`nova.compose.intro_scene`, one call per generation, no retry) picks the
+scene instead of the seed, or declines. Behind a second kill switch, `INTRO_SCENE_MODEL_ENABLED`
+(default off), on top of `INTRO_SCENE_ENABLED` + `_USER_IDS`. The question it answers: does the model
+beat the seeded pick? If Emir cannot tell them apart in the blind compare, drop the model and keep
+the seeded pick.
+
+* **Data shape.** The answer IS an `IntroScene` (ids and voices only; no field reaches the screen as
+  text or number). `build_input` issues, for this title: the accent splits (`accent_splits`), the font
+  pairs that can draw her words, inks, zones and entrances (not `pen`, see below). The response schema
+  sent with the call is closed over those ids; `parse` re-checks every id with `check_scene`, the voices
+  against the issued splits, and refuses any sound. Her title words and Gemini's footage notes are
+  UNTRUSTED data in one `untrusted` object. Hard rules (one ink, no Fraunces, stroke, fit, clearance
+  from the face and captions) stay in the engine, never in the prompt.
+* **Taste** is the `intro-design` skill (`agents/skills/intro-design/SKILL.md`, on the closed
+  allowlist in `agents/_skills.py`) plus the teardowns as examples (`prompts/intro_teardowns.json`)
+  and `prompts/intro_scene.txt`. `prompt_version` is a fingerprint of those three files and the issued
+  catalogue, so editing any of them moves it. Fixtures are stamped with `scripts/stamp_eval_fixtures.py
+  --agent intro_scene` after an edit.
+* **Dispatch** (`stamp_intro_scene`) pins only the decision: with the model switch on, the ask gets a
+  `model_ask` marker (nothing else changes; off, the stamp is KRI-1611's exactly). Dispatch holds the item
+  lock, so no model call runs there.
+* **Worker.** `_intro_scene_model_plan` (in `_run_phone_subtitled_job`, before the title is placed, so
+  the call happens once even though the title can be placed twice) asks the agent and carries the answer
+  in the ask as `model_pick` (`outcome`: `compose` + ids, `decline`, `failed`, `nothing_to_ask`). The
+  answer is written into the job's stamped ask at the end of the run (`pin_model_pick`, never
+  overwritten), so a re-render reads the pin and never asks again. `ask_for_fit` turns a `compose` pin
+  into one candidate led by the model's ink and zone (the other zones follow); the real
+  `place_title_look` still decides if it sits clear, and `intro_ink_pass` still replaces an ink that does
+  not read on the take.
+* **Fallbacks.** A decline, a failed or void answer, a scene that cannot sit clear, or a missing pin:
+  today's title rows (the project's rule: "where the AI declines or fails, the creator gets today's
+  intro"). The seeded candidates are NOT used as a fallback, so the two arms stay separable. The call is
+  not made when the scene would not apply (a logo above the title, a pinned text rule) or the title has
+  nothing to issue. Trace: `intro_scene` events carry `arm`, `model_outcome`, `chosen.source`;
+  `intro_scene_model` carries the pin.
+* **`pen` is not issued to the model.** The handwriting effect draws strokes with no text layer, so the
+  approval check cannot find her words in the drawn rows. The seeded arm can still pick `pen` for the
+  `grotesk_pen` pair (KRI-1611); that is KRI-1624. `make verify-intro-scenes` has a
+  tripwire (`approval_cannot_read_the_pen_entrance_so_it_is_not_issued`) that flips when approval can read it.
+
+Checks: `tests/evals/test_intro_scene_agent_evals.py` (free structural replay, Skia-free, hand-authored
+cassettes: English, Turkish, a decline, void answers), `tests/pipeline/test_intro_scene_model.py`,
+`tests/tasks/test_intro_scene_model_worker.py` (the real worker and approval check, provider replayed),
+and the model section of `make verify-intro-scenes` (`app/cli/verify_intro_scene_model.py`).
+
+### Blind compare (Emir's)
+
+    python -m app.cli.compare_intro_scenes build --fixtures fixtures.json --model live --out .intro-compare
+    python -m app.cli.compare_intro_scenes score --key .intro-compare/key.json --picks picks.json
+
+Renders the seeded pick and the model pick for each Talking fixture through the real worker call, as
+unlabeled frames in shuffled order and random sides, with a sealed `key.json` (its sha256 is on the page
+and checked by `score`). `--demo` is a check of the tool on synthetic plates, never the compare.
+Real stills stay out of git. Done when five real Talking edits have been compared and Emir has decided.

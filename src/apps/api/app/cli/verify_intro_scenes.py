@@ -17,6 +17,9 @@ blank tile. Four negative controls MUST fail (two inks, a title moved onto the f
 swapped for one that cannot draw Turkish, white ink on a light wall); a control that passes means
 the check is blind and exits 1.
 
+KRI-1612 adds the model arm (`verify_intro_scene_model`): the real agent, parser and fit with the
+provider call replayed, drawn and measured the same way (see that module).
+
 KRI-1611 adds the picks: the real dispatch pick (`intro_scene_pick`) for several job seeds, in
 English and Turkish, on a light and a dark plate. Each pick is fitted with the real
 `place_title_look`, takes its one ink from the plate (`intro_ink_pass`), and goes through the same
@@ -705,6 +708,9 @@ def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             )
     cases.extend(_controls(teardowns))
     cases.extend(pick_cases())
+    from app.cli.verify_intro_scene_model import model_cases  # noqa: PLC0415
+
+    cases.extend(model_cases())  # KRI-1612: the replayed model arm, drawn the same way
     return cases, data
 
 
@@ -794,7 +800,9 @@ def run(*, out_dir: str, sweep: bool = True) -> dict[str, Any]:
     blind = [c["control"] for c in public if c["control"] and c["verdict"] != "FAIL"]
     failed = [f"{c['id']}/{c['language']}" for c in checked if c["verdict"] != "PASS"]
     sweep_report = sweep_issued_menu() if sweep else {"compiled": 0, "declined": {}, "failed": []}
-    wiring = wiring_controls()
+    from app.cli.verify_intro_scene_model import model_wiring  # noqa: PLC0415
+
+    wiring = [*wiring_controls(), *model_wiring()]
     wiring_failed = [w["name"] for w in wiring if not w["ok"]]
     report = {
         "teardowns_version": data["version"],

@@ -66,6 +66,11 @@ _MAX_ACCENT_WORDS = 3
 _MIN_INK_CONTRAST = 4.5
 _LIGHT_INK_LUMINANCE = 0.5  # the ink to trust when the take was not measured
 INTRO_INKS_PARAM = "intro_inks"
+# KRI-1612: the model arm. Dispatch stamps ``model_ask`` (its own kill switch, read once); the
+# worker asks the agent once per generation and pins the answer as ``model_pick`` on the job.
+MODEL_ASK_FIELD = "model_ask"
+MODEL_PICK_FIELD = "model_pick"
+MODEL_VERSION = 1
 # Explicit text asks that put the creator above a generated look (`requested` roles and
 # `preferences` roles of the pinned phone text policy).
 _ASK_ROLES = ("all_text", "title")
@@ -222,7 +227,7 @@ def stamp_intro_scene(job: Any, *, session: Any = None) -> None:
         return
     if not picked:
         return
-    current[INTRO_SCENE_ASK_FIELD] = {
+    stamp: dict[str, Any] = {
         "version": INTRO_SCENE_VERSION,
         "seed": seed,
         "look": picked[0]["font_pair"],
@@ -230,6 +235,12 @@ def stamp_intro_scene(job: Any, *, session: Any = None) -> None:
         "candidates": picked,
         "excluded": list(recent),
     }
+    if settings.intro_scene_model_enabled:
+        # KRI-1612: the model picks instead of the seed. Only the decision is pinned here
+        # (dispatch holds the item lock, so no model call): the worker asks once and pins the
+        # answer. Off, the stamp is exactly KRI-1611's.
+        stamp[MODEL_ASK_FIELD] = {"version": MODEL_VERSION}
+    current[INTRO_SCENE_ASK_FIELD] = stamp
     job.assembly_plan = current
 
 
@@ -307,7 +318,8 @@ def fit_intro_scene(
                 if not scene_mod.placement_is_clean(receipt):
                     info["tried"].append({**step, "reason": "placement_unclean"})
                     continue
-                info.update(chosen={**step, "ink": inks[0]}, reason="ok")
+                source = {"source": ask["source"]} if ask.get("source") else {}
+                info.update(chosen={**step, "ink": inks[0], **source}, reason="ok")
                 return _tag_rows(placed, inks), receipt, info
         info["reason"] = "no_candidate_fits"
     except Exception as exc:  # noqa: BLE001 - a styled intro never blocks a render
@@ -393,3 +405,186 @@ def intro_ink_pass(
     except Exception as exc:  # noqa: BLE001 - an ink nicety never blocks a render
         log.warning("intro_scene.ink_failed", error=str(exc)[:200])
         return rows
+
+
+# --- the model arm (KRI-1612) ---------------------------------------------------------------
+#
+# Ways this could go wrong, and the guard for each (tests/pipeline/test_intro_scene_model.py,
+# tests/evals/test_intro_scene_agent_evals.py and the model section of `make verify-intro-scenes`):
+#
+# A1: the kill switch is off but the model runs, or flips mid-flight. `model_ask` is stamped at
+#     dispatch only when INTRO_SCENE_MODEL_ENABLED is on; a worker reads the stamp, never the flag.
+# A2: the model writes text or numbers that reach the screen. Its answer is an `IntroScene`
+#     (ids and voices only), re-checked against the issued menu; nothing else is read.
+# A3: a decline, a failed call or a void answer draws a scene anyway. All of them are today's
+#     title rows (the project's rule), recorded in the pin; the seeded candidates are NOT used.
+# A4: a re-render asks again or picks differently. The first answer is pinned on the job
+#     (`pin_model_pick`) and never overwritten; the call happens before the title is placed, once.
+# A5: the model's pick cannot sit clear on this footage. The engine tries its zone, then the other
+#     zones, with the REAL placement; nothing fits: today's title rows.
+# A6: the model's ink is unreadable on the take. It leads the ink order and `intro_ink_pass` still
+#     takes the first ink that reads.
+# A7: a sound is added without a request. The agent's schema allows only ``none``.
+# A8: the model is asked for a scene that would not apply (a logo above the title, a pinned text
+#     rule). The caller passes ``applies`` and no call is made.
+
+
+def model_requested(ask: Mapping[str, Any]) -> bool:
+    """Did dispatch stamp the model arm (its own kill switch was on)?"""
+    marker = ask.get(MODEL_ASK_FIELD)
+    return isinstance(marker, Mapping) and marker.get("version") == MODEL_VERSION
+
+
+def pinned_model_pick(ask: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The job's pinned model answer, or ``None`` (not asked yet, or a shape this build cannot
+    read)."""
+    raw = ask.get(MODEL_PICK_FIELD)
+    if not isinstance(raw, Mapping) or raw.get("version") != MODEL_VERSION:
+        return None
+    return dict(raw)
+
+
+def take_brightness(frames: Sequence[Any]) -> str:
+    """``light`` / ``mid`` / ``dark`` from the upper half of the sampled take frames (where the
+    title sits), or ``unknown`` with none. A measured category: the model never sees pixels."""
+    total = count = 0
+    for frame in frames:
+        try:
+            rows = max(1, int(frame.height * 0.5))
+            band = frame.pixels[: rows * frame.width]
+            total += sum(band)
+            count += len(band)
+        except Exception:  # noqa: BLE001 - a frame we cannot read only means "unknown"
+            continue
+    if not count:
+        return "unknown"
+    mean = total / count / 255.0
+    return "light" if mean >= 0.6 else "dark" if mean <= 0.35 else "mid"
+
+
+def resolve_model_scene(
+    title: str,
+    *,
+    language: str | None,
+    footage_notes: str,
+    brightness: str,
+    job_id: str | None,
+    client: Any = None,
+    ctx: Any = None,
+) -> dict[str, Any]:
+    """Ask the agent once and return the answer as a pin: ``outcome`` is ``compose`` (with a
+    ``scene``), ``decline``, ``failed`` or ``nothing_to_ask``. Never raises."""
+    pin: dict[str, Any] = {"version": MODEL_VERSION}
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.intro_scene_designer import (  # noqa: PLC0415
+            INTRO_SCENE_PROMPT_VERSION,
+            IntroSceneDesignerAgent,
+            build_input,
+        )
+
+        pin["prompt_version"] = INTRO_SCENE_PROMPT_VERSION
+        request = build_input(
+            title, language=language, footage_notes=footage_notes, brightness=brightness
+        )
+        if request is None:
+            return {**pin, "outcome": "nothing_to_ask"}
+        scene = IntroSceneDesignerAgent(client or default_client()).run(
+            request, ctx=ctx or RunContext(job_id=job_id)
+        )
+    except Exception as exc:  # noqa: BLE001 - a styled intro never blocks a render
+        log.warning("intro_scene.model_failed", error_type=type(exc).__name__)
+        return {**pin, "outcome": "failed", "error": type(exc).__name__}
+    if scene.decision == "decline":
+        return {**pin, "outcome": "decline", "decline_reason": scene.decline_reason}
+    return {
+        **pin,
+        "outcome": "compose",
+        "scene": {
+            "voices": list(scene.voices),
+            "font_pair": scene.font_pair,
+            "ink": scene.ink,
+            "zone": scene.zone,
+            "entrance": scene.entrance,
+        },
+    }
+
+
+def resolve_for_render(
+    plan: Mapping[str, Any] | None,
+    title: str,
+    *,
+    applies: bool,
+    language: str | None,
+    footage_notes: str,
+    frames: Sequence[Any],
+    job_id: str | None,
+    client: Any = None,
+) -> tuple[Mapping[str, Any] | None, dict[str, Any] | None]:
+    """``(plan to place the title with, pin to persist)`` for one render. The plan carries the
+    model's answer in the ask (pinned from an earlier run, or asked now). ``pin`` is the NEW
+    answer to write to the job (``None`` when there is nothing new). Asks at most once and not
+    at all when the model arm was not stamped, a pin exists, or the scene would not apply."""
+    ask = pinned_intro_scene(plan)
+    if ask is None or not model_requested(ask) or pinned_model_pick(ask) is not None:
+        return plan, None
+    if not applies:
+        return plan, None
+    pin = resolve_model_scene(
+        title,
+        language=language,
+        footage_notes=footage_notes,
+        brightness=take_brightness(frames),
+        job_id=job_id,
+        client=client,
+    )
+    merged = {**(plan or {}), INTRO_SCENE_ASK_FIELD: {**ask, MODEL_PICK_FIELD: pin}}
+    return merged, pin
+
+
+def pin_model_pick(current: dict[str, Any], pin: Mapping[str, Any] | None) -> dict[str, Any]:
+    """``current`` (the job's assembly plan) with the model's answer pinned inside the stamped
+    ask. A pin already there is never overwritten, and an unstamped job is left as it is."""
+    ask = current.get(INTRO_SCENE_ASK_FIELD)
+    if pin is None or not isinstance(ask, Mapping) or MODEL_PICK_FIELD in ask:
+        return current
+    return {**current, INTRO_SCENE_ASK_FIELD: {**ask, MODEL_PICK_FIELD: dict(pin)}}
+
+
+def ask_for_fit(ask: Mapping[str, Any]) -> tuple[Mapping[str, Any] | None, dict[str, Any]]:
+    """The ask `fit_intro_scene` should try, with trace info. The seeded arm is the stamp as it
+    is. The model arm is its one pinned scene, led by its ink; a decline, a failed or missing
+    answer, or a scene this build cannot read is ``None``: today's title rows."""
+    if not model_requested(ask):
+        return ask, {}
+    pick = pinned_model_pick(ask)
+    info: dict[str, Any] = {"arm": "model", "model_outcome": (pick or {}).get("outcome", "missing")}
+    if pick is None or pick.get("outcome") != "compose":
+        return None, info
+    try:
+        scene = scene_mod.IntroScene.model_validate(
+            {"decision": "compose", **pick["scene"], "sound": "none"}
+        )
+    except Exception:  # noqa: BLE001 - a pin this build cannot read
+        info["model_outcome"] = "unreadable"
+        return None, info
+    assert scene.font_pair and scene.ink and scene.zone and scene.entrance
+    inks = [ink for ink in ask.get("inks") or [] if ink in scene_mod.INKS and ink != scene.ink]
+    zones = [scene.zone, *(zone for zone in scene_mod.ZONES if zone != scene.zone)]
+    return (
+        {
+            **ask,
+            "source": "model",
+            "inks": [scene.ink, *inks],
+            "candidates": [
+                {
+                    "voices": list(scene.voices),
+                    "font_pair": scene.font_pair,
+                    "entrance": scene.entrance,
+                    "zones": zones,
+                }
+            ],
+        },
+        info,
+    )

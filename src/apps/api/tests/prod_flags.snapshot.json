@@ -473,6 +473,10 @@
       "source": "default",
       "value": false
     },
+    "intro_scene_model_enabled": {
+      "source": "default",
+      "value": false
+    },
     "intro_scene_user_ids": {
       "source": "default",
       "value": []
