@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.3.0] - 2026-11-24
+
+### Changed
+- test(ios): a request from an earlier test never reaches the next test's fake server (KRI-1607) (#2511) <!-- release-pr: 2511 -->
+
 ## [0.90.2.0] - 2026-11-24
 
 ### Changed
