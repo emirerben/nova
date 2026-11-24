@@ -23,7 +23,6 @@ None there and the draft's receipts, holds and promises are what they were.
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
@@ -196,37 +195,32 @@ def _clip_matches(step: NarratedStepFact, clip: str) -> bool:
     return clip in {step.media_id, step.clip} - {""}
 
 
-def _without_triggers(req: BriefRequirement, triggers: Sequence[str]) -> str:
-    """The ask's loose words with its quoted words taken out: a shot label must be named by the
-    rest of the sentence, never by the words it plays on."""
-    from app.kria.brief_checks import _loose_req  # noqa: PLC0415
-    from app.kria.brief_route import loose_text  # noqa: PLC0415
-
-    text = f" {_loose_req(req)} "
-    for trigger in triggers:
-        said = " ".join(re.sub(r"[^\w\s]", " ", loose_text(trigger)).split())
-        if said:
-            text = re.sub(rf"(?<!\w){re.escape(said)}(?!\w)", " ", text)
-    return " ".join(text.split())
-
-
 def _named_labels(req: BriefRequirement, steps: Sequence[NarratedStepFact]) -> frozenset[str]:
     """KRI-1517: the steps' shot labels a word-cue row names ("Show the snowy mountains when I
     say "Ant Dağları'ndan""), the most specific ones only.
 
     The brief types such a row ``scope: global`` with ``facts.triggers``; the worker stores the
     creator's words for each shot it placed on the step (``labels``). A label counts when its
-    whole name (no article) is in the row's words outside the quoted words; a label that is part
-    of a longer named label ("the paintings" in "the paintings in gold frames") gives way to it.
+    whole name (no article) is in the row's words and is not just its quoted words ("Tor" never
+    names a shot labelled "Tor"); a label that is part of a longer named label ("the paintings"
+    in "the paintings in gold frames") gives way to it.
     """
-    from app.kria.brief_checks import _contains_text, _label_core, _named_triggers  # noqa: PLC0415
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _contains_text,
+        _label_core,
+        _loose_req,
+        _named_triggers,
+    )
 
-    text = _without_triggers(req, _named_triggers(req))
+    text = _loose_req(req)
+    said = [_label_core(trigger) for trigger in _named_triggers(req)]
     named = {
         label: core
         for step in steps
         for label in step.labels
-        if (core := _label_core(label)) and _contains_text(text, core)
+        if (core := _label_core(label))
+        and _contains_text(text, core)
+        and not any(_contains_text(words, core) for words in said if words)
     }
     return frozenset(
         label
@@ -249,6 +243,12 @@ def _cue_shot(
         clip, triggers = asked
         return (lambda step: _clip_matches(step, clip)), triggers
     if req.kind == "text" or req.scope.startswith("clip:"):
+        return None
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.narrated_footage_fit_enabled:
+        # A label can name a moment inside its clip ("the TOR on the big screen"); without the
+        # footage fit no moment is located, so the clip on screen proves nothing: old answer.
         return None
     triggers = [t for t in _named_triggers(req) if str(t).strip()]
     labels = _named_labels(req, steps) if triggers else frozenset()

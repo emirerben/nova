@@ -223,3 +223,12 @@ def test_f8_a_shared_first_word_elsewhere_is_not_the_phrase() -> None:
     receipt = _judge("r6")
 
     assert receipt.status == "met" and "(51.7–53.2 s)" in receipt.reason
+
+
+def test_f9_without_the_footage_fit_a_shot_label_proves_nothing(monkeypatch) -> None:
+    """A label can name a moment inside its clip; with the fit off no moment is located, so the
+    clip being on screen is not "Done" (KRI-1466's TOR case): the old answer stays."""
+    monkeypatch.setattr(settings, "narrated_footage_fit_enabled", False)
+
+    for rid in MOMENTS:
+        assert not is_judged(REQUIREMENTS[rid], _judge(rid)), rid
