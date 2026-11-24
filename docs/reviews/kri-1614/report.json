@@ -1,0 +1,825 @@
+{
+  "overall": "PASS",
+  "thresholds": {
+    "cap": "min(0.85, max(0.5, 2.5 / issued_options))",
+    "zone_cap": 0.85,
+    "top3_cap": 0.333,
+    "decline_cap": 0.25,
+    "min_sample": 30,
+    "min_ink_contrast": 4.5
+  },
+  "fixtures": {
+    "titles": {
+      "en": [
+        "the biggest design trend right now",
+        "how i stopped overthinking",
+        "five habits that changed my mornings",
+        "why this matters",
+        "what nobody tells you about moving abroad"
+      ],
+      "tr": [
+        "bu yılın en büyük tasarım trendi şu an",
+        "düşünmeyi nasıl bıraktım",
+        "sabahlarımı değiştiren beş alışkanlık",
+        "bu neden önemli",
+        "yurt dışına taşınmak hakkında kimsenin söylemediği şey"
+      ]
+    },
+    "plates": [
+      "light_wall",
+      "dark_room"
+    ],
+    "pool_seeds_per_title": 200,
+    "realized_seeds_per_title_plate": 12
+  },
+  "layers": [
+    {
+      "layer": "pool",
+      "ok": true,
+      "failures": [],
+      "exemptions": [],
+      "summaries": [
+        {
+          "stratum": "pool/en",
+          "axis": "font_pair",
+          "n": 1000,
+          "issued": [
+            "grotesk_hand",
+            "grotesk_loop",
+            "grotesk_pen",
+            "script_serif",
+            "serif_italic",
+            "young_serif"
+          ],
+          "counts": {
+            "young_serif": 197,
+            "script_serif": 175,
+            "grotesk_hand": 163,
+            "grotesk_loop": 159,
+            "grotesk_pen": 156,
+            "serif_italic": 150
+          },
+          "top": "young_serif",
+          "top_share": 0.197,
+          "top_share_lower": 0.177,
+          "cap": 0.5
+        },
+        {
+          "stratum": "pool/en",
+          "axis": "entrance",
+          "n": 1000,
+          "issued": [
+            "fade",
+            "ink",
+            "pen",
+            "pop",
+            "rise"
+          ],
+          "counts": {
+            "rise": 260,
+            "ink": 254,
+            "pop": 239,
+            "fade": 221,
+            "pen": 26
+          },
+          "top": "rise",
+          "top_share": 0.26,
+          "top_share_lower": 0.238,
+          "cap": 0.5
+        },
+        {
+          "stratum": "pool/en",
+          "axis": "zone",
+          "n": 1000,
+          "issued": [
+            "above_head",
+            "mid_frame",
+            "top_left"
+          ],
+          "counts": {
+            "above_head": 745,
+            "mid_frame": 140,
+            "top_left": 115
+          },
+          "top": "above_head",
+          "top_share": 0.745,
+          "top_share_lower": 0.722,
+          "cap": 0.85
+        },
+        {
+          "stratum": "pool/en",
+          "axis": "accent_len",
+          "n": 1000,
+          "issued": [
+            "1",
+            "2",
+            "3"
+          ],
+          "counts": {
+            "1": 437,
+            "2": 359,
+            "3": 204
+          },
+          "top": "1",
+          "top_share": 0.437,
+          "top_share_lower": 0.411,
+          "cap": 0.833
+        },
+        {
+          "stratum": "pool/en",
+          "axis": "accent_pos",
+          "n": 1000,
+          "issued": [
+            "head",
+            "middle",
+            "tail"
+          ],
+          "counts": {
+            "middle": 483,
+            "head": 284,
+            "tail": 233
+          },
+          "top": "middle",
+          "top_share": 0.483,
+          "top_share_lower": 0.457,
+          "cap": 0.833
+        },
+        {
+          "stratum": "pool/tr",
+          "axis": "font_pair",
+          "n": 1000,
+          "issued": [
+            "grotesk_hand",
+            "grotesk_loop",
+            "grotesk_pen",
+            "script_serif",
+            "serif_italic",
+            "young_serif"
+          ],
+          "counts": {
+            "young_serif": 176,
+            "grotesk_pen": 173,
+            "grotesk_hand": 172,
+            "script_serif": 163,
+            "grotesk_loop": 158,
+            "serif_italic": 158
+          },
+          "top": "young_serif",
+          "top_share": 0.176,
+          "top_share_lower": 0.157,
+          "cap": 0.5
+        },
+        {
+          "stratum": "pool/tr",
+          "axis": "entrance",
+          "n": 1000,
+          "issued": [
+            "fade",
+            "ink",
+            "pen",
+            "pop",
+            "rise"
+          ],
+          "counts": {
+            "pop": 259,
+            "ink": 248,
+            "rise": 235,
+            "fade": 231,
+            "pen": 27
+          },
+          "top": "pop",
+          "top_share": 0.259,
+          "top_share_lower": 0.237,
+          "cap": 0.5
+        },
+        {
+          "stratum": "pool/tr",
+          "axis": "zone",
+          "n": 1000,
+          "issued": [
+            "above_head",
+            "mid_frame",
+            "top_left"
+          ],
+          "counts": {
+            "above_head": 729,
+            "top_left": 142,
+            "mid_frame": 129
+          },
+          "top": "above_head",
+          "top_share": 0.729,
+          "top_share_lower": 0.705,
+          "cap": 0.85
+        },
+        {
+          "stratum": "pool/tr",
+          "axis": "accent_len",
+          "n": 1000,
+          "issued": [
+            "1",
+            "2",
+            "3"
+          ],
+          "counts": {
+            "1": 472,
+            "2": 355,
+            "3": 173
+          },
+          "top": "1",
+          "top_share": 0.472,
+          "top_share_lower": 0.446,
+          "cap": 0.833
+        },
+        {
+          "stratum": "pool/tr",
+          "axis": "accent_pos",
+          "n": 1000,
+          "issued": [
+            "head",
+            "middle",
+            "tail"
+          ],
+          "counts": {
+            "middle": 433,
+            "tail": 291,
+            "head": 276
+          },
+          "top": "middle",
+          "top_share": 0.433,
+          "top_share_lower": 0.407,
+          "cap": 0.833
+        }
+      ],
+      "declined": 0,
+      "decline_rates": {
+        "en": {
+          "declined": 0,
+          "total": 1000
+        },
+        "tr": {
+          "declined": 0,
+          "total": 1000
+        }
+      }
+    },
+    {
+      "layer": "realized",
+      "ok": true,
+      "failures": [],
+      "exemptions": [
+        {
+          "stratum": "realized/en/light_wall",
+          "axis": "ink",
+          "reason": "only ['oxblood'] is issued here: not a choice (4.5:1 against the wall: {'oxblood': 7.23})"
+        },
+        {
+          "stratum": "realized/tr/light_wall",
+          "axis": "ink",
+          "reason": "only ['oxblood'] is issued here: not a choice (4.5:1 against the wall: {'oxblood': 7.23})"
+        }
+      ],
+      "summaries": [
+        {
+          "stratum": "realized/en",
+          "axis": "font_pair",
+          "n": 60,
+          "issued": [
+            "grotesk_hand",
+            "grotesk_loop",
+            "grotesk_pen",
+            "script_serif",
+            "serif_italic",
+            "young_serif"
+          ],
+          "counts": {
+            "young_serif": 16,
+            "grotesk_pen": 15,
+            "grotesk_hand": 9,
+            "grotesk_loop": 8,
+            "script_serif": 7,
+            "serif_italic": 5
+          },
+          "top": "young_serif",
+          "top_share": 0.267,
+          "top_share_lower": 0.184,
+          "cap": 0.5
+        },
+        {
+          "stratum": "realized/en",
+          "axis": "entrance",
+          "n": 60,
+          "issued": [
+            "fade",
+            "ink",
+            "pen",
+            "pop",
+            "rise"
+          ],
+          "counts": {
+            "ink": 19,
+            "rise": 13,
+            "pop": 13,
+            "fade": 10,
+            "pen": 5
+          },
+          "top": "ink",
+          "top_share": 0.317,
+          "top_share_lower": 0.228,
+          "cap": 0.5
+        },
+        {
+          "stratum": "realized/en",
+          "axis": "zone",
+          "n": 60,
+          "issued": [
+            "above_head",
+            "mid_frame",
+            "top_left"
+          ],
+          "counts": {
+            "above_head": 53,
+            "mid_frame": 5,
+            "top_left": 2
+          },
+          "top": "above_head",
+          "top_share": 0.883,
+          "top_share_lower": 0.798,
+          "cap": 0.9
+        },
+        {
+          "stratum": "realized/en",
+          "axis": "accent_len",
+          "n": 60,
+          "issued": [
+            "1",
+            "2",
+            "3"
+          ],
+          "counts": {
+            "2": 28,
+            "1": 21,
+            "3": 11
+          },
+          "top": "2",
+          "top_share": 0.467,
+          "top_share_lower": 0.364,
+          "cap": 0.833
+        },
+        {
+          "stratum": "realized/en",
+          "axis": "accent_pos",
+          "n": 60,
+          "issued": [
+            "head",
+            "middle",
+            "tail"
+          ],
+          "counts": {
+            "middle": 30,
+            "head": 17,
+            "tail": 13
+          },
+          "top": "middle",
+          "top_share": 0.5,
+          "top_share_lower": 0.396,
+          "cap": 0.833
+        },
+        {
+          "stratum": "realized/en/light_wall",
+          "axis": "ink",
+          "n": 60,
+          "issued": [
+            "oxblood"
+          ],
+          "counts": {
+            "oxblood": 60
+          },
+          "contrast": {
+            "oxblood": 7.23
+          }
+        },
+        {
+          "stratum": "realized/en/light_wall",
+          "axis": "top3_looks",
+          "n": 60,
+          "distinct_looks": 54,
+          "top3_share": 0.1,
+          "cap": 0.333
+        },
+        {
+          "stratum": "realized/en/dark_room",
+          "axis": "ink",
+          "n": 60,
+          "issued": [
+            "butter",
+            "chartreuse",
+            "cream",
+            "white"
+          ],
+          "counts": {
+            "chartreuse": 20,
+            "white": 20,
+            "butter": 15,
+            "cream": 5
+          },
+          "top": "chartreuse",
+          "top_share": 0.333,
+          "top_share_lower": 0.242,
+          "cap": 0.625,
+          "contrast": {
+            "chartreuse": 13.79,
+            "cream": 13.79,
+            "butter": 12.49,
+            "white": 15.51
+          }
+        },
+        {
+          "stratum": "realized/en/dark_room",
+          "axis": "top3_looks",
+          "n": 60,
+          "distinct_looks": 58,
+          "top3_share": 0.083,
+          "cap": 0.333
+        },
+        {
+          "stratum": "realized/tr",
+          "axis": "font_pair",
+          "n": 60,
+          "issued": [
+            "grotesk_hand",
+            "grotesk_loop",
+            "grotesk_pen",
+            "script_serif",
+            "serif_italic",
+            "young_serif"
+          ],
+          "counts": {
+            "grotesk_pen": 17,
+            "script_serif": 15,
+            "young_serif": 10,
+            "serif_italic": 7,
+            "grotesk_hand": 6,
+            "grotesk_loop": 5
+          },
+          "top": "grotesk_pen",
+          "top_share": 0.283,
+          "top_share_lower": 0.199,
+          "cap": 0.5
+        },
+        {
+          "stratum": "realized/tr",
+          "axis": "entrance",
+          "n": 60,
+          "issued": [
+            "fade",
+            "ink",
+            "pen",
+            "pop",
+            "rise"
+          ],
+          "counts": {
+            "pop": 18,
+            "fade": 17,
+            "ink": 12,
+            "rise": 10,
+            "pen": 3
+          },
+          "top": "pop",
+          "top_share": 0.3,
+          "top_share_lower": 0.213,
+          "cap": 0.5
+        },
+        {
+          "stratum": "realized/tr",
+          "axis": "zone",
+          "n": 60,
+          "issued": [
+            "above_head",
+            "mid_frame",
+            "top_left"
+          ],
+          "counts": {
+            "above_head": 37,
+            "top_left": 12,
+            "mid_frame": 11
+          },
+          "top": "above_head",
+          "top_share": 0.617,
+          "top_share_lower": 0.511,
+          "cap": 0.9
+        },
+        {
+          "stratum": "realized/tr",
+          "axis": "accent_len",
+          "n": 60,
+          "issued": [
+            "1",
+            "2",
+            "3"
+          ],
+          "counts": {
+            "2": 28,
+            "1": 20,
+            "3": 12
+          },
+          "top": "2",
+          "top_share": 0.467,
+          "top_share_lower": 0.364,
+          "cap": 0.833
+        },
+        {
+          "stratum": "realized/tr",
+          "axis": "accent_pos",
+          "n": 60,
+          "issued": [
+            "head",
+            "middle",
+            "tail"
+          ],
+          "counts": {
+            "middle": 24,
+            "tail": 18,
+            "head": 18
+          },
+          "top": "middle",
+          "top_share": 0.4,
+          "top_share_lower": 0.302,
+          "cap": 0.833
+        },
+        {
+          "stratum": "realized/tr/light_wall",
+          "axis": "ink",
+          "n": 60,
+          "issued": [
+            "oxblood"
+          ],
+          "counts": {
+            "oxblood": 60
+          },
+          "contrast": {
+            "oxblood": 7.23
+          }
+        },
+        {
+          "stratum": "realized/tr/light_wall",
+          "axis": "top3_looks",
+          "n": 60,
+          "distinct_looks": 55,
+          "top3_share": 0.1,
+          "cap": 0.333
+        },
+        {
+          "stratum": "realized/tr/dark_room",
+          "axis": "ink",
+          "n": 60,
+          "issued": [
+            "butter",
+            "chartreuse",
+            "cream",
+            "white"
+          ],
+          "counts": {
+            "chartreuse": 20,
+            "white": 20,
+            "butter": 15,
+            "cream": 5
+          },
+          "top": "chartreuse",
+          "top_share": 0.333,
+          "top_share_lower": 0.242,
+          "cap": 0.625,
+          "contrast": {
+            "chartreuse": 13.79,
+            "cream": 13.79,
+            "butter": 12.49,
+            "white": 15.51
+          }
+        },
+        {
+          "stratum": "realized/tr/dark_room",
+          "axis": "top3_looks",
+          "n": 60,
+          "distinct_looks": 59,
+          "top3_share": 0.067,
+          "cap": 0.333
+        }
+      ],
+      "declined": 0,
+      "decline_rates": {
+        "en": {
+          "declined": 0,
+          "total": 120
+        },
+        "tr": {
+          "declined": 0,
+          "total": 120
+        }
+      }
+    }
+  ],
+  "failed": [],
+  "controls": [
+    {
+      "name": "pool_ignores_seed",
+      "expect": "dominance",
+      "stratum": "any",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "pool/en font_pair starved",
+        "pool/en entrance dominance",
+        "pool/en entrance starved",
+        "pool/en zone dominance",
+        "pool/en zone starved",
+        "pool/en accent_len starved",
+        "pool/tr font_pair starved",
+        "pool/tr entrance dominance"
+      ]
+    },
+    {
+      "name": "pool_never_picks_one_entrance",
+      "expect": "starved",
+      "stratum": "any",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "pool/en entrance starved",
+        "pool/tr entrance starved"
+      ]
+    },
+    {
+      "name": "pool_mostly_declines",
+      "expect": "declined_too_often",
+      "stratum": "any",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "pool/en entrance starved",
+        "pool/en decline declined_too_often",
+        "pool/tr decline declined_too_often"
+      ]
+    },
+    {
+      "name": "pool_collapses_in_turkish",
+      "expect": "dominance",
+      "stratum": "pool/tr",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "pool/tr font_pair starved",
+        "pool/tr entrance dominance",
+        "pool/tr entrance starved",
+        "pool/tr zone starved",
+        "pool/tr accent_len dominance",
+        "pool/tr accent_len starved",
+        "pool/tr accent_pos starved"
+      ]
+    },
+    {
+      "name": "realized_ignores_seed",
+      "expect": "collapse",
+      "stratum": "any",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "realized/en zone dominance",
+        "realized/en/light_wall top3_looks collapse",
+        "realized/en/dark_room ink dominance",
+        "realized/en/dark_room top3_looks collapse",
+        "realized/tr accent_len dominance",
+        "realized/tr/light_wall top3_looks collapse",
+        "realized/tr/dark_room ink dominance",
+        "realized/tr/dark_room top3_looks collapse"
+      ]
+    },
+    {
+      "name": "realized_places_everything_above_the_head",
+      "expect": "dominance:zone",
+      "stratum": "realized/en",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "realized/en zone dominance"
+      ]
+    },
+    {
+      "name": "realized_collapses_in_turkish",
+      "expect": "dominance",
+      "stratum": "realized/tr",
+      "caught": true,
+      "stayed_in_its_language": true,
+      "failures": [
+        "realized/tr accent_len dominance",
+        "realized/tr/light_wall top3_looks collapse",
+        "realized/tr/dark_room ink dominance",
+        "realized/tr/dark_room top3_looks collapse"
+      ]
+    }
+  ],
+  "blind_controls": [],
+  "montage": {
+    "cases": 12,
+    "failed": [
+      "pick-4-dark/en: the approval check does not find her title in the drawn layers"
+    ],
+    "looks": [
+      {
+        "seed": "v-0",
+        "font_pair": "young_serif",
+        "zone": "above_head",
+        "ink": "chartreuse",
+        "entrance": "rise",
+        "tried": 0
+      },
+      {
+        "seed": "v-1",
+        "font_pair": "young_serif",
+        "zone": "above_head",
+        "ink": "butter",
+        "entrance": "ink",
+        "tried": 3
+      },
+      {
+        "seed": "v-2",
+        "font_pair": "serif_italic",
+        "zone": "above_head",
+        "ink": "white",
+        "entrance": "ink",
+        "tried": 0
+      },
+      {
+        "seed": "v-3",
+        "font_pair": "script_serif",
+        "zone": "above_head",
+        "ink": "butter",
+        "entrance": "ink",
+        "tried": 0
+      },
+      {
+        "seed": "v-4",
+        "font_pair": "grotesk_pen",
+        "zone": "above_head",
+        "ink": "cream",
+        "entrance": "pen",
+        "tried": 0
+      },
+      {
+        "seed": "v-5",
+        "font_pair": "script_serif",
+        "zone": "above_head",
+        "ink": "white",
+        "entrance": "fade",
+        "tried": 0
+      },
+      {
+        "seed": "v-0",
+        "font_pair": "grotesk_loop",
+        "zone": "mid_frame",
+        "ink": "chartreuse",
+        "entrance": "ink",
+        "tried": 0
+      },
+      {
+        "seed": "v-1",
+        "font_pair": "grotesk_pen",
+        "zone": "top_left",
+        "ink": "butter",
+        "entrance": "pop",
+        "tried": 1
+      },
+      {
+        "seed": "v-2",
+        "font_pair": "grotesk_loop",
+        "zone": "top_left",
+        "ink": "white",
+        "entrance": "ink",
+        "tried": 0
+      },
+      {
+        "seed": "v-3",
+        "font_pair": "script_serif",
+        "zone": "top_left",
+        "ink": "butter",
+        "entrance": "ink",
+        "tried": 0
+      },
+      {
+        "seed": "v-4",
+        "font_pair": "script_serif",
+        "zone": "above_head",
+        "ink": "cream",
+        "entrance": "rise",
+        "tried": 0
+      },
+      {
+        "seed": "v-5",
+        "font_pair": "grotesk_hand",
+        "zone": "mid_frame",
+        "ink": "white",
+        "entrance": "pop",
+        "tried": 0
+      }
+    ]
+  },
+  "exempt_sound": "sound is always 'none' in the pick (an automatic sound is an open question on the project), so it is not an axis"
+}
