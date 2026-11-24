@@ -857,6 +857,18 @@ class Settings(BaseSettings):
         allowed = {value.strip() for value in self.creator_editorial_taste_user_ids}
         return "*" in allowed or str(user_id) in allowed
 
+    # KRI-1611: a fitted intro scene (`pipeline/intro_scene_pick.py`) on Talking edits. Read once at
+    # dispatch (`stamp_intro_scene`); workers branch on the stamp. Per-account JSON list of ids,
+    # ["*"] admits every account (ENABLED stays the kill switch). Off = today's title rows.
+    intro_scene_enabled: bool = False
+    intro_scene_user_ids: list[str] = []
+
+    def intro_scene_for(self, user_id: object) -> bool:
+        if not self.intro_scene_enabled or user_id is None:
+            return False
+        allowed = {value.strip() for value in self.intro_scene_user_ids}
+        return "*" in allowed or str(user_id) in allowed
+
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.

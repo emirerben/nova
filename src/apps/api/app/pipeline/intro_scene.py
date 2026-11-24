@@ -11,7 +11,8 @@ with coordinates.
 
 `compile_intro_scene` turns a scene into today's title rows (the `title_look_rows` shape, one
 `TextElement` row per voice run), so the iPhone renderer, the editor and the approval check need
-no change. Nothing calls it yet: no wire change, no flag. Every failure returns ``rows=None`` with
+no change. `intro_scene_pick` (KRI-1611, flagged off) calls it. Every failure returns
+``rows=None`` with
 a reason, which is "use today's title" for the caller.
 
 Ways this could go wrong, and the guard for each (tests/pipeline/test_intro_scene*.py):
