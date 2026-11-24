@@ -17,7 +17,25 @@ import XCTest
         try await assertInterleaving(next: session("atomic-b"))
     }
 
-    private func assertInterleaving(next: MobileSession?) async throws {
+    /// KRI-1607: the test before this one signs in, which starts a profile read nobody awaits.
+    /// When that read answered 401 here, its refresh was counted as a second interleaving.
+    func testRefreshFromAnEarlierTestsClientIsNotCounted() async throws {
+        let leftover = NativeEditorTestSupport.api(tokenStore: NativeEditorMemoryTokenStore(session("atomic-leftover")))
+        NativeEditorTestRun.shared.testCaseWillStart(self)
+        let refusedBefore = NativeEditorTestRun.shared.lateRequests
+        try await assertInterleaving(next: nil, leftover: leftover)
+        XCTAssertGreaterThan(NativeEditorTestRun.shared.lateRequests, refusedBefore, "The leftover client did send a request")
+    }
+
+    func testAClientMadeInThisTestReachesItsHandler() async throws {
+        NativeEditorTestRun.shared.testCaseWillStart(self)
+        let requests = ExpectedRequests()
+        NativeEditorURLProtocol.handler = { _ in requests.increment(); return (500, Data()) }
+        _ = try? await NativeEditorTestSupport.api(tokenStore: NativeEditorMemoryTokenStore(session("atomic-own"))).currentUser()
+        XCTAssertEqual(requests.count, 1)
+    }
+
+    private func assertInterleaving(next: MobileSession?, leftover: KriaAPI? = nil) async throws {
         let first = session("atomic-a")
         let store = InterleavingNotificationStore(first)
         let refreshed = try JSONEncoder().encode(session("atomic-a-rotated"))
@@ -31,6 +49,7 @@ import XCTest
         let api = NativeEditorTestSupport.api(tokenStore: store)
         let owner = try XCTUnwrap(api.mediaLibraryOwner)
         do { _ = try await api.nativeActivity(id: UUID(), owner: owner) } catch {}
+        if let leftover { _ = try? await leftover.currentUser() }
         XCTAssertEqual(try store.read(), next)
         XCTAssertEqual(store.interleavings, 1)
     }
@@ -74,6 +93,13 @@ import XCTest
         XCTAssertTrue(auth.isSignedIn)
         XCTAssertEqual(try store.read(), next)
     }
+}
+
+private final class ExpectedRequests: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func increment() { lock.withLock { value += 1 } }
 }
 
 private final class InterleavingNotificationStore: TokenStore, @unchecked Sendable {
