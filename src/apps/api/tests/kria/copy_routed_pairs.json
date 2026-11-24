@@ -2,6 +2,66 @@
  "note": "KRI-1362/KRI-1408: (file, en, tr) pairs this branch adds (pairs) or stops saying (retired); see test_codemod_kept_every_en_tr_pair. KRI-1408 split sentences with English fragments into whole sentences per case, so German gets whole sentences.",
  "pairs": [
   [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-left corner {where}",
+   "{where} sol alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-right corner {where}",
+   "{where} sağ alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-left corner {where}",
+   "{where} sol üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-right corner {where}",
+   "{where} sağ üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small on screen {where}",
+   "{where} ekranda küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put you full screen {where}",
+   "{where} tam ekrandasın"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put you full size over the background {where}",
+   "{where} arka planın önünde tam boy gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Showed the picture alone {where}",
+   "{where} sadece görsel gösteriliyor"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "for the whole video",
+   "videonun tamamında"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "from {start}s to {end}s",
+   "{start}. saniyeden {end}. saniyeye kadar"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "in part {number}",
+   "{number}. bölümde"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "in parts {numbers}",
+   "{numbers} numaralı bölümlerde"
+  ],
+  [
    "app/agents/editor_ops_v2/background.py",
    "I can't change where you are part by part on this edit yet.",
    "Bu düzenlemede yerini bölüm bölüm henüz değiştiremiyorum."

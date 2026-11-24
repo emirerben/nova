@@ -372,8 +372,8 @@ MediaCapability = Literal[
     # KRI-1562 (protocol 53): the music-role track ducks under `audio.speech_windows` on device.
     # Derived from non-empty windows; gated by its own verified token.
     "speechDuck",
-    # KRI-1558 (protocol 57): the speaker take split where her layout changes, back-to-back
-    # pieces of one take with nothing removed whose `speaker_frame_override` differs. Derived.
+    # KRI-1558 (protocol 57): the speaker's layout per section, `speaker_background.layout_windows`
+    # on the V2 recipe. Derived from those windows only.
     "speakerSections",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable

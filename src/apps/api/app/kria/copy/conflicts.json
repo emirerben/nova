@@ -85,7 +85,7 @@
       },
       {
         "file": "app/services/kria_editor_ops_diff.py",
-        "line": 871,
+        "line": 938,
         "tr": "{count} {noun_tr}"
       }
     ]

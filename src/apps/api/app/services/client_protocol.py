@@ -115,10 +115,10 @@ INFORMATIVE_TEXT_DESIGNS_PROTOCOL = 55
 # text-only cards.
 TEXT_DESIGN_PICKER_PROTOCOL = 56
 
-# KRI-1558: the first build that plays the speaker take split where her layout changes (nothing
-# removed between the pieces) as one shot: no declick at the join, the cut-out carries on (the
-# `speakerSections` capability). An older build would click and could flash the uncut frame there,
-# so it keeps one layout for the whole video and is told to update for a recipe that has more.
+# KRI-1558: the first build that draws the speaker's layout per section
+# (`speaker_background.layout_windows`, the `speakerSections` capability) and plays a take split
+# with nothing removed as one shot (no declick at the join, the cut-out carries on). An older
+# build keeps one layout for the whole video and is told to update for a recipe that has more.
 SPEAKER_SECTIONS_PROTOCOL = 57
 
 

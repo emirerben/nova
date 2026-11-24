@@ -14,7 +14,9 @@ Failure modes these runs guard (docs/reviews/kri-1558-section-layout-failure-mod
   clip's own corner), with or without a picture pool;
 * "no picture behind me after the intro" applies nothing;
 * "keep me in the corner the whole time" leaves per-section layouts behind;
-* a layout swapped between two sections passes the check against the section list.
+* a layout swapped between two sections passes the check against the section list;
+* changing one section's framing is missing from the chat's "Done: ..." reply, or the reply
+  names another section or the whole video.
 """
 
 from __future__ import annotations
@@ -103,10 +105,17 @@ def _turn(
     assert verdict.get("compiles") is True, verdict.get("compile_error")
     payload = built["compiled"].payload
     section = payload.speaker_background
+    from app.services.kria_editor_ops_diff import describe_diff  # noqa: PLC0415
+
+    diff = built["compiled"].diff
     return {
         "background": section.model_dump(exclude_none=True) if section is not None else None,
         "snapshot": built["snapshot"]["background"],
         "summary": built["compiled"].changes,
+        # What the chat's "Done: ..." reply of an editor turn says (kria_runtime: describe_diff
+        # over the compiled diff, every change named).
+        "said": describe_diff(diff.entries, live_text_count=diff.live_text_count, limit=None),
+        "diff": diff,
     }
 
 
@@ -234,3 +243,53 @@ def test_sections_come_from_the_recorded_list_when_the_edit_has_no_caption_words
     ]
     sections = speaker_sections_for({"caption_cues": [], "speaker_sections": rows})
     assert [(s.index, s.start_s, s.end_s) for s in sections] == [(1, 0.0, 6.0), (2, 6.0, 12.0)]
+
+
+def test_one_section_framing_change_is_named_in_the_chat_reply(prod_profile) -> None:
+    from app.kria.editor_receipts import reply_from_diff  # noqa: PLC0415
+
+    setup = _talk("en")
+    arranged = _turn(setup, None, {"op": "arrange_sections", "asset_ids": ["bg-1", "bg-2"]})
+    sections = _sections(arranged["snapshot"])
+    assert len(sections) >= 3, sections
+    before = arranged["background"]
+    assert before["layout_windows"][0]["layout"] == "own"
+    # "Make me small in the bottom-left corner in the first part" and nothing else.
+    turn = _turn(
+        setup,
+        before,
+        {
+            "op": "set_section_layout",
+            "speaker_layout": "small",
+            "preset": "small_bottom_left",
+            "section_numbers": [1],
+        },
+    )
+    after = turn["background"]["layout_windows"]
+    first = sections[0]
+    assert any(
+        row["start_s"] <= (first.start_s + first.end_s) / 2 < row["end_s"]
+        and row["layout"] == "small"
+        for row in after
+    ), after
+    # Every other section draws what it drew before.
+    from app.pipeline.talking_sections import drawn_layout  # noqa: PLC0415
+
+    for section in sections[1:]:
+        middle = (section.start_s + section.end_s) / 2
+        assert drawn_layout(after, middle) == drawn_layout(before["layout_windows"], middle)
+
+    said = turn["said"]
+    framing = [phrase for phrase in said if "part" in phrase]
+    assert framing == ["Made you small in the bottom-left corner in part 1"], said
+    assert not any("whole video" in phrase for phrase in said), said
+    assert reply_from_diff(said).startswith(
+        "Done: Made you small in the bottom-left corner in part 1"
+    ), said
+    # The same reply in a Turkish chat.
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+    from app.services.kria_editor_ops_diff import describe_diff  # noqa: PLC0415
+
+    with reply_language_for("tr"):
+        said_tr = describe_diff(turn["diff"].entries, limit=None)
+    assert "1. bölümde sol alt köşede küçük gösteriliyorsun" in said_tr, said_tr

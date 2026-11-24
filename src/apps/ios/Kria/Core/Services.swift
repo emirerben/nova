@@ -1453,9 +1453,9 @@ enum KriaClientProtocolContract {
     /// 56 (KRI-1582): reads `choice_question` version 2, whose options may carry a `preview` (text layers drawn over a frame
     /// of the creator's own clip). The server sends the informative text design picker with previews only to this protocol;
     /// a 55 build gets the same question as text-only cards.
-    /// 57 (KRI-1558): plays a Talking take split where the speaker's layout changes (back-to-back pieces of one take with
-    /// nothing removed, each with its own `speaker_frame_override`) as one shot: no declick at the join and the cut-out keeps
-    /// its state across it. Needs `speakerSections`. The server plans layouts per topic only for this protocol.
+    /// 57 (KRI-1558): draws the speaker's layout per section (`speaker_background.layout_windows`, needs `speakerSections`)
+    /// and plays a take split with nothing removed as one shot: no declick at the join and the cut-out keeps its state
+    /// across it. The server plans layouts per topic only for this protocol.
     static let version = 57
     static let header = "X-Kria-Client-Protocol"
 }
