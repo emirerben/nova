@@ -22,5 +22,8 @@ echo "[$label] xcodebuild exit $status; test runs passed $(grep -c "\]' passed" 
 echo "[$label] failed tests:"; grep -o "Test Case '-\[KriaTests\.[A-Za-z]* [A-Za-z_]*\]' failed" "$label.log" | sed -E "s/^.*\[KriaTests\.([A-Za-z]+ [A-Za-z_]+)\]' failed/\1/" | sort | uniq -c || true
 echo "[$label] failure messages:"; grep -o "error: -\[.*" "$label.log" | sed -E 's/^error: -\[KriaTests\.//' | cut -c1-260 | sort | uniq -c | head -20 || true
 echo "[$label] time-limit hits:"; grep -c "exceeded execution time allowance" "$label.log" || true
+echo "[$label] around each time-limit hit:"; grep -n -B4 -A6 -E "exceeded execution time allowance|Restarting after|Test crashed|unexpected exit" "$label.log" | cut -c1-400 | head -80 || true
+echo "[$label] tests that started and never finished:"; awk '/Test Case .* started/ { name = $0; sub(/^.*Test Case ./, "", name); sub(/. started.*$/, "", name); open[name] = 1 } /Test Case .* (passed|failed|skipped)/ { name = $0; sub(/^.*Test Case ./, "", name); sub(/. (passed|failed|skipped).*$/, "", name); delete open[name] } END { for (n in open) print "  " n }' "$label.log"
+echo "[$label] slowest tests:"; grep -oE "Test Case '-\[[A-Za-z.]+ [A-Za-z_0-9]+\]' (passed|failed) \([0-9.]+ seconds\)" "$label.log" | sed -E "s/^.*KriaTests\.([A-Za-z]+ [A-Za-z_0-9]+)\]' (passed|failed) \(([0-9.]+) seconds\)/\3 \2 \1/" | sort -rn | head -8
 echo "[$label] requests from an earlier test:"; grep -E "Requests from an earlier test|^  [0-9]+ during " "$label.log" | head -40 || true
 exit 0

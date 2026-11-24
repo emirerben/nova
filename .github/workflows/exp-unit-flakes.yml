@@ -26,40 +26,12 @@ jobs:
           SIM=$(xcrun simctl list devices available -j | /usr/bin/python3 scripts/exp-select-sim.py)
           echo "SIM=$SIM" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM" || true
-      - name: Fixes, the whole unit suite twice (counts requests left over from an earlier test)
+      - name: Fixes, the whole unit suite once, naming any test that hits the time limit
         if: ${{ !cancelled() }}
-        run: |
-          bash scripts/exp-unit.sh fix-suite-1 1 0
-          bash scripts/exp-unit.sh fix-suite-2 1 6
-      - name: Red control, the session's wait step returns at once (both new phone-render tests must fail)
+        run: bash scripts/exp-unit.sh fix-suite 1 0
+      - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
-        run: |
-          /usr/bin/python3 scripts/exp-patch.py control-nowait
-          bash scripts/exp-unit.sh control-nowait 1 0 DeviceRenderExecutionTests
-          git checkout HEAD -- src/apps/ios
-      - name: Red control, an automatic relink gets past Stop (the Stop tests must fail at their relink check)
-        if: ${{ !cancelled() }}
-        run: |
-          /usr/bin/python3 scripts/exp-patch.py control-relink
-          bash scripts/exp-unit.sh control-relink 1 0 $RENDER
-          git checkout HEAD -- src/apps/ios
-      - name: Red control, every request reaches the current fake server (the leftover-client test must fail with 2 is not equal to 1)
-        if: ${{ !cancelled() }}
-        run: |
-          /usr/bin/python3 scripts/exp-patch.py control-admit-all
-          bash scripts/exp-unit.sh control-admit-all 1 0 $ATOMIC
-          git checkout HEAD -- src/apps/ios
-      - name: Main's phone-render test with one background read held (must fail with the CI message, 1 is not equal to 2)
-        if: ${{ !cancelled() }}
-        run: |
-          git checkout "$(git merge-base HEAD origin/main)" -- src/apps/ios/Kria/Core/DeviceRenderSessions.swift src/apps/ios/Tests/KriaTests
-          git apply scripts/exp-kri1605-held-read.patch
-          bash scripts/exp-unit.sh main-held-read 1 0 DeviceRenderExecutionTests/testStopBeforeRetryAcknowledgementPausesReturnedIdentity
-          grep -h "REPRO" src/apps/ios/main-held-read.log | sort | uniq -c || true
-          git checkout HEAD -- src/apps/ios
-      - name: Main's tests, the four classes 60 times each, idle and with 6 busy processes
-        if: ${{ !cancelled() }}
-        run: |
-          git checkout "$(git merge-base HEAD origin/main)" -- src/apps/ios/Kria/Core/DeviceRenderSessions.swift src/apps/ios/Tests/KriaTests
-          bash scripts/exp-unit.sh main-idle 60 0 $RENDER $ATOMIC
-          bash scripts/exp-unit.sh main-busy 60 6 $RENDER $ATOMIC
+        with:
+          name: unit-logs
+          path: src/apps/ios/*.log
+          retention-days: 3
