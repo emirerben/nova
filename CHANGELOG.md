@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.89.112.0] - 2026-11-24
+
+### Changed
+- fix(kria): research captions work on a draft edited on the phone (KRI-1595) (#2480) <!-- release-pr: 2480 -->
+
 ## [0.89.111.0] - 2026-11-24
 
 ### Changed
