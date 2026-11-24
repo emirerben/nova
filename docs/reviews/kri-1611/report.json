@@ -1,7 +1,7 @@
 {
   "teardowns_version": "2026-11-24-kri-1610-1",
-  "environment": "host",
-  "skia": "144.0.post2",
+  "environment": "prod-image",
+  "skia": "144.1",
   "overall": "PASS",
   "failed": [],
   "wiring": [
@@ -34,13 +34,25 @@
       "expected": "no match",
       "observed": "0 match",
       "ok": true
+    },
+    {
+      "name": "approval_accepts_every_issued_pair_as_drawn",
+      "expected": "no pair refused",
+      "observed": "no pair refused",
+      "ok": true
+    },
+    {
+      "name": "unmeasured_take_never_keeps_a_dark_ink",
+      "expected": "light ink (luminance >= 0.5)",
+      "observed": "#FFFFFF (1.00)",
+      "ok": true
     }
   ],
   "sweep": {
-    "compiled": 197,
+    "compiled": 195,
     "declined": {
       "placement_unclean": 15,
-      "ink_off_zone": 4
+      "ink_off_zone": 6
     },
     "failed": []
   },
@@ -164,7 +176,7 @@
           "size_px": 114,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.1248,
+          "y_frac": 0.1238,
           "text_case": "upper"
         },
         {
@@ -173,7 +185,7 @@
           "size_px": 138,
           "color": "#8A1C1F",
           "effect": "ink-reveal",
-          "y_frac": 0.2371
+          "y_frac": 0.234
         }
       ],
       "placement": {
@@ -222,7 +234,7 @@
           "size_px": 105,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.156,
+          "y_frac": 0.1555,
           "text_case": "upper"
         },
         {
@@ -231,7 +243,7 @@
           "size_px": 128,
           "color": "#8A1C1F",
           "effect": "ink-reveal",
-          "y_frac": 0.2515
+          "y_frac": 0.2494
         }
       ],
       "placement": {
@@ -348,7 +360,7 @@
           "size_px": 100.0,
           "color": "#E6FF00",
           "effect": "fade-in",
-          "y_frac": 0.1188
+          "y_frac": 0.1182
         },
         {
           "text": "pinterest",
@@ -356,14 +368,14 @@
           "size_px": 250.0,
           "color": "#E6FF00",
           "effect": "ink-reveal",
-          "y_frac": 0.2015
+          "y_frac": 0.1995
         }
       ],
       "placement": {
         "status": "squeezed",
         "spot": "preset",
         "scale": 1.0,
-        "coverage": 0.0181,
+        "coverage": 0.00669,
         "lines": 2
       },
       "sound": "soft-pop",
@@ -413,7 +425,7 @@
           "size_px": 100.0,
           "color": "#E6FF00",
           "effect": "fade-in",
-          "y_frac": 0.1188
+          "y_frac": 0.1182
         },
         {
           "text": "kullanıyorum",
@@ -421,7 +433,7 @@
           "size_px": 250.0,
           "color": "#E6FF00",
           "effect": "ink-reveal",
-          "y_frac": 0.1904
+          "y_frac": 0.1888
         }
       ],
       "placement": {
@@ -699,7 +711,7 @@
           "size_px": 114,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.1248,
+          "y_frac": 0.1238,
           "text_case": "upper"
         },
         {
@@ -708,7 +720,7 @@
           "size_px": 138,
           "color": "#FFFFFF",
           "effect": "ink-reveal",
-          "y_frac": 0.2371
+          "y_frac": 0.234
         }
       ]
     },
@@ -762,7 +774,7 @@
           "size_px": 105,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.156,
+          "y_frac": 0.1555,
           "text_case": "upper"
         },
         {
@@ -771,7 +783,7 @@
           "size_px": 128,
           "color": "#8A1C1F",
           "effect": "ink-reveal",
-          "y_frac": 0.2515
+          "y_frac": 0.2494
         }
       ]
     },
@@ -823,7 +835,7 @@
           "size_px": 84,
           "color": "#8A1C1F",
           "effect": "ink-reveal",
-          "y_frac": 0.1782
+          "y_frac": 0.1787
         },
         {
           "text": "biggest design trend right now",
@@ -831,7 +843,7 @@
           "size_px": 90,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.2495
+          "y_frac": 0.2498
         }
       ],
       "pick": {
@@ -861,7 +873,7 @@
           "size_px": 84,
           "color": "#FFFFFF",
           "effect": "ink-reveal",
-          "y_frac": 0.1782
+          "y_frac": 0.1787
         },
         {
           "text": "biggest design trend right now",
@@ -869,7 +881,7 @@
           "size_px": 90,
           "color": "#FFFFFF",
           "effect": "fade-in",
-          "y_frac": 0.2495
+          "y_frac": 0.2498
         }
       ],
       "pick": {
@@ -899,7 +911,7 @@
           "size_px": 138,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.0937
+          "y_frac": 0.0927
         },
         {
           "text": "design trend",
@@ -907,7 +919,7 @@
           "size_px": 129,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.168
+          "y_frac": 0.1654
         },
         {
           "text": "right now",
@@ -915,7 +927,7 @@
           "size_px": 138,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.2416
+          "y_frac": 0.2374
         }
       ],
       "pick": {
@@ -945,7 +957,7 @@
           "size_px": 138,
           "color": "#FFFFFF",
           "effect": "fade-in",
-          "y_frac": 0.0937
+          "y_frac": 0.0927
         },
         {
           "text": "design trend",
@@ -953,7 +965,7 @@
           "size_px": 129,
           "color": "#FFFFFF",
           "effect": "fade-in",
-          "y_frac": 0.168
+          "y_frac": 0.1654
         },
         {
           "text": "right now",
@@ -961,7 +973,7 @@
           "size_px": 138,
           "color": "#FFFFFF",
           "effect": "fade-in",
-          "y_frac": 0.2416
+          "y_frac": 0.2374
         }
       ],
       "pick": {
@@ -1067,7 +1079,7 @@
           "size_px": 66,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.1128
+          "y_frac": 0.1117
         },
         {
           "text": "yılın",
@@ -1075,7 +1087,7 @@
           "size_px": 165,
           "color": "#8A1C1F",
           "effect": "ink-reveal",
-          "y_frac": 0.1799
+          "y_frac": 0.1784
         },
         {
           "text": "en büyük tasarım trendi şu an",
@@ -1083,7 +1095,7 @@
           "size_px": 66,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.2567
+          "y_frac": 0.2541
         }
       ],
       "pick": {
@@ -1113,7 +1125,7 @@
           "size_px": 66,
           "color": "#FFFFFF",
           "effect": "fade-in",
-          "y_frac": 0.1128
+          "y_frac": 0.1117
         },
         {
           "text": "yılın",
@@ -1121,7 +1133,7 @@
           "size_px": 165,
           "color": "#FFFFFF",
           "effect": "ink-reveal",
-          "y_frac": 0.1799
+          "y_frac": 0.1784
         },
         {
           "text": "en büyük tasarım trendi şu an",
@@ -1129,7 +1141,7 @@
           "size_px": 66,
           "color": "#FFFFFF",
           "effect": "fade-in",
-          "y_frac": 0.2567
+          "y_frac": 0.2541
         }
       ],
       "pick": {
@@ -1255,7 +1267,7 @@
           "size_px": 129,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.0916
+          "y_frac": 0.0911
         },
         {
           "text": "en büyük tasarım trendi şu an",
@@ -1263,7 +1275,7 @@
           "size_px": 138,
           "color": "#8A1C1F",
           "effect": "slide-up",
-          "y_frac": 0.2119
+          "y_frac": 0.2098
         }
       ],
       "pick": {
@@ -1293,7 +1305,7 @@
           "size_px": 129,
           "color": "#FBF1D8",
           "effect": "fade-in",
-          "y_frac": 0.0916
+          "y_frac": 0.0911
         },
         {
           "text": "en büyük tasarım trendi şu an",
@@ -1301,7 +1313,7 @@
           "size_px": 138,
           "color": "#FBF1D8",
           "effect": "slide-up",
-          "y_frac": 0.2119
+          "y_frac": 0.2098
         }
       ],
       "pick": {
@@ -1334,7 +1346,7 @@
           "size_px": 84,
           "color": "#8A1C1F",
           "effect": "ink-reveal",
-          "y_frac": 0.1782
+          "y_frac": 0.1787
         },
         {
           "text": "biggest design trend right now",
@@ -1342,7 +1354,7 @@
           "size_px": 90,
           "color": "#8A1C1F",
           "effect": "fade-in",
-          "y_frac": 0.2495
+          "y_frac": 0.2498
         }
       ],
       "pick": {

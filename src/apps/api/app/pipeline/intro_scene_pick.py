@@ -34,8 +34,14 @@ the `make verify-intro-scenes` picks section):
 * P7: the Turkish title lacks glyphs or caps wrong. `issue_menu` filters faces by coverage and
   the row carries ``text_language`` ("trendi" -> "TRENDİ").
 * P8: more than one ink, or ink invisible on the footage. One ink per scene, chosen on the
-  sampled frames; her own colour is never overwritten.
+  sampled frames; her own colour is never overwritten. With nothing measured (no frames, no
+  reading) the first LIGHT ink of the pinned order stands, never a dark one.
 * P9: the approval check refuses a stack of her title (`phone_title_look.stacked_title_matches`).
+  The caps pairs draw her lowercase words in capitals, so the check compares without case
+  (`_case_blind`, Turkish-safe). Guard: tests/tasks/test_intro_scene_worker.py (real worker).
+* P10: her whole-title edit leaves old scene lines or repeats the new title per line. A rewrite
+  that hits every line of a stack makes line 1 the one plain title and drops the rest
+  (`phone_title_look.collapse_title_look`); one line edited stays one line.
 """
 
 from __future__ import annotations
@@ -58,6 +64,7 @@ MAX_ATTEMPTS = 9  # compiles + real placements per render, across candidates and
 RECENT_LIMIT = 4
 _MAX_ACCENT_WORDS = 3
 _MIN_INK_CONTRAST = 4.5
+_LIGHT_INK_LUMINANCE = 0.5  # the ink to trust when the take was not measured
 INTRO_INKS_PARAM = "intro_inks"
 # Explicit text asks that put the creator above a generated look (`requested` roles and
 # `preferences` roles of the pinned phone text policy).
@@ -327,8 +334,10 @@ def intro_ink_pass(
     rows: list[dict[str, Any]], frames: Sequence[Any], *, canvas: Any
 ) -> list[dict[str, Any]]:
     """One ink for the whole scene: the first of the pinned order that reads (4.5:1) under every
-    row on the sampled take frames, else the best reading. Rows she coloured stay as they are;
-    with no frames the pinned first ink stands. Never raises."""
+    row on the sampled take frames, else the best reading. Rows she coloured stay as they are.
+    With nothing measured (no frames, or no reading) the first LIGHT ink of the order stands, as
+    today's white title does, never a pinned dark ink that may sit on a dark take. Never
+    raises."""
     from app.pipeline import caption_legibility as legibility  # noqa: PLC0415
     from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
     from app.pipeline.phone_title_look import TITLE_LOOK_PARAM  # noqa: PLC0415
@@ -339,31 +348,40 @@ def intro_ink_pass(
         return [i for i in found if i in scene_mod.INKS] if isinstance(found, list) else []
 
     scene_rows = [row for row in rows if inks_of(row)]
-    if not scene_rows or not frames:
+    if not scene_rows:
         return rows
     try:
         order = inks_of(scene_rows[0])
-        boxes = []
-        for row in scene_rows:
-            box = title_mod._measure_title_box(row, canvas=canvas)
-            under = [
-                f
-                for f in frames
-                if f.start_s < float(row["end_s"]) and float(row["start_s"]) < f.end_s
-            ]
-            boxes.append(((box.left, box.top, box.right, box.bottom), under))
         scored: list[tuple[str, float]] = []
-        for name in order:
-            fill = scene_mod.INKS[name]
-            readings = [legibility.worst_contrast(fill, box, under) for box, under in boxes]
-            known = [r for r in readings if r is not None]
-            scored.append((name, min(known) if known else 0.0))
-        if not any(score for _, score in scored):
-            return rows
-        chosen = next(
-            (name for name, score in scored if score >= _MIN_INK_CONTRAST),
-            max(scored, key=lambda item: item[1])[0],
-        )
+        if frames:
+            boxes = []
+            for row in scene_rows:
+                box = title_mod._measure_title_box(row, canvas=canvas)
+                under = [
+                    f
+                    for f in frames
+                    if f.start_s < float(row["end_s"]) and float(row["start_s"]) < f.end_s
+                ]
+                boxes.append(((box.left, box.top, box.right, box.bottom), under))
+            for name in order:
+                fill = scene_mod.INKS[name]
+                readings = [legibility.worst_contrast(fill, box, under) for box, under in boxes]
+                known = [r for r in readings if r is not None]
+                scored.append((name, min(known) if known else 0.0))
+        if any(score for _, score in scored):
+            chosen = next(
+                (name for name, score in scored if score >= _MIN_INK_CONTRAST),
+                max(scored, key=lambda item: item[1])[0],
+            )
+        else:
+            chosen = next(
+                (
+                    name
+                    for name in order
+                    if legibility.relative_luminance(scene_mod.INKS[name]) >= _LIGHT_INK_LUMINANCE
+                ),
+                "white",
+            )
         fill = scene_mod.INKS[chosen]
         out = []
         for row in rows:

@@ -408,12 +408,36 @@ def test_ink_is_light_on_a_dark_take_and_dark_on_a_light_one():
     assert dark[0]["color"] != light[0]["color"]
 
 
-def test_ink_stands_without_frames_and_never_touches_other_rows():
+def _dark_first_rows():
+    ask = _stamped()
+    ask = {**ask, "inks": ["oxblood", *[i for i in ask["inks"] if i != "oxblood"]]}
+    rows, _receipt, info = _fit(ask, EN, _place_with())
+    assert rows is not None, info
+    assert rows[0]["color"] == scene_mod.INKS["oxblood"]
+    return rows
+
+
+@pytest.mark.parametrize("frames", [[], None], ids=["no-frames", "no-reading"])
+def test_an_unmeasured_take_never_keeps_a_dark_first_ink(frames, monkeypatch):
+    """Nothing was sampled (proxy download failed, budget spent) or nothing read: the pinned
+    first ink is not known to read, so the scene takes the first LIGHT ink, as today's white."""
+    from app.pipeline import caption_legibility as legibility
+
+    if frames is None:
+        monkeypatch.setattr(legibility, "worst_contrast", lambda *a, **k: None)
+        frames = _frames(20)
+    out = pick.intro_ink_pass(_dark_first_rows(), frames, canvas=PORTRAIT)
+    colors = {row["color"] for row in out}
+    assert len(colors) == 1  # still one ink for the whole scene
+    assert legibility.relative_luminance(colors.pop()) >= 0.5
+
+
+def test_ink_never_touches_other_rows_or_hers():
     rows = _scene_rows()
-    assert pick.intro_ink_pass(rows, [], canvas=PORTRAIT) == rows
     other = {"id": "caption-1", "text": "x", "color": "#123456", "start_s": 0, "end_s": 1}
     out = pick.intro_ink_pass([*rows, other], _frames(20), canvas=PORTRAIT)
     assert out[-1] == other
+    assert pick.intro_ink_pass([other], [], canvas=PORTRAIT) == [other]  # no scene: untouched
 
 
 def test_a_creator_edit_to_a_scene_row_stays_hers():

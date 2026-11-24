@@ -164,17 +164,59 @@ def intro_plain_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
     return " ".join(str(row.get("text") or "") for row in look_rows)
 
 
+def title_look_line_ids(bar_ids: Sequence[str]) -> list[str]:
+    """The ids a stacked title's lines carry (`opening-title`, `opening-title-line-N`), in the
+    order given. A whole-title edit addresses every one of them."""
+    first = title_mod.TALKING_TITLE_ELEMENT_ID
+    return [i for i in bar_ids if i == first or i.startswith(f"{first}-line-")]
+
+
+def collapse_title_look(
+    live: Sequence[dict[str, Any]], targeted: Sequence[dict[str, Any]]
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """A whole-title text rewrite of a stacked title (KRI-1611 review: an intro scene's lines or
+    her typed " / " stack). ``live`` are every live row; ``targeted`` the rows the edit hit.
+
+    Only when the edit hits EVERY line of one stack does it mean "this is the title now": the
+    first line becomes her one plain row (she typed those words, so no generated capitals or
+    scene styling decide how they read) and the other lines are returned to be removed. Hitting
+    some lines is a line edit and returns ``None``, as does any title that is not a stack."""
+    look = [row for row in live if is_title_look_row(row)]
+    hit = {id(row) for row in targeted}
+    if len(look) < 2 or any(id(row) not in hit for row in look):
+        return None
+    look.sort(key=lambda row: int(_look_params(row).get("line") or 0))  # type: ignore[union-attr]
+    first, rest = look[0], look[1:]
+    params = dict(first.get("source_params") or {})
+    params[TITLE_LOOK_PARAM] = {"line": 1, "lines": 1, "style": "plain"}
+    first["source_params"] = params
+    first.pop("text_case", None)
+    return first, rest
+
+
+_TURKISH_I = str.maketrans({"İ": "i", "I": "i", "ı": "i"})
+
+
+def _case_blind(value: object) -> str:
+    """``normalize_text`` without letter case, Turkish-safe: a caps face draws "bu yılın" as
+    "BU YILIN" and "trendi" as "TRENDİ", and no stock casefold maps those back ("İ" lowers to
+    "i" plus a combining dot). The dotted and dotless i all read as "i" here."""
+    return normalize_text(value).translate(_TURKISH_I).casefold()
+
+
 def _intro_stack_matches(
     pool: Sequence[Mapping[str, Any]], wanted: str, *, tolerance_s: float
 ) -> list[dict]:
     """KRI-1611: ``wanted`` (her slashless title) drawn as an intro scene's stacked lines: 2-5
     rows shown together (their start and end within ``tolerance_s``), strictly top to bottom,
     that read as exactly her words in order. A recipe layer carries no element id, so this reads
-    text, time and ``anchor_y`` only, like the typed-stack check."""
-    target = normalize_text(re.sub(r"\s+/\s+", " ", wanted))
+    text, time and ``anchor_y`` only, like the typed-stack check. Case is style: the scene's
+    caps faces draw her lowercase words in capitals (`text_case`), so the words are compared
+    without it; spelling, order and spacing still must match."""
+    target = _case_blind(re.sub(r"\s+/\s+", " ", wanted))
     timed: list[tuple[float, float, float, Mapping[str, Any]]] = []
     for row in pool:
-        text = normalize_text(row.get("text", ""))
+        text = _case_blind(row.get("text", ""))
         if not text or text not in target:
             continue
         try:
@@ -192,7 +234,7 @@ def _intro_stack_matches(
                 continue
             if max(starts) - min(starts) > tolerance_s or max(ends) - min(ends) > tolerance_s:
                 continue
-            if normalize_text(" ".join(str(item[3].get("text", "")) for item in window)) != target:
+            if _case_blind(" ".join(str(item[3].get("text", "")) for item in window)) != target:
                 continue
             return [
                 {

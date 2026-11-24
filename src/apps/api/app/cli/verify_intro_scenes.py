@@ -223,6 +223,46 @@ def _place(rows: list[dict[str, Any]], position: str | None) -> tuple[list[dict]
     return scene_mod.place_on_typical_face(rows, position, PORTRAIT)
 
 
+def approval_matches(rows: list[dict[str, Any]], title: str) -> list[dict[str, Any]]:
+    """The approval check on what the phone is told to draw: the rows compiled to text layers the
+    way the Talking recipe does (`_compile_text_lane`: capitals applied), read back as
+    `verify_phone_recipe` reads layers (NFC text per baseline, `text-N` ids, `anchor_y`), then
+    matched like its opening-title requirement. Reading the rows' own text instead hid the
+    all-caps pairs (review round 2); tests/tasks/test_intro_scene_worker.py runs the real call."""
+    import unicodedata  # noqa: PLC0415
+
+    from app.pipeline.cloud_render_evidence import normalize_text  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _compile_text_lane  # noqa: PLC0415
+    from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
+    from app.pipeline.sequence_text_evidence import text_matches  # noqa: PLC0415
+
+    layers = _compile_text_lane(rows, user_edited=False, timeline_duration_s=30.0)
+    evidence = []
+    for layer in layers:
+        lines: list[list[str]] = []
+        baseline = None
+        for run in layer.runs:
+            text = unicodedata.normalize("NFC", run.text)
+            if baseline is None or abs(run.baseline_y - baseline) > 0.001:
+                lines.append([text])
+                baseline = run.baseline_y
+            else:
+                lines[-1].append(text)
+        evidence.append(
+            {
+                "element_id": layer.id,
+                "text": normalize_text("\n".join("".join(line) for line in lines)),
+                "start_s": layer.start,
+                "end_s": layer.end,
+                "anchor_y": layer.anchor_y,
+            }
+        )
+    frame = 1 / 30
+    return text_matches(evidence, title, role="opening", tolerance_s=frame) or (
+        stacked_title_matches(evidence, title, tolerance_s=frame)
+    )
+
+
 # --- the cases ----------------------------------------------------------------------------
 
 
@@ -443,6 +483,9 @@ def _pick_case(title: str, language: str, seed: str, kind: str, *, force_ink: st
         sound="none",
     )
     verdict, reasons, frame = verify_rows(rows, receipt, face=FACE_BOX, scene=scene, footage=kind)
+    if not approval_matches(rows, title):
+        verdict = "FAIL"
+        reasons = [*reasons, "the approval check does not find her title in the drawn layers"]
     return _case(
         {
             **base,
@@ -477,8 +520,6 @@ def pick_cases() -> list[dict[str, Any]]:
 
 def wiring_controls() -> list[dict[str, Any]]:
     """Checks on the pick's own contract. Each names what it expects and what it saw."""
-    from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
-
     language, title = PICK_TITLES[0]
     out: list[dict[str, Any]] = []
 
@@ -523,26 +564,81 @@ def wiring_controls() -> list[dict[str, Any]]:
 
     _ask, rows, receipt, _info = _fit_pick(title, language, PICK_SEEDS[0], "light_wall")
     assert rows is not None
-    evidence = [
-        {
-            "element_id": f"text-{i}",
-            "text": row["text"],
-            "start_s": row["start_s"],
-            "end_s": row["end_s"],
-            "anchor_y": row["y_frac"],
-        }
-        for i, row in enumerate(rows)
-    ]
-    accepted = stacked_title_matches(evidence, title, tolerance_s=0.05)
+    accepted = approval_matches(rows, title)
     check(
         "approval_accepts_her_title_as_a_stack",
         "1 match",
         f"{len(accepted)} match",
         len(accepted) == 1,
     )
-    wrong = [{**evidence[0], "text": evidence[0]["text"] + "s"}, *evidence[1:]]
-    refused = stacked_title_matches(wrong, title, tolerance_s=0.05)
-    check("approval_refuses_a_changed_word", "no match", f"{len(refused)} match", not refused)
+    changed = approval_matches(rows, title + "s")
+    check("approval_refuses_a_changed_word", "no match", f"{len(changed)} match", not changed)
+
+    # Every issued pair, both languages, as drawn: the caps pairs once hid behind row text.
+    refused: list[str] = []
+    for lang, pair_title in PICK_TITLES:
+        menu = scene_mod.issue_menu(pair_title)
+        for pair in menu.font_pairs:
+            pair_ask = {
+                "version": pick_mod.INTRO_SCENE_VERSION,
+                "seed": "pairs",
+                "inks": list(scene_mod.INKS),
+                "candidates": [
+                    {
+                        "voices": list(pick_mod.accent_splits(pair_title)[0]),
+                        "font_pair": pair,
+                        "entrance": menu.entrances_for(pair)[0],
+                        "zones": list(scene_mod.ZONES),
+                    }
+                ],
+            }
+            pair_rows, _r, _i = pick_mod.fit_intro_scene(
+                pair_ask,
+                pair_title,
+                canvas=PORTRAIT,
+                timeline_duration_s=30.0,
+                duration_s=None,
+                language=pick_mod.language_of(pair_title, lang),
+                place=_place,
+            )
+            if pair_rows is None:
+                continue  # the face-fit declined this pair on the typical speaker: today's rows
+            if not approval_matches(pair_rows, pair_title):
+                refused.append(f"{lang}:{pair}")
+    check(
+        "approval_accepts_every_issued_pair_as_drawn",
+        "no pair refused",
+        ", ".join(refused) or "no pair refused",
+        not refused,
+    )
+
+    # Nothing measured on the take: the scene takes a light ink, never a pinned dark one.
+    from app.pipeline import caption_legibility as legibility  # noqa: PLC0415
+
+    dark_first = {
+        "version": pick_mod.INTRO_SCENE_VERSION,
+        "seed": "u",
+        "inks": ["oxblood", "white", "cream", "butter", "chartreuse"],
+        "candidates": pick_mod.pick_candidates(title, seed="u"),
+    }
+    unmeasured, _r, _i = pick_mod.fit_intro_scene(
+        dark_first,
+        title,
+        canvas=PORTRAIT,
+        timeline_duration_s=30.0,
+        duration_s=None,
+        language=None,
+        place=_place,
+    )
+    assert unmeasured is not None
+    unmeasured = pick_mod.intro_ink_pass(unmeasured, [], canvas=PORTRAIT)
+    luminance = legibility.relative_luminance(unmeasured[0]["color"])
+    check(
+        "unmeasured_take_never_keeps_a_dark_ink",
+        "light ink (luminance >= 0.5)",
+        f"{unmeasured[0]['color']} ({luminance:.2f})",
+        luminance >= 0.5,
+    )
     return out
 
 

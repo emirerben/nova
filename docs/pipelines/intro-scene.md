@@ -74,3 +74,16 @@ Check: `tests/pipeline/test_intro_scene_pick.py` and the picks / wiring section 
 Not covered: a lower-third zone, ref 2's folder sticker and refs 3, 4, 5's extras (KRI-1613, 1615,
 1616, 1618), phone-build font support and per-footage ink (KRI-1619). The realized pick is not
 written back, so "recent looks" are the first stamped candidate of each earlier job.
+
+## Review round 2 (KRI-1611)
+
+* **Caps pairs and approval**: `grotesk_hand` and `grotesk_pen` set `text_case: upper`, so the
+  compiled layer reads "BU YILIN". `_intro_stack_matches` compares case-blind (dotted and dotless i
+  fold to i); spelling, order and spacing still must match.
+* **Unmeasured ink**: with no sampled frames or no reading, `intro_ink_pass` takes the first light
+  ink of the pinned order (as today's white title), never a dark first pick.
+* **Title edits**: a manual Review Plan title edit addresses every line (`_title_ids`), and
+  `op_rewrite_text` turns a rewrite of all lines of a stack into one plain row. This also fixes the
+  same shape for her typed " / " stacks.
+* **Evidence**: `make verify-intro-scenes` (prod image) now reads the compiled text layers and
+  checks every issued pair in EN and TR.

@@ -556,6 +556,19 @@ def edit_section(
     raise ManualEditTargetMissing(target)
 
 
+def _title_ids(target: str, bars: list[dict[str, Any]]) -> list[str]:
+    """The ids a manual text edit addresses. The Review Plan shows a stacked title (an intro
+    scene's lines, her typed stack) as ONE field on its first line's id, so editing it means
+    every line of it (`op_rewrite_text` then makes line 1 the whole new title)."""
+    from app.pipeline.phone_subtitled_title import TALKING_TITLE_ELEMENT_ID  # noqa: PLC0415
+    from app.pipeline.phone_title_look import title_look_line_ids  # noqa: PLC0415
+
+    if target != TALKING_TITLE_ELEMENT_ID:
+        return [target]
+    live = [str(b.get("id")) for b in bars if not b.get("removed")]
+    return title_look_line_ids(live) or [target]
+
+
 def manual_edits_to_ops(edits: list[ManualEdit], snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     """Translate manual edits into the copilot's own op vocabulary (parsed afterwards by the
     SAME coercion the model's ops go through)."""
@@ -581,7 +594,13 @@ def manual_edits_to_ops(edits: list[ManualEdit], snapshot: dict[str, Any]) -> li
                 # Caption/narration bars are owned by the caption lane, never by selectors.
                 ops.append({"op": "edit_text", "bar_index": index, "text": edit.text})
             else:
-                ops.append({"op": "rewrite_text", "selector": {"ids": [target]}, "text": edit.text})
+                ops.append(
+                    {
+                        "op": "rewrite_text",
+                        "selector": {"ids": _title_ids(target, bars)},
+                        "text": edit.text,
+                    }
+                )
             continue
         cue_index = next((i for i, c in enumerate(cues) if str(c.get("id")) == target), None)
         if cue_index is None:
