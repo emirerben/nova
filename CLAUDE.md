@@ -43,7 +43,7 @@ Rules:
 - Frontend: Next.js (src/apps/web/) — **frozen**; the web editor was removed (KRI-1398). Only landing, privacy/terms, /admin, and assets the iOS build reads (`public/fonts`, `public/plan/type-posters`, `public/landing/raw-story`) remain. Restore old code from branch `archive/web-editor-2026-11` (commit `560f1f3`).
 - Native: SwiftUI + AVFoundation (src/apps/ios/) — iOS 18, XcodeGen
 - Backend: Python FastAPI + Celery (src/apps/api/) — video processing pipeline
-- Queue: Redis (job queue for async processing)
+- Queue: Redis (async jobs)
 - Storage: GCS or S3 — raw uploads + processed outputs NEVER in git
 - DB: PostgreSQL (job metadata, user state)
 
@@ -71,13 +71,13 @@ cp .env.example .env            # fill in values
 ./scripts/dev-auto.sh            # single-command dev env with hot reload
 ```
 
-`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually (hot reload). Stop with `./scripts/dev-stop.sh`. A plan stuck in `generating` after a worker crash: `python3 scripts/dev/reset-stuck-plans.py` (local-only).
+`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs: `.dev/<service>.log`. Never restart servers manually (hot reload). Stop with `./scripts/dev-stop.sh`. A plan stuck in `generating` after a worker crash: `python3 scripts/dev/reset-stuck-plans.py` (local-only).
 
 Alternatives:
-- `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis already running
-- `docker-compose up` — full stack in containers; rarely needed since native is faster
+- `./scripts/dev-no-docker.sh` — same flow, postgres@16 + redis already running
+- `docker-compose up` — full stack in containers; rarely needed
 
-Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) deployed to Fly.io. Note: `src/apps/api/Dockerfile` and `src/apps/web/Dockerfile` are only referenced by docker-compose.
+Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) deployed to Fly.io; `src/apps/api/Dockerfile` and `src/apps/web/Dockerfile` are docker-compose only.
 
 ### Local sign-in (dev-login)
 Localhost sign-in bypasses Google consent via the `dev-login` NextAuth provider, gated behind `ALLOW_DEV_LOGIN=true` + `INTERNAL_API_KEY` in the repo-root `.env` (works in every worktree; `dev-auto.sh` sources it). NEVER set `ALLOW_DEV_LOGIN` in Vercel/Fly. Setup + gotchas: `docs/runbooks/local-dev-login.md`.
@@ -120,8 +120,8 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 
 ## Domain context
 - Target output: 9:16 aspect ratio, sub-60s, H.264/AAC, 1080x1920
-- Hook window: first 2-3 seconds must create a question in the viewer's mind
-- Processing is ASYNC — a 5-min source video takes 2-5 min to process
+- Hook window: the first 2-3 seconds must raise a question
+- Processing is ASYNC: a 5-min source takes 2-5 min
 - Jobs polled via GET /jobs/:id/status or websocket
 - Read agents/VIDEO_CONTEXT.md for full video domain context and FFmpeg patterns
 - Read agents/DECISIONS.md for why key choices were made
@@ -211,10 +211,11 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — `false`; speech paths only, fail-open. **"cleanup cut a word" is a guard bug, not this lever.** Runbook: `docs/runbooks/chat-speech-cleanup-rollout.md` (fingerprint levers: DECISIONS.md "CLAUDE.md flag detail"); pins `test_silence_cut*.py`; plans/010/019/021.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — `false`. 2+-clip self-narration renders on the phone. `docs/reviews/kri-132/phone-format-matrix.md`.
 - `USER_SONG_MONTAGE_ENABLED` — default `true` (KRI-374). Creator song montages; off hides `media.song` + refuses `user_song`. Needs `musicBed`+`audioMix` verified. Apply: fly secret `…=false` (api+worker) + restart; `phone-rendering.md`. Same for `SONG_CAPTIONS_ENABLED` (lyrics) and `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT` (unasked = hidden).
-- `KRIA_INTENT_REVIEW_ENABLED` / `_PAID_ENABLED` / `_REPAIR_ENABLED` / `_USER_IDS` — off / `[]` (KRI-1171): paid frame review of the finished video; a repair needs the creator's Approve tap. A child flag needs its parent; tier decided only in `kria/intent_review_tier.py`. Also `_MAX_USD`, `_CANARY_ID`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD`. Runbook: `docs/runbooks/intent-review-rollout.md`.
+- `KRIA_INTENT_REVIEW_ENABLED` / `_PAID_ENABLED` / `_REPAIR_ENABLED` / `_USER_IDS` — off / `[]` (KRI-1171): paid frame review of the finished video; a repair needs the creator's Approve tap. A child flag needs its parent; tier decided only in `kria/intent_review_tier.py`. Also `_MAX_USD`, `_CANARY_ID`, `AI_OPENAI_INTENT_REVIEW_BUDGET_USD`. `docs/runbooks/intent-review-rollout.md`.
 - `CAPTION_ANIMATION_ENABLED` — default `true` (KRI-1007): caption entrance/exit/loop (protocol 24, `authoredText`); off = old captions. `phone-rendering.md`.
 - `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; token/protocol: `speakerBackground` 27, `speakerBackgroundWindows` 32, `speakerBackgroundColor` 34. `docs/pipelines/speaker-background.md`.
 - `MEDIA_TILT_ENABLED` — default **`false`** (KRI-1134). Clip tilt + backdrop; needs `clipTilt` verified + protocol ≥28. phone-rendering.md.
+- `CLIP_DIM_ENABLED` — default **`false`**. Phone-only clip/photo dim under text; needs `clipDim` verified + `CLIP_DIM_PROTOCOL`. phone-rendering.md.
 - `COLOR_MOMENTS_ENABLED` — default **`false`** (KRI-1350). Chat-set B&W/warm/faded windows, flash/dip edges, end fade; needs `colorMoments` verified + protocol ≥48. phone-rendering.md.
 - `INFORMATIVE_TEXT_DESIGNS_ENABLED` — default `false` (KRI-1585): hook/research roles, creator > design > prefs styles; stamped per job. Guard: `test_kri1579_creator_edits_win.py`.
 - `CREATOR_EDITORIAL_TASTE_ENABLED` / `_USER_IDS` — `false` / `[]` (`["*"]` = all accounts; ENABLED = kill switch). `docs/runbooks/editorial-taste-calibration.md`.
@@ -251,7 +252,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - Production URL: https://nova-video.vercel.app
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
-- Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
+- Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it ships your local tree to production. Emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
 - Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD).
 - **`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD` are MANDATORY.** They gate `/admin/*` and `/api/admin/*` via `src/apps/web/src/middleware.ts`. Without them, every admin page returns 503 — fail-closed by design.
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)

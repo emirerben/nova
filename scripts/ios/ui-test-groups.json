@@ -30,6 +30,7 @@
     "NativeSourceWindowUITests": "editor",
     "NativeSpeedUITests": "editor",
     "NativeTalkingRangeUITests": "editor",
+    "NativeDimUITests": "editor",
     "NativeTiltUITests": "editor",
     "NativeUpdateRequiredUITests": "projects",
     "ObjectMarkUITests": "creation",

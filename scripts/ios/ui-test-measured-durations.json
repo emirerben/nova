@@ -183,6 +183,8 @@
   "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector": 60.9,
   "KriaUITests/NativeTalkingRangeUITests/testClosedLeafKeepsRangeVisibleAndSaysWhy": 17.8,
   "KriaUITests/NativeTalkingRangeUITests/testRangeOnATalkingSegmentSavesAndReopensWithTheSavedWindow": 46.6,
+  "KriaUITests/NativeDimUITests/testDimHalfApplyToAllRemoveOneSaveAndReopen": 80.4,
+  "KriaUITests/NativeDimUITests/testDimIsHiddenWhereTheServerDoesNotOfferIt": 8.0,
   "KriaUITests/NativeTiltUITests/testNudgeMovesTheDialClockwiseAndCounterClockwiseByOneDegree": 18.6,
   "KriaUITests/NativeTiltUITests/testPhotoOrVideoBackgroundIsPickedShownAndResetToBlank": 41.1,
   "KriaUITests/NativeTiltUITests/testPhotoOrVideoIsOfferedOnlyWhereTheServerListsIt": 14.0,
