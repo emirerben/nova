@@ -2413,6 +2413,20 @@ class Settings(BaseSettings):
         "so a flip re-analyzes. Kill switch: `fly secrets set "
         "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker restart.",
     )
+    speech_cleanup_stretched_pairs_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup stretched-pair fix (KRI-1627, Cusco T3). whisper-1 can stretch "
+        "BOTH the tail of the word before a pause and the head of the word after it into the "
+        "pause, so the stamps meet inside it and rule 3 never sees it (\"Dağları'nın … "
+        'bayırlarında", a 1.65 s mid-sentence pause kept). On (and with '
+        "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED): the preflight analysis trims both stamps to "
+        "the silence edges, only when the KRI-1017 voicing detector hears the whole pause "
+        "voiceless, the previous voice ending and the next voice starting right at its edges "
+        "(app/pipeline/late_word_realign.py). Off is byte-identical to the stretched-word fix. "
+        "Part of the source policy fingerprint, so a flip re-analyzes. Kill switch: `fly secrets "
+        "set SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED=false --app nova-video` + api and worker "
+        "restart.",
+    )
 
     speech_cleanup_aligner_model_dir: str = Field(
         default="/opt/models/wav2vec2-base-960h",
