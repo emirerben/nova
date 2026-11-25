@@ -8072,6 +8072,57 @@
         }
       }
     },
+    "Bold + handwritten" : {
+      "comment" : "Intro style name: a bold sans with a handwritten accent",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fett + Handschrift"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kalın + el yazısı"
+          }
+        }
+      }
+    },
+    "Bold + loop script" : {
+      "comment" : "Intro style name: a bold sans with a looping script accent",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fett + Schleifenschrift"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kalın + kıvrımlı yazı"
+          }
+        }
+      }
+    },
+    "Bold + marker" : {
+      "comment" : "Intro style name: a bold sans with a marker accent",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fett + Marker"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kalın + kalem"
+          }
+        }
+      }
+    },
     "Both apps" : {
       "localizations" : {
         "de" : {
@@ -11950,6 +12001,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu, iCloud'dan zamanında indirilemedi. Wi-Fi'da tekrar dene."
+          }
+        }
+      }
+    },
+    "Couldn't load intro styles. Tap to try again." : {
+      "comment" : "Intro styles: the request failed; tapping retries",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intro-Stile konnten nicht geladen werden. Tippe, um es erneut zu versuchen."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giriş stilleri yüklenemedi. Tekrar denemek için dokun."
           }
         }
       }
@@ -18704,6 +18772,57 @@
         }
       }
     },
+    "Intro styles" : {
+      "comment" : "Editor panel title: fitted looks for the title",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intro-Stile"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giriş stilleri"
+          }
+        }
+      }
+    },
+    "Intro styles aren't available for this video." : {
+      "comment" : "Intro styles: not offered for this video",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intro-Stile sind für dieses Video nicht verfügbar."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu video için giriş stilleri yok."
+          }
+        }
+      }
+    },
+    "Intro styles need a title of two or more words." : {
+      "comment" : "Intro styles: the title is one word",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intro-Stile brauchen einen Titel mit mindestens zwei Wörtern."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giriş stilleri için başlık en az iki kelime olmalı."
+          }
+        }
+      }
+    },
     "Invalid email or password." : {
       "localizations" : {
         "de" : {
@@ -21456,6 +21575,23 @@
         }
       }
     },
+    "Loading intro styles" : {
+      "comment" : "VoiceOver: intro style tiles are loading",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intro-Stile werden geladen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giriş stilleri yükleniyor"
+          }
+        }
+      }
+    },
     "Loading more…" : {
       "localizations" : {
         "de" : {
@@ -23802,6 +23938,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu etkinlikte henüz fikir bulunamadı. Bir yön eklemeyi dene."
+          }
+        }
+      }
+    },
+    "No intro style" : {
+      "comment" : "Intro styles: the option that restores the plain title",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Intro-Stil"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giriş stili yok"
+          }
+        }
+      }
+    },
+    "No intro style fits this video yet." : {
+      "comment" : "Intro styles: no look fits this video",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für dieses Video passt noch kein Intro-Stil."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu videoya uyan bir giriş stili yok."
           }
         }
       }
@@ -33825,6 +33995,40 @@
         }
       }
     },
+    "Serif + italic" : {
+      "comment" : "Intro style name: a serif with an italic accent",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Serif + Kursiv"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Serif + italik"
+          }
+        }
+      }
+    },
+    "Serif + script" : {
+      "comment" : "Intro style name: a serif with an elegant script accent",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Serif + Schreibschrift"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Serif + zarif yazı"
+          }
+        }
+      }
+    },
     "Set" : {
       "localizations" : {
         "de" : {
@@ -35168,6 +35372,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Smoky Split-Tone"
+          }
+        }
+      }
+    },
+    "Soft serif" : {
+      "comment" : "Intro style name: one soft serif",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weiche Serif"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yumuşak serif"
           }
         }
       }
@@ -36972,6 +37193,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stil"
+          }
+        }
+      }
+    },
+    "Style %lld" : {
+      "comment" : "Intro style name for a look this build has no name for; the number is its place in the list",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil %lld"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stil %lld"
           }
         }
       }
@@ -43800,6 +44038,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Başka bir kelime dene ya da aramayı temizle."
+          }
+        }
+      }
+    },
+    "Try intro styles" : {
+      "comment" : "Editor: opens fitted looks for the title",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Intro-Stile ausprobieren"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giriş stillerini dene"
           }
         }
       }

@@ -145,6 +145,8 @@ targets:
         buildPhase: resources
       - path: Tests/Fixtures/speech_editor_projection.json
         buildPhase: resources
+      - path: Tests/Fixtures/KRI1633IntroStyles.json
+        buildPhase: resources
     dependencies:
       - target: Kria
     settings:

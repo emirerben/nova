@@ -1,0 +1,2720 @@
+{
+ "_comment": "Stand-in for the backend-generated fixture (KRI-1633 backend PR owns the real one; same keys). Hand-assembled from the wire contract, not server-generated.",
+ "editor_talking_en": {
+  "editor_capabilities": {
+   "intro_styles": true,
+   "text_elements": {
+    "editable": true
+   }
+  },
+  "render_destination": "device",
+  "text_elements": [
+   {
+    "id": "opening-title",
+    "text": "How I spend my mornings",
+    "start_s": 0.0,
+    "end_s": 3.0,
+    "role": "generative_intro",
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.15,
+    "size_class": "large",
+    "size_px": 96,
+    "font_family": "Playfair Display",
+    "effect": "fade-in",
+    "color": "#FFFFFF",
+    "source_params": {
+     "source": "opening_title"
+    }
+   }
+  ]
+ },
+ "editor_montage_tr": {
+  "editor_capabilities": {
+   "intro_styles": true,
+   "text_elements": {
+    "editable": true
+   }
+  },
+  "render_destination": "device",
+  "text_elements": [
+   {
+    "id": "guided-title",
+    "text": "Bu yılın trendi",
+    "start_s": 0.0,
+    "end_s": 3.0,
+    "role": "generative_intro",
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.15,
+    "size_class": "large",
+    "size_px": 96,
+    "font_family": "Playfair Display",
+    "effect": "fade-in",
+    "color": "#FFFFFF",
+    "source_params": {
+     "source": "guided_story"
+    },
+    "text_language": "tr"
+   }
+  ]
+ },
+ "editor_narrated_en": {
+  "editor_capabilities": {
+   "intro_styles": true,
+   "text_elements": {
+    "editable": true
+   }
+  },
+  "render_destination": "device",
+  "text_elements": [
+   {
+    "id": "narrated-title",
+    "text": "How I spend my mornings",
+    "start_s": 0.0,
+    "end_s": 3.0,
+    "role": "generative_intro",
+    "position": "custom",
+    "x_frac": 0.5,
+    "y_frac": 0.15,
+    "size_class": "large",
+    "size_px": 96,
+    "font_family": "Playfair Display",
+    "effect": "fade-in",
+    "color": "#FFFFFF",
+    "source_params": {
+     "narrated_storyboard": "intro"
+    }
+   }
+  ]
+ },
+ "offer_talking_en": {
+  "version": 1,
+  "available": true,
+  "reason": null,
+  "offer_id": "is1-0a1b2c3d4e5f6071",
+  "route": "talking",
+  "title_family": "opening-title",
+  "language": null,
+  "replace_ids": [
+   "opening-title"
+  ],
+  "options": [
+   {
+    "key": "grotesk_hand",
+    "recommended": true,
+    "current": false,
+    "rows": [
+     {
+      "id": "opening-title",
+      "text": "How I spend",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "slide-up",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 124,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "text_case": "upper",
+      "line_spacing": 1.02,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "grotesk_hand",
+         "font_pair": "grotesk_hand",
+         "entrance": "rise",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     },
+     {
+      "id": "opening-title-line-2",
+      "text": "my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Zeyada",
+      "size_px": 150,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "grotesk_hand",
+         "font_pair": "grotesk_hand",
+         "entrance": "rise",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "HOW I SPEND",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 76.88,
+         "x": 320.1232,
+         "baseline_y": 318.752,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 390.3,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "my mornings",
+         "font_asset_id": "font-Zeyada-Regular.ttf",
+         "font_size": 93.0,
+         "x": 274.02,
+         "baseline_y": 427.5,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+      "font-Zeyada-Regular.ttf": "Zeyada-Regular.ttf"
+     }
+    }
+   },
+   {
+    "key": "serif_italic",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "opening-title",
+      "text": "How I spend",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Instrument Serif",
+      "size_px": 150,
+      "color": "#FFFFFF",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "serif_italic",
+         "font_pair": "serif_italic",
+         "entrance": "fade",
+         "zone": "above_head",
+         "ink": "white"
+        }
+       }
+      }
+     },
+     {
+      "id": "opening-title-line-2",
+      "text": "my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Instrument Serif Italic",
+      "size_px": 140,
+      "color": "#FFFFFF",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "serif_italic",
+         "font_pair": "serif_italic",
+         "entrance": "fade",
+         "zone": "above_head",
+         "ink": "white"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "How I spend",
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 93.0,
+         "x": 274.02,
+         "baseline_y": 325.2,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 383.48,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "my mornings",
+         "font_asset_id": "font-InstrumentSerif-Italic.ttf",
+         "font_size": 86.8,
+         "x": 291.75199999999995,
+         "baseline_y": 418.20000000000005,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf",
+      "font-InstrumentSerif-Italic.ttf": "InstrumentSerif-Italic.ttf"
+     }
+    }
+   },
+   {
+    "key": "grotesk_loop",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "opening-title",
+      "text": "How I",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 100,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.02,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 1,
+        "lines": 3,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       }
+      }
+     },
+     {
+      "id": "opening-title-line-2",
+      "text": "spend",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Over the Rainbow",
+      "size_px": 250,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 2,
+        "lines": 3,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       }
+      }
+     },
+     {
+      "id": "opening-title-line-3",
+      "text": "my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 100,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.02,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 3,
+        "lines": 3,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "How I",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 62.0,
+         "x": 130.0,
+         "baseline_y": 312.8,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 458.5,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "spend",
+         "font_asset_id": "font-OvertheRainbow-Regular.ttf",
+         "font_size": 155.0,
+         "x": 130.0,
+         "baseline_y": 520.5,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-2",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 424.4,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "my mornings",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 62.0,
+         "x": 130.0,
+         "baseline_y": 449.2,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+      "font-OvertheRainbow-Regular.ttf": "OvertheRainbow-Regular.ttf"
+     }
+    }
+   },
+   {
+    "key": "script_serif",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "opening-title",
+      "text": "How I spend",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Newsreader",
+      "size_px": 140,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "script_serif",
+         "font_pair": "script_serif",
+         "entrance": "ink",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     },
+     {
+      "id": "opening-title-line-2",
+      "text": "my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "ink-reveal",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Great Vibes",
+      "size_px": 190,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-0a1b2c3d4e5f6071",
+         "key": "script_serif",
+         "font_pair": "script_serif",
+         "entrance": "ink",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "How I spend",
+         "font_asset_id": "font-Newsreader-Medium.ttf",
+         "font_size": 86.8,
+         "x": 291.75199999999995,
+         "baseline_y": 322.72,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 417.58000000000004,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "my mornings",
+         "font_asset_id": "font-GreatVibes-Regular.ttf",
+         "font_size": 117.8,
+         "x": 203.09199999999998,
+         "baseline_y": 464.70000000000005,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-Newsreader-Medium.ttf": "Newsreader-Medium.ttf",
+      "font-GreatVibes-Regular.ttf": "GreatVibes-Regular.ttf"
+     }
+    }
+   },
+   {
+    "key": "none",
+    "recommended": false,
+    "current": true,
+    "rows": [
+     {
+      "id": "opening-title",
+      "text": "How I spend my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "size_px": 96,
+      "font_family": "Playfair Display",
+      "effect": "fade-in",
+      "color": "#FFFFFF",
+      "source_params": {
+       "source": "opening_title"
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "How I spend my mornings",
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 59.519999999999996,
+         "x": 184.0704,
+         "baseline_y": 311.808,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-YoungSerif-Regular.ttf": "YoungSerif-Regular.ttf"
+     }
+    }
+   }
+  ]
+ },
+ "offer_montage_tr": {
+  "version": 1,
+  "available": true,
+  "reason": null,
+  "offer_id": "is1-1b2c3d4e5f607182",
+  "route": "montage",
+  "title_family": "guided-title",
+  "language": "tr",
+  "replace_ids": [
+   "guided-title"
+  ],
+  "options": [
+   {
+    "key": "grotesk_hand",
+    "recommended": true,
+    "current": false,
+    "rows": [
+     {
+      "id": "guided-title",
+      "text": "Bu yılın",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Zeyada",
+      "size_px": 150,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "grotesk_hand",
+         "font_pair": "grotesk_hand",
+         "entrance": "rise",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     },
+     {
+      "id": "guided-title-line-2",
+      "text": "trendi",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "slide-up",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 124,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "text_case": "upper",
+      "line_spacing": 1.02,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "grotesk_hand",
+         "font_pair": "grotesk_hand",
+         "entrance": "rise",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Bu yılın",
+         "font_asset_id": "font-Zeyada-Regular.ttf",
+         "font_size": 93.0,
+         "x": 346.56,
+         "baseline_y": 325.2,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 372.568,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "TRENDİ",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 76.88,
+         "x": 420.06719999999996,
+         "baseline_y": 403.32,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-Zeyada-Regular.ttf": "Zeyada-Regular.ttf",
+      "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf"
+     }
+    }
+   },
+   {
+    "key": "serif_italic",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "guided-title",
+      "text": "Bu yılın",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Instrument Serif",
+      "size_px": 150,
+      "color": "#FFFFFF",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "serif_italic",
+         "font_pair": "serif_italic",
+         "entrance": "fade",
+         "zone": "above_head",
+         "ink": "white"
+        }
+       }
+      }
+     },
+     {
+      "id": "guided-title-line-2",
+      "text": "trendi",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Instrument Serif Italic",
+      "size_px": 140,
+      "color": "#FFFFFF",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "serif_italic",
+         "font_pair": "serif_italic",
+         "entrance": "fade",
+         "zone": "above_head",
+         "ink": "white"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Bu yılın",
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 93.0,
+         "x": 346.56,
+         "baseline_y": 325.2,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 383.48,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "trendi",
+         "font_asset_id": "font-InstrumentSerif-Italic.ttf",
+         "font_size": 86.8,
+         "x": 404.592,
+         "baseline_y": 418.20000000000005,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf",
+      "font-InstrumentSerif-Italic.ttf": "InstrumentSerif-Italic.ttf"
+     }
+    }
+   },
+   {
+    "key": "grotesk_loop",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "guided-title",
+      "text": "Bu",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 100,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.02,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 1,
+        "lines": 3,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       }
+      }
+     },
+     {
+      "id": "guided-title-line-2",
+      "text": "yılın",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Over the Rainbow",
+      "size_px": 250,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 2,
+        "lines": 3,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       }
+      }
+     },
+     {
+      "id": "guided-title-line-3",
+      "text": "trendi",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 100,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.02,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 3,
+        "lines": 3,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Bu",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 62.0,
+         "x": 130.0,
+         "baseline_y": 312.8,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 458.5,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "yılın",
+         "font_asset_id": "font-OvertheRainbow-Regular.ttf",
+         "font_size": 155.0,
+         "x": 130.0,
+         "baseline_y": 520.5,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-2",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 424.4,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "trendi",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 62.0,
+         "x": 130.0,
+         "baseline_y": 449.2,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+      "font-OvertheRainbow-Regular.ttf": "OvertheRainbow-Regular.ttf"
+     }
+    }
+   },
+   {
+    "key": "script_serif",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "guided-title",
+      "text": "Bu yılın",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Newsreader",
+      "size_px": 140,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "script_serif",
+         "font_pair": "script_serif",
+         "entrance": "ink",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     },
+     {
+      "id": "guided-title-line-2",
+      "text": "trendi",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "ink-reveal",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Great Vibes",
+      "size_px": 190,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "text_language": "tr",
+      "source_params": {
+       "source": "guided_story",
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-1b2c3d4e5f607182",
+         "key": "script_serif",
+         "font_pair": "script_serif",
+         "entrance": "ink",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       }
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Bu yılın",
+         "font_asset_id": "font-Newsreader-Medium.ttf",
+         "font_size": 86.8,
+         "x": 359.456,
+         "baseline_y": 322.72,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 417.58000000000004,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "trendi",
+         "font_asset_id": "font-GreatVibes-Regular.ttf",
+         "font_size": 117.8,
+         "x": 356.23199999999997,
+         "baseline_y": 464.70000000000005,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-Newsreader-Medium.ttf": "Newsreader-Medium.ttf",
+      "font-GreatVibes-Regular.ttf": "GreatVibes-Regular.ttf"
+     }
+    }
+   },
+   {
+    "key": "none",
+    "recommended": false,
+    "current": true,
+    "rows": [
+     {
+      "id": "guided-title",
+      "text": "Bu yılın trendi",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "size_px": 96,
+      "font_family": "Playfair Display",
+      "effect": "fade-in",
+      "color": "#FFFFFF",
+      "source_params": {
+       "source": "guided_story"
+      },
+      "text_language": "tr"
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "Bu yılın trendi",
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 59.519999999999996,
+         "x": 307.872,
+         "baseline_y": 311.808,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-YoungSerif-Regular.ttf": "YoungSerif-Regular.ttf"
+     }
+    }
+   }
+  ]
+ },
+ "offer_narrated_en": {
+  "version": 1,
+  "available": true,
+  "reason": null,
+  "offer_id": "is1-2c3d4e5f60718293",
+  "route": "narrated",
+  "title_family": "narrated-title",
+  "language": null,
+  "replace_ids": [
+   "narrated-title"
+  ],
+  "options": [
+   {
+    "key": "grotesk_hand",
+    "recommended": true,
+    "current": false,
+    "rows": [
+     {
+      "id": "narrated-title",
+      "text": "How I spend",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "slide-up",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 124,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "text_case": "upper",
+      "line_spacing": 1.02,
+      "source_params": {
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-2c3d4e5f60718293",
+         "key": "grotesk_hand",
+         "font_pair": "grotesk_hand",
+         "entrance": "rise",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       },
+       "narrated_storyboard": "intro"
+      }
+     },
+     {
+      "id": "narrated-title-line-2",
+      "text": "my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Zeyada",
+      "size_px": 150,
+      "color": "#FBF1D8",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-2c3d4e5f60718293",
+         "key": "grotesk_hand",
+         "font_pair": "grotesk_hand",
+         "entrance": "rise",
+         "zone": "above_head",
+         "ink": "cream"
+        }
+       },
+       "narrated_storyboard": "intro"
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "HOW I SPEND",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 76.88,
+         "x": 320.1232,
+         "baseline_y": 318.752,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 390.3,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "my mornings",
+         "font_asset_id": "font-Zeyada-Regular.ttf",
+         "font_size": 93.0,
+         "x": 274.02,
+         "baseline_y": 427.5,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.984313725490196,
+          "green": 0.9450980392156862,
+          "blue": 0.8470588235294118,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+      "font-Zeyada-Regular.ttf": "Zeyada-Regular.ttf"
+     }
+    }
+   },
+   {
+    "key": "serif_italic",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "narrated-title",
+      "text": "How I spend",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Instrument Serif",
+      "size_px": 150,
+      "color": "#FFFFFF",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "title_look": {
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-2c3d4e5f60718293",
+         "key": "serif_italic",
+         "font_pair": "serif_italic",
+         "entrance": "fade",
+         "zone": "above_head",
+         "ink": "white"
+        }
+       },
+       "narrated_storyboard": "intro"
+      }
+     },
+     {
+      "id": "narrated-title-line-2",
+      "text": "my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "fade-in",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Instrument Serif Italic",
+      "size_px": 140,
+      "color": "#FFFFFF",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "title_look": {
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-2c3d4e5f60718293",
+         "key": "serif_italic",
+         "font_pair": "serif_italic",
+         "entrance": "fade",
+         "zone": "above_head",
+         "ink": "white"
+        }
+       },
+       "narrated_storyboard": "intro"
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "How I spend",
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 93.0,
+         "x": 274.02,
+         "baseline_y": 325.2,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 383.48,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "my mornings",
+         "font_asset_id": "font-InstrumentSerif-Italic.ttf",
+         "font_size": 86.8,
+         "x": 291.75199999999995,
+         "baseline_y": 418.20000000000005,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf",
+      "font-InstrumentSerif-Italic.ttf": "InstrumentSerif-Italic.ttf"
+     }
+    }
+   },
+   {
+    "key": "grotesk_loop",
+    "recommended": false,
+    "current": false,
+    "rows": [
+     {
+      "id": "narrated-title",
+      "text": "How I",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 100,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.02,
+      "source_params": {
+       "title_look": {
+        "line": 1,
+        "lines": 3,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-2c3d4e5f60718293",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       },
+       "narrated_storyboard": "intro"
+      }
+     },
+     {
+      "id": "narrated-title-line-2",
+      "text": "spend",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Over the Rainbow",
+      "size_px": 250,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.0,
+      "source_params": {
+       "title_look": {
+        "line": 2,
+        "lines": 3,
+        "style": "intro_accent",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-2c3d4e5f60718293",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       },
+       "narrated_storyboard": "intro"
+      }
+     },
+     {
+      "id": "narrated-title-line-3",
+      "text": "my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "effect": "pop-in",
+      "position": "custom",
+      "x_frac": 0.12,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "font_family": "Hanken Grotesk",
+      "size_px": 100,
+      "color": "#F6E7A8",
+      "alignment": "left",
+      "max_width_frac": 0.84,
+      "shadow_style": "high_visibility",
+      "line_spacing": 1.02,
+      "source_params": {
+       "title_look": {
+        "line": 3,
+        "lines": 3,
+        "style": "intro_solid",
+        "intro_style": {
+         "version": 1,
+         "offer_id": "is1-2c3d4e5f60718293",
+         "key": "grotesk_loop",
+         "font_pair": "grotesk_loop",
+         "entrance": "pop",
+         "zone": "top_left",
+         "ink": "butter"
+        }
+       },
+       "narrated_storyboard": "intro"
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "How I",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 62.0,
+         "x": 130.0,
+         "baseline_y": 312.8,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-1",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 458.5,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "spend",
+         "font_asset_id": "font-OvertheRainbow-Regular.ttf",
+         "font_size": 155.0,
+         "x": 130.0,
+         "baseline_y": 520.5,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      },
+      {
+       "id": "preview-2",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 424.4,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "my mornings",
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 62.0,
+         "x": 130.0,
+         "baseline_y": 449.2,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 0.9647058823529412,
+          "green": 0.9058823529411765,
+          "blue": 0.6588235294117647,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+      "font-OvertheRainbow-Regular.ttf": "OvertheRainbow-Regular.ttf"
+     }
+    }
+   },
+   {
+    "key": "none",
+    "recommended": false,
+    "current": true,
+    "rows": [
+     {
+      "id": "narrated-title",
+      "text": "How I spend my mornings",
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "role": "generative_intro",
+      "position": "custom",
+      "x_frac": 0.5,
+      "y_frac": 0.15,
+      "size_class": "large",
+      "size_px": 96,
+      "font_family": "Playfair Display",
+      "effect": "fade-in",
+      "color": "#FFFFFF",
+      "source_params": {
+       "narrated_storyboard": "intro"
+      }
+     }
+    ],
+    "preview": {
+     "media_id": "fixture-clip",
+     "media_kind": "video",
+     "at_s": 1.4,
+     "time_s": 1.2,
+     "text_layers": [
+      {
+       "id": "preview-0",
+       "start": 0.0,
+       "end": 3.0,
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "rotation_degrees": 0.0,
+       "srgb_blend": true,
+       "runs": [
+        {
+         "text": "How I spend my mornings",
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 59.519999999999996,
+         "x": 184.0704,
+         "baseline_y": 311.808,
+         "letter_spacing": 0.0,
+         "shaped": true,
+         "fill": {
+          "red": 1.0,
+          "green": 1.0,
+          "blue": 1.0,
+          "alpha": 1.0
+         },
+         "stroke": {
+          "red": 0,
+          "green": 0,
+          "blue": 0,
+          "alpha": 0.9
+         },
+         "stroke_width": 0.0,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "red": 0,
+            "green": 0,
+            "blue": 0,
+            "alpha": 0.55
+           },
+           "sigma": 14.0,
+           "dx": 0.0,
+           "dy": 3.0
+          }
+         ]
+        }
+       ],
+       "effect": "static"
+      }
+     ],
+     "fonts": {
+      "font-YoungSerif-Regular.ttf": "YoungSerif-Regular.ttf"
+     }
+    }
+   }
+  ]
+ },
+ "unavailable_nothing_fits": {
+  "version": 1,
+  "available": false,
+  "reason": "nothing_fits",
+  "offer_id": null,
+  "options": []
+ },
+ "save_body_expected": {
+  "offer": "offer_talking_en",
+  "option_key": "serif_italic",
+  "section": "text_elements",
+  "rule": "the commit body's text_elements equal that option's rows, raw"
+ }
+}

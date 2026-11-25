@@ -18,6 +18,7 @@
     "FootageSourcesUITests": "creation",
     "GamedayAddClipUITests": "editor",
     "GeneratedMediaUITests": "creation",
+    "IntroStylesUITests": "editor",
     "LongApprovalCardUITests": "creation",
     "MomentOrderUITests": "creation",
     "NativeCaptionAnimationUITests": "editor",
@@ -258,6 +259,10 @@
     "src/apps/ios/Kria/Features/DesignPreviewStrip.swift": "creation",
     "src/apps/ios/Kria/Features/DesignPickerUITestFixture.swift": "creation",
     "src/apps/ios/Kria/Core/ChoiceQuestion.swift": "creation",
-    "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift": "creation"
+    "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift": "creation",
+    "src/apps/ios/Kria/Core/IntroStyles.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorSession+IntroStyles.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeIntroStylesPanel.swift": "editor",
+    "src/apps/ios/Kria/Features/IntroStylesUITestFixture.swift": "editor"
   }
 }

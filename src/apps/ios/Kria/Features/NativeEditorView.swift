@@ -784,7 +784,10 @@ struct NativeEditorView: View {
     @ViewBuilder private func panelContent(captionEditLines: Int) -> some View {
         switch panel {
         case .textCreation:
-            NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) })
+            NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) },
+                                    onOpenIntroStyles: session.canOfferIntroStyles ? { openIntroStyles() } : nil)
+        case .introStyles:
+            NativeIntroStylesPanel(session: session, projectID: project.id) { changePanel(to: nil) }
         case .text(let id):
             // KRI-508: an existing text opens on Edit text with the keyboard up; a text just created
             // from the Text tab keeps opening on Style.
@@ -793,7 +796,8 @@ struct NativeEditorView: View {
                 id: id, session: session, initialTab: startsOnEdit ? .edit : .style,
                 configuration: NativeTextPanelConfiguration(
                     focusesContentOnAppear: startsOnEdit,
-                    onTypingChange: { setTextTypingLines($0) }
+                    onTypingChange: { setTextTypingLines($0) },
+                    onOpenIntroStyles: session.isIntroStyleTitleRow(id) ? { openIntroStyles() } : nil
                 ),
                 onDone: textEditingDone
             ).id(id)
@@ -844,7 +848,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .translation, .visuals, .background, .sounds, .drawing, .split: changePanel(to: nil)
+        case .captions, .translation, .visuals, .background, .sounds, .drawing, .split, .introStyles: changePanel(to: nil)
         case .speaker:
             if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
             changePanel(to: nil)
@@ -937,6 +941,16 @@ struct NativeEditorView: View {
         textEditOrigin = .list
         session.select(EditorSelection(kind: .text, id: id))
         changePanel(to: .text(id))
+    }
+
+    /// KRI-1633: "Try intro styles". Leaves the new-text draft (as opening a text row does) so the swap is its own undo step.
+    private func openIntroStyles() {
+        guard session.canOfferIntroStyles else { return }
+        session.cancelTextCreation()
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+            panelExpansion = max(panelExpansion, 0.55)
+        }
+        changePanel(to: .introStyles)
     }
 
     /// KRI-589: opens Draw mode. Playback pauses, the panel closes, the finger canvas covers the preview and a
