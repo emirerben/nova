@@ -529,6 +529,8 @@ import XCTest
     // tap that takes over 20 s is the hang.
     func testExpSwapLoopGlass() { expSwapLoop(extraEnv: [:]) }
     func testExpSwapLoopOpaque() { expSwapLoop(extraEnv: ["UI_TEST_REDUCE_TRANSPARENCY": "1"]) }
+    func testExpSwapLoopNoHandle() { expSwapLoop(extraEnv: ["EXP_NO_HANDLE": "1"]) }
+    func testExpSwapLoopBalanced() { expSwapLoop(extraEnv: ["EXP_BALANCE_START": "1"]) }
     private func expSwapLoop(extraEnv: [String: String]) {
         continueAfterFailure = false
         let rounds = Int(ProcessInfo.processInfo.environment["EXP_ROUNDS"] ?? "") ?? 40
@@ -538,14 +540,20 @@ import XCTest
             print(String(format: "EXPLOOP round %d step %@ took %.1f", round, step, took))
             if took > 20 { XCTFail(String(format: "EXPHANG round %d step %@ took %.1f s", round, step, took)) }
         }
+        func handleFrame() -> String {
+            let handle = app.descendants(matching: .any)["slidepost-text-handle"].firstMatch
+            return handle.exists ? NSCoder.string(for: handle.frame) : "not drawn"
+        }
         timed("tool-text", 0) { app.buttons["slidepost-tool-text"].tap() }
         let field = app.textViews["slidepost-text-field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         for round in 1...rounds {
             timed("style", round) { app.buttons["Style"].tap() }
             XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5), "round \(round): the style tab")
+            if round == 1 { print("EXPLOOP handle on the style tab: \(handleFrame())") }
             timed("edit", round) { app.buttons["Edit text"].tap() }
             XCTAssertTrue(field.waitForExistence(timeout: 5), "round \(round): the text field")
+            if round == 1 { sleep(1); print("EXPLOOP handle with the keyboard up: \(handleFrame())") }
         }
         timed("done", rounds) { app.buttons["slidepost-done"].tap() }
         print("EXPLOOP finished \(rounds) rounds")

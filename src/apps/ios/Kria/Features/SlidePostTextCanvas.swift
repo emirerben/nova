@@ -277,15 +277,18 @@ struct SlidePostTextCanvas: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("slidepost-text-selection")
                 .accessibilityValue(String(localized: "selected"))
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: Self.handleRadius * 2, height: Self.handleRadius * 2)
-                .background(KriaColor.sky, in: Circle())
-                .position(x: handle.x, y: handle.y)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Resize and rotate")
-                .accessibilityIdentifier("slidepost-text-handle")
+            // THROWAWAY (KRI-1604 control arm, never merged): the handle is not drawn at all.
+            if ProcessInfo.processInfo.environment["EXP_NO_HANDLE"] != "1" {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: Self.handleRadius * 2, height: Self.handleRadius * 2)
+                    .background(KriaColor.sky, in: Circle())
+                    .position(x: handle.x, y: handle.y)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Resize and rotate")
+                    .accessibilityIdentifier("slidepost-text-handle")
+            }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .allowsHitTesting(false)

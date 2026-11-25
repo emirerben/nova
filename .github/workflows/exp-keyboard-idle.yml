@@ -4,21 +4,26 @@ on:
     branches: [codex/exp-keyboard-idle]
 permissions:
   contents: read
-env:
-  TESTS: >-
-    SlidePostUITests/testExpSwapLoopGlass SlidePostUITests/testExpSwapLoopOpaque
 jobs:
   capture:
     runs-on: macos-15
-    timeout-minutes: 150
+    timeout-minutes: 210
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: a
-            busy: 0
+            passes: 12
+            allow: 600
+            tests: SlidePostUITests/testExpSwapLoopGlass SlidePostUITests/testExpSwapLoopBalanced
           - label: b
-            busy: 0
+            passes: 12
+            allow: 600
+            tests: SlidePostUITests/testExpSwapLoopGlass SlidePostUITests/testExpSwapLoopBalanced
+          - label: c
+            passes: 60
+            allow: 180
+            tests: CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo
     steps:
       - uses: actions/checkout@v4
       - uses: maxim-lobanov/setup-xcode@v1
@@ -33,11 +38,11 @@ jobs:
           echo "SIM=$SIM" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM" || true
           xcrun simctl bootstatus "$SIM" -b || true
-      - name: Style and Edit text switched 40 times per launch, glass then opaque, 8 passes (${{ matrix.label }})
+      - name: a and b switch Style and Edit text 40 times per launch, as shipped then with each double start balanced by one extra stop; c is the editor test that hangs alone (${{ matrix.label }})
         env:
-          ALLOW: 600
-          ALLOW_MAX: 600
-        run: bash scripts/exp-kbd.sh "${{ matrix.label }}" 8 "${{ matrix.busy }}" $TESTS
+          ALLOW: ${{ matrix.allow }}
+          ALLOW_MAX: ${{ matrix.allow == 600 && 600 || 300 }}
+        run: bash scripts/exp-kbd.sh "${{ matrix.label }}" "${{ matrix.passes }}" 0 ${{ matrix.tests }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

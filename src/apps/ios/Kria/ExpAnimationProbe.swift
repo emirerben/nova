@@ -41,6 +41,49 @@ import UIKit
         }
         return found
     }
+    /// One animation as it was added to a layer (hooked `CALayer addAnimation:forKey:`): exact, unlike the window scan.
+    /// It rides on the animation as an associated object and is never kept by the probe, so nothing lives longer
+    /// than it would have. When the animation is freed after a start and with no stop, the track says so as it dies.
+    private final class Track: @unchecked Sendable {
+        weak var layer: CALayer?
+        let key: String
+        let keyPath: String
+        let owner: String
+        var starts = 0
+        var stops = 0
+        var firstStart: CFTimeInterval = 0
+        let added = CACurrentMediaTime()
+        init(layer: CALayer, key: String, keyPath: String, owner: String) {
+            self.layer = layer; self.key = key; self.keyPath = keyPath; self.owner = owner
+        }
+        var text: String { "key=\(key) keyPath=\(keyPath) layer=\(layer == nil ? "freed" : "alive") was=\(owner)" }
+        deinit {
+            if starts != stops { NSLog("KBDPROBE lost animation freed with starts=%d stops=%d: %@", starts, stops, text) }
+        }
+    }
+    private final class WeakAnimation { weak var animation: CAAnimation?; init(_ animation: CAAnimation) { self.animation = animation } }
+    nonisolated(unsafe) private static var trackKey: UInt8 = 0
+    private static var addHookMisses = 0
+    private static func track(of animation: CAAnimation) -> Track? { objc_getAssociatedObject(animation, &trackKey) as? Track }
+    private static func hookAddAnimation() {
+        let selector = NSSelectorFromString("addAnimation:forKey:")
+        guard let method = class_getInstanceMethod(CALayer.self, selector) else { NSLog("KBDPROBE add hook missing"); return }
+        typealias Add = @convention(c) (CALayer, Selector, CAAnimation, NSString?) -> Void
+        let original = unsafeBitCast(method_getImplementation(method), to: Add.self)
+        let block: @convention(block) (CALayer, CAAnimation, NSString?) -> Void = { layer, animation, key in
+            original(layer, selector, animation, key)
+            guard Thread.isMainThread, let delegate = animation.delegate,
+                  NSStringFromClass(type(of: delegate as AnyObject)) == "UIViewAnimationState" else { return }
+            MainActor.assumeIsolated {
+                guard let key = key as String?, let copy = layer.animation(forKey: key) else { addHookMisses += 1; return }
+                let made = Track(layer: layer, key: key, keyPath: (copy as? CAPropertyAnimation)?.keyPath ?? "-",
+                                 owner: "\(owners(of: layer, depth: 8)) \(place(of: layer))")
+                objc_setAssociatedObject(copy, &trackKey, made, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+        }
+        method_setImplementation(method, imp_implementationWithBlock(block))
+        NSLog("KBDPROBE add hook installed")
+    }
     private final class OpenState {
         let state: AnyObject
         let since = CACurrentMediaTime()
@@ -52,6 +95,11 @@ import UIKit
         var scans = 0
         /// Every interactive-glass view on screen when the group started: where it was and what it sat in.
         var glass: [(view: Weak, was: String)] = []
+        /// Animations that reported a start and no stop yet, by identity.
+        var live: [WeakAnimation] = []
+        var stopsOnFreed: [String] = []
+        var notFinished = 0
+        var untrackedStops = 0
         init(_ state: AnyObject) { self.state = state }
     }
 
@@ -105,7 +153,11 @@ import UIKit
         typealias Stop = @convention(c) (AnyObject, Selector, CAAnimation?, Bool) -> Void
         let originalStart = unsafeBitCast(method_getImplementation(startMethod), to: Start.self)
         let originalStop = unsafeBitCast(method_getImplementation(stopMethod), to: Stop.self)
+        // Control arm only (EXP_BALANCE_START=1): a second start for one animation is answered with one extra stop,
+        // sent through whatever is hooked on the class now, so UIKit's and XCTest's counts both come back to zero.
+        let balances = ProcessInfo.processInfo.environment["EXP_BALANCE_START"] == "1"
         let startBlock: @convention(block) (AnyObject, CAAnimation?) -> Void = { state, animation in
+            var duplicate = false
             if Thread.isMainThread {
                 MainActor.assumeIsolated {
                     starts += 1; balance += 1
@@ -113,6 +165,19 @@ import UIKit
                     open[ObjectIdentifier(state)] = entry
                     entry.balance += 1; entry.total += 1
                     recordLayers(of: entry)
+                    if let animation {
+                        entry.live.append(WeakAnimation(animation))
+                        if let found = track(of: animation) {
+                            found.starts += 1
+                            if found.starts == 1 { found.firstStart = CACurrentMediaTime() } else {
+                                let now = found.layer.map { "\(owners(of: $0, depth: 8)) \(place(of: $0)) attached=\($0.animation(forKey: found.key) === animation ? 1 : 0)" } ?? "layer freed"
+                                NSLog("KBDPROBE double start #%d stops=%d msAfterAdd=%.0f msAfterFirstStart=%.0f key=%@ keyPath=%@ was=%@ now=%@",
+                                      found.starts, found.stops, (CACurrentMediaTime() - found.added) * 1000, (CACurrentMediaTime() - found.firstStart) * 1000,
+                                      found.key, found.keyPath, found.owner, now)
+                            }
+                            duplicate = found.starts > 1
+                        } else { entry.untrackedStops += 1 }
+                    }
                     if entry.sample.isEmpty, animation == nil { entry.sample = "no animation object" }
                     if entry.sample.isEmpty, let animation {
                         entry.sample = String(format: "class=%@ keyPath=%@ duration=%.2f repeat=%.0f removed=%d fill=%@",
@@ -123,6 +188,10 @@ import UIKit
                 }
             } else { NSLog("KBDPROBE hook start off the main thread") }
             originalStart(state, startSelector, animation)
+            if balances, duplicate, let current = class_getMethodImplementation(object_getClass(state), stopSelector) {
+                NSLog("KBDPROBE balanced a double start with one extra stop")
+                unsafeBitCast(current, to: Stop.self)(state, stopSelector, animation, false)
+            }
         }
         let stopBlock: @convention(block) (AnyObject, CAAnimation?, Bool) -> Void = { state, animation, finished in
             if Thread.isMainThread {
@@ -130,7 +199,20 @@ import UIKit
                     stops += 1; balance -= 1
                     if let entry = open[ObjectIdentifier(state)] {
                         entry.balance -= 1
-                        if entry.balance <= 0 { open[ObjectIdentifier(state)] = nil }
+                        if !finished { entry.notFinished += 1 }
+                        if let animation, let found = track(of: animation) {
+                            found.stops += 1
+                            if found.layer == nil { entry.stopsOnFreed.append("\(found.keyPath) \(found.owner)") }
+                        }
+                        if entry.balance <= 0 {
+                            open[ObjectIdentifier(state)] = nil
+                            // Every group of 20 or more animations (the keyboard's has 47 to 57), hung or not.
+                            if entry.total >= 20 {
+                                NSLog("KBDPROBE closed total=%d ms=%.0f notFinished=%d stopsOnFreedLayer=%d untracked=%d freed=[%@]",
+                                      entry.total, (CACurrentMediaTime() - entry.since) * 1000, entry.notFinished, entry.stopsOnFreed.count,
+                                      entry.untrackedStops, entry.stopsOnFreed.joined(separator: " ; "))
+                            }
+                        }
                     } else { strayStops += 1 }
                 }
             } else { NSLog("KBDPROBE hook stop off the main thread") }
@@ -189,6 +271,15 @@ import UIKit
                     NSLog("KBDPROBE open layer in a window and still animating key=%@ keyPath=%@ on=%@", record.key, record.keyPath, record.owner)
                 } else { finished += 1 }
             }
+            var alive = 0, gonePending = 0
+            for item in entry.live {
+                guard let animation = item.animation else { gonePending += 1; continue }
+                guard let found = track(of: animation) else { continue }
+                if found.stops < found.starts { alive += 1; NSLog("KBDPROBE open anim alive and never stopped %@", found.text) }
+            }
+            NSLog("KBDPROBE open sofar started=%d animationsFreed=%d aliveNeverStopped=%d stopsOnFreedLayer=%d notFinished=%d untracked=%d freed=[%@]",
+                  entry.live.count, gonePending, alive, entry.stopsOnFreed.count, entry.notFinished, entry.untrackedStops,
+                  entry.stopsOnFreed.joined(separator: " ; "))
             for item in entry.glass {
                 if let view = item.view.view {
                     NSLog("KBDPROBE open glass %@ now=%@ was=%@", view.window == nil ? "out of every window" : "still on screen", place(of: view.layer), item.was)
@@ -242,6 +333,7 @@ import UIKit
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         hookAnimationState()
+        hookAddAnimation()
         NSLog("KBDPROBE started")
     }
 
@@ -326,7 +418,6 @@ import UIKit
                 seen["wakes"] ?? 0, seen["layout"] ?? 0, seen["caret"] ?? 0, seen["update"] ?? 0, seen["selection"] ?? 0, seen["change"] ?? 0, inner, outer
             )
             NSLog("KBDPROBE uikit starts=%d stops=%d strayStops=%d groups=%d balance=%d xctestAnimating=%d", starts, stops, strayStops, open.count, balance, xctestSaysAnimating())
-            starts = 0; stops = 0; strayStops = 0
             // Any group still unfinished 3 s after it began is listed, hang or not: the keyboard's group lasts 0.38 s.
             if open.values.contains(where: { CACurrentMediaTime() - $0.since > 3 }) { logOpenAnimations(windows) }
             held = responder is ExplicitLineTextView ? held + 1 : 0
