@@ -258,6 +258,16 @@ boot_simulator() {
     status=0
     simctl_wait bootstatus "$SIMULATOR_ID" || status=$?
   fi
+  if [[ "$status" -eq 0 ]]; then
+    # A new simulator shows iOS's "slide to type" tip the first time a keyboard
+    # is used. When it arrives while XCTest is typing, the text reaches the
+    # field seconds after typeText returns and a test that reads it at once
+    # fails (KRI-1604; hosted: tip left alone missed 1 read in 8 and showed the
+    # tip 8 times in 8, marked as shown 0 in 7 and no tip). The tip is the
+    # simulator's, not the app's. Guard: SimulatorKeyboardTipTests.
+    xcrun simctl spawn "$SIMULATOR_ID" defaults write com.apple.keyboard.preferences \
+      DidShowContinuousPathIntroduction -bool true || status=$?
+  fi
   return "$status"
 }
 timed "Simulator readiness (overlaps compilation)" boot_simulator > "$RESULT_DIR/simulator.log" 2>&1 &
