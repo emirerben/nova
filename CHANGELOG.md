@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.18.0] - 2026-11-25
+
+### Changed
+- feat(intro): Try intro styles on tap, backend (KRI-1633) (#2521) <!-- release-pr: 2521 -->
+
 ## [0.90.17.0] - 2026-11-25
 
 ### Changed
