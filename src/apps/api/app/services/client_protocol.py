@@ -115,6 +115,8 @@ INFORMATIVE_TEXT_DESIGNS_PROTOCOL = 55
 # text-only cards.
 TEXT_DESIGN_PICKER_PROTOCOL = 56
 
+INTRO_STYLES_PROTOCOL = 57
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
