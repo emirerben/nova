@@ -1196,6 +1196,47 @@ remain intact. Diagnose picker failures from CI xcresult/logs before changing th
 suspected authorization race. Parallel execution on one simulator remains off:
 cloned simulators missed drawer controls in #1004.
 
+### UI tests and "the app is idle" (KRI-1604)
+
+Before each tap XCTest waits for the app to go idle, which includes "no UIKit
+animation is running". UIKit and XCTest both get that from counting the
+`animationDidStart:` and `animationDidStop:finished:` calls Core Animation
+sends to the animation group (`UIViewAnimationState`).
+
+Core Animation sometimes sends the start twice and the stop once for one
+animation. It happens when the animation's layer is freed a few milliseconds
+after the animation was added, and SwiftUI frees 1 to 11 such layers on every
+keyboard move. Both starts come from QuartzCore's `run_animation_callbacks`.
+The count then never returns to zero and the next tap waits its full 60 s
+("App animations complete notification not received"). Measured at about one
+keyboard move in 60 to 160. In the app nothing visible depends on that count:
+`keyboardDidShow` still arrives and the screen works.
+
+`UITestAnimationStartGuard` (debug builds only) removes the wait without
+hiding anything a test checks:
+
+- It goes in when a UI test drives the app: at launch for `-ui-testing…`
+  launches, otherwise when XCTest's support code arrives in the process.
+- A second start for an animation that has not stopped is not passed on. If a
+  second stop ever follows, it is dropped too, so the count cannot go below
+  zero. Everything else is passed on untouched: a real animation still has to
+  end before the app counts as idle.
+- XCTest hooks the same two methods after launch. A hook in front of the guard
+  would count the duplicate first, so the guard moves back in front when it
+  finds one.
+- It hooks a private UIKit class. If that class or its two methods are gone,
+  the app stops at launch with a message naming the guard, so a UI run fails
+  at once instead of going back to random 60 s waits.
+- Every drop is posted to the UI test bundle, whose principal class
+  (`UITestAnimationGuardLog`) prints `ANIMATION-GUARD dropped …` into the test
+  log, one line per event. `verify.sh` prints the totals per UI phase:
+  `UI idle (…): N waits of 60 s …; M duplicate animation starts dropped`.
+- A test that needs the app exactly as UIKit ships it launches with
+  `UI_TEST_ANIMATION_START_GUARD=off`.
+
+A 60 s wait with the guard on is a second cause, not this one: look at what
+was animating, do not add a retry.
+
 ## Native editor source assets
 
 `GET /generative-jobs/{job_id}/variants/{variant_id}/timeline` exposes additive

@@ -124,6 +124,14 @@ run_ui() {
   else
     verify_status=1
   fi
+  # Report only. A "60 s wait" is XCTest giving up on seeing the app go idle before a tap. The known cause is
+  # Core Animation reporting one animation's start twice; in UI-test launches the app drops the duplicate
+  # (UITestAnimationStartGuard) and the test bundle prints a line each time (KRI-1604).
+  local idle_waits guard_drops
+  idle_waits="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "App animations complete notification not received" || true)"
+  guard_drops="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "ANIMATION-GUARD dropped" || true)"
+  echo "UI idle ($label): ${idle_waits:-0} waits of 60 s for the app to go idle; ${guard_drops:-0} duplicate animation starts dropped by the guard" \
+    | tee -a "$RESULT_DIR/selection.log"
   # Fail-closed: both signals must be green for the phase to pass. A clean rerun
   # of every overrun replaces only the first run's exit status; verify still
   # requires every other selected test to have passed.

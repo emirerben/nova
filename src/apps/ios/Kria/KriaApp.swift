@@ -21,6 +21,8 @@ import UserNotifications
         SpeakerMaskCacheSwitch.installIfEnabled()
         ExportOverlapSwitch.installIfConfigured()
         #if DEBUG
+        // Before the first animation: a UI test must be able to see the app go idle (KRI-1604).
+        UITestAnimationStartGuard.installIfUITesting()
         TalkBench.startIfRequested()
         // First, before anything can touch `URLSession.shared`: AsyncImage loads gallery posters through it.
         PerfPosterURLProtocol.registerIfNeeded()
