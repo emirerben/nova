@@ -4063,6 +4063,7 @@
       "api_tests": "tests/pipeline/test_intro_styles.py tests/pipeline/test_intro_styles_ios_fixture.py tests/pipeline/test_intro_scene_pick.py tests/services/test_intro_styles_contract.py tests/services/test_intro_styles_edit_ops.py tests/routes/test_intro_styles_e2e.py",
       "paths": [
         "src/apps/api/app/pipeline/intro_styles.py",
+        "src/apps/api/app/pipeline/title_family.py",
         "src/apps/api/app/routes/intro_styles.py",
         "src/apps/api/app/cli/intro_styles_fixtures.py",
         "src/apps/api/app/cli/verify_intro_styles.py",
