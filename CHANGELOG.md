@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.19.0] - 2026-11-25
+
+### Changed
+- feat(ios): Try intro styles offers fitted intro looks the creator picks on tap (KRI-1633) (#2522) <!-- release-pr: 2522 -->
+
 ## [0.90.18.0] - 2026-11-25
 
 ### Changed
