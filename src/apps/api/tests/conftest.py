@@ -56,10 +56,9 @@ if os.environ.get("EXP_TRACE_BASE_CONNECT") == "1":  # throwaway: who connects o
     @event.listens_for(Engine, "connect")
     def _exp_trace_connect(dbapi_connection, record):  # noqa: ARG001
         with open(f"/tmp/base-connect-{os.getpid()}.log", "a") as handle:
-            handle.write(
-                f"--- pid {os.getpid()} worker={os.environ.get('PYTEST_XDIST_WORKER', 'CONTROLLER')} "
-                f"url={os.environ.get('DATABASE_URL', '').rsplit('/', 1)[-1]}\n"
-            )
+            who = os.environ.get("PYTEST_XDIST_WORKER", "CONTROLLER")
+            name = os.environ.get("DATABASE_URL", "").rsplit("/", 1)[-1]
+            handle.write(f"--- pid {os.getpid()} worker={who} url={name}\n")
             handle.write("".join(traceback.format_stack(limit=28)))
 
 
