@@ -334,7 +334,7 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
     fall back to the earliest opening bar. Sequence children inherit the group
     from their source, so later word-by-word fragments remain selectable.
     """
-    from app.pipeline.phone_title_look import title_family_of  # noqa: PLC0415
+    from app.pipeline.title_family import title_family_of  # noqa: PLC0415
 
     live = [bar for bar in bars if not bar["removed"]]
 
@@ -406,7 +406,7 @@ def title_bar_ids(snapshot: dict[str, Any]) -> frozenset[str]:
 
 def resolve_selector(bars: list[dict[str, Any]], selector: dict[str, Any]) -> list[str]:
     """Ids of the live bars matching every criterion in a NORMALIZED selector."""
-    from app.pipeline.phone_title_look import (  # noqa: PLC0415
+    from app.pipeline.title_family import (  # noqa: PLC0415
         TITLE_FAMILY_IDS,
         title_look_line_ids,
     )

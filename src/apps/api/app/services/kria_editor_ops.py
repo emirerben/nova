@@ -1582,7 +1582,7 @@ def _text_appearance_enabled() -> bool:
 
 def _appearance_group(bar_id: str) -> str | None:
     """Selector vocabulary for "all titles" / "all labels" (edit_copilot.py)."""
-    from app.pipeline.phone_title_look import title_family_of  # noqa: PLC0415
+    from app.pipeline.title_family import title_family_of  # noqa: PLC0415
 
     # KRI-1633: a picked intro style's `guided-title-line-N` rows are the same title.
     if title_family_of(bar_id) == "guided-title":
@@ -3062,8 +3062,10 @@ def _op_remove_visual_media(state: _DraftState, op: dict[str, Any]) -> None:
 
 def _title_stack(state: _DraftState, bar: dict[str, Any]) -> list[dict[str, Any]]:
     """Every live line of the stacked title ``bar`` heads (KRI-1633), else just ``bar``."""
-    from app.pipeline.phone_title_look import title_stack_rows  # noqa: PLC0415
+    from app.pipeline.title_family import title_family_of, title_stack_rows  # noqa: PLC0415
 
+    if title_family_of(bar.get("id")) is None:
+        return [bar]
     live = [
         row
         for row in state.text_bars

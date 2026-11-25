@@ -560,7 +560,7 @@ def _title_ids(target: str, bars: list[dict[str, Any]]) -> list[str]:
     """The ids a manual text edit addresses. The Review Plan shows a stacked title (an intro
     scene's lines, her typed stack) as ONE field on its first line's id, so editing it means
     every line of it (`op_rewrite_text` then makes line 1 the whole new title)."""
-    from app.pipeline.phone_title_look import (  # noqa: PLC0415
+    from app.pipeline.title_family import (  # noqa: PLC0415
         TITLE_FAMILY_IDS,
         title_look_line_ids,
     )

@@ -41,12 +41,20 @@ from app.pipeline.cloud_render_evidence import normalize_text
 from app.pipeline.narrated_title import TITLE_FONT_FAMILY, narrated_title_placement
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import NormalizedBox
+from app.pipeline.title_family import (  # noqa: F401
+    _MIN_LINES,
+    TITLE_FAMILY_IDS,
+    TITLE_LOOK_PARAM,
+    _look_params,
+    is_title_look_row,
+    title_family_of,
+    title_look_line_ids,
+    title_stack_rows,
+)
 from app.text_fold import fold_text
 
 log = structlog.get_logger(__name__)
 
-TITLE_LOOK_PARAM = "title_look"
-_MIN_LINES = 2
 _MAX_LINES = 5
 _MIN_LINE_CHARS = 2
 
@@ -134,16 +142,6 @@ def split_title_lines(title: str | None) -> list[str] | None:
     return parts
 
 
-def _look_params(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    params = row.get("source_params")
-    look = params.get(TITLE_LOOK_PARAM) if isinstance(params, Mapping) else None
-    return look if isinstance(look, Mapping) else None
-
-
-def is_title_look_row(row: Mapping[str, Any]) -> bool:
-    return _look_params(row) is not None
-
-
 def title_look_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
     """Her title in typed form (`` / `` between lines), or ``None`` without look rows."""
     look_rows = [row for row in rows if is_title_look_row(row)]
@@ -165,22 +163,7 @@ def intro_plain_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
     return " ".join(str(row.get("text") or "") for row in look_rows)
 
 
-# The title's first-row id on each phone route: Talking, recorded-voiceover and guided/montage
-# stories. A stack's other lines carry ``<family>-line-N`` (KRI-1633 offers intro styles on all
-# three).
-TITLE_FAMILY_IDS = (title_mod.TALKING_TITLE_ELEMENT_ID, "narrated-title", "guided-title")
-
-
-def title_family_of(row_id: object) -> str | None:
-    """The family a title row id belongs to (``opening-title``, ``narrated-title``,
-    ``guided-title``, each optionally followed by ``-line-N``), else ``None``."""
-    text = str(row_id or "")
-    for family in TITLE_FAMILY_IDS:
-        if text == family or (
-            text.startswith(f"{family}-line-") and text[len(family) + 6 :].isdigit()
-        ):
-            return family
-    return None
+assert TITLE_FAMILY_IDS[0] == title_mod.TALKING_TITLE_ELEMENT_ID
 
 
 def intro_stack_as_one_row(rows: Sequence[Any]) -> list[Any]:
@@ -197,29 +180,6 @@ def intro_stack_as_one_row(rows: Sequence[Any]) -> list[Any]:
     first = ordered[0]
     gone = {id(row) for row in ordered[1:]}
     return [{**row, "text": plain} if row is first else row for row in rows if id(row) not in gone]
-
-
-def title_look_line_ids(bar_ids: Sequence[str], family: str | None = None) -> list[str]:
-    """The ids a stacked title's lines carry (`opening-title`, `opening-title-line-N`, and the
-    narrated / guided families), in the order given. A whole-title edit addresses every one of
-    them: all of ONE family (``family``, else the first one present), never lines of two."""
-    families = [title_family_of(i) for i in bar_ids]
-    present = family or next((f for f in TITLE_FAMILY_IDS if f in families), None)
-    return [i for i, family in zip(bar_ids, families, strict=True) if present and family == present]
-
-
-def title_stack_rows(live: Sequence[dict[str, Any]], row: dict[str, Any]) -> list[dict[str, Any]]:
-    """KRI-1633: every line (in line order) of the stacked title ``row`` heads, else ``[row]``.
-    Only a family's first-line id heads a stack, so an edit aimed at one ``-line-N`` stays a line
-    edit; an edit aimed at the title itself (index op, selector id) means the whole stack, as the
-    Review Plan shows it (`plan_review._title_ids`). ``live`` are the rows not removed."""
-    family = title_family_of(row.get("id"))
-    if family is None or row.get("id") != family or not is_title_look_row(row):
-        return [row]
-    stack = [r for r in live if title_family_of(r.get("id")) == family and is_title_look_row(r)]
-    if len(stack) < _MIN_LINES or not any(r is row for r in stack):
-        return [row]
-    return sorted(stack, key=lambda r: int((_look_params(r) or {}).get("line") or 0))
 
 
 def collapse_title_look(
