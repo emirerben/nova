@@ -128,11 +128,12 @@ run_ui() {
   # Core Animation reporting a start twice for an animation whose layer is already freed, and stopping it once.
   # In UI-test launches the app drops that second start (UITestAnimationStartGuard) and the test bundle prints
   # a line each time; "waits avoided" is drops minus the few whose second stop did come (KRI-1604).
-  local idle_waits guard_drops guard_stops
+  local idle_waits guard_drops guard_stops guard_missed
   idle_waits="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "App animations complete notification not received" || true)"
   guard_drops="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "ANIMATION-GUARD dropped a second start" || true)"
   guard_stops="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "ANIMATION-GUARD the stop for a dropped start" || true)"
-  echo "UI idle ($label): ${idle_waits:-0} waits of 60 s for the app to go idle; guard dropped ${guard_drops:-0} second starts on freed layers, ${guard_stops:-0} of them got a stop later" \
+  guard_missed="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "ANIMATION-GUARD missed one" || true)"
+  echo "UI idle ($label): ${idle_waits:-0} waits of 60 s for the app to go idle; guard dropped ${guard_drops:-0} second starts on freed layers, ${guard_stops:-0} of them got a stop later; ${guard_missed:-0} starts never stopped that the guard did not catch" \
     | tee -a "$RESULT_DIR/selection.log"
   # Fail-closed: both signals must be green for the phase to pass. A clean rerun
   # of every overrun replaces only the first run's exit status; verify still

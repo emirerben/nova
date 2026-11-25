@@ -52,6 +52,9 @@ enum UITestAnimationStartGuard {
     static let droppedStopNotification = "com.kria.uitest.animation-stop-dropped"
     /// A stop paired with no start the guard saw. Passed on untouched; printed so it is not silent.
     static let unmatchedStopNotification = "com.kria.uitest.animation-stop-unmatched"
+    /// An animation was freed with a passed-on start that never got its stop: a leak the guard did not catch.
+    static let neverStoppedFreedNotification = "com.kria.uitest.animation-never-stopped-layer-freed"
+    static let neverStoppedLiveNotification = "com.kria.uitest.animation-never-stopped-layer-live"
     /// The guard moved in front of a hook added after launch (XCTest's). Once per launch.
     static let movedNotification = "com.kria.uitest.animation-guard-moved"
     /// Set to `off` by a test that wants the app exactly as UIKit ships it (the red control for the guard).
@@ -60,8 +63,18 @@ enum UITestAnimationStartGuard {
     /// Rides on the animation as an associated object, made when the animation is added to its layer.
     private final class Box {
         weak var layer: CALayer?
+        let keyPath: String
         var ledger = AnimationStartLedger()
-        init(layer: CALayer) { self.layer = layer }
+        init(layer: CALayer, keyPath: String) { self.layer = layer; self.keyPath = keyPath }
+        /// Runs when the animation itself is freed. A start that was passed on and never stopped is the leak the
+        /// guard exists for; one that gets here was not caught, so it is reported with what the guard knows.
+        deinit {
+            guard ledger.passedOnBalance > 0 else { return }
+            let layerGone = layer == nil
+            NSLog("UITestAnimationStartGuard: an animation was freed with %d start(s) never stopped (%@, layer %@)",
+                  ledger.passedOnBalance, keyPath, layerGone ? "freed" : "still there")
+            notify_post(layerGone ? neverStoppedFreedNotification : neverStoppedLiveNotification)
+        }
     }
     private typealias Add = @convention(c) (CALayer, Selector, CAAnimation, NSString?) -> Void
     private typealias Start = @convention(c) (AnyObject, Selector, CAAnimation?) -> Void
@@ -108,7 +121,8 @@ enum UITestAnimationStartGuard {
                   let attached = layer.animation(forKey: key as String) else { return }
             // An animation added again keeps its ledger; only the layer it sits on is refreshed.
             if let known = box(of: attached) { known.layer = layer } else {
-                objc_setAssociatedObject(attached, &boxKey, Box(layer: layer), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                let made = Box(layer: layer, keyPath: (attached as? CAPropertyAnimation)?.keyPath ?? "-")
+                objc_setAssociatedObject(attached, &boxKey, made, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             }
         }
         method_setImplementation(addMethod, imp_implementationWithBlock(add))

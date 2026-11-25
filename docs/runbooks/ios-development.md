@@ -1238,7 +1238,12 @@ hiding anything a test checks:
   (`UITestAnimationGuardLog`) prints `ANIMATION-GUARD dropped …` into the test
   log, one line per event. `verify.sh` prints the totals per UI phase:
   `UI idle (…): N waits of 60 s …; guard dropped M second starts on freed
-  layers, K of them got a stop later`.
+  layers, K of them got a stop later; J starts never stopped that the guard
+  did not catch`.
+- When an animation is freed with a start that was passed on and never
+  stopped, the guard did not catch that one. It prints
+  `ANIMATION-GUARD missed one …` with whether the layer was freed or still
+  there, so a 60 s wait that happens with the guard on names its animation.
 - A test that needs the app exactly as UIKit ships it launches with
   `UI_TEST_ANIMATION_START_GUARD=off`.
 
