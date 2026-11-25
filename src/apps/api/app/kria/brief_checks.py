@@ -17826,10 +17826,11 @@ def _check_all_clips_used(req: BriefRequirement, facts: PlanFacts) -> Requiremen
 def _check_own_voiceover(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
     """KRI-1517: "Use my recorded Turkish voiceover." on a finished phone Voiceover render.
 
-    Met when the render's own record says its narration is the recorded file and the row types
-    nothing but the file's language. A row that also asks about the bed, the clip sound or the
-    pauses keeps its readers, and a file heard in another language than the one named keeps
-    today's answer (None).
+    Met when the render's own record says its narration is the recorded file, the row types
+    nothing but the file's language, and the language the record heard in the file is that one.
+    A row that also asks about the bed, the clip sound or the pauses keeps its readers; a file
+    heard in another language, a record with no heard language (the worker clears it when caption
+    compilation fails) and a row whose language cannot be read keep today's answer (None).
     """
     typed = req.facts if isinstance(req.facts, Mapping) else {}
     if (
@@ -17847,7 +17848,7 @@ def _check_own_voiceover(req: BriefRequirement, facts: PlanFacts) -> Requirement
         None,
     )
     heard = _language_code(facts.voiceover_file_language)
-    if asked is not None and heard is not None and asked != heard:
+    if asked is None or heard is None or asked != heard:
         return None
     return _receipt(req, "met", None, verification="checked", stage="checked")
 

@@ -21,7 +21,9 @@ Ways this can fail, written before the code:
  V2 r1 is still "Have a look" although the narration is the recorded voiceover file.
  V3 r1 reads "Done" without proof: no accepted Voiceover record for this render (another
     generation, e.g. after an editor Save), or the record heard another language than the one the
-    creator named for the file.
+    creator named for the file, or holds no language at all (the worker clears
+    ``spoken_language`` when caption compilation fails): only a recorded language that matches the
+    one named is proof.
  V4 the voiceover check claims another audio row: a row with more than the file's language
     ("Use my voiceover, music under it"), or one a bed / cleanup reader owns.
  V5 wrong content passes: a clip the steps never play still reads "Done" for "fill the rest" (it
@@ -77,6 +79,7 @@ def _job(
     requirements: list[BriefRequirement] | None = None,
     record_generation: str | None = None,
     strategy: dict | None = None,
+    spoken_language: object = ...,
 ):
     """The recorded job: its brief binding (with the approved media), the Voiceover record, the
     variant. The variant carries the record's generation, as a cloud-checked render does."""
@@ -87,6 +90,8 @@ def _job(
     variant["render_generation_id"] = record["generation_id"]
     if record_generation is not None:
         record["generation_id"] = record_generation
+    if spoken_language is not ...:
+        record["spoken_language"] = spoken_language
     thread_id = uuid.uuid4()
     binding = BriefBinding.create(
         thread_id,
@@ -257,6 +262,28 @@ def test_v3_a_voiceover_heard_in_another_language_keeps_the_old_answer() -> None
 
     assert rows["r1"]["status"] == "partial"
     assert rows["r1"]["verification"] in (None, "unchecked")
+
+
+@pytest.mark.parametrize("missing", [None, "", "  "])
+def test_v3_a_record_with_no_heard_language_keeps_the_old_answer(missing) -> None:
+    # Tadic's control: the worker clears spoken_language when caption compilation fails, so the
+    # named Turkish cannot be confirmed; the rest of the review is unchanged.
+    rows = _review(spoken_language=missing)
+
+    assert rows["r1"]["status"] == "partial"
+    assert rows["r1"]["verification"] in (None, "unchecked"), rows["r1"]
+    assert _verdict(rows["r7"]) == ("met", "checked", None)
+
+
+def test_v3_a_row_whose_language_cannot_be_read_keeps_the_old_answer() -> None:
+    unreadable = {**CASE["requirements"][0], "facts": {"voiceover_language": "my own"}}
+    rows = _review(
+        requirements=[
+            BriefRequirement.model_validate(row) for row in [unreadable, *CASE["requirements"][1:]]
+        ]
+    )
+
+    assert rows["r1"]["verification"] in (None, "unchecked"), rows["r1"]
 
 
 # -- V4: the voiceover check owns only the plain ask ---------------------------------------------
