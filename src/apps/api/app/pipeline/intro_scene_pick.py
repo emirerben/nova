@@ -168,7 +168,6 @@ def ink_order(seed: str) -> list[str]:
 # preferences, `all_text` (it mixes the strategy writer's own font/colour knobs, KRI-1024) and a
 # title position or font-list say nothing about whether she asked for a look.
 TITLE_LOOK_ASK_KEYS = ("font_family", "color", "stroke_width", "shadow_enabled")
-_EXCLUDED_FONT_KEYS = ("excluded_fonts", "excluded_font_families")
 
 
 def has_text_ask(policy: Mapping[str, Any] | None) -> bool:
@@ -194,12 +193,11 @@ def excluded_font_families(policy: Mapping[str, Any] | None) -> frozenset[str]:
             rule = source.get(role)
             if not isinstance(rule, Mapping):
                 continue
-            for key in _EXCLUDED_FONT_KEYS:
-                values = rule.get(key)
-                if isinstance(values, str):
-                    values = [values]
-                if isinstance(values, list | tuple | set):
-                    found.update(str(value).strip().casefold() for value in values if value)
+            values = rule.get("excluded_fonts")  # font family names (phone_text_styling)
+            if isinstance(values, str):
+                values = [values]
+            if isinstance(values, list | tuple | set):
+                found.update(str(value).strip().casefold() for value in values if value)
     return frozenset(found)
 
 

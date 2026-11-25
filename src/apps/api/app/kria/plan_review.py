@@ -560,13 +560,15 @@ def _title_ids(target: str, bars: list[dict[str, Any]]) -> list[str]:
     """The ids a manual text edit addresses. The Review Plan shows a stacked title (an intro
     scene's lines, her typed stack) as ONE field on its first line's id, so editing it means
     every line of it (`op_rewrite_text` then makes line 1 the whole new title)."""
-    from app.pipeline.phone_subtitled_title import TALKING_TITLE_ELEMENT_ID  # noqa: PLC0415
-    from app.pipeline.phone_title_look import title_look_line_ids  # noqa: PLC0415
+    from app.pipeline.phone_title_look import (  # noqa: PLC0415
+        TITLE_FAMILY_IDS,
+        title_look_line_ids,
+    )
 
-    if target != TALKING_TITLE_ELEMENT_ID:
+    if target not in TITLE_FAMILY_IDS:
         return [target]
     live = [str(b.get("id")) for b in bars if not b.get("removed")]
-    return title_look_line_ids(live) or [target]
+    return title_look_line_ids(live, target) or [target]
 
 
 def manual_edits_to_ops(edits: list[ManualEdit], snapshot: dict[str, Any]) -> list[dict[str, Any]]:
