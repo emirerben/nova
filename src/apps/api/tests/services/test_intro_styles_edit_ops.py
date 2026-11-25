@@ -107,3 +107,49 @@ def test_an_edit_to_one_line_stays_one_line(route):  # O5
     after = _title(_compile(job, variant, snapshot, raw), route)
     assert len(after) == len(rows)
     assert {r["id"]: r["text"] for r in after}[second] == "fresh"
+
+
+# F13 review round: ops aimed at the title by its OWN id or by the title-bar index (what the
+# parser makes of `set_title`) addressed line 1 only. Written from the reproduced failures.
+O7 = "set_title leaves her old words on lines 2-N (montage: parsed to an index edit of line 1)"
+O8 = "a selector naming the title's id restyles or removes line 1 only"
+O9 = "the appearance inventory groups only the literal `guided-title` as the title"
+
+
+def test_set_title_replaces_the_whole_montage_stack():  # O7
+    # Talking and narrated phone edits do not offer `set_title` (no intro_controls); montage's
+    # title is a text bar, so the parser makes it an index edit of the title bar.
+    job, variant, snapshot, _rows, others = _job("montage")
+    compiled = _compile(job, variant, snapshot, [{"op": "set_title", "title": NEW}])
+    assert [r["text"] for r in _title(compiled, "montage")] == [NEW]
+    assert {r["id"] for r in _saved_text(compiled)} >= {r["id"] for r in others}
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_selector_naming_the_title_id_means_every_line(route):  # O8
+    job, variant, snapshot, rows, _others = _job(route)
+    family = styles.ROUTE_FAMILIES[route]
+    paint = [{"op": "patch_text", "selector": {"ids": [family]}, "patch": {"color": "#112233"}}]
+    painted = _title(_compile(job, variant, snapshot, paint), route)
+    assert len(painted) == len(rows) and {r["color"] for r in painted} == {"#112233"}
+    gone = [{"op": "remove_texts", "selector": {"ids": [family]}}]
+    assert _title(_compile(job, variant, snapshot, gone), route) == []
+
+
+def test_the_appearance_inventory_calls_every_montage_line_the_title(monkeypatch):  # O9
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "text_appearance_enabled", True)
+    job, variant, snapshot, rows, _others = _job("montage")
+    groups = {t["id"]: t.get("group") for t in snapshot["text_appearance"]["targets"]}
+    assert {groups[r["id"]] for r in rows} == {"title"}
+    raw = [
+        {
+            "op": "patch_text_appearance",
+            "text_appearance_version": 1,
+            "selector": {"scope": "editable_text", "quantifier": "all", "group": "titles"},
+            "patch": {"shadow_enabled": False},
+        }
+    ]
+    title = _title(_compile(job, variant, snapshot, raw), "montage")
+    assert len(title) == len(rows) and {r["shadow_enabled"] for r in title} == {False}

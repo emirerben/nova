@@ -334,6 +334,8 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
     fall back to the earliest opening bar. Sequence children inherit the group
     from their source, so later word-by-word fragments remain selectable.
     """
+    from app.pipeline.phone_title_look import title_family_of  # noqa: PLC0415
+
     live = [bar for bar in bars if not bar["removed"]]
 
     def is_label(bar: dict[str, Any]) -> bool:
@@ -345,7 +347,7 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
         if not is_label(bar)
         and not bar.get("caption")
         and (
-            bar["id"] == "guided-title"
+            title_family_of(bar["id"]) == "guided-title"
             or bar["role"] == "title"
             or (
                 bar["role"] == "generative_intro"
@@ -404,8 +406,18 @@ def title_bar_ids(snapshot: dict[str, Any]) -> frozenset[str]:
 
 def resolve_selector(bars: list[dict[str, Any]], selector: dict[str, Any]) -> list[str]:
     """Ids of the live bars matching every criterion in a NORMALIZED selector."""
+    from app.pipeline.phone_title_look import (  # noqa: PLC0415
+        TITLE_FAMILY_IDS,
+        title_look_line_ids,
+    )
+
     kinds = classify(bars)
     ids = set(selector.get("ids") or [])
+    # KRI-1633: naming a stacked title by its own id names every line of it.
+    for family in TITLE_FAMILY_IDS:
+        if family in ids:
+            live_ids = [b["id"] for b in bars if not b["removed"]]
+            ids.update(title_look_line_ids(live_ids, family))
     clips = set(selector.get("clip_ids") or [])
     group = selector.get("group")
     contains = fold(selector["contains"]) if selector.get("contains") else None

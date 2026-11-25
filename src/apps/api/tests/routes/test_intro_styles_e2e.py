@@ -285,8 +285,31 @@ def test_pick_save_edit_and_override_through_the_real_app(make, route, lang):
     none = again.json()["options"][-1]
     assert none["key"] == "none" and len(none["rows"]) == 1
     assert fold_text(none["rows"][0]["text"]) == fold_text(words)
+    # ... and it is the title the pick replaced, exactly as the worker styled and placed it (F15)
+    assert none["rows"] == seeded.rows
     assert save(client, seeded, none["rows"]).status_code == 200
     assert len(seeded.layers()) == 1
+
+
+def test_a_chat_set_title_of_a_picked_montage_title_collapses_the_stack(make):
+    from app.kria.plan_review import parse_ops_without_model
+    from app.services.kria_editor_ops import build_editor_snapshot, compile_editor_ops
+
+    seeded, client = make("montage")
+    pick = offer(client, seeded).json()["options"][0]
+    assert save(client, seeded, pick["rows"]).status_code == 200
+    job, variant = seeded.job(), seeded.variant()
+    ops, rejection = parse_ops_without_model(
+        [{"op": "set_title", "title": "my morning ritual"}],
+        build_editor_snapshot(job, variant),
+        "change the title",
+    )
+    assert ops, rejection
+    rows = compile_editor_ops(job, variant, ops).payload.model_dump(mode="json", exclude_none=True)[
+        "text_elements"
+    ]
+    title = [r for r in rows if title_family_of(r["id"])]
+    assert len(title) == 1 and title[0]["text"] == "my morning ritual"
 
 
 @pytest.mark.parametrize("route", ["talking", "montage"])

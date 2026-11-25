@@ -219,7 +219,11 @@ F1-F26 with each guard is in the module docstring):
   `canvas_unsupported`, `no_title`, `title_look_asked`, `title_too_short`, `nothing_fits`,
   `save_refused`.
 * Apply: the editor stages `option.rows` and her normal editor-commit Save persists them. Each row
-  carries `source_params.title_look.intro_style` so the next offer can mark the current look.
+  carries `source_params.title_look.intro_style` so the next offer can mark the current look; line
+  1 also carries `restore`, the title rows the look replaced. "No intro style" over a stack gives
+  `restore` back exactly (the worker's font, size and place are kept nowhere else) while the words
+  are still hers, else her words as one plain row under the pinned text policy (an approximation of
+  the route's builder, notably on montage).
 
 | Route | Title family | Face evidence | In |
 | --- | --- | --- | --- |
@@ -233,6 +237,10 @@ the variant's own evidence (a stub sampler replays the saved face; the other tex
 pinned recipe are avoided) and kept only on a clean receipt, then dry-run through the route's real
 phone Save on a detached copy (a refused look is dropped). Ink is the first light ink of the
 seeded order; nothing is measured on her footage at request time (KRI-1619 owns per-footage ink).
+A caption layer is never treated as her own title, even when it repeats her words; layers are
+matched whole, not by substring. Known v1 limit: placement works on layout boxes and a few script
+faces draw ink a hair outside them (under 1% of looks on random jobs); the tile is drawn over her
+frame so she can judge.
 
 **`has_text_ask`** is True only when `requested.title` holds `font_family`, `color`,
 `stroke_width` or `shadow_enabled` (`TITLE_LOOK_ASK_KEYS`). Saved preferences, `all_text` (the
@@ -243,14 +251,17 @@ scene she did not pick; a KRI-1611 stamp still renders byte-identically (golden
 
 **Her edits win.** A stack is one text for the render contract (`intro_plain_text`; `any`
 requirements fall back to `stacked_title_matches` like `opening`). Chat ops and the Review Plan
-title field address every line of a title family; a whole-title rewrite collapses the stack.
+title field address every line of a title family: a style patch, an id selector, an index op on
+the title bar and the appearance group `titles` reach every line; a whole-title rewrite or
+`set_title` collapses the stack and a remove takes every line (edits aimed at one `-line-N` stay
+line edits).
 
 **Deliberately not gates:** `TITLE_LOOK_ENABLED` (it gates typed stacks and the worker's look pass;
 the Save path does not read it), the job's `informative_text_shapes` stamp (the live protocol gate
 replaces it), suggestion chips and cards.
 
 **Checks:** `make verify-intro-styles` (prod image; `.intro-styles-verify/{report.json,montage.png}`,
-six negative controls), `tests/pipeline/test_intro_styles.py`, `tests/routes/test_intro_styles_e2e.py`
+eight negative controls (N7: captions that repeat her words; N8: "none" rebuilt without the saved title)), `tests/pipeline/test_intro_styles.py`, `tests/routes/test_intro_styles_e2e.py`
 (real PostgreSQL, three routes, EN and TR), `tests/services/test_intro_styles_{contract,edit_ops}.py`,
 and the generated iOS fixture `src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json`
 (`KRI1633_REGENERATE=1 pytest tests/pipeline/test_intro_styles_ios_fixture.py`).

@@ -481,6 +481,10 @@
       "source": "default",
       "value": []
     },
+    "intro_styles_min_client_protocol": {
+      "source": "default",
+      "value": 57
+    },
     "ios_device_only_mode": {
       "source": "decisions-md:2026-11-02",
       "value": true

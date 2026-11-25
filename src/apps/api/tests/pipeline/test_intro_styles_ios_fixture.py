@@ -3,8 +3,8 @@
 `src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json` is GENERATED here from the real offer
 builder (never hand-edited) and read by the iOS unit and UI tests (`IntroStylesOfferTests`,
 `IntroStylesUITests`), so the app is tested against the exact wire shape: the editor variant with
-its capability, three offers (Talking EN, montage TR, narrated EN), an unavailable offer and the
-editor-commit body a pick must produce.
+its capability and three editor variants with their offers (Talking EN, montage TR, narrated EN),
+an unavailable offer and the editor-commit body a pick must produce.
 
 Drift check, the way `test_kri1582_design_picker.py` does it: the stored file's SHAPE (keys, ids,
 option keys, row ids, layer texts, fonts, reasons) must equal a fresh build's; pixel positions
@@ -30,6 +30,9 @@ from app.services.client_protocol import INTRO_STYLES_PROTOCOL, _client_protocol
 
 # A fixed job id keeps the seeded looks (and so the fixture) the same on every run.
 _JOB_ID = uuid.UUID("00000000-0000-4000-8000-000000001633")
+# A Turkish title whose caps look draws "TRENDİ" (dotted capital): the iOS live preview must
+# produce the same capitals as the server's preview layers (F10).
+_TR_TITLE = "bu yılın trendi şu an"
 _FIXTURE = Path(__file__).resolve().parents[3] / "ios/Tests/Fixtures/KRI1633IntroStyles.json"
 
 
@@ -44,40 +47,46 @@ def _offer(route: str, title: str) -> tuple[dict, dict]:
     return st.build_offer(st.detach(job), vid, rows, "first"), {"job": job, "rows": rows}
 
 
+def _editor(route: str, job, rows: list[dict]) -> dict:
+    """The editor variant the app loads for ``route``: its capability map and the title rows."""
+    token = _client_protocol.set(INTRO_STYLES_PROTOCOL)
+    try:
+        variant_id = fx.VARIANT_IDS[route]
+        variant = next(v for v in gj._variants_for_response(job) if v["variant_id"] == variant_id)
+    finally:
+        _client_protocol.reset(token)
+    saved = next(v for v in job.assembly_plan["variants"] if v["variant_id"] == variant_id)
+    return {
+        "variant_id": variant_id,
+        "base_generation": gj.variant_render_baseline(saved),
+        "editor_capabilities": {
+            key: variant["editor_capabilities"][key]
+            for key in ("intro_styles", "text_elements")
+            if key in variant["editor_capabilities"]
+        },
+        "text_elements": rows,
+    }
+
+
 def _fresh() -> dict:
     offer_en, talking = _offer("talking", fx.EN_TITLE)
     job = talking["job"]
-    token = _client_protocol.set(INTRO_STYLES_PROTOCOL)
-    try:
-        variant = next(v for v in gj._variants_for_response(job) if v["variant_id"] == "subtitled")
-    finally:
-        _client_protocol.reset(token)
-    offer_tr, _ = _offer("montage", fx.TR_TITLE)
-    offer_narrated, _ = _offer("narrated", fx.EN_TITLE)
+    offer_tr, montage = _offer("montage", _TR_TITLE)
+    offer_narrated, narrated = _offer("narrated", fx.EN_TITLE)
     pick = offer_en["options"][1]
-    other_rows = [
-        r
-        for r in job.assembly_plan["variants"][0]["text_elements"]
-        if r["id"] not in offer_en["replace_ids"]
-    ]
+    saved = job.assembly_plan["variants"][0]
+    other_rows = [r for r in saved["text_elements"] if r["id"] not in offer_en["replace_ids"]]
     return {
-        "editor_talking_en": {
-            "variant_id": variant["variant_id"],
-            "base_generation": gj.variant_render_baseline(job.assembly_plan["variants"][0]),
-            "editor_capabilities": {
-                key: variant["editor_capabilities"][key]
-                for key in ("intro_styles", "text_elements")
-                if key in variant["editor_capabilities"]
-            },
-            "text_elements": talking["rows"],
-        },
+        "editor_talking_en": _editor("talking", job, talking["rows"]),
+        "editor_montage_tr": _editor("montage", montage["job"], montage["rows"]),
+        "editor_narrated_en": _editor("narrated", narrated["job"], narrated["rows"]),
         "offer_talking_en": offer_en,
         "offer_montage_tr": offer_tr,
         "offer_narrated_en": offer_narrated,
         "unavailable_nothing_fits": st._unavailable("nothing_fits"),
         "save_body_expected": {
             "picked_key": pick["key"],
-            "base_generation": gj.variant_render_baseline(job.assembly_plan["variants"][0]),
+            "base_generation": gj.variant_render_baseline(saved),
             "text_elements": [*pick["rows"], *copy.deepcopy(other_rows)],
         },
     }
@@ -126,10 +135,13 @@ def _offer_shape(offer: dict) -> dict:
 
 def _shape(fixture: dict) -> dict:
     return {
-        "editor": {
-            "variant_id": fixture["editor_talking_en"]["variant_id"],
-            "capabilities": fixture["editor_talking_en"]["editor_capabilities"],
-            "rows": [r["id"] for r in fixture["editor_talking_en"]["text_elements"]],
+        "editors": {
+            name: {
+                "variant_id": fixture[name]["variant_id"],
+                "capabilities": fixture[name]["editor_capabilities"],
+                "rows": [r["id"] for r in fixture[name]["text_elements"]],
+            }
+            for name in ("editor_talking_en", "editor_montage_tr", "editor_narrated_en")
         },
         "offers": {
             name: _offer_shape(fixture[name])
@@ -157,6 +169,14 @@ def test_the_ios_fixture_is_what_the_server_sends():
         == fresh["offer_talking_en"]["options"][1]["rows"]
     )
     assert all(o["preview"] is not None for o in fresh["offer_montage_tr"]["options"])
+    # F10: a Turkish caps look in the fixture draws the dotted capital the iOS preview must match
+    drawn = [
+        run["text"]
+        for option in fresh["offer_montage_tr"]["options"]
+        for layer in option["preview"]["text_layers"]
+        for run in layer["runs"]
+    ]
+    assert any("TRENDİ" in text for text in drawn), drawn
     if _FIXTURE.exists() and os.environ.get("KRI1633_REGENERATE") != "1":
         stored = json.loads(_FIXTURE.read_text())
         assert _shape(stored) == _shape(fresh), (

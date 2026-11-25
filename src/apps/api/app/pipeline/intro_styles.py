@@ -34,7 +34,11 @@ tests/pipeline/test_intro_scene_pick.py, and `make verify-intro-styles`):
 * F6 options not fitted (ink over her face, captions, logo or other text, outside the safe zone).
   Every look is placed with the real `place_title_look` against the variant's own evidence and its
   receipt must pass `placement_is_clean`; routes avoid the other text and media layers in the
-  pinned recipe that overlap the title window. The verify CLI measures each ink box (N3).
+  pinned recipe that overlap the title window (a caption that repeats her words is still a caption:
+  layers are matched whole, and a ``caption-*`` layer is never her title). The verify CLI measures
+  each ink box and the recipe's caption boxes on its own (N3, N7). Known v1 limit: placement
+  works on layout boxes, and a few script faces draw ink a hair outside them (<1% of offered
+  looks on random jobs, measured by raster); the tile is drawn over her frame so she can judge.
 * F7 request-time face boxes are in another coordinate space than the worker's. The saved
   receipt's canvas-space ``face_band`` is replayed through a stub sampler on a canvas-sized
   display; a parity test re-places today's plain title and must reproduce its decision and
@@ -59,8 +63,11 @@ tests/pipeline/test_intro_scene_pick.py, and `make verify-intro-styles`):
   guided recompile). E2E: pick Save then an unrelated Save; the pinned recipe's title layers equal
   the picked rows' layers, per route.
 * F15 "No intro style" changes a title that was never styled, or does not restore today's title. A
-  non-stack ``none.rows`` equals the sent rows byte for byte; a stack becomes her words as one
-  plain row under the job's pinned text policy.
+  non-stack ``none.rows`` equals the sent rows byte for byte. Every look carries the title it
+  replaced on line 1's ``intro_style.restore`` (the worker's font, size and place are not kept
+  anywhere else), so "none" gives that title back while the words are still hers (N8); a stack
+  without it (or with her words changed) becomes her words as one plain row under the job's
+  pinned text policy, an approximation of the route's builder.
 * F16 an offer built on an old baseline is applied over a newer render: 409 ``baseline_conflict``,
   and editor-commit's own compare-and-fail.
 * F17 previews differ from what is applied, or fall back to text. Each preview is compiled from its
@@ -204,6 +211,9 @@ class Title:
     language: str | None
     is_intro_stack: bool
     intro_key: str | None
+    # The plain title this stack replaced, carried on line 1's ``intro_style.restore`` so "No intro
+    # style" can give it back exactly (F15); for a title that is not a stack, its own rows.
+    restore: tuple[dict[str, Any], ...] | None = None
 
 
 def read_title_rows(rows: Sequence[Any], route: str) -> Title:
@@ -240,15 +250,23 @@ def read_title_rows(rows: Sequence[Any], route: str) -> Title:
     stack = intro_plain_text(clean) if len(clean) >= 2 and len(look) == len(clean) else None
     if len(clean) >= 2 and len(look) != len(clean):
         raise TitleRowsInvalid("a title of several rows must be one look")
+    restore: tuple[dict[str, Any], ...] | None = None
     if stack is not None:
         words = stack
-        key = ((_look_params(look[0]) or {}).get("intro_style") or {}).get("key")
+        first = min(look, key=lambda row: int((_look_params(row) or {}).get("line") or 0))
+        style = (_look_params(first) or {}).get("intro_style") or {}
+        key = style.get("key")
+        saved = style.get("restore")
+        if isinstance(saved, list) and 1 <= len(saved) <= MAX_TITLE_ROWS:
+            restore = tuple(copy.deepcopy(dict(row)) for row in saved if isinstance(row, Mapping))
     elif len(clean) >= 2:
         words = title_look_text(clean) or ""
         key = None
     else:
         words = " ".join(str(clean[0]["text"]).split())
         key = None
+    if stack is None:
+        restore = tuple(copy.deepcopy(row) for row in clean)
     start = min(float(row.get("start_s") or 0.0) for row in clean)
     end = max(float(row.get("end_s") or 0.0) for row in clean)
     if end <= start:
@@ -262,6 +280,7 @@ def read_title_rows(rows: Sequence[Any], route: str) -> Title:
         language=language if isinstance(language, str) else None,
         is_intro_stack=stack is not None,
         intro_key=key if isinstance(key, str) else None,
+        restore=restore,
     )
 
 
@@ -371,7 +390,8 @@ def avoid_boxes(
 ) -> list[Any]:
     """Boxes of the OTHER text layers in the pinned recipe shown during the title's window (the
     captions, a corner line, a closing line): the title keeps clear of them (F6). The layers that
-    draw her current title are not other text."""
+    draw her current title are not other text: those are matched whole (a caption that repeats
+    her words, which she usually says, is NOT her title), and a caption layer never is."""
     from app.text_fold import fold_text  # noqa: PLC0415
 
     own = {fold_text(" ".join(str(row["text"]).split())) for row in title.rows}
@@ -384,7 +404,9 @@ def avoid_boxes(
         ):
             continue
         text = fold_text(" ".join(str(run.get("text") or "") for run in layer.get("runs") or []))
-        if not text.strip() or text in own or any(text in value for value in own):
+        if not text.strip() or (
+            text in own and not str(layer.get("id") or "").startswith("caption")
+        ):
             continue
         box = layer_box(layer, canvas)
         if box is not None:
@@ -574,6 +596,7 @@ def fit_looks(
     budget: list[int],
     declines: dict[str, int],
     accept: Callable[[Look], str | None] | None = None,
+    restore: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[Look]:
     """Up to `MAX_LOOKS` fitted looks with distinct font pairs. Each candidate x zone is compiled
     (`compile_intro_scene`, no model) and placed with the real `place_title_look` against
@@ -632,7 +655,7 @@ def fit_looks(
                     continue
                 look = Look(
                     pair,
-                    _tagged(placed, route, offer, pair, entrance, zone, ink),
+                    _tagged(placed, route, offer, pair, entrance, zone, ink, restore),
                     zone,
                     ink,
                     entrance,
@@ -660,9 +683,11 @@ def _tagged(
     entrance: str,
     zone: str,
     ink: str,
+    restore: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """The placed rows as ``route``'s title rows, each carrying ``title_look.intro_style`` (so the
-    next offer can mark the current look and tell a stack from a plain title)."""
+    next offer can mark the current look and tell a stack from a plain title). Line 1 also carries
+    ``restore``, the title this look replaces, for "No intro style" (F15)."""
     from app.pipeline.phone_title_look import TITLE_LOOK_PARAM  # noqa: PLC0415
 
     rows = remap_to_route(placed, route)
@@ -675,9 +700,11 @@ def _tagged(
         "zone": zone,
         "ink": ink,
     }
-    for row in rows:
+    for index, row in enumerate(rows):
         look = dict(row["source_params"][TITLE_LOOK_PARAM])
         look["intro_style"] = dict(style)
+        if index == 0 and restore:
+            look["intro_style"]["restore"] = copy.deepcopy([dict(r) for r in restore])
         row["source_params"] = {**row["source_params"], TITLE_LOOK_PARAM: look}
     return rows
 
@@ -942,6 +969,7 @@ def build_offer(
         budget=budget,
         declines=declines,
         accept=accept,
+        restore=title.restore,
     )
     log_fields = {
         "route": route,
@@ -1007,6 +1035,31 @@ def build_offer(
     }
 
 
+def _restored_title(title: Title, route: str) -> list[dict[str, Any]] | None:
+    """The plain title this stack replaced, when it still reads as her words: the rows exactly as
+    the worker styled and placed them, in the current window. The rows came back from the editor,
+    so they are validated like any title rows. ``None`` falls back to the route's builder."""
+    from app.pipeline.phone_title_look import _case_blind  # noqa: PLC0415
+
+    if not title.restore:
+        return None
+    try:
+        original = read_title_rows(list(title.restore), route)
+    except TitleRowsInvalid:
+        return None
+
+    def plain(words: str) -> str:  # a typed stack's " / " is not part of her words
+        return _case_blind(" ".join(words.replace(" / ", " ").split()))
+
+    if original.is_intro_stack or plain(original.words) != plain(title.words):
+        return None
+    rows = [copy.deepcopy(dict(row)) for row in original.rows]
+    if abs(original.start_s - title.start_s) > 0.01 or abs(original.end_s - title.end_s) > 0.01:
+        for row in rows:
+            row["start_s"], row["end_s"] = title.start_s, title.end_s
+    return rows
+
+
 def _none_rows(
     title: Title,
     *,
@@ -1017,9 +1070,13 @@ def _none_rows(
     canvas: Any,
 ) -> list[dict[str, Any]] | None:
     """``none.rows``: a title that was never styled is returned byte for byte (a tap changes
-    nothing); a stack becomes the route's own plain title (F15)."""
+    nothing); a stack becomes the plain title it replaced when its words are still hers, else the
+    route's own plain title for her words (F15)."""
     if not title.is_intro_stack:
         return [copy.deepcopy(dict(row)) for row in title.rows]
+    restored = _restored_title(title, route)
+    if restored is not None:
+        return restored
     try:
         return plain_title_rows(
             title,

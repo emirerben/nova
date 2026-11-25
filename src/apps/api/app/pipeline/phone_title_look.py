@@ -208,6 +208,20 @@ def title_look_line_ids(bar_ids: Sequence[str], family: str | None = None) -> li
     return [i for i, family in zip(bar_ids, families, strict=True) if present and family == present]
 
 
+def title_stack_rows(live: Sequence[dict[str, Any]], row: dict[str, Any]) -> list[dict[str, Any]]:
+    """KRI-1633: every line (in line order) of the stacked title ``row`` heads, else ``[row]``.
+    Only a family's first-line id heads a stack, so an edit aimed at one ``-line-N`` stays a line
+    edit; an edit aimed at the title itself (index op, selector id) means the whole stack, as the
+    Review Plan shows it (`plan_review._title_ids`). ``live`` are the rows not removed."""
+    family = title_family_of(row.get("id"))
+    if family is None or row.get("id") != family or not is_title_look_row(row):
+        return [row]
+    stack = [r for r in live if title_family_of(r.get("id")) == family and is_title_look_row(r)]
+    if len(stack) < _MIN_LINES or not any(r is row for r in stack):
+        return [row]
+    return sorted(stack, key=lambda r: int((_look_params(r) or {}).get("line") or 0))
+
+
 def collapse_title_look(
     live: Sequence[dict[str, Any]], targeted: Sequence[dict[str, Any]]
 ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:

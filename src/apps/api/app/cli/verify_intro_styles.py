@@ -69,6 +69,7 @@ TITLES = {
         "five_words": "five things i learned today",
         "long_first_line": "the absolutely biggest design trend right now",
         "typed_stack": "5 PROJECTS / the AI builder community",
+        "captions_repeat_title": "the biggest design trend right now",
     },
     "tr": {
         "two_words": "Hafta sonu",
@@ -76,6 +77,7 @@ TITLES = {
         "dotted_dotless": "bu yılın trendi",
         "long_first_line": "bu yılın en büyük tasarım trendi şu an",
         "typed_stack": "5 PROJE / yapay zeka topluluğu",
+        "captions_repeat_title": "bu yılın en büyük tasarım trendi şu an",
     },
 }
 _COLOR = {"PASS": (46, 160, 67), "FAIL": (218, 54, 51), "CONTROL-FAILED": (46, 160, 67)}
@@ -193,13 +195,53 @@ def saved_state(job: Any, vid: str, route: str, rows: list[dict[str, Any]], titl
 # --- the matrix --------------------------------------------------------------------------------
 
 
+def caption_boxes(assembly: dict[str, Any], vid: str, probe: st.Title) -> list[NormalizedBox]:
+    """The pinned recipe's caption layers in the title's window, measured on their own (not through
+    the offer's avoid list, so a caption the offer forgot is still caught: F6)."""
+    out = []
+    for layer in st.recipe_layers(assembly, vid):
+        if not str(layer.get("id") or "").startswith("caption"):
+            continue
+        if (
+            float(layer.get("end", 0)) <= probe.start_s
+            or float(layer.get("start", 0)) >= probe.end_s
+        ):
+            continue
+        box = st.layer_box(layer, PORTRAIT)
+        if box is not None:
+            out.append(box)
+    return out
+
+
+def _chunks(title: str) -> list[dict[str, Any]]:
+    """Caption cues that say her title, in two halves (people usually say the title they type)."""
+    words = title.split()
+    mid = max(1, len(words) // 2)
+    return [
+        {"text": " ".join(words[:mid]), "start_s": 0.0, "end_s": 1.5},
+        {"text": " ".join(words[mid:]), "start_s": 1.5, "end_s": 3.0},
+    ]
+
+
 def run_case(route: str, lang: str, name: str, title: str, index: int) -> dict[str, Any]:
+    saved_cues = list(fx.CUES)
+    if name == "captions_repeat_title":
+        fx.CUES[:] = _chunks(title)
+    try:
+        return _run_case(route, lang, name, title, index)
+    finally:
+        fx.CUES[:] = saved_cues
+
+
+def _run_case(route: str, lang: str, name: str, title: str, index: int) -> dict[str, Any]:
     job_id = uuid.UUID(int=_SEED_JOB.int + index)
     job, vid, rows = fx.BUILDERS[route](title, job_id=job_id)
     variant = next(v for v in job.assembly_plan["variants"] if v["variant_id"] == vid)
     face = _face_of(route, variant)
     probe = st.read_title_rows(rows, route)
-    captions = st.avoid_boxes(job.assembly_plan, vid, probe, PORTRAIT)
+    captions = caption_boxes(job.assembly_plan, vid, probe)
+    if name == "captions_repeat_title" and route == "talking" and not captions:
+        raise RuntimeError("the repeated-caption case has no caption layers to measure")
     started = time.monotonic()
     offer = st.build_offer(st.detach(job), vid, rows, "first")
     total_ms = round((time.monotonic() - started) * 1000)
@@ -252,6 +294,13 @@ def run_case(route: str, lang: str, name: str, title: str, index: int) -> dict[s
             case["problems"].append(f"{option['key']}: opening is not her whole title")
         if ink and option["key"] != "none":
             case["problems"].append(f"{option['key']}: {ink[0]}")
+    first = next((o for o in offer["options"] if o["key"] != "none"), None)
+    if first is not None:
+        again = st.build_offer(st.detach(job), vid, first["rows"], "first")
+        back = again["options"][-1]["rows"] if again["available"] else None
+        case["none_restores_title"] = back == rows
+        if back != rows:
+            case["problems"].append("none after a picked look does not restore her title")
     multi_word = len(scene_mod.title_words(title)) >= 2
     if multi_word and case["looks"] < 3:
         case["problems"].append(f"only {case['looks']} looks")
@@ -434,6 +483,72 @@ def controls() -> list[dict[str, Any]]:
         "N6_old_any_rule_refuses_the_stack",
         (not old_any) and new_any,
         f"old={old_any} new={new_any}",
+    )
+    # N7: a caption that repeats her words is still a caption to keep clear of. The first
+    # version matched layers by substring of the title, so such captions were never avoided.
+    real_avoid = st.avoid_boxes
+
+    def substring_avoid(assembly: Any, variant_id: str, title: Any, canvas: Any) -> list[Any]:
+        from app.text_fold import fold_text  # noqa: PLC0415
+
+        own = {fold_text(" ".join(str(r["text"]).split())) for r in title.rows}
+        own.add(fold_text(title.words))
+        boxes = []
+        for layer in st.recipe_layers(assembly, variant_id):
+            runs = layer.get("runs") or []
+            text = fold_text(" ".join(str(run.get("text") or "") for run in runs))
+            if not text.strip() or any(text in value for value in own):
+                continue
+            box = st.layer_box(layer, canvas)
+            if box is not None:
+                boxes.append(box)
+        return boxes
+
+    caught = False
+    saved_cues = list(fx.CUES)
+    fx.CUES[:] = _chunks(fx.EN_TITLE)
+    st.avoid_boxes = substring_avoid
+    try:
+        job, vid, rows = fx.talking_job()
+        probe = st.read_title_rows(rows, "talking")
+        measured = caption_boxes(job.assembly_plan, vid, probe)
+        for look in st.build_offer(st.detach(job), vid, rows, "first")["options"]:
+            if look["key"] != "none" and ink_report(look["rows"], NO_FACE, measured)[0]:
+                caught = True
+    finally:
+        st.avoid_boxes = real_avoid
+        fx.CUES[:] = saved_cues
+    add(
+        "N7_captions_that_repeat_her_words_are_avoided",
+        caught and bool(measured),
+        f"old substring rule drew over a caption: {caught}",
+    )
+    # N8: "No intro style" must give back the title the look replaced, not rebuild one.
+    job, vid, rows = fx.talking_job()
+    picked = st.build_offer(st.detach(job), vid, rows, "first")["options"][0]["rows"]
+    stripped = [
+        {
+            **r,
+            "source_params": {
+                **r["source_params"],
+                "title_look": {
+                    **r["source_params"]["title_look"],
+                    "intro_style": {
+                        k: v
+                        for k, v in r["source_params"]["title_look"]["intro_style"].items()
+                        if k != "restore"
+                    },
+                },
+            },
+        }
+        for r in picked
+    ]
+    rebuilt = st.build_offer(st.detach(job), vid, stripped, "first")["options"][-1]["rows"]
+    restored = st.build_offer(st.detach(job), vid, picked, "first")["options"][-1]["rows"]
+    add(
+        "N8_none_rebuilt_without_the_saved_title_differs",
+        restored == rows and rebuilt != rows,
+        f"restored_equal={restored == rows} rebuilt_equal={rebuilt == rows}",
     )
     return out
 

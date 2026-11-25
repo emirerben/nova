@@ -213,6 +213,48 @@ def test_every_look_is_clear_of_her_saved_face_and_the_captions():
         assert _ink_problems(option["rows"], face, captions) == [], option["key"]
 
 
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_looks_keep_clear_of_captions_that_repeat_her_words(monkeypatch, lang):
+    """F6 review round: she usually says her title, so the pinned recipe's caption layers repeat
+    it. They were matched as "her own title" by substring and never avoided."""
+    import uuid
+
+    from app.cli.verify_intro_styles import _SEED_JOB, _chunks, caption_boxes, ink_report
+
+    title = TITLES[lang]
+    monkeypatch.setattr(fx, "CUES", _chunks(title))
+    # A fixed job id: the seed picks the looks, and the ink check is a raster measure that a few
+    # script faces fail by a hair on other seeds (a known v1 limit, see the module docstring).
+    job, vid, rows = fx.talking_job(title, job_id=uuid.UUID(int=_SEED_JOB.int + 7))
+    probe = st.read_title_rows(rows, "talking")
+    measured = caption_boxes(job.assembly_plan, vid, probe)
+    assert measured, "the recipe has caption layers in the title window"
+    assert len(st.avoid_boxes(job.assembly_plan, vid, probe, PORTRAIT)) >= len(measured)
+    offer = st.build_offer(st.detach(job), vid, rows, "first")
+    face = st.saved_face_band(job.assembly_plan["variants"][0])
+    for option in offer["options"][:-1]:
+        assert ink_report(option["rows"], face, measured)[0] == [], option["key"]
+
+
+def test_a_caption_layer_is_never_her_own_title_but_a_whole_title_layer_is():
+    from app.services.device_render import DEVICE_RENDER_FIELD
+
+    _job, _vid, rows = fx.talking_job()
+    probe = st.read_title_rows(rows, "talking")
+
+    def layer(layer_id: str, text: str) -> dict:
+        run = {"text": text, "x": 100, "baseline_y": 300, "font_size": 60}
+        return {"id": layer_id, "start": 0.0, "end": 2.0, "runs": [run]}
+
+    layers = [
+        layer("text-0", fx.EN_TITLE),  # the layer that draws her title now
+        layer("caption-0", fx.EN_TITLE),  # a caption that says the same words
+        layer("text-1", "i"),  # a stray one-letter text
+    ]
+    assembly = {DEVICE_RENDER_FIELD: {"v": {"request": {"recipe": {"text_layers": layers}}}}}
+    assert len(st.avoid_boxes(assembly, "v", probe, PORTRAIT)) == 2
+
+
 def test_wrong_content_control_a_look_moved_onto_the_face_is_caught():
     from app.pipeline.render_geometry import NormalizedBox
 
@@ -378,6 +420,45 @@ def test_none_on_a_stack_is_one_plain_row_in_her_words(route):
     assert none["rows"][0]["text"].lower() == fx.EN_TITLE
     assert "intro_style" not in str(none["rows"][0].get("source_params"))
     assert [o["current"] for o in again["options"]].count(True) == 1
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_none_after_a_pick_gives_back_the_title_the_look_replaced(route, lang):
+    """F15 review round: the rebuilt title lost the worker's font, size and place (the typography
+    model's pick is not kept anywhere). The look carries the title it replaced."""
+    job, vid, rows = fx.BUILDERS[route](TITLES[lang])
+    picked = st.build_offer(st.detach(job), vid, rows, "first")["options"][0]["rows"]
+    again = st.build_offer(st.detach(job), vid, picked, "first")["options"]
+    assert again[-1]["key"] == "none" and again[-1]["rows"] == rows
+    # picking another look keeps the way back to the original, not to the first pick
+    other = st.build_offer(st.detach(job), vid, picked, "first")["options"][1]["rows"]
+    assert st.build_offer(st.detach(job), vid, other, "first")["options"][-1]["rows"] == rows
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_none_restores_a_typed_slash_stack_too(route):
+    """The picked look drops her " / " (the look sets her slashless words); "none" gives the typed
+    stack back."""
+    from app.cli.verify_intro_styles import TITLES as STRESS
+
+    job, vid, rows = fx.BUILDERS[route](STRESS["en"]["typed_stack"])
+    offer = st.build_offer(st.detach(job), vid, rows, "first")
+    picked = offer["options"][0]["rows"]
+    assert st.build_offer(st.detach(job), vid, picked, "first")["options"][-1]["rows"] == rows
+
+
+def test_none_falls_back_to_her_words_when_the_saved_title_is_not_hers_any_more():
+    job, vid, rows = fx.talking_job()
+    picked = st.build_offer(st.detach(job), vid, rows, "first")["options"][0]["rows"]
+    edited = copy.deepcopy(picked)
+    for row in edited:
+        row["text"] = row["text"].replace("biggest", "smallest")
+    none = st.build_offer(st.detach(job), vid, edited, "first")["options"][-1]["rows"]
+    assert len(none) == 1 and "smallest" in none[0]["text"].lower()
+    bad = copy.deepcopy(picked)
+    bad[0]["source_params"]["title_look"]["intro_style"]["restore"] = [{"id": "x", "text": "no"}]
+    assert len(st.build_offer(st.detach(job), vid, bad, "first")["options"][-1]["rows"]) == 1
 
 
 @pytest.mark.parametrize("route", ROUTES)
