@@ -14,6 +14,7 @@ import UIKit
     private static var held = 0
     private static var quiet = 0
     private static var keyboardSeen = false
+    private static var lastGlass = ""
     /// UIKit animation groups (one `UIViewAnimationState` each) whose animations reported more starts than stops.
     /// XCTest counts the same two calls (it hooks `UIViewAnimationState animationDidStart:` and
     /// `animationDidStop:finished:`) and calls the app idle only at zero.
@@ -24,6 +25,22 @@ import UIKit
         let owner: String
         init(layer: CALayer, key: String, keyPath: String, owner: String) { self.layer = layer; self.key = key; self.keyPath = keyPath; self.owner = owner }
     }
+    private final class Weak { weak var view: UIView?; init(_ view: UIView) { self.view = view } }
+    private static func place(of layer: CALayer) -> String {
+        let frame = layer.convert(layer.bounds, to: nil)
+        return String(format: "at=%.0f,%.0f size=%.0fx%.0f radius=%.0f", frame.minX, frame.minY, frame.width, frame.height, layer.cornerRadius)
+    }
+    private static func glassViews() -> [UIView] {
+        var found: [UIView] = []
+        for window in allWindows() {
+            var stack: [UIView] = [window]
+            while let view = stack.popLast() {
+                if String(describing: type(of: view)).contains("GlassInteraction") { found.append(view) }
+                stack.append(contentsOf: view.subviews)
+            }
+        }
+        return found
+    }
     private final class OpenState {
         let state: AnyObject
         let since = CACurrentMediaTime()
@@ -33,6 +50,8 @@ import UIKit
         var attached: [Attached] = []
         var seen: Set<String> = []
         var scans = 0
+        /// Every interactive-glass view on screen when the group started: where it was and what it sat in.
+        var glass: [(view: Weak, was: String)] = []
         init(_ state: AnyObject) { self.state = state }
     }
 
@@ -41,6 +60,15 @@ import UIKit
     private static func recordLayers(of entry: OpenState) {
         guard entry.attached.count < entry.total, entry.scans < 4 else { return }
         entry.scans += 1
+        if entry.scans == 1 {
+            entry.glass = glassViews().map { (Weak($0), "\(owners(of: $0.layer, depth: 14)) \(place(of: $0.layer))") }
+            let summary = entry.glass.map(\.was).joined(separator: " | ")
+            if summary != lastGlass {
+                lastGlass = summary
+                NSLog("KBDPROBE glass n=%d", entry.glass.count)
+                for item in entry.glass { NSLog("KBDPROBE glass one %@", item.was) }
+            }
+        }
         for window in allWindows() {
             var stack: [CALayer] = [window.layer]
             while let layer = stack.popLast() {
@@ -50,7 +78,7 @@ import UIKit
                     let id = "\(ObjectIdentifier(layer).hashValue)|\(key)"
                     guard entry.seen.insert(id).inserted else { continue }
                     entry.attached.append(Attached(layer: layer, key: key, keyPath: (animation as? CAPropertyAnimation)?.keyPath ?? "-",
-                                                   owner: "\(String(describing: type(of: window))) \(owners(of: layer))"))
+                                                   owner: "\(String(describing: type(of: window))) \(owners(of: layer)) \(place(of: layer))"))
                 }
             }
         }
@@ -161,6 +189,13 @@ import UIKit
                     NSLog("KBDPROBE open layer in a window and still animating key=%@ keyPath=%@ on=%@", record.key, record.keyPath, record.owner)
                 } else { finished += 1 }
             }
+            for item in entry.glass {
+                if let view = item.view.view {
+                    NSLog("KBDPROBE open glass %@ now=%@ was=%@", view.window == nil ? "out of every window" : "still on screen", place(of: view.layer), item.was)
+                } else {
+                    NSLog("KBDPROBE open glass freed was=%@", item.was)
+                }
+            }
             NSLog("KBDPROBE open group recorded=%d of %d scans=%d freed=%d detached=%d stillAnimating=%d finished=%d",
                   entry.attached.count, entry.total, entry.scans, gone, detached, running, finished)
         }
@@ -220,12 +255,12 @@ import UIKit
         return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
     }
 
-    private static func owners(of layer: CALayer) -> String {
+    private static func owners(of layer: CALayer, depth: Int = 6) -> String {
         var names: [String] = []
         var current: CALayer? = layer
-        while let next = current, names.count < 6 {
+        while let next = current, names.count < depth {
             if let view = next.delegate as? UIView {
-                var name = String(describing: type(of: view))
+                var name = String(String(describing: type(of: view)).prefix { $0 != "<" })
                 if let identifier = view.accessibilityIdentifier, !identifier.isEmpty { name += "#\(identifier)" }
                 names.append(name)
             } else if names.isEmpty {
