@@ -119,6 +119,33 @@ def test_what_cannot_draw_it_gets_todays_render_byte_for_byte(monkeypatch, kwarg
     assert _recipe(today).speaker_background.speaker_frame is not None  # today's corner
 
 
+def test_an_intro_styles_only_build_never_gets_a_speaker_sections_plan(monkeypatch):
+    """Tadic (#prs, 2026-11-25): main took protocol 57 for Intro Styles while this branch also
+    claimed 57. A 57 build knows intro styles but cannot draw layout windows, so with the switch on
+    and `speakerSections` verified its plan is still today's single layout; the next protocol gets
+    the sections."""
+    from app.services.client_protocol import INTRO_STYLES_PROTOCOL  # noqa: PLC0415
+    from app.services.phone_rollout import speaker_sections_planned_reason  # noqa: PLC0415
+
+    # The intro-only build is a real build: its own feature opens at 57.
+    assert settings.intro_styles_min_client_protocol == INTRO_STYLES_PROTOCOL
+    assert settings.speaker_sections_min_client_protocol == SPEAKER_SECTIONS_PROTOCOL
+    assert SPEAKER_SECTIONS_PROTOCOL > INTRO_STYLES_PROTOCOL
+
+    today = _run(monkeypatch, STORED_BACKGROUND, enabled=False)
+    intro_only = _run(monkeypatch, STORED_BACKGROUND, protocol=INTRO_STYLES_PROTOCOL)
+    assert speaker_sections_planned_reason(INTRO_STYLES_PROTOCOL) == "app_too_old"
+    recipe = _recipe(intro_only)
+    assert recipe.speaker_background.layout_windows is None
+    assert "speakerSections" not in recipe.required_capabilities
+    assert recipe.model_dump_json() == _recipe(today).model_dump_json()
+    assert "speaker_sections" not in _variant(intro_only)
+
+    sections_build = _run(monkeypatch, STORED_BACKGROUND, protocol=SPEAKER_SECTIONS_PROTOCOL)
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL) is None
+    assert _recipe(sections_build).speaker_background.layout_windows
+
+
 def test_a_named_pace_is_kept(monkeypatch):
     """KRI-1494: "changing every 3-5 seconds" is the creator's own words; sections would hold
     each picture for a whole passage, so the asked pace keeps today's layout."""
