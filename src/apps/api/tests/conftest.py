@@ -45,7 +45,9 @@ os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key")
 # Here, before any app module reads DATABASE_URL.
 from tests import _worker_database  # noqa: E402
 
-_worker_database.select(os.environ)
+if os.environ.get("PYTEST_XDIST_WORKER") != os.environ.get("EXP_BREAK_SELECT_FOR", "none"):
+    # Throwaway red control: the named worker is left on the shared database.
+    _worker_database.select(os.environ)
 
 if os.environ.get("EXP_TRACE_BASE_CONNECT") == "1":  # throwaway: who connects outside a worker
     import traceback

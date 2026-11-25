@@ -6,13 +6,17 @@ permissions:
   contents: read
 jobs:
   real:
-    name: real job, switch on, api (${{ matrix.shard }})
+    name: real job, switch on, api (${{ matrix.shard }}) broken=${{ matrix.broken }}
     runs-on: ubuntu-latest
     timeout-minutes: 80
     strategy:
       fail-fast: false
       matrix:
-        shard: [3]
+        shard: [0, 1, 2, 3, 4, 5]
+        broken: [none]
+        include:
+          - shard: 3
+            broken: gw1
     services:
       postgres:
         image: postgres:16-alpine
@@ -95,7 +99,7 @@ jobs:
           # One database per xdist worker (tests/_worker_database.py). Set the repository
           # variable CI_API_DB_PER_WORKER to "on" to use it; anything else is the shared one.
           NOVA_TEST_DB_PER_WORKER: "1"
-          EXP_TRACE_BASE_CONNECT: "1"
+          EXP_BREAK_SELECT_FOR: ${{ matrix.broken }}
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
           REDIS_URL: redis://localhost:6379
           STORAGE_BUCKET: nova-test
