@@ -39,6 +39,7 @@ VERIFIED_FEATURES = [
     "alphaOverlay",
     "stillImages",
     "visualVideos",
+    "authoredText",
 ]
 POLICY = {
     "version": 1,
@@ -64,6 +65,7 @@ def flag_overrides() -> dict[str, Any]:
         "phone_narrated_caption_edits_enabled": True,
         "phone_subtitled_editor_lanes_enabled": True,
         "phone_subtitled_media_lanes_enabled": True,
+        "guided_story_editor_v2_enabled": True,
         "sound_effects_enabled": True,
         "media_overlays_enabled": True,
         "title_look_enabled": True,
@@ -296,7 +298,68 @@ def montage_job(title: str = EN_TITLE) -> tuple[Any, str, list[dict]]:
         "text_elements": copy.deepcopy(raw["text_elements"]),
     }
     job = _job(variant, {"guided_story_execution_plan": raw}, recipe, (bind,))
-    return job, "guided_story", copy.deepcopy(raw["text_elements"])
+    _make_guided_v2(job, bind, title)
+    rows = [
+        r for r in job.assembly_plan["variants"][0]["text_elements"] if r["id"] == "guided-title"
+    ]
+    return job, "guided_story", copy.deepcopy(rows)
+
+
+def _make_guided_v2(job: Any, bind: PhoneSourceBinding, title: str) -> None:
+    """The real revision-token-bearing guided-v2 plan (`compile_execution_plan`), as a Kria montage
+    leaves it: the title row is the guided writer's own, and non-text Saves recompile from it."""
+    from app.pipeline.guided_story import compile_execution_plan  # noqa: PLC0415
+    from app.schemas.edit_proposal import (  # noqa: PLC0415
+        EditProposalSnapshot,
+        FastMontageCut,
+        MediaRef,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id="source",
+            gcs_path=bind.proxy_path,
+            generation="1",
+            kind="video",
+            duration_s=10,
+        )
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="fast_montage",
+        duration_s=3,
+        title=title,
+        media=media,
+        fast_cuts=[
+            FastMontageCut(
+                cut_id=f"cut-{index}",
+                media_id="source",
+                source_start_s=2 + index,
+                source_end_s=3 + index,
+                output_duration_s=1,
+                role="hook",
+            )
+            for index in range(3)
+        ],
+        story_beats=[StoryBeat(beat_id="story", topic="Scene", media_ids=["source"], duration_s=3)],
+    )
+    guided = {
+        "proposal_version": 1,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {
+                key: getattr(media[0], key)
+                for key in ("lane", "media_id", "gcs_path", "generation", "kind")
+            }
+            for _ in (0,)
+        ],
+    }
+    plan = compile_execution_plan(guided, track=None)
+    job.assembly_plan.update(guided_edit=guided, guided_story_execution_plan=plan)
+    job.assembly_plan["variants"][0]["text_elements"] = plan["text_elements"]
 
 
 BUILDERS = {"talking": talking_job, "narrated": narrated_job, "montage": montage_job}
