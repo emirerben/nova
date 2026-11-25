@@ -867,6 +867,11 @@ class Settings(BaseSettings):
     # read once at dispatch and stamped, so a worker never re-reads it. Off = the seeded pick,
     # byte-identical to KRI-1611.
     intro_scene_model_enabled: bool = False
+    # KRI-1633: "Try intro styles" (`pipeline/intro_styles`, `routes/intro_styles`) reuses the two
+    # flags above and needs a build at this protocol (set by scripts/bump-protocol.py). The
+    # `intro_styles` editor capability is sent, and the route answers, only at or above it;
+    # INTRO_STYLES_MIN_CLIENT_PROTOCOL=999 removes the entry for every build.
+    intro_styles_min_client_protocol: int = 57
 
     def intro_scene_for(self, user_id: object) -> bool:
         if not self.intro_scene_enabled or user_id is None:

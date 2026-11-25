@@ -50,6 +50,7 @@ from app.routes import (
     editorial_taste,
     generated_media,
     generative_jobs,
+    intro_styles,
     kria_runtime,
     landing,
     manual_drafts,
@@ -437,6 +438,7 @@ app.include_router(thought_summaries.router, tags=["thought-summaries"])
 app.include_router(dictation.router, prefix="/dictation", tags=["dictation"])
 app.include_router(kria_runtime.router, prefix="/creation-threads", tags=["kria-runtime-v2"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
+app.include_router(intro_styles.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(slide_post_ai_requests.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(editor_sources.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(generated_media.router, prefix="/plan-items", tags=["generated-media"])

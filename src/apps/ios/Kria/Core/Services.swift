@@ -1453,7 +1453,7 @@ enum KriaClientProtocolContract {
     /// 56 (KRI-1582): reads `choice_question` version 2, whose options may carry a `preview` (text layers drawn over a frame
     /// of the creator's own clip). The server sends the informative text design picker with previews only to this protocol;
     /// a 55 build gets the same question as text-only cards.
-    static let version = 56
+    static let version = 57
     static let header = "X-Kria-Client-Protocol"
 }
 

@@ -1,0 +1,208 @@
+{
+ "plan": {
+  "creator_generation_id": "gen-1",
+  "intro_scene_ask": {
+   "candidates": [
+    {
+     "entrance": "fade",
+     "font_pair": "script_serif",
+     "voices": [
+      "solid",
+      "solid",
+      "solid",
+      "accent",
+      "accent",
+      "accent"
+     ],
+     "zones": [
+      "mid_frame",
+      "top_left",
+      "above_head"
+     ]
+    },
+    {
+     "entrance": "ink",
+     "font_pair": "grotesk_pen",
+     "voices": [
+      "solid",
+      "solid",
+      "accent",
+      "solid",
+      "solid",
+      "solid"
+     ],
+     "zones": [
+      "mid_frame",
+      "top_left",
+      "above_head"
+     ]
+    },
+    {
+     "entrance": "ink",
+     "font_pair": "grotesk_loop",
+     "voices": [
+      "solid",
+      "solid",
+      "accent",
+      "solid",
+      "solid",
+      "solid"
+     ],
+     "zones": [
+      "above_head",
+      "mid_frame",
+      "top_left"
+     ]
+    },
+    {
+     "entrance": "pop",
+     "font_pair": "serif_italic",
+     "voices": [
+      "accent",
+      "solid",
+      "solid",
+      "solid",
+      "solid",
+      "solid"
+     ],
+     "zones": [
+      "above_head",
+      "mid_frame",
+      "top_left"
+     ]
+    },
+    {
+     "entrance": "fade",
+     "font_pair": "grotesk_hand",
+     "voices": [
+      "solid",
+      "solid",
+      "solid",
+      "accent",
+      "accent",
+      "solid"
+     ],
+     "zones": [
+      "mid_frame",
+      "above_head",
+      "top_left"
+     ]
+    },
+    {
+     "entrance": "pop",
+     "font_pair": "young_serif",
+     "voices": [
+      "solid",
+      "solid",
+      "solid",
+      "solid",
+      "accent",
+      "accent"
+     ],
+     "zones": [
+      "above_head",
+      "mid_frame",
+      "top_left"
+     ]
+    }
+   ],
+   "excluded": [],
+   "inks": [
+    "butter",
+    "chartreuse",
+    "cream",
+    "white",
+    "oxblood"
+   ],
+   "look": "script_serif",
+   "seed": "5468d63631827174",
+   "version": 1
+  },
+  "phone_text_style": {
+   "informative_text_designs": true,
+   "informative_text_shapes": true,
+   "preferences": {
+    "all_text": {}
+   },
+   "requested": {},
+   "version": 1
+  }
+ },
+ "receipt": {
+  "status": "shrunk"
+ },
+ "rows": [
+  {
+   "alignment": "center",
+   "behind_subject": false,
+   "color": "#F6E7A8",
+   "effect": "fade-in",
+   "end_s": 3.0,
+   "font_family": "Newsreader",
+   "id": "opening-title",
+   "line_spacing": 1.0,
+   "max_width_frac": 0.88,
+   "position": "custom",
+   "removed": false,
+   "role": "generative_intro",
+   "shadow_style": "high_visibility",
+   "size_class": "large",
+   "size_px": 119,
+   "source_params": {
+    "source": "opening_title",
+    "title_look": {
+     "intro_inks": [
+      "butter",
+      "chartreuse",
+      "cream",
+      "white",
+      "oxblood"
+     ],
+     "line": 1,
+     "lines": 2,
+     "style": "intro_solid"
+    }
+   },
+   "start_s": 0.0,
+   "text": "the biggest design",
+   "x_frac": 0.5,
+   "y_frac": 0.771
+  },
+  {
+   "alignment": "center",
+   "behind_subject": false,
+   "color": "#F6E7A8",
+   "effect": "fade-in",
+   "end_s": 3.0,
+   "font_family": "Great Vibes",
+   "id": "opening-title-line-2",
+   "line_spacing": 1.0,
+   "max_width_frac": 0.88,
+   "position": "custom",
+   "removed": false,
+   "role": "generative_intro",
+   "shadow_style": "high_visibility",
+   "size_class": "large",
+   "size_px": 162,
+   "source_params": {
+    "source": "opening_title",
+    "title_look": {
+     "intro_inks": [
+      "butter",
+      "chartreuse",
+      "cream",
+      "white",
+      "oxblood"
+     ],
+     "line": 2,
+     "lines": 2,
+     "style": "intro_accent"
+    }
+   },
+   "start_s": 0.0,
+   "text": "trend right now",
+   "x_frac": 0.5,
+   "y_frac": 0.8671
+  }
+ ]
+}

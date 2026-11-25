@@ -3237,8 +3237,10 @@ def verify_phone_recipe(
             role=requirement.role,
             tolerance_s=frame,
         )
-        if not matches and requirement.role == "opening":
-            # Item 20: a " / " title drawn as one row per line, stacked top to bottom.
+        if not matches and requirement.role in ("opening", "any"):
+            # Item 20: a " / " title drawn as one row per line, stacked top to bottom. KRI-1633:
+            # a picked intro look is the same shape, and its whole-title `any` check (the second
+            # requirement of `[opening X, any X]`) reads it the same way.
             from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
 
             matches = stacked_title_matches(rendered_evidence, requirement.text, tolerance_s=frame)
