@@ -2372,6 +2372,11 @@
    "{v1} dediğinde ekranda başka bir klip var ({step_start_s:.1f}–{step_end_s:.1f} sn); söylediğin klip {shown_at} sn arasında oynuyor"
   ],
   [
+   "app/kria/narrated_render_checks.py",
+   "I couldn't find {v1} in the finished voiceover; the clip you named plays at {shown_at} s",
+   "Bitmiş seslendirmede {v1} sözünü bulamadım; söylediğin klip {shown_at} sn arasında oynuyor"
+  ],
+  [
    "app/kria/brief_checks.py",
    "Left out {missing} of your {total} clips",
    "{total} klibinden {missing} tanesi dışarıda kaldı"
@@ -2890,6 +2895,21 @@
    "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you after if any stay longer",
+   "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır (gürültülü çekimler hariç), daha uzun kalan olursa sonra sana söylerim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Choose Clean up speech when you approve: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” seçeneğini seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "If Clean up speech is offered when you approve, choose it: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” çıkarsa onu seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
   ]
  ],
  "retired": [

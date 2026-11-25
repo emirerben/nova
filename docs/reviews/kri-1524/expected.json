@@ -1,0 +1,18 @@
+{
+ "source": "Linear KRI-1524 (filed 2026-11-17 from the kit run, before any fix) and the kit's pass criteria (~/Downloads/kria-cusco-dji-test/T1_two_takes_false_start/EXPECTED.md row 4)",
+ "incident": {
+  "job": "d988bb99-bf5c-4bc5-9e83-aa2ffae1ca76",
+  "tight_pauses_both_takes": {"status": "no_change", "reason": "noisy_take", "added_cuts": 0},
+  "gaps_0_5_s_or_more_in_output": [[10.15, 11.35], [16.95, 17.85], [12.15, 12.9], [14.65, 15.3], [2.2, 2.8], [7.95, 8.55], [5.9, 6.4]],
+  "measured_by": "voice-band level of kria_output.mp4, 50 ms steps"
+ },
+ "pass": {
+  "kit_row_4": "No silent gap longer than about half a second",
+  "ticket_expected": "Either the tight pass works on normal outdoor speech, or the draft says before approval that background sound limits it",
+  "receipt": "the finished-video line never claims tight while a measured pause stays over the limit; it counts what stayed"
+ },
+ "wrong_content_control": {
+  "rule": "a take whose speech rises less than 25 dB over its room floor (restaurant, cafe, crowd) is still not tightened, its plan is untouched, and the reply says there is background sound",
+  "takes": ["kria-julio-test T1_01_footage.mp4 (restaurant)", "kria-ecuador-test T2_01_footage.mp4", "kria-ecuador-test T1_01_footage.mp4", "kria-cigdem-test R_Dem_WtSo-4q.mp4"]
+ }
+}

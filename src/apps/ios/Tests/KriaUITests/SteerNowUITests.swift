@@ -266,7 +266,7 @@ final class SteerNowUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["drawer-new-chat"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         // "Send clips" sends the same stock message as the "Suggest an edit" chip.
         let sendClips = app.buttons["Send clips"]
         XCTAssertTrue(sendClips.waitForExistence(timeout: 5))

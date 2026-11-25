@@ -193,10 +193,7 @@ import XCTest
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
         newChat.tap()
-        let talking = app.buttons["format-talking_to_camera"]
-        XCTAssertTrue(talking.waitForExistence(timeout: 10))
-        if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        talking.tap()
+        app.chooseFormat("talking_to_camera")
         // With footage attached the stage has no Add media entry of its own: the composer + is the way in. Add script
         // opens the camera from Add media, so closing the camera leaves the clip list open.
         let plus = app.buttons["chat-attach"]
@@ -372,10 +369,7 @@ import XCTest
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
         newChat.tap()
-        let talking = app.buttons["format-talking_to_camera"]
-        XCTAssertTrue(talking.waitForExistence(timeout: 10))
-        if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        talking.tap()
+        app.chooseFormat("talking_to_camera")
         return app
     }
 

@@ -87,3 +87,5 @@ src/apps/ios/.device-derived/
 test-results/
 .overlay-verify/
 .intro-verify/
+.intro-variety/
+.intro-intake/

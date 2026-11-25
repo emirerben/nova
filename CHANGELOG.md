@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.16.0] - 2026-11-25
+
+### Changed
+- fix(ios): slide-to-select auto-scroll keeps its speed on a slow device (KRI-1602) (#2493) <!-- release-pr: 2493 -->
+
+## [0.90.15.0] - 2026-11-25
+
+### Changed
+- fix(ios): Save tapped while the editor is still loading runs when it is ready (KRI-1617) (#2518) <!-- release-pr: 2518 -->
+
+## [0.90.14.0] - 2026-11-24
+
+### Changed
+- fix(ci): an editor change also runs the UI tests from other groups that enter the editor (KRI-1632) (#2520) <!-- release-pr: 2520 -->
+
+## [0.90.13.0] - 2026-11-24
+
+### Changed
+- fix(kria): Cusco T4 review judges each named moment on a Voiceover and says when its words are gone (KRI-1517) (#2513) <!-- release-pr: 2513 -->
+
+## [0.90.12.0] - 2026-11-24
+
+### Changed
+- docs(ci): failure-log rows for the five failures fixed on 2026-11-24 (#2519) <!-- release-pr: 2519 -->
+
+## [0.90.11.0] - 2026-11-24
+
+### Changed
+- test(ios): UI tests tap a format card only once it accepts taps (KRI-1604) (#2507) <!-- release-pr: 2507 -->
+
+## [0.90.10.0] - 2026-11-24
+
+### Changed
+- test(notifications): notification delivery tests no longer collide across test workers (KRI-1630) (#2517) <!-- release-pr: 2517 -->
+
+## [0.90.9.0] - 2026-11-24
+
+### Changed
+- fix(captions): caption correction keeps the words that were said (KRI-1520) (#2505) <!-- release-pr: 2505 -->
+
+## [0.90.8.0] - 2026-11-24
+
+### Changed
+- fix(kria): tight pauses work on a take recorded loud, and the 0.3 s promise names the noisy-take exception (KRI-1524) (#2509) <!-- release-pr: 2509 -->
+
+## [0.90.7.0] - 2026-11-24
+
+### Changed
+- fix(overlays): the intro render check no longer sits at the 60 s test limit (KRI-1629) (#2516) <!-- release-pr: 2516 -->
+
+## [0.90.6.0] - 2026-11-24
+
+### Changed
+- feat(intro): a bounded agent picks the intro scene from issued option ids, or declines (KRI-1612) (#2504) <!-- release-pr: 2504 -->
+
+## [0.90.5.0] - 2026-11-24
+
+### Changed
+- feat(intro): reference intake and a variety report in CI (KRI-1614) (#2503) <!-- release-pr: 2503 -->
+
+## [0.90.4.0] - 2026-11-24
+
+### Changed
+- feat(intro): server-issued options and a seeded pick for Talking intro scenes (KRI-1611) (#2501) <!-- release-pr: 2501 -->
+
+## [0.90.3.0] - 2026-11-24
+
+### Changed
+- test(ios): a request from an earlier test never reaches the next test's fake server (KRI-1607) (#2511) <!-- release-pr: 2511 -->
+
+## [0.90.2.0] - 2026-11-24
+
+### Changed
+- test(ios): phone-render tests wait for the session's own reads before each check (KRI-1605) (#2510) <!-- release-pr: 2510 -->
+
 ## [0.90.1.0] - 2026-11-24
 
 ### Changed

@@ -306,10 +306,12 @@ def _teardowns() -> dict:
     return json.loads(TEARDOWNS.read_text())
 
 
-def test_teardowns_file_has_a_version_and_five_references():
+def test_teardowns_file_has_a_version_and_the_five_seed_references():
+    """The five references of KRI-1610 stay first; the intake script (KRI-1614) appends more."""
     data = _teardowns()
     assert data["version"]
-    assert [t["id"] for t in data["teardowns"]] == ["ref1", "ref2", "ref3", "ref4", "ref5"]
+    ids = [t["id"] for t in data["teardowns"]]
+    assert ids == [f"ref{n}" for n in range(1, len(ids) + 1)] and len(ids) >= 5
 
 
 def test_teardowns_carry_no_free_text_into_scenes():
@@ -486,7 +488,6 @@ def test_render_check_negative_controls_must_fail(report, control):
     assert case["verdict"] == "FAIL", case
 
 
-@pytest.mark.timeout(300)
 def test_issued_menu_sweep_renders_clean_or_declines():
     sweep = check.sweep_issued_menu(thorough=False)
     assert sweep["compiled"] > 50, sweep  # not vacuous: most of the menu does compile

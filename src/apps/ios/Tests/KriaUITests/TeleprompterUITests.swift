@@ -262,10 +262,7 @@ import XCTest
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
         newChat.tap()
-        let talking = app.buttons["format-talking_to_camera"]
-        XCTAssertTrue(talking.waitForExistence(timeout: 10))
-        if !talking.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        talking.tap()
+        app.chooseFormat("talking_to_camera")
         XCTAssertTrue(app.buttons["chat-attach"].waitForExistence(timeout: 5))
         return app
     }

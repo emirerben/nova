@@ -158,6 +158,7 @@ class UISelectionTests(unittest.TestCase):
                 "creation": ["KriaUITests/CUITests/testD"],
                 "projects": ["KriaUITests/DUITests/testE"],
             },
+            "also": {"creation": [], "projects": [], "editor": []},
             "sources": {f"{ui.UI_TEST_ROOT}DUITests.swift": "creation"},
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -384,7 +385,11 @@ class UISelectionTests(unittest.TestCase):
         for group in ("creation", "projects", "editor"):
             self.assertEqual(
                 ui.expected_tests(f"smoke,{group}"),
-                set(data["groups"]["smoke"] + data["groups"][group]),
+                set(
+                    data["groups"]["smoke"]
+                    + data["groups"][group]
+                    + data["also"][group]
+                ),
             )
         # Smoke alone is the PR tripwire when the selector wants full coverage.
         self.assertEqual(ui.expected_tests("smoke"), set(data["groups"]["smoke"]))
@@ -415,9 +420,103 @@ class UISelectionTests(unittest.TestCase):
         )
         self.assertEqual(
             ui.expected_tests(f"smoke,editor,{rename}"),
-            set(data["groups"]["smoke"] + data["groups"]["editor"])
+            set(
+                data["groups"]["smoke"]
+                + data["groups"]["editor"]
+                + data["also"]["editor"]
+            )
             | {f"KriaUITests/{rename}"},
         )
+
+    # A test has one group, and some cross into another group's screens: PR #2518 changed
+    # the editor's Save and went green without `DesignPickerUITests`, the one UI test
+    # that had shown the bug, because it is a creation test. `also` adds such tests to
+    # the second group's selection.
+    #
+    # Failure modes: a crossing test is still left out of the editor selection; adding
+    # it drops something another selection ran; a test in two selections is counted
+    # twice; the file that holds it stops resolving to one group and every edit to it
+    # selects the full suite; a new crossing test arrives with no entry and nobody is
+    # told; an entry outlives its test, or is not followed through a rename.
+
+    def _with_manifest(self, edit):
+        data = json.loads(ui.MANIFEST.read_text())
+        edit(data)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "ui-test-groups.json"
+        path.write_text(json.dumps(data))
+        patcher = patch.object(ui, "MANIFEST", path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_an_editor_change_runs_the_tests_that_cross_into_the_editor(self):
+        design_picker = (
+            "KriaUITests/DesignPickerUITests/"
+            "testFourDesignsRenderOnThePhoneThePickRendersAndHerHeadingColourSticks"
+        )
+        self.assertIn(design_picker, ui.expected_tests("smoke,editor"))
+        self.assertIn(design_picker, ui.expected_tests("smoke,creation"))
+        self.assertGreaterEqual(len(ui.manifest()["also"]["editor"]), 20)
+
+    def test_second_groups_only_add_to_a_selection(self):
+        with_also = {
+            value: ui.expected_tests(value)
+            for value in (
+                "smoke",
+                "smoke,creation",
+                "smoke,projects",
+                "smoke,editor",
+                "full",
+            )
+        }
+        self._with_manifest(lambda data: data.pop("also"))
+        for value, now in with_also.items():
+            before = ui.expected_tests(value)
+            with self.subTest(value=value):
+                self.assertLessEqual(before, now)
+                if value in ("smoke", "full"):
+                    self.assertEqual(before, now)
+        self.assertEqual(with_also["full"], ui.discovered())
+
+    def test_a_test_in_two_selections_keeps_one_group_and_its_file_one_owner(self):
+        data = ui.manifest()
+        for group in ui.FEATURES:
+            self.assertFalse(set(data["groups"][group]) & set(data["also"][group]))
+        owners = [
+            group
+            for group in ui.FEATURES
+            for test in data["groups"][group]
+            if test.startswith("KriaUITests/DesignPickerUITests/")
+        ]
+        self.assertEqual(set(owners), {"creation"})
+        self.assertEqual(
+            ui.file_group(f"{ui.UI_TEST_ROOT}DesignPickerUITests.swift", data),
+            "creation",
+        )
+
+    def test_a_crossing_test_with_no_entry_is_named_by_check(self):
+        self.assertEqual(ui.editor_crossers(), [])
+        name = "DesignPickerUITests/testFourDesignsRenderOnThePhoneThePickRendersAndHerHeadingColourSticks"
+        self._with_manifest(lambda data: data["also"].pop(name))
+        self.assertEqual(ui.editor_crossers(), [name])
+        problems = "\n".join(ui.check())
+        self.assertIn(name, problems)
+        self.assertIn("`also`", problems)
+
+    def test_second_group_entries_are_validated_followed_and_reported_when_stale(self):
+        gone = "CreationUITests/testThatWasRemoved"
+        self._with_manifest(lambda data: data["also"].update({gone: "editor"}))
+        self.assertEqual(ui.stale_entries()["also"], [gone])
+        self.assertIn(gone, "\n".join(ui.check()))
+        data = json.loads(ui.MANIFEST.read_text())
+        moved = ui.follow_test_renames(data, {gone: "CreationUITests/testItsNewName"})
+        self.assertEqual(data["also"].get("CreationUITests/testItsNewName"), "editor")
+        self.assertNotIn(gone, data["also"])
+        self.assertTrue(any("also" in line for line in moved))
+        self._with_manifest(lambda data: data["also"].update({gone: "billing"}))
+        with self.assertRaises(ValueError):
+            ui.manifest()
 
     def test_shards_partition_the_full_suite_and_balance_recorded_time(self):
         inventory = ui.discovered()

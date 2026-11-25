@@ -17,6 +17,17 @@ blank tile. Four negative controls MUST fail (two inks, a title moved onto the f
 swapped for one that cannot draw Turkish, white ink on a light wall); a control that passes means
 the check is blind and exits 1.
 
+KRI-1612 adds the model arm (`verify_intro_scene_model`): the real agent, parser and fit with the
+provider call replayed, drawn and measured the same way (see that module).
+
+KRI-1611 adds the picks: the real dispatch pick (`intro_scene_pick`) for several job seeds, in
+English and Turkish, on a light and a dark plate. Each pick is fitted with the real
+`place_title_look`, takes its one ink from the plate (`intro_ink_pass`), and goes through the same
+measurements; wiring controls then check that the same seed is stable, a recent look is excluded,
+an unclean real receipt falls back to today's title, and the approval check accepts her slashless
+title as a stack and refuses a changed word. A pick drawn in an ink that does not read on its
+plate is a negative control and MUST fail.
+
 Run it font-accurately inside the prod image:
 
     make verify-intro-scenes
@@ -44,6 +55,7 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 from PIL import Image, ImageChops, ImageDraw, ImageFont  # noqa: E402
 
 from app.pipeline import intro_scene as scene_mod  # noqa: E402
+from app.pipeline import intro_scene_pick as pick_mod  # noqa: E402
 from app.pipeline import overlay_verify as ov  # noqa: E402
 from app.pipeline.canvas import PORTRAIT  # noqa: E402
 from app.pipeline.render_geometry import NormalizedBox  # noqa: E402
@@ -214,6 +226,46 @@ def _place(rows: list[dict[str, Any]], position: str | None) -> tuple[list[dict]
     return scene_mod.place_on_typical_face(rows, position, PORTRAIT)
 
 
+def approval_matches(rows: list[dict[str, Any]], title: str) -> list[dict[str, Any]]:
+    """The approval check on what the phone is told to draw: the rows compiled to text layers the
+    way the Talking recipe does (`_compile_text_lane`: capitals applied), read back as
+    `verify_phone_recipe` reads layers (NFC text per baseline, `text-N` ids, `anchor_y`), then
+    matched like its opening-title requirement. Reading the rows' own text instead hid the
+    all-caps pairs (review round 2); tests/tasks/test_intro_scene_worker.py runs the real call."""
+    import unicodedata  # noqa: PLC0415
+
+    from app.pipeline.cloud_render_evidence import normalize_text  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _compile_text_lane  # noqa: PLC0415
+    from app.pipeline.phone_title_look import stacked_title_matches  # noqa: PLC0415
+    from app.pipeline.sequence_text_evidence import text_matches  # noqa: PLC0415
+
+    layers = _compile_text_lane(rows, user_edited=False, timeline_duration_s=30.0)
+    evidence = []
+    for layer in layers:
+        lines: list[list[str]] = []
+        baseline = None
+        for run in layer.runs:
+            text = unicodedata.normalize("NFC", run.text)
+            if baseline is None or abs(run.baseline_y - baseline) > 0.001:
+                lines.append([text])
+                baseline = run.baseline_y
+            else:
+                lines[-1].append(text)
+        evidence.append(
+            {
+                "element_id": layer.id,
+                "text": normalize_text("\n".join("".join(line) for line in lines)),
+                "start_s": layer.start,
+                "end_s": layer.end,
+                "anchor_y": layer.anchor_y,
+            }
+        )
+    frame = 1 / 30
+    return text_matches(evidence, title, role="opening", tolerance_s=frame) or (
+        stacked_title_matches(evidence, title, tolerance_s=frame)
+    )
+
+
 # --- the cases ----------------------------------------------------------------------------
 
 
@@ -365,6 +417,234 @@ def sweep_issued_menu(*, thorough: bool = True) -> dict[str, Any]:
     return {"compiled": compiled, "declined": declined, "failed": failed}
 
 
+PICK_TITLES = (
+    ("en", "the biggest design trend right now"),
+    ("tr", "bu yılın en büyük tasarım trendi şu an"),
+)
+PICK_SEEDS = ("kri1611-a", "kri1611-b", "kri1611-c")
+PICK_PLATES = ("light_wall", "dark_room")
+
+
+def _take_frames(kind: str) -> list[Any]:
+    from app.pipeline import caption_legibility as legibility  # noqa: PLC0415
+
+    grey = plate(kind).convert("L").resize((270, 480))
+    return [legibility.GreyFrame(grey.tobytes(), 270, 480, 0.0, 30.0)]
+
+
+def _fit_pick(title: str, language: str, seed: str, kind: str, *, force_ink: str | None = None):
+    """The dispatch pick for ``seed`` fitted to the plate, as the worker draws it."""
+    ask = {
+        "version": pick_mod.INTRO_SCENE_VERSION,
+        "seed": seed,
+        "inks": pick_mod.ink_order(seed),
+        "candidates": pick_mod.pick_candidates(title, seed=seed),
+    }
+    if force_ink:
+        ask["inks"] = [force_ink]
+    rows, receipt, info = pick_mod.fit_intro_scene(
+        ask,
+        title,
+        canvas=PORTRAIT,
+        timeline_duration_s=30.0,
+        duration_s=None,
+        language=pick_mod.language_of(title, language),
+        place=lambda r, position: _place(r, position),
+    )
+    if rows is not None and not force_ink:
+        rows = pick_mod.intro_ink_pass(rows, _take_frames(kind), canvas=PORTRAIT)
+    return ask, rows, receipt, info
+
+
+def _pick_case(title: str, language: str, seed: str, kind: str, *, force_ink: str | None = None):
+    base: dict[str, Any] = {
+        "id": f"pick-{seed.split('-')[-1]}-{kind.split('_')[0]}",
+        "name": "seeded pick",
+        "language": language,
+        "control": "pick_ink_unreadable" if force_ink else None,
+        "expressible": True,
+        "missing_moves": [],
+        "title": title,
+        "rendered": True,
+    }
+    ask, rows, receipt, info = _fit_pick(title, language, seed, kind, force_ink=force_ink)
+    if rows is None or receipt is None:
+        return _case(
+            {**base, "verdict": "FAIL", "reasons": [f"no fit: {info.get('reason')}"]}, None
+        )
+    chosen = info["chosen"]
+    ink_name = next(
+        n for n, hex_ in scene_mod.INKS.items() if hex_ == str(rows[0]["color"]).upper()
+    )
+    scene = scene_mod.IntroScene(
+        decision="compose",
+        voices=tuple(ask["candidates"][chosen["candidate"]]["voices"]),
+        font_pair=chosen["font_pair"],
+        ink=ink_name,
+        zone=chosen["zone"],
+        entrance=ask["candidates"][chosen["candidate"]]["entrance"],
+        sound="none",
+    )
+    verdict, reasons, frame = verify_rows(rows, receipt, face=FACE_BOX, scene=scene, footage=kind)
+    if not approval_matches(rows, title):
+        verdict = "FAIL"
+        reasons = [*reasons, "the approval check does not find her title in the drawn layers"]
+    return _case(
+        {
+            **base,
+            "verdict": verdict,
+            "reasons": reasons,
+            "rows": _row_summary(rows),
+            "pick": {
+                "seed": seed,
+                "font_pair": chosen["font_pair"],
+                "zone": chosen["zone"],
+                "ink": ink_name,
+                "entrance": scene.entrance,
+                "tried": len(info["tried"]),
+            },
+        },
+        frame,
+    )
+
+
+def pick_cases() -> list[dict[str, Any]]:
+    cases = [
+        _pick_case(title, language, seed, kind)
+        for language, title in PICK_TITLES
+        for seed in PICK_SEEDS
+        for kind in PICK_PLATES
+    ]
+    # Control: oxblood forced onto the dark room must be seen as unreadable.
+    language, title = PICK_TITLES[0]
+    cases.append(_pick_case(title, language, PICK_SEEDS[0], "dark_room", force_ink="oxblood"))
+    return cases
+
+
+def wiring_controls() -> list[dict[str, Any]]:
+    """Checks on the pick's own contract. Each names what it expects and what it saw."""
+    language, title = PICK_TITLES[0]
+    out: list[dict[str, Any]] = []
+
+    def check(name: str, expected: str, observed: str, ok: bool) -> None:
+        out.append({"name": name, "expected": expected, "observed": observed, "ok": bool(ok)})
+
+    a = pick_mod.pick_candidates(title, seed="s", recent=())
+    check(
+        "same_seed_is_stable",
+        "equal",
+        "equal" if a == pick_mod.pick_candidates(title, seed="s") else "differ",
+        a == pick_mod.pick_candidates(title, seed="s"),
+    )
+    recent = (a[0]["font_pair"],)
+    excluded = pick_mod.pick_candidates(title, seed="s", recent=recent)
+    check(
+        "recent_look_is_tried_last",
+        f"first pair != {recent[0]}",
+        f"first pair {excluded[0]['font_pair']}",
+        excluded[0]["font_pair"] != recent[0],
+    )
+
+    def unclean(rows, _position):
+        return rows, {"status": "best_effort", "face_collision": True}
+
+    ask = {
+        "version": 1,
+        "seed": "s",
+        "inks": pick_mod.ink_order("s"),
+        "candidates": a,
+    }
+    fell_back, _receipt, info = pick_mod.fit_intro_scene(
+        ask,
+        title,
+        canvas=PORTRAIT,
+        timeline_duration_s=30.0,
+        duration_s=None,
+        language=None,
+        place=unclean,
+    )
+    check("unclean_real_receipt_falls_back", "no rows", info["reason"], fell_back is None)
+
+    _ask, rows, receipt, _info = _fit_pick(title, language, PICK_SEEDS[0], "light_wall")
+    assert rows is not None
+    accepted = approval_matches(rows, title)
+    check(
+        "approval_accepts_her_title_as_a_stack",
+        "1 match",
+        f"{len(accepted)} match",
+        len(accepted) == 1,
+    )
+    changed = approval_matches(rows, title + "s")
+    check("approval_refuses_a_changed_word", "no match", f"{len(changed)} match", not changed)
+
+    # Every issued pair, both languages, as drawn: the caps pairs once hid behind row text.
+    refused: list[str] = []
+    for lang, pair_title in PICK_TITLES:
+        menu = scene_mod.issue_menu(pair_title)
+        for pair in menu.font_pairs:
+            pair_ask = {
+                "version": pick_mod.INTRO_SCENE_VERSION,
+                "seed": "pairs",
+                "inks": list(scene_mod.INKS),
+                "candidates": [
+                    {
+                        "voices": list(pick_mod.accent_splits(pair_title)[0]),
+                        "font_pair": pair,
+                        "entrance": menu.entrances_for(pair)[0],
+                        "zones": list(scene_mod.ZONES),
+                    }
+                ],
+            }
+            pair_rows, _r, _i = pick_mod.fit_intro_scene(
+                pair_ask,
+                pair_title,
+                canvas=PORTRAIT,
+                timeline_duration_s=30.0,
+                duration_s=None,
+                language=pick_mod.language_of(pair_title, lang),
+                place=_place,
+            )
+            if pair_rows is None:
+                continue  # the face-fit declined this pair on the typical speaker: today's rows
+            if not approval_matches(pair_rows, pair_title):
+                refused.append(f"{lang}:{pair}")
+    check(
+        "approval_accepts_every_issued_pair_as_drawn",
+        "no pair refused",
+        ", ".join(refused) or "no pair refused",
+        not refused,
+    )
+
+    # Nothing measured on the take: the scene takes a light ink, never a pinned dark one.
+    from app.pipeline import caption_legibility as legibility  # noqa: PLC0415
+
+    dark_first = {
+        "version": pick_mod.INTRO_SCENE_VERSION,
+        "seed": "u",
+        "inks": ["oxblood", "white", "cream", "butter", "chartreuse"],
+        "candidates": pick_mod.pick_candidates(title, seed="u"),
+    }
+    unmeasured, _r, _i = pick_mod.fit_intro_scene(
+        dark_first,
+        title,
+        canvas=PORTRAIT,
+        timeline_duration_s=30.0,
+        duration_s=None,
+        language=None,
+        place=_place,
+    )
+    assert unmeasured is not None
+    unmeasured = pick_mod.intro_ink_pass(unmeasured, [], canvas=PORTRAIT)
+    luminance = legibility.relative_luminance(unmeasured[0]["color"])
+    check(
+        "unmeasured_take_never_keeps_a_dark_ink",
+        "light ink (luminance >= 0.5)",
+        f"{unmeasured[0]['color']} ({luminance:.2f})",
+        luminance >= 0.5,
+    )
+    return out
+
+
 def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     data = json.loads(_TEARDOWNS.read_text())
     teardowns = {t["id"]: t for t in data["teardowns"]}
@@ -427,6 +707,10 @@ def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 )
             )
     cases.extend(_controls(teardowns))
+    cases.extend(pick_cases())
+    from app.cli.verify_intro_scene_model import model_cases  # noqa: PLC0415
+
+    cases.extend(model_cases())  # KRI-1612: the replayed model arm, drawn the same way
     return cases, data
 
 
@@ -516,12 +800,19 @@ def run(*, out_dir: str, sweep: bool = True) -> dict[str, Any]:
     blind = [c["control"] for c in public if c["control"] and c["verdict"] != "FAIL"]
     failed = [f"{c['id']}/{c['language']}" for c in checked if c["verdict"] != "PASS"]
     sweep_report = sweep_issued_menu() if sweep else {"compiled": 0, "declined": {}, "failed": []}
+    from app.cli.verify_intro_scene_model import model_wiring  # noqa: PLC0415
+
+    wiring = [*wiring_controls(), *model_wiring()]
+    wiring_failed = [w["name"] for w in wiring if not w["ok"]]
     report = {
         "teardowns_version": data["version"],
         "environment": "prod-image" if os.environ.get("NOVA_IN_PROD_IMAGE") else "host",
         "skia": getattr(skia, "__version__", "unknown"),
-        "overall": "PASS" if not failed and not blind and not sweep_report["failed"] else "FAIL",
+        "overall": "PASS"
+        if not failed and not blind and not sweep_report["failed"] and not wiring_failed
+        else "FAIL",
         "failed": failed,
+        "wiring": wiring,
         "sweep": sweep_report,
         "blind_controls": blind,
         "inexpressible": [
@@ -551,6 +842,8 @@ def main(argv: list[str] | None = None) -> int:
             f"  [{_status(case)}] {label} {case['id']}/{case['language']}: "
             f"{'; '.join(case['reasons']) or 'ok'}"
         )
+    for w in report["wiring"]:
+        print(f"  [{'PASS' if w['ok'] else 'FAIL'}] wiring {w['name']}: {w['observed']}")
     sweep = report["sweep"]
     print(
         f"  sweep: {sweep['compiled']} issued scene(s) rendered, {len(sweep['failed'])} failed; "

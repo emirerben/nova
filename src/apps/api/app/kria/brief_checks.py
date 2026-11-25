@@ -2901,6 +2901,15 @@ def _title_look_text_of(rows: object) -> str | None:
     return title_look_text(live) or None
 
 
+def _intro_plain_text_of(rows: object) -> str | None:
+    """KRI-1611: an intro scene's lines read as her slashless title (``None`` for any other)."""
+    if not isinstance(rows, (list, tuple)) or not rows:
+        return None
+    from app.pipeline.phone_title_look import intro_plain_text  # noqa: PLC0415
+
+    return intro_plain_text([r for r in rows if isinstance(r, Mapping) and not r.get("removed")])
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -3002,8 +3011,11 @@ def plan_facts_from_editor_payload(
     look_text = _title_look_text_of(timing_rows)
     if look_text:
         strings.append(look_text)
+        plain = _intro_plain_text_of(timing_rows)
+        if plain:
+            strings.append(plain)
         if title is not None and title == (look_text.split(" / ", 1)[0]):
-            title = look_text
+            title = plain or look_text
     strings.extend(_cta_joined_texts(timing_rows))
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
@@ -7800,15 +7812,32 @@ _CLEANUP_SEVERAL_TAKES = (
 )
 # Qendresa 13 (TIGHT_PAUSE_CUT_ENABLED): "cut out all my pauses so it's tight". Only said when the
 # flag is on and the ask wants every pause gone; the draft promises 0.3 s, the finished video
-# reports what the render measured.
+# reports what the render measured. KRI-1524: the render skips the 0.3 s cut on a take with loud
+# background sound (`tight_pause_cut.take_noise`) and the draft cannot hear the take yet, so every
+# promise names that exception before approval (Cusco DJI T1 learned it after the render). Each
+# stays short: tight + a named line + a restart, joined, must fit one 300-character receipt.
 _TIGHT_PLANNED = (
+    "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you "
+    "after if any stay longer"
+)
+_TIGHT_AT_APPROVAL = (
+    "Choose Clean up speech when you approve: every pause is cut to about 0.3 s unless a take "
+    "is noisy"
+)
+_TIGHT_IF_OFFERED = (
+    "If Clean up speech is offered when you approve, choose it: every pause is cut to about "
+    "0.3 s unless a take is noisy"
+)
+# KRI-1524: the same three promises before the noisy-take exception. Drafts stored with them
+# (written before this change, approved after) are still render promises and format limits.
+_TIGHT_PLANNED_PRE_1524 = (
     "Speech cleanup cuts every pause down to about 0.3 s, and I'll tell you after if any "
     "stay longer"
 )
-_TIGHT_AT_APPROVAL = (
+_TIGHT_AT_APPROVAL_PRE_1524 = (
     "Choose Clean up speech when you approve and every pause is cut down to about 0.3 s"
 )
-_TIGHT_IF_OFFERED = (
+_TIGHT_IF_OFFERED_PRE_1524 = (
     "If Clean up speech is offered when you approve, choose it and every pause is cut down "
     "to about 0.3 s"
 )
@@ -7834,6 +7863,9 @@ _TIGHT_STATIC_LINES: tuple[str, ...] = (
     _TIGHT_PLANNED,
     _TIGHT_AT_APPROVAL,
     _TIGHT_IF_OFFERED,
+    _TIGHT_PLANNED_PRE_1524,
+    _TIGHT_AT_APPROVAL_PRE_1524,
+    _TIGHT_IF_OFFERED_PRE_1524,
     _TIGHT_KIND_LONG_ONLY,
     _TIGHT_RENDER_LONG_ONLY,
     _TIGHT_UNMEASURED,
@@ -8108,10 +8140,13 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _CLEANUP_IF_OFFERED,
     _NAMED_CUT_AT_RENDER,
     _RESTART_CUT_AT_APPROVAL,
-    # Qendresa 13: every pause cut down to about 0.3 s.
+    # Qendresa 13: every pause cut down to about 0.3 s (KRI-1524: unless a take is noisy).
     _TIGHT_PLANNED,
     _TIGHT_AT_APPROVAL,
     _TIGHT_IF_OFFERED,
+    _TIGHT_PLANNED_PRE_1524,
+    _TIGHT_AT_APPROVAL_PRE_1524,
+    _TIGHT_IF_OFFERED_PRE_1524,
     # Qendresa 14: the arrow beside the "comment WORD" ending.
     _CLOSING_ARROW_PLAN,
     # KRI-1346: the colour card after the last word.
@@ -8379,14 +8414,26 @@ _REASON_TR: dict[str, str] = {
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
     _TIGHT_PLANNED: (
-        "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır, daha uzun kalan "
-        "olursa sonra sana söylerim"
+        "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır (gürültülü "
+        "çekimler hariç), daha uzun kalan olursa sonra sana söylerim"
     ),
     _TIGHT_AT_APPROVAL: (
         "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, her duraklama yaklaşık "
-        "0,3 sn'ye kadar kısalır"
+        "0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
     ),
     _TIGHT_IF_OFFERED: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d çıkarsa onu seç, her duraklama yaklaşık "
+        "0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+    ),
+    _TIGHT_PLANNED_PRE_1524: (
+        "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır, daha uzun kalan "
+        "olursa sonra sana söylerim"
+    ),
+    _TIGHT_AT_APPROVAL_PRE_1524: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, her duraklama yaklaşık "
+        "0,3 sn'ye kadar kısalır"
+    ),
+    _TIGHT_IF_OFFERED_PRE_1524: (
         "Onaylarken \u201cKonuşmayı temizle\u201d çıkarsa onu seç, her duraklama yaklaşık "
         "0,3 sn'ye kadar kısalır"
     ),
