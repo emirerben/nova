@@ -39,6 +39,7 @@ from app.main import app
 from app.models import ContentPlan, Job, Persona, PlanItem, User
 from app.pipeline.phone_title_look import stacked_title_matches, title_family_of
 from app.routes import generative_jobs as gj
+from app.services.client_protocol import INTRO_STYLES_PROTOCOL
 from app.services.device_render import device_status
 from app.text_fold import fold_text
 
@@ -53,14 +54,13 @@ except (OperationalError, OSError) as exc:
 
 ROUTES = fx.ROUTES
 TITLES = {"en": fx.EN_TITLE, "tr": fx.TR_TITLE}
-CAPS = {"X-Kria-Client-Protocol": "57"}
+CAPS = {"X-Kria-Client-Protocol": str(INTRO_STYLES_PROTOCOL)}
 
 
 @pytest.fixture(autouse=True)
 def _flags(monkeypatch):
     for key, value in fx.flag_overrides().items():
         monkeypatch.setattr(settings, key, value)
-    monkeypatch.setattr(settings, "intro_styles_min_client_protocol", 57)
     monkeypatch.setattr(settings, "intro_scene_model_enabled", False)
     # the one storage boundary: the approved montage footage still has the generation it was
     # approved at (`_proposal_media_is_current`); no object store exists in the test
@@ -237,7 +237,7 @@ def test_pick_save_edit_and_override_through_the_real_app(make, route, lang):
     # 1. the entry exists for this build and account
     from app.services.client_protocol import _client_protocol
 
-    token = _client_protocol.set(57)
+    token = _client_protocol.set(INTRO_STYLES_PROTOCOL)
     try:
         variants = gj._variants_for_response(seeded.job())
     finally:
@@ -322,7 +322,9 @@ def test_a_stale_base_is_a_409_with_the_editors_own_body(make):
 
 def test_a_protocol_56_build_gets_426_and_no_capability_key(make):
     seeded, client = make("talking")
-    response = offer(client, seeded, headers={"X-Kria-Client-Protocol": "56"})
+    response = offer(
+        client, seeded, headers={"X-Kria-Client-Protocol": str(INTRO_STYLES_PROTOCOL - 1)}
+    )
     assert response.status_code == 426
     assert response.json()["detail"] == {
         "code": "client_update_required",
@@ -331,7 +333,7 @@ def test_a_protocol_56_build_gets_426_and_no_capability_key(make):
     }
     from app.services.client_protocol import _client_protocol
 
-    token = _client_protocol.set(56)
+    token = _client_protocol.set(INTRO_STYLES_PROTOCOL - 1)
     try:
         caps = gj._editor_capabilities(seeded.job(), seeded.variant())
     finally:

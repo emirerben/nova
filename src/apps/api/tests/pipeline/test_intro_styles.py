@@ -28,6 +28,7 @@ from app.pipeline import intro_styles as st
 from app.pipeline.canvas import PORTRAIT
 from app.pipeline.phone_title_look import intro_plain_text, title_family_of
 from app.routes import generative_jobs as gj
+from app.services.client_protocol import INTRO_STYLES_PROTOCOL
 from app.text_fold import fold_text
 
 ROUTES = fx.ROUTES
@@ -38,7 +39,6 @@ TITLES = {"en": fx.EN_TITLE, "tr": fx.TR_TITLE}
 def _flags(monkeypatch):
     for key, value in fx.flag_overrides().items():
         monkeypatch.setattr(settings, key, value)
-    monkeypatch.setattr(settings, "intro_styles_min_client_protocol", 57)
 
 
 def offer_for(route: str, lang: str = "en", **kwargs):
@@ -58,17 +58,17 @@ def _caps(job, vid, protocol):
 @pytest.mark.parametrize("route", ROUTES)
 def test_capability_needs_the_flag_the_account_and_the_protocol(monkeypatch, route):
     job, vid, _rows = fx.BUILDERS[route]()
-    assert _caps(job, vid, 57) is True
-    assert _caps(job, vid, 56) is False  # a protocol-56 build gets no key
+    assert _caps(job, vid, INTRO_STYLES_PROTOCOL) is True
+    assert _caps(job, vid, INTRO_STYLES_PROTOCOL - 1) is False  # a protocol-56 build gets no key
     assert _caps(job, vid, None) is False  # a worker drafting for no build
     monkeypatch.setattr(settings, "intro_scene_enabled", False)
-    assert _caps(job, vid, 57) is False
+    assert _caps(job, vid, INTRO_STYLES_PROTOCOL) is False
     monkeypatch.setattr(settings, "intro_scene_enabled", True)
     monkeypatch.setattr(settings, "intro_scene_user_ids", ["someone-else"])
-    assert _caps(job, vid, 57) is False
+    assert _caps(job, vid, INTRO_STYLES_PROTOCOL) is False
     monkeypatch.setattr(settings, "intro_scene_user_ids", [fx.USER_ID])
     monkeypatch.setattr(settings, "intro_styles_min_client_protocol", 999)  # the kill switch
-    assert _caps(job, vid, 57) is False
+    assert _caps(job, vid, INTRO_STYLES_PROTOCOL) is False
 
 
 def test_the_editor_capability_map_gains_a_key_only_when_on(monkeypatch):
@@ -76,12 +76,12 @@ def test_the_editor_capability_map_gains_a_key_only_when_on(monkeypatch):
 
     job, vid, _rows = fx.talking_job()
     variant = job.assembly_plan["variants"][0]
-    token = _client_protocol.set(57)
+    token = _client_protocol.set(INTRO_STYLES_PROTOCOL)
     try:
         on = gj._editor_capabilities(job, variant)
         monkeypatch.setattr(settings, "intro_scene_enabled", False)
         off = gj._editor_capabilities(job, variant)
-        _client_protocol.set(56)
+        _client_protocol.set(INTRO_STYLES_PROTOCOL - 1)
         monkeypatch.setattr(settings, "intro_scene_enabled", True)
         old = gj._editor_capabilities(job, variant)
     finally:
@@ -340,10 +340,15 @@ def test_the_offered_rows_survive_the_real_phone_save(route):
         ), option["key"]
         scratch = st.detach(job)
         before = device_status(scratch, vid).request.identity.recipe_revision
+        revision = gj._guided_v2_revision(scratch, scratch.assembly_plan["variants"][0])
         gj.prepare_editor_commit(
             scratch,
             vid,
-            gj.EditorCommitRequest(base_generation="first", text_elements=option["rows"]),
+            gj.EditorCommitRequest(
+                base_generation="first",
+                text_elements=option["rows"],
+                **({"guided_revision_number": revision["revision_number"]} if revision else {}),
+            ),
         )
         recipe = device_status(scratch, vid).request.recipe
         assert device_status(scratch, vid).request.identity.recipe_revision == before + 1

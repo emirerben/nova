@@ -175,15 +175,19 @@ def capability(
     key is sent only when True, so every closed payload keeps its exact shape (F1)."""
     from app.config import settings  # noqa: PLC0415
 
-    if not settings.intro_scene_for(getattr(job, "user_id", None)):
+    try:
+        if not settings.intro_scene_for(getattr(job, "user_id", None)):
+            return False
+        if not protocol_allows(protocol):
+            return False
+        assembly = getattr(job, "assembly_plan", None) or {}
+        route, _reason = route_of(variant, assembly)
+        if route is None or capabilities.get("text_elements") is not True:
+            return False
+        return not title_look_asked(variant, assembly)
+    except Exception as exc:  # noqa: BLE001 - a missing entry never breaks the editor payload
+        log.warning("intro_styles.capability_failed", error=str(exc)[:200])
         return False
-    if not protocol_allows(protocol):
-        return False
-    assembly = getattr(job, "assembly_plan", None) or {}
-    route, _reason = route_of(variant, assembly)
-    if route is None or capabilities.get("text_elements") is not True:
-        return False
-    return not title_look_asked(variant, assembly)
 
 
 # --- her rows -----------------------------------------------------------------------------------

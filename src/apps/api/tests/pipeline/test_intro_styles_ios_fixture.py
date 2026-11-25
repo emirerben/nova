@@ -26,7 +26,7 @@ from app.cli import intro_styles_fixtures as fx
 from app.config import settings
 from app.pipeline import intro_styles as st
 from app.routes import generative_jobs as gj
-from app.services.client_protocol import _client_protocol
+from app.services.client_protocol import INTRO_STYLES_PROTOCOL, _client_protocol
 
 # A fixed job id keeps the seeded looks (and so the fixture) the same on every run.
 _JOB_ID = uuid.UUID("00000000-0000-4000-8000-000000001633")
@@ -37,7 +37,6 @@ _FIXTURE = Path(__file__).resolve().parents[3] / "ios/Tests/Fixtures/KRI1633Intr
 def _flags(monkeypatch):
     for key, value in fx.flag_overrides().items():
         monkeypatch.setattr(settings, key, value)
-    monkeypatch.setattr(settings, "intro_styles_min_client_protocol", 57)
 
 
 def _offer(route: str, title: str) -> tuple[dict, dict]:
@@ -48,7 +47,7 @@ def _offer(route: str, title: str) -> tuple[dict, dict]:
 def _fresh() -> dict:
     offer_en, talking = _offer("talking", fx.EN_TITLE)
     job = talking["job"]
-    token = _client_protocol.set(57)
+    token = _client_protocol.set(INTRO_STYLES_PROTOCOL)
     try:
         variant = next(v for v in gj._variants_for_response(job) if v["variant_id"] == "subtitled")
     finally:
