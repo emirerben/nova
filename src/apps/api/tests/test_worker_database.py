@@ -154,7 +154,7 @@ def test_the_name_list_is_exactly_the_databases_a_worker_can_select():
 @pytest.mark.parametrize(
     "url",
     [
-        "postgresql://db.internal:5432/nova_test",
+        "postgresql://db.example.org:5432/nova_test",
         "postgresql://10.0.0.5/nova_test",
         "postgresql://database.example/nova_test",
     ],
