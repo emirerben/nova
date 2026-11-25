@@ -301,6 +301,10 @@ def test_one_section_framing_change_is_named_in_the_chat_reply(prod_profile) -> 
     assert "1. bölümde sol alt köşede küçük gösteriliyorsun" in said_tr, said_tr
 
 
+# What the brief writer records for "make me smaller in part 1" while speaker sections are open
+# (`with_speaker_parts_brief`): the part is a structured fact, never read from the words (KRI-667).
+PART_1_ASKED = {"speaker_parts": [1]}
+
 ASKS = {
     "en": (
         "make me smaller in part 1",
@@ -337,7 +341,9 @@ def test_make_me_smaller_in_part_1_is_done_in_the_per_request_summary(
         {"op": "set_section_layout", "speaker_layout": "small", "section_numbers": [1]},
     )
     compiled = turn["compiled"]
-    reqs = [BriefRequirement(id="r1", kind="style", scope="global", description=ask)]
+    reqs = [
+        BriefRequirement(id="r1", kind="style", scope="global", description=ask, facts=PART_1_ASKED)
+    ]
     with reply_language_for(language):
         payload = compiled.payload.model_dump(mode="json", exclude_none=True)
         facts = plan_facts_from_editor_payload(
@@ -380,7 +386,11 @@ def test_make_me_bigger_in_part_1_answered_by_making_her_small_is_not_done(prod_
     compiled = turn["compiled"]
     reqs = [
         BriefRequirement(
-            id="r1", kind="style", scope="global", description="make me bigger in part 1"
+            id="r1",
+            kind="style",
+            scope="global",
+            description="make me bigger in part 1",
+            facts=PART_1_ASKED,
         )
     ]
     payload = compiled.payload.model_dump(mode="json", exclude_none=True)
@@ -392,7 +402,9 @@ def test_make_me_bigger_in_part_1_answered_by_making_her_small_is_not_done(prod_
     assert receipt.status != "met", receipt
 
 
-def _size_ask_receipt(language: str, ask: str, section_numbers: list[int]):
+def _size_ask_receipt(
+    language: str, ask: str, section_numbers: list[int], asked: tuple[int, ...] = (1,)
+):
     """Ask `ask`, make her small in `section_numbers`, then run the per-request summary."""
     from dataclasses import replace  # noqa: PLC0415
 
@@ -417,7 +429,15 @@ def _size_ask_receipt(language: str, ask: str, section_numbers: list[int]):
         {"op": "set_section_layout", "speaker_layout": "small", "section_numbers": section_numbers},
     )
     compiled = turn["compiled"]
-    reqs = [BriefRequirement(id="r1", kind="style", scope="global", description=ask)]
+    reqs = [
+        BriefRequirement(
+            id="r1",
+            kind="style",
+            scope="global",
+            description=ask,
+            facts={"speaker_parts": list(asked)},
+        )
+    ]
     with reply_language_for(language):
         payload = compiled.payload.model_dump(mode="json", exclude_none=True)
         facts = plan_facts_from_editor_payload(
@@ -453,28 +473,36 @@ def test_make_me_smaller_in_part_1_answered_in_parts_1_and_3_is_done(
     assert (receipt.status, receipt.verification) == ("met", "checked"), (receipt, reply)
 
 
-@pytest.mark.parametrize(
-    ("ask", "parts"),
-    [
-        ("make me smaller in part 1", {1}),
-        ("make me small in parts 1 and 3", {1, 3}),
-        ("shrink me in the first part", {1}),
-        ("make me small in the last part", {-1}),
-        ("beni 1. bölümde küçült", {1}),
-        ("beni 1. ve 3. bölümlerde küçült", {1, 3}),
-        ("ilk bölümde beni küçült", {1}),
-        ("son kısımda beni küçült", {-1}),
-        ("mach mich in Teil 2 kleiner", {2}),
-        ("mach mich im zweiten Teil kleiner", {2}),
-        ("mach mich im letzten Abschnitt kleiner", {-1}),
-        # No part named: a whole-video ask, and a count that is not a part number.
-        ("make me smaller", set()),
-        ("split the video into 3 parts", set()),
-        ("sonra beni küçült", set()),
-    ],
-)
-def test_the_part_a_size_ask_names_is_read_in_english_turkish_and_german(ask, parts) -> None:
-    from app.kria.editor_receipts import _parts  # noqa: PLC0415
-    from app.kria.style_asks import words  # noqa: PLC0415
+def test_the_asked_parts_come_from_the_structured_fact_only() -> None:
+    from app.kria.editor_receipts import _speaker_parts  # noqa: PLC0415
 
-    assert _parts(words(ask)) == frozenset(parts)
+    assert _speaker_parts({"speaker_parts": [1, 3, -1]}) == {1, 3, -1}
+    # Anything the brief writer could get wrong is no part at all (the ask is then judged as
+    # before: by direction only), never a guess.
+    assert _speaker_parts({"speaker_parts": [0, 41, "2", True, 2.0]}) == frozenset()
+    assert _speaker_parts({"speaker_parts": 1}) == frozenset()
+    assert _speaker_parts({}) == frozenset()
+
+
+def test_the_brief_writer_is_taught_speaker_parts_only_while_sections_are_open(
+    monkeypatch,
+) -> None:
+    from app.agents._schemas.brief_extractor import BriefExtractionInput  # noqa: PLC0415
+    from app.agents.brief_extractor import BriefExtractorAgent  # noqa: PLC0415
+    from app.agents.main_creator import brief_prompt_section  # noqa: PLC0415
+    from app.services import phone_rollout  # noqa: PLC0415
+
+    def prompts() -> tuple[str, str]:
+        agent = BriefExtractorAgent.__new__(BriefExtractorAgent)
+        extractor = agent.render_prompt(BriefExtractionInput(user_message="make me smaller"))
+        return extractor, brief_prompt_section(False)
+
+    closed = prompts()
+    assert all("speaker_parts" not in prompt for prompt in closed)
+    monkeypatch.setattr(phone_rollout, "speaker_sections_supported", lambda **_: True)
+    opened = prompts()
+    assert all('"speaker_parts"' in prompt for prompt in opened)
+    # Opening adds the one sentence and nothing else, so closed prompts keep their bytes.
+    for before, after in zip(closed, opened, strict=True):
+        sentence = next(line for line in after.splitlines() if "speaker_parts" in line)
+        assert after.replace("\n" + sentence, "", 1) == before
