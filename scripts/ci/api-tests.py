@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -132,6 +133,55 @@ def worker_databases(environ: dict[str, str], cpu_count=None) -> int | None:
 
 def worker_database_command(workers: int) -> list[str]:
     return [sys.executable, "-m", "tests._worker_database", str(workers)]
+
+
+def worker_database_names(api_root: Path, url: str, workers: int) -> dict[str, str]:
+    """The database each xdist worker must have run on, from the module that makes the copies."""
+    spec = importlib.util.spec_from_file_location(
+        "_worker_database", api_root / "tests/_worker_database.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {
+        f"gw{index}": module.worker_url(url, f"gw{index}").rsplit("/", 1)[1]
+        for index in range(workers)
+    }
+
+
+def worker_database_problems(api_root: Path, expected: dict[str, str]) -> list[str]:
+    """Workers that did not run on their own copy, from the recorder's startup rows.
+
+    A worker's row names the database its process was on once collection had
+    finished, which is after every import that could have read the URL. No row
+    is a problem too: an unproven worker is not a proven one.
+    """
+    seen: dict[str, str | None] = {}
+    for path in sorted((api_root / TIMES).glob("*.jsonl")):
+        for line in path.read_text().splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("kind") == "startup":
+                seen[row.get("worker")] = row.get("database")
+    problems = []
+    for worker, database in sorted(expected.items()):
+        if worker not in seen:
+            problems.append(f"{worker} left no startup row: nothing shows which database it used")
+        elif seen[worker] != database:
+            problems.append(f"{worker} ran on {seen[worker]!r}, not on its own copy {database!r}")
+    return problems
+
+
+def check_worker_databases(api_root: Path, url: str, workers: int) -> int:
+    problems = worker_database_problems(api_root, worker_database_names(api_root, url, workers))
+    if not problems:
+        print(f"Worker databases: all {workers} workers ran on their own copy.")
+        return 0
+    print("::error::per-worker databases are switched on, but not every worker used its own.")
+    for problem in problems:
+        print(f"  {problem}")
+    return 1
 
 
 def pytest_command(selected: list[Path], workers: int | None = None) -> list[str]:
@@ -284,8 +334,12 @@ def main(argv: list[str] | None = None) -> int:
         env=env,
         check=False,
     ).returncode
-    # Checked even when pytest failed, so one run reports both.
-    return status or check_skips(api_root)
+    # Both checked even when pytest failed, so one run reports everything.
+    skips = check_skips(api_root)
+    proof = 0
+    if workers is not None:
+        proof = check_worker_databases(api_root, env[WORKER_DB_COPIED_FROM], workers)
+    return status or skips or proof
 
 
 if __name__ == "__main__":

@@ -214,6 +214,9 @@ def test_each_process_records_its_time_before_the_first_test(mode, processes, re
     for row in startups:
         assert row["items"] == len(NODES)
         assert row["seconds"] > 0
+        # Which database this process was on: scripts/ci/api-tests.py reads it to prove
+        # that every xdist worker ran on its own copy (KRI-1637).
+        assert row["database"] == os.environ["DATABASE_URL"].rsplit("/", 1)[-1]
 
 
 def test_recording_does_not_change_the_exit_code_and_is_off_by_default(tmp_path, plain):

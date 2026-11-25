@@ -2,8 +2,9 @@
 
 Each pytest process appends JSON lines to `<dir>/<worker>.jsonl`:
 
-- one `startup` row: seconds from plugin load to the end of collection, and how
-  many tests that process collected. More cores do not shrink this part;
+- one `startup` row: seconds from plugin load to the end of collection, how
+  many tests that process collected, and the name of the database it is on.
+  More cores do not shrink this part;
 - one `test` row per test: outcome, wall seconds of setup, call and teardown,
   CPU seconds of this process plus the children it waited for (ffmpeg), and
   the timeout that applies to it (its own marker, else the run's default).
@@ -88,6 +89,9 @@ class Recorder:
             {
                 "kind": "startup",
                 "worker": self.worker,
+                # The database this process is on (name only). With one database per xdist
+                # worker, scripts/ci/api-tests.py fails the shard unless it is the worker's own.
+                "database": os.environ.get("DATABASE_URL", "").rsplit("/", 1)[-1],
                 "seconds": round(time.perf_counter() - _LOADED, 3),
                 "items": len(session.items),
             }
