@@ -20,13 +20,15 @@ from app.services.generated_media import (
     retry_generated_storage,
 )
 from app.services.generated_media_transport import OpenAIGeneratedTransport
+from tests._worker_database import worker_database_names
 from tests.services.test_generated_media_transport import image_response
 
 
 @pytest.fixture
 def generated(monkeypatch):
     if sync_engine.url.database != "nova_generated_test" and not (
-        os.environ.get("CI") and sync_engine.url.database == "nova_test"
+        os.environ.get("CI")
+        and sync_engine.url.database in {"nova_test", *worker_database_names("nova_test")}
     ):
         pytest.skip("requires isolated nova_generated_test database")
     for key, value in {

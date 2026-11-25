@@ -29,14 +29,21 @@ Ways the weight-packed shards can go wrong, written before the packing (KRI-1544
 16. Rows left by an earlier run in the same directory are judged as this run's.
 17. A test that needs git history is added, skips in the shards as allowed, and
     is never added to the job that has the history, so it runs nowhere.
+18. Per-worker databases (tests/_worker_database.py): the switch is off and the
+    run changes anyway; or it is on and pytest starts more workers than there
+    are databases, starts although creating them failed, or never receives the
+    switch because the workflow or conftest dropped its half.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().with_name("api-tests.py")
 spec = importlib.util.spec_from_file_location("api_tests", SCRIPT)
@@ -363,6 +370,83 @@ class ApiTestShardTests(unittest.TestCase):
             command[command.index("-n") : command.index("-n") + 3],
             ["-n", "auto", "--timeout=60"],
         )
+
+    def test_without_the_switch_the_run_is_the_one_it_was(self):
+        for value in (None, "0", "on"):
+            environ = {} if value is None else {api_tests.WORKER_DB_SWITCH: value}
+            self.assertIsNone(api_tests.worker_databases(environ, cpu_count=lambda: 4))
+        selected = api_tests.shard_files(self.api_root, 0)
+        command = api_tests.pytest_command(selected)
+        self.assertEqual(command, api_tests.pytest_command(selected, None))
+        self.assertEqual(command[command.index("-n") + 1], "auto")
+
+    def test_with_the_switch_pytest_gets_exactly_as_many_workers_as_databases(self):
+        environ = {api_tests.WORKER_DB_SWITCH: "1"}
+        self.assertEqual(api_tests.worker_databases(environ, cpu_count=lambda: 4), 4)
+        self.assertEqual(api_tests.worker_databases(environ, cpu_count=lambda: None), 1)
+        self.assertEqual(
+            api_tests.worker_database_command(4)[1:], ["-m", "tests._worker_database", "4"]
+        )
+        command = api_tests.pytest_command(api_tests.shard_files(self.api_root, 0), 4)
+        self.assertEqual(
+            command[command.index("-n") : command.index("-n") + 3], ["-n", "4", "--timeout=60"]
+        )
+
+    def run_main(self, environ, statuses):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs["env"]))
+            return mock.Mock(returncode=statuses[len(calls) - 1])
+
+        with (
+            mock.patch.object(api_tests.subprocess, "run", fake_run),
+            mock.patch.object(api_tests.os, "cpu_count", lambda: 4),
+            mock.patch.dict(api_tests.os.environ, environ, clear=True),
+            mock.patch.object(api_tests, "check_skips", lambda api_root: 0),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            return api_tests.main(["0"]), calls
+
+    def test_the_databases_are_made_before_pytest_and_a_failure_stops_the_shard(self):
+        on = {api_tests.WORKER_DB_SWITCH: "1"}
+        status, calls = self.run_main(on, [0, 0])
+        self.assertEqual(status, 0)
+        self.assertEqual(calls[0][0][1:4], ["-m", "tests._worker_database", "4"])
+        self.assertEqual(calls[1][0][0], "pytest")
+        self.assertIn("4", calls[1][0][calls[1][0].index("-n") + 1])
+        self.assertEqual(calls[1][1][api_tests.WORKER_DB_SWITCH], "1")
+
+        status, calls = self.run_main(on, [3])
+        self.assertEqual(status, 3)
+        self.assertEqual(len(calls), 1, "pytest must not start without its databases")
+
+        status, calls = self.run_main({}, [0])
+        self.assertEqual(status, 0)
+        self.assertEqual([call[0][0] for call in calls], ["pytest"])
+        self.assertEqual(calls[0][0][calls[0][0].index("-n") + 1], "auto")
+
+    def test_the_workflow_and_conftest_carry_their_half_of_the_switch(self):
+        repo = SCRIPT.parents[2]
+        workflow = (repo / ".github/workflows/ci.yml").read_text()
+        suite_step = workflow.split(
+            "      - name: Run API test shard with timing reports\n", 1
+        )[1].split("        run: python3 scripts/ci/api-tests.py", 1)[0]
+        self.assertIn(
+            f"          {api_tests.WORKER_DB_SWITCH}: "
+            "${{ vars.CI_API_DB_PER_WORKER == 'on' && '1' || '0' }}\n",
+            suite_step,
+        )
+        conftest = (repo / "src/apps/api/tests/conftest.py").read_text()
+        select = "_worker_database.select(os.environ)\n"
+        self.assertIn(select, conftest)
+        # Before the first fixture, so before any test or fixture imports the app.
+        self.assertLess(conftest.index(select), conftest.index("@pytest.fixture"))
+        self.assertNotIn("\nfrom app", conftest.split(select, 1)[0])
+        self.assertNotIn("\nimport app", conftest.split(select, 1)[0])
+        module = (repo / "src/apps/api/tests/_worker_database.py").read_text()
+        self.assertIn(f'SWITCH = "{api_tests.WORKER_DB_SWITCH}"\n', module)
 
 
 if __name__ == "__main__":
