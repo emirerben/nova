@@ -219,6 +219,36 @@ def test_each_process_records_its_time_before_the_first_test(mode, processes, re
         assert row["database"] == os.environ["DATABASE_URL"].rsplit("/", 1)[-1]
 
 
+def _recorder_module():
+    from tests import _ci_times  # noqa: PLC0415
+
+    return _ci_times
+
+
+def test_the_recorded_database_is_the_one_the_loaded_app_is_on_not_the_environments():
+    """The app reads its URL once, at import. If something imported it before conftest moved
+    the worker, the environment says "own copy" while every query goes to the shared database;
+    a proof that read the environment would then pass on exactly the failure it exists for."""
+
+    class Settings:
+        database_url = "postgresql+asyncpg://localhost:5432/nova_test"
+
+    class Config:
+        settings = Settings()
+
+    environ = {"DATABASE_URL": "postgresql://localhost:5432/nova_gw1_test"}
+    name = _recorder_module().database_name({"app.config": Config()}, environ)
+    assert name == "nova_test"
+
+
+def test_without_a_loaded_app_the_environment_names_the_database_and_nothing_else_leaks():
+    recorder = _recorder_module()
+    environ = {"DATABASE_URL": "postgresql://localhost:5432/nova_gw1_test?x=1"}
+    assert recorder.database_name({}, environ) == "nova_gw1_test"
+    assert recorder.database_name({}, {}) == ""
+    assert recorder.database_name({"app.config": object()}, environ) == "nova_gw1_test"
+
+
 def test_recording_does_not_change_the_exit_code_and_is_off_by_default(tmp_path, plain):
     unrecorded, rows, out = run_sample(tmp_path, record=False)
     assert rows == [] and not out.exists()

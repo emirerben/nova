@@ -151,8 +151,8 @@ def worker_database_names(api_root: Path, url: str, workers: int) -> dict[str, s
 def worker_database_problems(api_root: Path, expected: dict[str, str]) -> list[str]:
     """Workers that did not run on their own copy, from the recorder's startup rows.
 
-    A worker's row names the database its process was on once collection had
-    finished, which is after every import that could have read the URL. No row
+    A worker's row names the database its loaded app was on once collection
+    had finished (tests/_ci_times.py asks the app, not the environment). No row
     is a problem too: an unproven worker is not a proven one.
     """
     seen: dict[str, str | None] = {}
