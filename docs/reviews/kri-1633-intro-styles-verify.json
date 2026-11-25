@@ -1,0 +1,1833 @@
+{
+ "note": "Host run (macOS, skia 144.0.post2), not the prod image: run `make verify-intro-styles` for font-accurate output. montage.png is not committed (media).",
+ "overall": "PASS",
+ "face_parity": [
+  {
+   "crop": "centred",
+   "same_status": true,
+   "same_band": true,
+   "max_delta": 0.0,
+   "ok": true
+  },
+  {
+   "crop": "position_x_crop",
+   "same_status": true,
+   "same_band": true,
+   "max_delta": 0.0,
+   "ok": true
+  },
+  {
+   "crop": "letterboxed_landscape",
+   "same_status": true,
+   "same_band": true,
+   "max_delta": 0.0,
+   "ok": true
+  }
+ ],
+ "controls": [
+  {
+   "name": "N1_old_has_text_ask_blocks_saved_preferences",
+   "caught": true,
+   "observed": "old=True new=False"
+  },
+  {
+   "name": "N2_title_look_ask_is_honoured",
+   "caught": true,
+   "observed": "title_look_asked"
+  },
+  {
+   "name": "N3_look_on_the_face_is_not_clean",
+   "caught": true,
+   "observed": "row 1: ink outside the title safe zone {'left': 0.0287, 'top': 0.41927, 'right': 0.90926, 'bottom': 0.51406}"
+  },
+  {
+   "name": "N4_face_without_the_glyphs_is_never_issued",
+   "caught": true,
+   "observed": "cyrillic blocked=['grotesk_hand', 'serif_italic', 'grotesk_loop', 'script_serif', 'young_serif', 'grotesk_pen'] issued=[]; without a dotted capital Zeyada's pair issued=False"
+  },
+  {
+   "name": "N5_reapplying_the_option_over_her_edit_fails",
+   "caught": true,
+   "observed": "edited=True reapplied=False"
+  },
+  {
+   "name": "N6_old_any_rule_refuses_the_stack",
+   "caught": true,
+   "observed": "old=False new=True"
+  }
+ ],
+ "per_route_language": {
+  "talking/en": {
+   "cases": 4,
+   "looks": [
+    4,
+    4,
+    4,
+    4
+   ],
+   "declines": {},
+   "total_ms": 622
+  },
+  "talking/tr": {
+   "cases": 5,
+   "looks": [
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "declines": {},
+   "total_ms": 337
+  },
+  "narrated/en": {
+   "cases": 4,
+   "looks": [
+    4,
+    4,
+    4,
+    4
+   ],
+   "declines": {},
+   "total_ms": 347
+  },
+  "narrated/tr": {
+   "cases": 5,
+   "looks": [
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "declines": {},
+   "total_ms": 319
+  },
+  "montage/en": {
+   "cases": 4,
+   "looks": [
+    4,
+    4,
+    4,
+    4
+   ],
+   "declines": {},
+   "total_ms": 262
+  },
+  "montage/tr": {
+   "cases": 5,
+   "looks": [
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "declines": {},
+   "total_ms": 314
+  }
+ },
+ "cases": [
+  {
+   "route": "talking",
+   "language": "en",
+   "title_kind": "two_words",
+   "title": "Weekend plans",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 378,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 23
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 15
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "en",
+   "title_kind": "five_words",
+   "title": "five things i learned today",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 76,
+   "problems": [],
+   "options": [
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 30
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 24
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 30
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 17
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "en",
+   "title_kind": "long_first_line",
+   "title": "the absolutely biggest design trend right now",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 83,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 32
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 30
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 25
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "en",
+   "title_kind": "typed_stack",
+   "title": "5 PROJECTS / the AI builder community",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 85,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 29
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 35
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 25
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 16
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "tr",
+   "title_kind": "two_words",
+   "title": "Hafta sonu",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 53,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 14
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "tr",
+   "title_kind": "five_words",
+   "title": "bugün öğrendiğim beş şey",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 68,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 15
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "tr",
+   "title_kind": "dotted_dotless",
+   "title": "bu yılın trendi",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 56,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 25
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 14
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "tr",
+   "title_kind": "long_first_line",
+   "title": "bu yılın en büyük tasarım trendi şu an",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 76,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 31
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 31
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 32
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 23
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    }
+   ]
+  },
+  {
+   "route": "talking",
+   "language": "tr",
+   "title_kind": "typed_stack",
+   "title": "5 PROJE / yapay zeka topluluğu",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 84,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 29
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 29
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 29
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 18
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "en",
+   "title_kind": "two_words",
+   "title": "Weekend plans",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 64,
+   "problems": [],
+   "options": [
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 23
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 24
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 18
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "en",
+   "title_kind": "five_words",
+   "title": "five things i learned today",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 77,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 35
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 18
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "en",
+   "title_kind": "long_first_line",
+   "title": "the absolutely biggest design trend right now",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 94,
+   "problems": [],
+   "options": [
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 46
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 68
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 48
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 53
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 31
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "en",
+   "title_kind": "typed_stack",
+   "title": "5 PROJECTS / the AI builder community",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 112,
+   "problems": [],
+   "options": [
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 33
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 36
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 31
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 33
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 17
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "tr",
+   "title_kind": "two_words",
+   "title": "Hafta sonu",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 54,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 13
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "tr",
+   "title_kind": "five_words",
+   "title": "bugün öğrendiğim beş şey",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 66,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 23
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 15
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "tr",
+   "title_kind": "dotted_dotless",
+   "title": "bu yılın trendi",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 57,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 13
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "tr",
+   "title_kind": "long_first_line",
+   "title": "bu yılın en büyük tasarım trendi şu an",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 74,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 31
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 15
+    }
+   ]
+  },
+  {
+   "route": "narrated",
+   "language": "tr",
+   "title_kind": "typed_stack",
+   "title": "5 PROJE / yapay zeka topluluğu",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 68,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 29
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 22
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 14
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "en",
+   "title_kind": "two_words",
+   "title": "Weekend plans",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 53,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 18
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 18
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "en",
+   "title_kind": "five_words",
+   "title": "five things i learned today",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 65,
+   "problems": [],
+   "options": [
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 20
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 29
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 15
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "en",
+   "title_kind": "long_first_line",
+   "title": "the absolutely biggest design trend right now",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 76,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 24
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 29
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 15
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "en",
+   "title_kind": "typed_stack",
+   "title": "5 PROJECTS / the AI builder community",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 68,
+   "problems": [],
+   "options": [
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 25
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 33
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 23
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 15
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "tr",
+   "title_kind": "two_words",
+   "title": "Hafta sonu",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 47,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 18
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 18
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 13
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "tr",
+   "title_kind": "five_words",
+   "title": "bugün öğrendiğim beş şey",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 58,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 14
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "tr",
+   "title_kind": "dotted_dotless",
+   "title": "bu yılın trendi",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 54,
+   "problems": [],
+   "options": [
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 19
+    },
+    {
+     "key": "grotesk_loop",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 32
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 27
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 16
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "tr",
+   "title_kind": "long_first_line",
+   "title": "bu yılın en büyük tasarım trendi şu an",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 82,
+   "problems": [],
+   "options": [
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 21
+    },
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 28
+    },
+    {
+     "key": "grotesk_pen",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 14
+    }
+   ]
+  },
+  {
+   "route": "montage",
+   "language": "tr",
+   "title_kind": "typed_stack",
+   "title": "5 PROJE / yapay zeka topluluğu",
+   "available": true,
+   "reason": null,
+   "looks": 4,
+   "total_ms": 73,
+   "problems": [],
+   "options": [
+    {
+     "key": "serif_italic",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 26
+    },
+    {
+     "key": "young_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 30
+    },
+    {
+     "key": "script_serif",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 32
+    },
+    {
+     "key": "grotesk_hand",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 25
+    },
+    {
+     "key": "none",
+     "save_compile": "ok",
+     "contract": "ok",
+     "opening_is_her_whole_title": true,
+     "stacked_title_matches": true,
+     "clean": true,
+     "preview": true,
+     "ms": 14
+    }
+   ]
+  }
+ ]
+}
