@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.17.0] - 2026-11-25
+
+### Changed
+- docs(ci): failure log row for the Save tapped during an editor load (KRI-1617) (#2524) <!-- release-pr: 2524 -->
+
 ## [0.90.16.0] - 2026-11-25
 
 ### Changed
