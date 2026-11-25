@@ -17,8 +17,11 @@ struct AnimationStartLedger {
     /// Stops that paired with nothing. Passed on untouched, and counted so a run can say it saw one.
     private(set) var unmatchedStops = 0
 
-    mutating func start() -> Verdict {
-        if open > 0 { dropped += 1; return .drop }
+    /// Only a second start whose layer is already freed is dropped: that is the one Core Animation never stops.
+    /// A second start on a layer that is still there is how UIKit re-aims a running animation (a sheet); it gets
+    /// its own stop, so it is passed on and the app is not called idle while the sheet still moves.
+    mutating func start(layerIsGone: Bool) -> Verdict {
+        if open > 0, layerIsGone { dropped += 1; return .drop }
         open += 1; passedOnBalance += 1
         return .pass
     }
@@ -31,28 +34,36 @@ struct AnimationStartLedger {
     }
 }
 
-/// Debug builds only, and only when a UI test launched the app.
+/// Debug builds only, and only when a UI test is driving the app.
 ///
 /// Core Animation sometimes reports one animation's start twice and its stop once. It happens when the layer is
 /// freed a few milliseconds after the animation was added, which SwiftUI does on every keyboard move: both calls
 /// come from QuartzCore's `run_animation_callbacks`. UIKit's animation group (`UIViewAnimationState`) and XCTest's
-/// "is the app idle" check count starts minus stops, so after a double start the count never returns to zero and
-/// the next tap in a UI test waits its full 60 s (KRI-1604).
+/// "is the app idle" check count starts minus stops, so after such a double start the count never returns to zero
+/// and the next tap in a UI test waits its full 60 s (KRI-1604).
 ///
-/// The guard does not pass on a second start for an animation that has not stopped. It draws nothing differently
-/// and a real animation still has to end before the app counts as idle. Every drop is logged and posted to the
-/// test bundle, which prints it in the test log.
+/// The guard does not pass on a second start for an animation whose layer is already freed. It draws nothing
+/// differently, and every animation on a layer that still exists is counted exactly as UIKit reports it. Each
+/// drop is logged and posted to the test bundle, which prints it in the test log.
 enum UITestAnimationStartGuard {
-    /// Darwin notification posted for each dropped start; `UITestAnimationGuardLog` in the UI test bundle prints it.
+    /// Darwin notifications; `UITestAnimationGuardLog` in the UI test bundle prints a line for each.
     static let droppedNotification = "com.kria.uitest.animation-start-dropped"
-    /// Posted when a stop pairs with no start the guard saw. Passed on untouched; printed so it is not silent.
+    /// The stop that pairs with a dropped start did come after all, and was dropped too.
+    static let droppedStopNotification = "com.kria.uitest.animation-stop-dropped"
+    /// A stop paired with no start the guard saw. Passed on untouched; printed so it is not silent.
     static let unmatchedStopNotification = "com.kria.uitest.animation-stop-unmatched"
-    /// Posted when the guard moves in front of a hook added after launch (XCTest's). Printed once per launch.
+    /// The guard moved in front of a hook added after launch (XCTest's). Once per launch.
     static let movedNotification = "com.kria.uitest.animation-guard-moved"
     /// Set to `off` by a test that wants the app exactly as UIKit ships it (the red control for the guard).
     static let switchName = "UI_TEST_ANIMATION_START_GUARD"
 
-    private final class Box { var ledger = AnimationStartLedger() }
+    /// Rides on the animation as an associated object, made when the animation is added to its layer.
+    private final class Box {
+        weak var layer: CALayer?
+        var ledger = AnimationStartLedger()
+        init(layer: CALayer) { self.layer = layer }
+    }
+    private typealias Add = @convention(c) (CALayer, Selector, CAAnimation, NSString?) -> Void
     private typealias Start = @convention(c) (AnyObject, Selector, CAAnimation?) -> Void
     private typealias Stop = @convention(c) (AnyObject, Selector, CAAnimation?, Bool) -> Void
     nonisolated(unsafe) private static var boxKey: UInt8 = 0
@@ -61,6 +72,7 @@ enum UITestAnimationStartGuard {
     nonisolated(unsafe) private static var newestStart: IMP?
     nonisolated(unsafe) private static var newestStop: IMP?
     nonisolated(unsafe) private static var gaveUpMoving = false
+    private static let addSelector = NSSelectorFromString("addAnimation:forKey:")
     private static let startSelector = NSSelectorFromString("animationDidStart:")
     private static let stopSelector = NSSelectorFromString("animationDidStop:finished:")
     /// A hook that keeps re-hooking would make this loop; eight moves is far more than XCTest's one.
@@ -83,10 +95,23 @@ enum UITestAnimationStartGuard {
         guard generation == 0 else { return }
         guard let stateClass = NSClassFromString("UIViewAnimationState"),
               let startMethod = class_getInstanceMethod(stateClass, startSelector),
-              let stopMethod = class_getInstanceMethod(stateClass, stopSelector) else {
+              let stopMethod = class_getInstanceMethod(stateClass, stopSelector),
+              let addMethod = class_getInstanceMethod(CALayer.self, addSelector) else {
             // Loud on purpose: without the guard UI tests go back to waiting 60 s at random, and a retry would hide it.
-            fatalError("UITestAnimationStartGuard: UIKit's animation group or its start/stop methods are gone. Update the guard (KRI-1604).")
+            fatalError("UITestAnimationStartGuard: UIKit's animation group or the methods the guard hooks are gone. Update the guard (KRI-1604).")
         }
+        // Remember which layer each UIKit animation was added to; nothing else about adding changes.
+        let nextAdd = unsafeBitCast(method_getImplementation(addMethod), to: Add.self)
+        let add: @convention(block) (CALayer, CAAnimation, NSString?) -> Void = { layer, animation, key in
+            nextAdd(layer, addSelector, animation, key)
+            guard Thread.isMainThread, let key, let delegate = animation.delegate, (delegate as AnyObject).isKind(of: stateClass),
+                  let attached = layer.animation(forKey: key as String) else { return }
+            // An animation added again keeps its ledger; only the layer it sits on is refreshed.
+            if let known = box(of: attached) { known.layer = layer } else {
+                objc_setAssociatedObject(attached, &boxKey, Box(layer: layer), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+        }
+        method_setImplementation(addMethod, imp_implementationWithBlock(add))
         hook(startMethod, stopMethod)
         NSLog("UITestAnimationStartGuard: installed")
     }
@@ -101,8 +126,8 @@ enum UITestAnimationStartGuard {
             // Core Animation calls its delegates on the main thread. Anything else is passed on untouched.
             guard mine == generation, Thread.isMainThread else { nextStart(state, startSelector, animation); return }
             stayOutermost(startMethod, stopMethod)
-            if let animation, box(for: animation, create: true)?.ledger.start() == .drop {
-                NSLog("UITestAnimationStartGuard: dropped a second start for one animation (%@)", (animation as? CAPropertyAnimation)?.keyPath ?? "-")
+            if let animation, let found = box(of: animation), found.ledger.start(layerIsGone: found.layer == nil) == .drop {
+                NSLog("UITestAnimationStartGuard: dropped a second start for an animation whose layer is freed (%@)", (animation as? CAPropertyAnimation)?.keyPath ?? "-")
                 notify_post(droppedNotification)
                 return
             }
@@ -111,10 +136,11 @@ enum UITestAnimationStartGuard {
         let stop: @convention(block) (AnyObject, CAAnimation?, Bool) -> Void = { state, animation, finished in
             guard mine == generation, Thread.isMainThread else { nextStop(state, stopSelector, animation, finished); return }
             stayOutermost(startMethod, stopMethod)
-            if let animation, let found = box(for: animation, create: false) {
+            if let animation, let found = box(of: animation) {
                 let before = found.ledger.unmatchedStops
                 if found.ledger.stop() == .drop {
                     NSLog("UITestAnimationStartGuard: dropped the stop that pairs with a dropped start")
+                    notify_post(droppedStopNotification)
                     return
                 }
                 if found.ledger.unmatchedStops > before {
@@ -144,12 +170,6 @@ enum UITestAnimationStartGuard {
         notify_post(movedNotification)
     }
 
-    private static func box(for animation: CAAnimation, create: Bool) -> Box? {
-        if let found = objc_getAssociatedObject(animation, &boxKey) as? Box { return found }
-        guard create else { return nil }
-        let made = Box()
-        objc_setAssociatedObject(animation, &boxKey, made, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        return made
-    }
+    private static func box(of animation: CAAnimation) -> Box? { objc_getAssociatedObject(animation, &boxKey) as? Box }
 }
 #endif
