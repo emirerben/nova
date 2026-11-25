@@ -15,43 +15,6 @@ env:
   WAITLIST_ADMIN_SECRET: test-admin-secret
   ALLOWED_ORIGINS: '["http://localhost:3000"]'
 jobs:
-  control:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: nova_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/api-env
-        with:
-          extras: dev analysis
-      - name: Migrate
-        working-directory: src/apps/api
-        run: python -m alembic upgrade head
-      - name: Notification file without its lock, shared vs one database per worker
-        run: bash scripts/exp-per-worker-control.sh 12
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: exp-control
-          path: src/apps/api/exp-control
-          retention-days: 3
   full:
     name: ${{ matrix.arm }} r${{ matrix.repeat }} api (${{ matrix.shard }})
     runs-on: ubuntu-latest
@@ -62,7 +25,7 @@ jobs:
       matrix:
         arm: [shared, per-worker]
         repeat: [1, 2, 3, 4, 5]
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0]
     services:
       postgres:
         image: postgres:16-alpine
@@ -88,6 +51,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      - name: Runner CPU
+        run: |
+          echo "CPU: $(lscpu | sed -n 's/^Model name: *//p') | cores $(nproc) | $(lscpu | sed -n 's/^Thread(s) per core: *//p') threads per core"
       - name: Disable unused Chrome apt source
         run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install FFmpeg and Skia runtime libs
