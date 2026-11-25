@@ -40,11 +40,12 @@ if [ "$busy" -gt 0 ]; then for i in $(seq "$busy"); do yes > /dev/null & pids+=(
 for pass in $(seq "$passes"); do
   echo "=== PASS $pass $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$label.log"
   began=$(date +%s)
-  xcodebuild "${common[@]}" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 "${only[@]}" test-without-building > "$label-pass.log" 2>&1
+  xcodebuild "${common[@]}" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance "${ALLOW:-180}" -maximum-test-execution-time-allowance "${ALLOW_MAX:-300}" "${only[@]}" test-without-building > "$label-pass.log" 2>&1
   status=$?
   cat "$label-pass.log" >> "$label.log"
   if [ "$pass" = 1 ]; then xcrun simctl spawn "$SIM" log show --last 50s --info --debug --style compact --predicate 'process == "Kria" OR process == "KriaUITests-Runner" OR process == "testmanagerd" OR process == "backboardd" OR process == "SpringBoard"' > "baseline-$label.log" 2>&1; fi
   echo "=== PASS $pass exit $status" >> "$label.log"
+  grep -E "EXPHANG|EXPLOOP finished|Test Case '.*' (passed|failed)" "$label-pass.log" | sed -E "s/^.*(EXPHANG|EXPLOOP finished|Test Case)/\\1/" | cut -c1-150 | sed "s/^/[$label] pass $pass: /"
   echo "[$label] pass $pass exit $status in $(( $(date +%s) - began ))s; passed $(grep -c "\]' passed" "$label-pass.log" || true), failed $(grep -c "\]' failed" "$label-pass.log" || true), 60 s waits $(grep -c "App animations complete notification not received" "$label-pass.log" || true)"
 done
 if [ "${#pids[@]}" -gt 0 ]; then kill "${pids[@]}" 2>/dev/null || true; fi

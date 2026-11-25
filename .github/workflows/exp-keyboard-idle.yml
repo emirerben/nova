@@ -6,16 +6,18 @@ permissions:
   contents: read
 env:
   TESTS: >-
-    SlidePostUITests/testAddStyleAndApplyTextToAllSlides
+    SlidePostUITests/testExpSwapLoopGlass SlidePostUITests/testExpSwapLoopOpaque
 jobs:
   capture:
     runs-on: macos-15
-    timeout-minutes: 170
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: idle
+          - label: a
+            busy: 0
+          - label: b
             busy: 0
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +33,11 @@ jobs:
           echo "SIM=$SIM" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM" || true
           xcrun simctl bootstatus "$SIM" -b || true
-      - name: The slide-post text test alone, one xcodebuild call per pass, 48 passes (${{ matrix.label }})
-        run: bash scripts/exp-kbd.sh "${{ matrix.label }}" 48 "${{ matrix.busy }}" $TESTS
+      - name: Style and Edit text switched 40 times per launch, glass then opaque, 8 passes (${{ matrix.label }})
+        env:
+          ALLOW: 600
+          ALLOW_MAX: 600
+        run: bash scripts/exp-kbd.sh "${{ matrix.label }}" 8 "${{ matrix.busy }}" $TESTS
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -524,6 +524,33 @@ import XCTest
         for _ in 0..<6 where !(element.exists && element.isHittable) { scroll.swipeUp() }
     }
 
+    // Throwaway (KRI-1604): in the open text panel, switch Style and Edit text back and forth in one launch.
+    // "Edit text" raises the keyboard and "Style" drops it; each is one chance for the keyboard hang, and a
+    // tap that takes over 20 s is the hang.
+    func testExpSwapLoopGlass() { expSwapLoop(extraEnv: [:]) }
+    func testExpSwapLoopOpaque() { expSwapLoop(extraEnv: ["UI_TEST_REDUCE_TRANSPARENCY": "1"]) }
+    private func expSwapLoop(extraEnv: [String: String]) {
+        continueAfterFailure = false
+        let rounds = Int(ProcessInfo.processInfo.environment["EXP_ROUNDS"] ?? "") ?? 40
+        let app = openRichWorkspace(extraEnv: extraEnv)
+        func timed(_ step: String, _ round: Int, _ body: () -> Void) {
+            let began = Date(); body(); let took = Date().timeIntervalSince(began)
+            print(String(format: "EXPLOOP round %d step %@ took %.1f", round, step, took))
+            if took > 20 { XCTFail(String(format: "EXPHANG round %d step %@ took %.1f s", round, step, took)) }
+        }
+        timed("tool-text", 0) { app.buttons["slidepost-tool-text"].tap() }
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        for round in 1...rounds {
+            timed("style", round) { app.buttons["Style"].tap() }
+            XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5), "round \(round): the style tab")
+            timed("edit", round) { app.buttons["Edit text"].tap() }
+            XCTAssertTrue(field.waitForExistence(timeout: 5), "round \(round): the text field")
+        }
+        timed("done", rounds) { app.buttons["slidepost-done"].tap() }
+        print("EXPLOOP finished \(rounds) rounds")
+    }
+
     func testAddStyleAndApplyTextToAllSlides() {
         let app = openRichWorkspace()
         // Slide 1: add text (the real native Text panel opens on Edit with the box focused).
