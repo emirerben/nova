@@ -694,42 +694,49 @@ def plain_title_rows(
     """Today's plain title for her words and window, built by the route's own builder and styled
     under the job's pinned text policy, then placed clear of the evidence (F15). Raises when the
     builder cannot run (the caller drops the option rather than substituting)."""
-    from app.services.phone_text_styling import (  # noqa: PLC0415
-        PHONE_TEXT_STYLE_FIELD,
-        generation_style_rows,
-        phone_text_policy_scope,
-    )
+    from app.pipeline.informative_text import policy_enabled, shapes_enabled  # noqa: PLC0415
+    from app.pipeline.phone_text_style import resolve_phone_text_style  # noqa: PLC0415
+    from app.services.phone_text_styling import PHONE_TEXT_STYLE_FIELD  # noqa: PLC0415
 
     window = round(title.end_s - title.start_s, 3)
-    policy = variant.get(PHONE_TEXT_STYLE_FIELD) or assembly.get(PHONE_TEXT_STYLE_FIELD)
+    policy = variant.get(PHONE_TEXT_STYLE_FIELD) or assembly.get(PHONE_TEXT_STYLE_FIELD) or {}
     plain = " ".join(title.words.replace(" / ", " ").split())
-    with phone_text_policy_scope(policy):
-        if route == "talking":
-            from app.pipeline.phone_subtitled_title import talking_title_element  # noqa: PLC0415
+    # The route's own builder, called OUTSIDE a text-policy scope: inside one, the builders'
+    # `generation_style_rows` asks the typography agent (a model) to pick fonts. Styling is then
+    # the deterministic `resolve_phone_text_style` under the job's pinned policy (F15, F21).
+    if route == "talking":
+        from app.pipeline.phone_subtitled_title import talking_title_element  # noqa: PLC0415
 
-            row = talking_title_element(
-                plain,
-                duration_s=window,
-                first_word_end_s=None,
-                timeline_duration_s=max(timeline_duration_s, window),
-                canvas=canvas,
-            )
-        elif route == "narrated":
-            from app.pipeline.phone_narrated_plan import narrated_title_element  # noqa: PLC0415
+        row = talking_title_element(
+            plain,
+            duration_s=window,
+            first_word_end_s=None,
+            timeline_duration_s=max(timeline_duration_s, window),
+            canvas=canvas,
+        )
+    elif route == "narrated":
+        from app.pipeline.phone_narrated_plan import narrated_title_element  # noqa: PLC0415
 
-            element = narrated_title_element(
-                plain,
-                end_s=window,
-                timeline_duration_s=max(timeline_duration_s, window),
-                canvas=canvas,
-            )
-            row = element.model_dump(mode="json", exclude_none=True) if element else None
-        else:
-            row = _guided_plain_title(plain, window, canvas)
-        if row is None:
-            raise ValueError("no plain title")
-        if route != "narrated":
-            [row] = generation_style_rows([row], canvas=canvas)
+        element = narrated_title_element(
+            plain,
+            end_s=window,
+            timeline_duration_s=max(timeline_duration_s, window),
+            canvas=canvas,
+        )
+        row = element.model_dump(mode="json", exclude_none=True) if element else None
+    else:
+        row = _guided_plain_title(plain, window, canvas)
+    if row is None:
+        raise ValueError("no plain title")
+    [row] = resolve_phone_text_style(
+        [row],
+        preferences=policy.get("preferences"),
+        requested=policy.get("requested"),
+        selected_fonts=policy.get("selected_fonts"),
+        canvas=canvas,
+        informative=policy_enabled(policy),
+        shapes=shapes_enabled(policy),
+    )
     row = {**row, "start_s": title.start_s, "end_s": title.end_s}
     if title.language:
         row["text_language"] = title.language
