@@ -206,8 +206,12 @@ enum EditorOpenIntent { case warm, open }
     /// True while an editor open or reload holds `isSaving` as its in-flight fence. The fence stays; the creator
     /// asked for no save, so the header reads `showsSavingIndicator` instead of `isSaving`.
     @Published private(set) var isLoadingEditor = false
-    var showsSavingIndicator: Bool { isSaving && !isLoadingEditor }
-    @Published var hasUnsavedChanges = false
+    var showsSavingIndicator: Bool { (isSaving && !isLoadingEditor) || saveRequestedDuringLoad }
+    /// KRI-1617: Save was tapped while the editor was still loading. A load holds `isSaving`, so the tap used to
+    /// return with nothing sent while the button still read "Save changes". It is kept and runs when the load ends.
+    /// It belongs to the edit it was tapped for: when that edit is gone (a reload replaced the document), so is it.
+    @Published private(set) var saveRequestedDuringLoad = false
+    @Published var hasUnsavedChanges = false { didSet { if !hasUnsavedChanges { saveRequestedDuringLoad = false } } }
     @Published var saveState: NativeEditorSaveState = .idle
     @Published var splitScreenActionError: String?
     /// "Top ends at 4.2s · aligned" while the end handle of a split clip is dragged; nil otherwise.
@@ -1736,6 +1740,20 @@ enum EditorOpenIntent { case warm, open }
         return editorLoadEpoch
     }
 
+    /// The one place a load that still owns the editor gives it back. A Save tapped during the load runs now, if the
+    /// editor loaded and the creator's edit is still there to save.
+    private func endEditorLoad() {
+        isSaving = false; isLoadingEditor = false
+        guard saveRequestedDuringLoad else { return }
+        saveRequestedDuringLoad = false
+        guard loadState == .loaded, hasUnsavedChanges else { return }
+        Task { await save() }
+    }
+
+    /// The creator chose "Discard changes" on the leave prompt: a Save kept for the end of the load must not run
+    /// after it.
+    func forgetSaveKeptForLoad() { saveRequestedDuringLoad = false }
+
     private var pendingRenderRetrySections: Set<EditorSection> = []
     /// Pending render intent survives a failed commit without becoming an authored edit.
     var hasPendingRenderRetry: Bool { !pendingRenderRetrySections.isEmpty }
@@ -2632,7 +2650,7 @@ enum EditorOpenIntent { case warm, open }
         pendingLoadObservation = { [weak self] in
             await self?.load(api: api, threadID: threadID, variantID: variantID, allowPlaybackFallback: allowPlaybackFallback)
         }
-        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false } }
+        defer { if editorLoadEpoch == epoch { endEditorLoad() } }
         do {
             let snapshot = try await readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
             guard editorLoadEpoch == epoch else { return }
@@ -3289,7 +3307,7 @@ enum EditorOpenIntent { case warm, open }
     private func abandonUnfinishedLoad() {
         guard loadState != .loaded else { return }
         _ = beginEditorLoad()
-        isSaving = false; isLoadingEditor = false
+        isSaving = false; isLoadingEditor = false; saveRequestedDuringLoad = false
         loadRetryTask?.cancel(); loadRetryTask = nil
         pendingLoadObservation = nil
         loadWaitingMessage = nil
@@ -3304,7 +3322,7 @@ enum EditorOpenIntent { case warm, open }
         if loadState != .loaded { retireOpenFlight(); return }
         guard openFlight == nil, !isSaving, pendingText == nil, !hasUnsavedChanges || hasOnlyChatStagedChanges else { return }
         _ = beginEditorLoad()
-        isSaving = false; isLoadingEditor = false
+        isSaving = false; isLoadingEditor = false; saveRequestedDuringLoad = false
         discardPlaybackForNewJob()
         serverBaseline = nil
         hasUnsavedChanges = false
@@ -3794,7 +3812,7 @@ enum EditorOpenIntent { case warm, open }
         saveState = .saving
         loadState = .loading
         Perf.begin("editor.open", id: editorJobID.uuidString)
-        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
+        defer { if editorLoadEpoch == epoch { endEditorLoad() }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
         // Neither of these needs the job's status, so they start now and overlap it. They used to follow it one after
         // the other, three round trips in a row before the editor could show anything. The draft is compared with the
         // resolved variant only once that is known.
@@ -7548,7 +7566,7 @@ enum EditorOpenIntent { case warm, open }
     // MARK: Speaker layout per section (KRI-1558)
 
     /// The section controls exist only while the server advertises `speaker_sections` (gate open, this build speaks
-    /// protocol 57) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
+    /// protocol 58) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
     /// and the speaker controls act on the whole-video frame exactly as before.
     var canEditSpeakerSections: Bool {
         canEditSpeakerBackgroundWindows && document.capabilities["speaker_sections"]?.editable == true
@@ -7565,7 +7583,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     /// Ticket step 5: with the section controls open and the timeline editable, a take cut into two or more speaker
-    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 57).
+    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 58).
     private var scopesSpeakerPieces: Bool {
         guard canEditSpeakerSections, canEditTimeline else { return false }
         return document.clips.filter { !$0.removed && $0.splitSectionID == nil && isFramableSpeakerPiece($0) }.count >= 2
@@ -9388,6 +9406,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func save(retrying retrySections: Set<EditorSection>) async {
+        if isLoadingEditor, retrySections.isEmpty, hasUnsavedChanges { saveRequestedDuringLoad = true; return }
         guard !isSaving, activeSaveAttemptID == nil, finishingUploadCount == 0 else { return }
         guard await finishPendingAddsBeforeSave(), !isSaving, activeSaveAttemptID == nil else { return }
         let attemptID = UUID()

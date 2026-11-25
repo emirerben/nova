@@ -138,11 +138,16 @@ struct DragSelectScrollView<Content: View>: View {
     private func startAutoScroll() {
         autoScroll?.cancel()
         autoScroll = Task { @MainActor in
+            var last = ContinuousClock.now
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(16))
+                let now = ContinuousClock.now
+                let elapsed = (now - last) / .seconds(1)
+                last = now
                 let m = metricsRef
-                var step = DragSelect.autoScrollStep(fingerY: m.finger.y, viewportHeight: m.viewportHeight)
-                if reduceMotion { step /= 2 }
+                var velocity = DragSelect.autoScrollVelocity(fingerY: m.finger.y, viewportHeight: m.viewportHeight)
+                if reduceMotion { velocity /= 2 }
+                let step = DragSelect.autoScrollDistance(velocity: velocity, elapsed: elapsed, limit: DragSelect.autoScrollLimit(frames: m.frames))
                 guard step != 0 else { continue }
                 let target = min(max(m.offsetY + step, 0), m.maxOffsetY)
                 guard target != m.offsetY else { continue }

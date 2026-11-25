@@ -2689,6 +2689,50 @@ def check_scene_matcher(
     return failures
 
 
+def check_intro_scene(output: Any, input: Any) -> list[str]:  # noqa: A002
+    """KRI-1612: structural checks on the intro-scene agent. Skia-free: it reads only the issued
+    ids in the input, never the compiler. A decline carries no choice; a compose uses only what
+    the server issued for this title (a split from the issued list, ids from the menu, ``pen``
+    only with a Patrick Hand pair, no sound)."""
+    from app.pipeline import intro_scene as scene  # noqa: PLC0415
+
+    failures: list[str] = []
+    if output.decision == "decline":
+        if any(
+            [
+                output.voices,
+                output.font_pair,
+                output.ink,
+                output.zone,
+                output.entrance,
+                output.sound,
+            ]
+        ):
+            failures.append("a decline carries choices")
+        return failures
+    if len(output.voices) != len(input.title_words):
+        failures.append("the split is not one voice per title word")
+    if list(output.voices) not in input.splits:
+        failures.append("the split is not one the server issued")
+    for name, issued in (
+        ("font_pair", input.font_pairs),
+        ("ink", input.inks),
+        ("zone", input.zones),
+        ("entrance", input.entrances),
+    ):
+        if getattr(output, name) not in issued:
+            failures.append(f"{name} is not an issued id")
+    if output.sound != "none":
+        failures.append("an automatic sound was chosen")
+    if (
+        output.entrance == "pen"
+        and output.font_pair in scene.FONT_PAIRS
+        and scene.FONT_PAIRS[output.font_pair].accent.family != scene.PEN_FAMILY
+    ):
+        failures.append("pen entrance with a pair whose accent is not Patrick Hand")
+    return failures
+
+
 def check_phone_typography(output: Any, input: Any) -> list[str]:  # noqa: A002
     """KRI-1584: the prompt's readability rule, which parse() does not enforce. A script or
     handwritten face only on one to three short words, and every stamped role gets a reason."""
@@ -3137,6 +3181,8 @@ def run_structural(
         return check_narrated_clip_alignment(output, input)
     if agent_name == "nova.compose.spoken_cue_resolver":
         return check_spoken_cue_resolver(output, input)
+    if agent_name == "nova.compose.intro_scene":
+        return check_intro_scene(output, input)
     if agent_name == "nova.compose.phone_typography":
         return check_phone_typography(output, input)
     if agent_name == "nova.compose.narrated_storyboard":

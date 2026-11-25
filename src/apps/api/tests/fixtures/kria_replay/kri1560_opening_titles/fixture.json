@@ -1,0 +1,137 @@
+{
+  "fixture_id": "kri1560_opening_titles",
+  "incident": "Prod thread 1b8974a0 (2026-11-20): on a finished Talking draft the creator wrote \"başlık koy\"; Kria put its own title \"Renk Kavgası\" on the video with no question and replied that no title was added.",
+  "source": "Test data in the incident's language (not the creator's real words). The scripted model answer includes one invented title (\"Paris\", never said) as the wrong-content control.",
+  "tr": {
+    "message": "başlık koy",
+    "talk": [
+      [
+        0.0,
+        3.2,
+        "Herkes siyahın her şeye yakıştığını söylüyor."
+      ],
+      [
+        3.4,
+        6.0,
+        "Bence bu hiç doğru değil."
+      ],
+      [
+        6.2,
+        10.5,
+        "Stilistimle bu bej yüzünden yirmi dakika tartıştık."
+      ],
+      [
+        10.8,
+        14.0,
+        "Sıcak tenliysen bej almayı bırak."
+      ],
+      [
+        14.2,
+        18.0,
+        "Renkler yüzünü ya aydınlatır ya da söndürür."
+      ]
+    ],
+    "model_answer": {
+      "opening_already_strong": false,
+      "candidates": [
+        {
+          "text": "Siyah herkese yakışmaz",
+          "first": 1,
+          "last": 2,
+          "why": "a claim people argue with"
+        },
+        {
+          "text": "Bir bej yüzünden stilistimle tartıştık",
+          "first": 3,
+          "last": 3,
+          "why": "a small story"
+        },
+        {
+          "text": "Paris'te bej giymeyi bıraktım",
+          "first": 4,
+          "last": 4,
+          "why": "a twist"
+        }
+      ]
+    },
+    "expected_titles": [
+      {
+        "label": "Siyah herkese yakışmaz",
+        "description": "0:00 · “Herkes siyahın her şeye yakıştığını söylüyor. Bence bu hiç doğru değil.”"
+      },
+      {
+        "label": "Bir bej yüzünden stilistimle tartıştık",
+        "description": "0:06 · “Stilistimle bu bej yüzünden yirmi dakika tartıştık.”"
+      }
+    ],
+    "expected_no_title": "Başlık olmasın",
+    "expected_reply_contains": "Söylediklerinden 2 açılış çıkardım"
+  },
+  "en": {
+    "message": "make a video from my talk and add a title",
+    "talk": [
+      [
+        0.0,
+        2.8,
+        "Everyone says black goes with everything."
+      ],
+      [
+        3.0,
+        4.6,
+        "It doesn't, not on me."
+      ],
+      [
+        5.0,
+        9.4,
+        "My stylist and I argued about this beige for twenty minutes."
+      ],
+      [
+        9.8,
+        12.5,
+        "If you're warm-toned, stop buying beige."
+      ]
+    ],
+    "model_answer": {
+      "opening_already_strong": false,
+      "candidates": [
+        {
+          "text": "Black doesn't suit everyone",
+          "first": 1,
+          "last": 2,
+          "why": "debatable"
+        },
+        {
+          "text": "My stylist and I fought over one beige",
+          "first": 3,
+          "last": 3,
+          "why": "story"
+        },
+        {
+          "text": "Stop buying beige",
+          "first": 4,
+          "last": 4,
+          "why": "advice"
+        },
+        {
+          "text": "What Paris taught me about beige",
+          "first": 4,
+          "last": 4,
+          "why": "twist"
+        }
+      ]
+    },
+    "expected_titles": [
+      {
+        "label": "Black doesn't suit everyone"
+      },
+      {
+        "label": "My stylist and I fought over one beige"
+      },
+      {
+        "label": "Stop buying beige"
+      }
+    ],
+    "expected_no_title": "No title",
+    "expected_reply_contains": "Here are 3 openings from what you said"
+  }
+}

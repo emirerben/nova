@@ -1,0 +1,283 @@
+{
+  "agent": "nova.compose.intro_scene",
+  "prompt_version": "is-5b06f2dd33f5",
+  "prompt_sha": "73ba0ebb44be0a6f",
+  "input": {
+    "language": "tr",
+    "splits": [
+      [
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "accent"
+      ]
+    ],
+    "font_pairs": [
+      "grotesk_hand",
+      "serif_italic",
+      "grotesk_loop",
+      "script_serif",
+      "young_serif",
+      "grotesk_pen"
+    ],
+    "inks": [
+      "oxblood",
+      "chartreuse",
+      "cream",
+      "butter",
+      "white"
+    ],
+    "zones": [
+      "above_head",
+      "top_left",
+      "mid_frame"
+    ],
+    "entrances": [
+      "fade",
+      "rise",
+      "pop",
+      "ink"
+    ],
+    "brightness": "light",
+    "title_words": [
+      "bu",
+      "yılın",
+      "en",
+      "büyük",
+      "tasarım",
+      "trendi",
+      "şu",
+      "an"
+    ],
+    "footage_notes": "açık renk duvarın önünde kameraya konuşan bir kadın"
+  },
+  "raw_text": "{\"decision\": \"compose\", \"voices\": [\"solid\", \"solid\", \"solid\", \"solid\", \"solid\", \"solid\", \"accent\", \"accent\"], \"font_pair\": \"grotesk_hand\", \"ink\": \"oxblood\", \"zone\": \"above_head\", \"entrance\": \"ink\", \"sound\": \"none\"}",
+  "output": {
+    "decision": "compose",
+    "voices": [
+      "solid",
+      "solid",
+      "solid",
+      "solid",
+      "solid",
+      "solid",
+      "accent",
+      "accent"
+    ],
+    "font_pair": "grotesk_hand",
+    "ink": "oxblood",
+    "zone": "above_head",
+    "entrance": "ink",
+    "sound": "none"
+  },
+  "meta": {
+    "source": "hand_authored",
+    "note": "A hand-authored answer, NOT recorded model output (no paid run, KRI-1612). Input is what build_input issues for the title today.",
+    "expect": "compose",
+    "language": "tr"
+  }
+}

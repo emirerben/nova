@@ -16,8 +16,8 @@
     {
       "id": "sc_55076d2d8a20",
       "kind": "hook",
-      "label": "Add a hook to the opening",
-      "message": "Add a hook that matches the video",
+      "label": "Find an opening title",
+      "message": "Find an opening title for my video",
       "rank": 1,
       "default_edit": false,
       "capability": "family:title",

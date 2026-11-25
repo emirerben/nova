@@ -737,6 +737,11 @@ class PlanFacts:
     # checked (no manifest was supplied), so nothing about beats is claimed.
     reaction_beats_available: bool | None = None
     reaction_beats: tuple[BeatFact, ...] | None = None
+    # KRI-1598: the beats on this edit play sound only (a phone montage with a recorded
+    # voiceover, `reaction_beats:sound_only`): the beat check judges the sounds, and a photo,
+    # sticker or closing shot is "not available here", never "couldn't find the photo".
+    # `reaction_beats_available` stays False there (no picture can show).
+    beats_sound_only: bool = False
     # Triggers of beats approval drops because their photo/sticker didn't resolve.
     dropped_beat_triggers: tuple[str, ...] = ()
     # KRI-537: triggers the render never heard in the creator's voice (a phone variant's
@@ -1071,6 +1076,7 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         insert_clips_problems,
         repair_creator_ending_clip,
         repair_creator_reaction_beats,
+        sound_cues_apply,
     )
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
@@ -1079,6 +1085,10 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
         parsed = CreativeStrategy.model_validate(dict(strategy))
     except ValueError:
         return {"reaction_beats_available": available}
+    # KRI-1598: a voiceover montage plays the beats' sounds (the repair keeps only those).
+    # `reaction_beats_available` stays False there: no picture can pop up, end or sit above
+    # the title on this edit, and the closing-shot and title-picture checks read it that way.
+    sound_only = not available and sound_cues_apply(manifest, parsed)
     repaired, _notices = repair_creator_reaction_beats(manifest, parsed)
     # A beat the creator named but the beats repair dropped (its photo didn't resolve).
     kept_ids = {beat.beat_id for beat in repaired.reaction_beats or []}
@@ -1131,11 +1141,15 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
             )
             for b in kept
         ),
-        "dropped_beat_triggers": tuple(
+        # On a sound-only edit a beat is left out for its picture, which is not "not found".
+        "dropped_beat_triggers": ()
+        if sound_only
+        else tuple(
             dict.fromkeys(
                 b.trigger for b in parsed.reaction_beats or [] if b.beat_id not in kept_ids
             )
         ),
+        **({"beats_sound_only": True} if sound_only else {}),
         "closing_requested": raw_closing is not None,
         "closing_visual_id": closing.visual_id if closing is not None else None,
         "closing_badge_requested": bool(raw_closing and raw_closing.badge_visual_id),
@@ -2859,6 +2873,15 @@ def _title_look_text_of(rows: object) -> str | None:
     return title_look_text(live) or None
 
 
+def _intro_plain_text_of(rows: object) -> str | None:
+    """KRI-1611: an intro scene's lines read as her slashless title (``None`` for any other)."""
+    if not isinstance(rows, (list, tuple)) or not rows:
+        return None
+    from app.pipeline.phone_title_look import intro_plain_text  # noqa: PLC0415
+
+    return intro_plain_text([r for r in rows if isinstance(r, Mapping) and not r.get("removed")])
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -2960,8 +2983,11 @@ def plan_facts_from_editor_payload(
     look_text = _title_look_text_of(timing_rows)
     if look_text:
         strings.append(look_text)
+        plain = _intro_plain_text_of(timing_rows)
+        if plain:
+            strings.append(plain)
         if title is not None and title == (look_text.split(" / ", 1)[0]):
-            title = look_text
+            title = plain or look_text
     strings.extend(_cta_joined_texts(timing_rows))
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
@@ -3302,9 +3328,15 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     base = plan_facts_from_editor_payload(
         _with_narrated_text_rows(variant), canonical_duration_s=_phone_output_duration(variant)
     )
+    # KRI-1598: a montage-with-voiceover render ("voiceover") plays the voice from its first
+    # frame, so its receipt's times are on the output clock too; its beats are sound only.
+    archetype = variant.get("resolved_archetype")
     changes = _phone_receipt_facts(
-        variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
+        variant.get("phone_beat_receipt"), timed=archetype in ("narrated", "voiceover")
     )
+    if archetype == "voiceover" and changes:
+        changes["beats_sound_only"] = True
+        changes["reaction_beats_available"] = False  # sounds only: no picture on this edit
     measured = _finite_number(variant.get("measured_export_duration_s"))
     if (
         measured is not None
@@ -7769,15 +7801,32 @@ _CLEANUP_SEVERAL_TAKES = (
 )
 # Qendresa 13 (TIGHT_PAUSE_CUT_ENABLED): "cut out all my pauses so it's tight". Only said when the
 # flag is on and the ask wants every pause gone; the draft promises 0.3 s, the finished video
-# reports what the render measured.
+# reports what the render measured. KRI-1524: the render skips the 0.3 s cut on a take with loud
+# background sound (`tight_pause_cut.take_noise`) and the draft cannot hear the take yet, so every
+# promise names that exception before approval (Cusco DJI T1 learned it after the render). Each
+# stays short: tight + a named line + a restart, joined, must fit one 300-character receipt.
 _TIGHT_PLANNED = (
+    "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you "
+    "after if any stay longer"
+)
+_TIGHT_AT_APPROVAL = (
+    "Choose Clean up speech when you approve: every pause is cut to about 0.3 s unless a take "
+    "is noisy"
+)
+_TIGHT_IF_OFFERED = (
+    "If Clean up speech is offered when you approve, choose it: every pause is cut to about "
+    "0.3 s unless a take is noisy"
+)
+# KRI-1524: the same three promises before the noisy-take exception. Drafts stored with them
+# (written before this change, approved after) are still render promises and format limits.
+_TIGHT_PLANNED_PRE_1524 = (
     "Speech cleanup cuts every pause down to about 0.3 s, and I'll tell you after if any "
     "stay longer"
 )
-_TIGHT_AT_APPROVAL = (
+_TIGHT_AT_APPROVAL_PRE_1524 = (
     "Choose Clean up speech when you approve and every pause is cut down to about 0.3 s"
 )
-_TIGHT_IF_OFFERED = (
+_TIGHT_IF_OFFERED_PRE_1524 = (
     "If Clean up speech is offered when you approve, choose it and every pause is cut down "
     "to about 0.3 s"
 )
@@ -7803,6 +7852,9 @@ _TIGHT_STATIC_LINES: tuple[str, ...] = (
     _TIGHT_PLANNED,
     _TIGHT_AT_APPROVAL,
     _TIGHT_IF_OFFERED,
+    _TIGHT_PLANNED_PRE_1524,
+    _TIGHT_AT_APPROVAL_PRE_1524,
+    _TIGHT_IF_OFFERED_PRE_1524,
     _TIGHT_KIND_LONG_ONLY,
     _TIGHT_RENDER_LONG_ONLY,
     _TIGHT_UNMEASURED,
@@ -8025,6 +8077,8 @@ _TALKING_LIST_LABEL_PLAN = (
 # voiceover yet, so it is a promise, not "met"; the finished render's beat receipt decides
 # (placed = met, never heard = "I never heard ... in your voice").
 _NARRATED_BEAT_PLAN = "I'll show it when I hear those words in your voiceover"
+# KRI-1598: a voiceover montage's sound cue waits for the voice the same way (sound only).
+_MONTAGE_SOUND_CUE_PLAN = "I'll play it when I hear those words in your voiceover"
 # KRI-1489: moments the creator described rather than quoted ("Vela's 2 posts"), which the plan's
 # other pop-ins may answer on the words she actually says. Only their count matches; nothing
 # says which picture stands for which moment (or that any does), so the line claims no match:
@@ -8075,10 +8129,13 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     _CLEANUP_IF_OFFERED,
     _NAMED_CUT_AT_RENDER,
     _RESTART_CUT_AT_APPROVAL,
-    # Qendresa 13: every pause cut down to about 0.3 s.
+    # Qendresa 13: every pause cut down to about 0.3 s (KRI-1524: unless a take is noisy).
     _TIGHT_PLANNED,
     _TIGHT_AT_APPROVAL,
     _TIGHT_IF_OFFERED,
+    _TIGHT_PLANNED_PRE_1524,
+    _TIGHT_AT_APPROVAL_PRE_1524,
+    _TIGHT_IF_OFFERED_PRE_1524,
     # Qendresa 14: the arrow beside the "comment WORD" ending.
     _CLOSING_ARROW_PLAN,
     # KRI-1346: the colour card after the last word.
@@ -8105,6 +8162,7 @@ RENDER_PROMISE_REASONS: tuple[str, ...] = (
     # KRI-1356 / KRI-1357: a phone Voiceover draft's word cues wait for the voice.
     _NARRATED_BEAT_PLAN,
     _NARRATED_FOOTAGE_CUE_PLAN,
+    _MONTAGE_SOUND_CUE_PLAN,
     # KRI-1489: described moments answered only by a count of the other pop-ins.
     _DESCRIBED_POPINS_PLAN,
     # KRI-1465: a phone Voiceover draft's captions wait for the render too.
@@ -8345,14 +8403,26 @@ _REASON_TR: dict[str, str] = {
         "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
     ),
     _TIGHT_PLANNED: (
-        "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır, daha uzun kalan "
-        "olursa sonra sana söylerim"
+        "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır (gürültülü "
+        "çekimler hariç), daha uzun kalan olursa sonra sana söylerim"
     ),
     _TIGHT_AT_APPROVAL: (
         "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, her duraklama yaklaşık "
-        "0,3 sn'ye kadar kısalır"
+        "0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
     ),
     _TIGHT_IF_OFFERED: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d çıkarsa onu seç, her duraklama yaklaşık "
+        "0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+    ),
+    _TIGHT_PLANNED_PRE_1524: (
+        "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır, daha uzun kalan "
+        "olursa sonra sana söylerim"
+    ),
+    _TIGHT_AT_APPROVAL_PRE_1524: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, her duraklama yaklaşık "
+        "0,3 sn'ye kadar kısalır"
+    ),
+    _TIGHT_IF_OFFERED_PRE_1524: (
         "Onaylarken \u201cKonuşmayı temizle\u201d çıkarsa onu seç, her duraklama yaklaşık "
         "0,3 sn'ye kadar kısalır"
     ),
@@ -8490,6 +8560,7 @@ _REASON_TR: dict[str, str] = {
         "Konuşmanda o bölüm başladığında gösteririm; nerede başladığını duymazsam çıkmaz"
     ),
     _NARRATED_BEAT_PLAN: "Seslendirmende o sözleri duyduğumda gösteririm",
+    _MONTAGE_SOUND_CUE_PLAN: "Seslendirmende o sözleri duyduğumda çalarım",
     _DESCRIBED_POPINS_PLAN: (
         "Görselleri ekledim ama hangi anlara denk geldiklerini doğrulayamadım, görselleri ve "
         "zamanlamalarını kontrol et"
@@ -9921,7 +9992,7 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
         # verdict below ("No pop-in for ..."); every other problem of the row is still said.
         unsaid_names = _unsaid_cue_names(req, facts) or []
         unsaid = _unsaid_sentence(unsaid_names) if unsaid_names else None
-        if not facts.reaction_beats_available:
+        if not facts.reaction_beats_available and not facts.beats_sound_only:
             problems.append(
                 say(
                     en="Photo and sound pop-ins timed to your words aren't available for this "
@@ -9974,9 +10045,13 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
                     )
                     if facts.dropped_beat_triggers
                     else sequence_problem
-                    or say(
-                        en="This draft has no pop-ins timed to your words",
-                        tr="Bu taslakta sözlerine göre çıkan görsel yok",
+                    or (
+                        _sound_only_picture_problem()
+                        if facts.beats_sound_only and _VISUAL_RE.search(_req_text(req))
+                        else say(
+                            en="This draft has no pop-ins timed to your words",
+                            tr="Bu taslakta sözlerine göre çıkan görsel yok",
+                        )
                     )
                 )
                 delivered = bool(sequence_problem) and not facts.dropped_beat_triggers
@@ -10089,7 +10164,9 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
                     and not room  # KRI-547: the dropped card is the reason, told above
                 ):
                     problems.append(
-                        say(
+                        _sound_only_picture_problem()
+                        if facts.beats_sound_only
+                        else say(
                             en="None of the pop-ins shows a photo or sticker",
                             tr="Çıkan görsellerin hiçbiri fotoğraf ya da çıkartma göstermiyor",
                         )
@@ -10103,7 +10180,10 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
                         problems.append(_display_problem(asked_display, [b.trigger for b in wrong]))
     if wants_closing:
         if facts.closing_visual_id is None:
-            if facts.closing_requested:
+            if facts.beats_sound_only:
+                # KRI-1598: the closing shot is a picture, which this edit cannot show.
+                problems.append(_sound_only_picture_problem())
+            elif facts.closing_requested:
                 problems.append(
                     say(
                         en="I couldn't find the closing photo you named",
@@ -10155,12 +10235,30 @@ def _check_reaction_beats_core(req: BriefRequirement, facts: PlanFacts) -> Requi
         ):
             # KRI-1356: no voice has been matched against the cue yet.
             promises.insert(0, _NARRATED_BEAT_PLAN)
+        elif (
+            by_name
+            and placements
+            and facts.beats_sound_only
+            and not facts.rendered_variant
+            and not facts.editor
+            and _narrated_beat_promise_on()
+        ):
+            # KRI-1598: the same wait on a voiceover montage, whose cues are sounds.
+            promises.insert(0, _MONTAGE_SOUND_CUE_PLAN)
         if promises:
             return _receipt(req, "partial", "; ".join(_loc(p) for p in promises))
         return _receipt(req, "met", _placement_reason(placements) if by_name else None)
     problems.extend(_loc(p) for p in promises)
     status = "partial" if delivered else "not_possible"
     return _receipt(req, status, "; ".join(problems) + ".")
+
+
+def _sound_only_picture_problem() -> str:
+    """KRI-1598: a photo or sticker asked at a word on an edit whose beats play sound only."""
+    return say(
+        en="Photos and stickers can't pop up on your words in this edit yet, only sounds",
+        tr="Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, sadece ses",
+    )
 
 
 def _narrated_beat_promise_on() -> bool:

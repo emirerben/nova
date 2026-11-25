@@ -362,6 +362,19 @@ def _is_cringe(text: str) -> bool:
     return any(has_marker(view, _CRINGE) or squashed_phrase_hit(view, _CRINGE) for view in views)
 
 
+def is_bait(text: str) -> bool:
+    """Engagement bait or prompt-injection residue (`_CRINGE`), however it is spaced.
+
+    Shared with the KRI-1560 opening titles (`app.services.opening_titles`), which quote the
+    creator's own speech and so need the same bar against bait a transcript may carry."""
+    return _is_cringe(text)
+
+
+def wrong_language(text: str, language: str | None) -> bool:
+    """``text`` is in the other of Turkish / English than the thread's ``language``."""
+    return _wrong_language(text, language_of(language))
+
+
 def _lifts_on_screen_text(text: str, on_screen: Iterable[str]) -> bool:
     """Words read off the screen come back out: a two-word run, or the one word of a short sign."""
     mine = set(loose_words(text))

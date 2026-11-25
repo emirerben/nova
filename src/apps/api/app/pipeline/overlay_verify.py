@@ -304,7 +304,13 @@ def render_overlay_frame(overlay: dict) -> Image.Image:
     """Render one overlay via the real Skia ``_draw_frame`` (transparent RGBA)."""
     duration_s = max(0.0, float(overlay.get("end_s", 0.0)) - float(overlay.get("start_s", 0.0)))
     img = tos._draw_frame(overlay, _settled_t(duration_s), max(duration_s, 0.5))
-    return Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    # Read the pixels directly. Encoding the frame to PNG and decoding it again gives the same
+    # pixels (tests/pipeline/test_overlay_verify.py holds the two equal) at about 35 times the cost,
+    # and the intro compiler calls this once per title row.
+    pixels = img.toarray(
+        colorType=tos.skia.kRGBA_8888_ColorType, alphaType=tos.skia.kUnpremul_AlphaType
+    )
+    return Image.frombytes("RGBA", (pixels.shape[1], pixels.shape[0]), pixels.tobytes())
 
 
 def burn_overlay_to_frame(overlay: dict, bg_hex: str, tmpdir: str) -> Image.Image:

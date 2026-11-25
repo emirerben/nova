@@ -344,8 +344,10 @@ def _text_requirements_for_save(
         key = _normal_text(text)
         return [item for item in prior if _normal_text(item.text) == key] if key else []
 
+    from app.pipeline.phone_title_look import intro_stack_as_one_row  # noqa: PLC0415
+
     out: list[TextRequirement] = []
-    for row in rows:
+    for row in intro_stack_as_one_row(rows):  # KRI-1633: a picked look is ONE title text
         if not (isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip()):
             continue
         before = prior_elements.get(str(row.get("id")))
@@ -566,9 +568,11 @@ def _rebind_editor_render_contract(
         canonical_text = (prep.get("guided_revision") or {}).get(
             "text_elements", variant.get("text_elements") or []
         )
+        from app.pipeline.phone_title_look import intro_stack_as_one_row  # noqa: PLC0415
+
         prior_elements = {
             str(row.get("id")): row["text"]
-            for row in (previous_variant or {}).get("text_elements") or []
+            for row in intro_stack_as_one_row((previous_variant or {}).get("text_elements") or [])
             if isinstance(row, dict) and isinstance(row.get("text"), str)
         }
         changes["exact_texts"] = _text_requirements_for_save(

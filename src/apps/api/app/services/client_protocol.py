@@ -115,11 +115,13 @@ INFORMATIVE_TEXT_DESIGNS_PROTOCOL = 55
 # text-only cards.
 TEXT_DESIGN_PICKER_PROTOCOL = 56
 
+INTRO_STYLES_PROTOCOL = 57
+
 # KRI-1558: the first build that draws the speaker's layout per section
 # (`speaker_background.layout_windows`, the `speakerSections` capability) and plays a take split
 # with nothing removed as one shot (no declick at the join, the cut-out carries on). An older
 # build keeps one layout for the whole video and is told to update for a recipe that has more.
-SPEAKER_SECTIONS_PROTOCOL = 57
+SPEAKER_SECTIONS_PROTOCOL = 58
 
 
 def caption_style_scope_supported() -> bool:

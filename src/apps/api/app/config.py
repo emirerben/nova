@@ -257,6 +257,18 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker + light).
     phone_voiceover_reaction_beats_enabled: bool = True
+    # KRI-1598: named sound cues ("a whoosh when I say Barcelona") on a phone montage-family
+    # edit WITH a recorded voiceover, sound only. Takes effect only while
+    # `phone_rollout.phone_voiceover_reaction_beats_supported()` holds (the same grounding and
+    # KRI-281 lanes the Voiceover beats use): the manifest then advertises
+    # `reaction_beats:sound_only`, the Main Creator is taught sound-only beats for that edit, the
+    # repair keeps a beat's sound and leaves its picture / the closing shot out with a notice,
+    # and `_run_phone_voiceover_montage_job` grounds the cues against the voice into the
+    # sound-effect lane (`phone_beat_receipt` on the variant). False (default): byte-identical
+    # -- no manifest key, no prompt section, beats stripped with today's notice, no grounding.
+    # Apply: `fly secrets set PHONE_VOICEOVER_MONTAGE_SOUND_CUES_ENABLED=true --app nova-video`
+    # + `fly machine restart <id>` (api + worker); rollback with `=false` the same way.
+    phone_voiceover_montage_sound_cues_enabled: bool = False
     # Exact-timed small cards: "show the menu photo as a small card at 3 seconds for 2
     # seconds" / "put the receipt in the corner during the second clip" on a
     # phone-rendered Montage (guided / unified montage, montage-family voiceover) or
@@ -845,6 +857,28 @@ class Settings(BaseSettings):
         allowed = {value.strip() for value in self.creator_editorial_taste_user_ids}
         return "*" in allowed or str(user_id) in allowed
 
+    # KRI-1611: a fitted intro scene (`pipeline/intro_scene_pick.py`) on Talking edits. Read once at
+    # dispatch (`stamp_intro_scene`); workers branch on the stamp. Per-account JSON list of ids,
+    # ["*"] admits every account (ENABLED stays the kill switch). Off = today's title rows.
+    intro_scene_enabled: bool = False
+    intro_scene_user_ids: list[str] = []
+    # KRI-1612: its own kill switch for the model that picks the scene
+    # (`agents/intro_scene_designer`) instead of the seeded pick. Needs the two flags above;
+    # read once at dispatch and stamped, so a worker never re-reads it. Off = the seeded pick,
+    # byte-identical to KRI-1611.
+    intro_scene_model_enabled: bool = False
+    # KRI-1633: "Try intro styles" (`pipeline/intro_styles`, `routes/intro_styles`) reuses the two
+    # flags above and needs a build at this protocol (set by scripts/bump-protocol.py). The
+    # `intro_styles` editor capability is sent, and the route answers, only at or above it;
+    # INTRO_STYLES_MIN_CLIENT_PROTOCOL=999 removes the entry for every build.
+    intro_styles_min_client_protocol: int = 57
+
+    def intro_scene_for(self, user_id: object) -> bool:
+        if not self.intro_scene_enabled or user_id is None:
+            return False
+        allowed = {value.strip() for value in self.intro_scene_user_ids}
+        return "*" in allowed or str(user_id) in allowed
+
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so
     # both billing accounts can be added without shipping account IDs in git.
@@ -1185,7 +1219,7 @@ class Settings(BaseSettings):
     # set SPEAKER_SECTIONS_ENABLED=true --app nova-video` + restart (api + worker); rollback =
     # `...=false` + restart. Design: docs/reviews/kri-1558-section-layout-failure-modes.md.
     speaker_sections_enabled: bool = False
-    speaker_sections_min_client_protocol: int = 57
+    speaker_sections_min_client_protocol: int = 58
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on
@@ -2259,6 +2293,20 @@ class Settings(BaseSettings):
         "and worker restart.",
     )
 
+    tight_pause_relative_floor_enabled: bool = Field(
+        default=True,
+        description="KRI-1524 bug-fix kill switch for the tight / long pause passes and the "
+        "several-take join measures. An action camera records hot, so an ordinary outdoor take's "
+        "room floor sits above -45 dBFS: the pass called every such take noisy and cut nothing, "
+        "and the -38 dB pause measure heard no pause in it at all (join gaps of 0.0 s). On: a take "
+        "above -45 dBFS is noisy only when its speech rises less than 25 dB above its floor; "
+        "otherwise it is cut with the same floor-relative protections and its pauses are measured "
+        "against its own floor (`tight_pause_cut.take_noise`, `measure_take_silences`). Takes at "
+        "or below -45 dBFS are unchanged. Off: every plan, report and receipt is byte-identical "
+        "to before. Kill switch: `fly secrets set TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED=false --app "
+        "nova-video` + api and worker restart.",
+    )
+
     speech_cleanup_slate_cut_enabled: bool = Field(
         default=False,
         description="Speech cleanup also cuts off-script pre-roll that opens a take: the first "
@@ -3300,6 +3348,11 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-1560: a title ask is answered with up to three titles built from what the creator said,
+    # in one question (`services/opening_titles`). Kill switch: false asks the older "do you have
+    # an idea, or should I write one?" question instead, and makes no extra model call.
+    kria_opening_title_options_enabled: bool = True
+
     # KRI-1563: the ask ledger of a chat edit. Every part of the ask ends done, declined or
     # waiting on a choice; the reply names every change (no "first two" cut), a turn that
     # changed nothing still answers each part, and on a failed-render correction a part the

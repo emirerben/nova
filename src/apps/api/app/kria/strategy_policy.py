@@ -73,6 +73,7 @@ from app.services.creator_capabilities import (
     ENDING_CLIP_NOTICES,
     GENERIC_SOUND_EFFECT_NOTICE,
     SFX_ASK_UNAVAILABLE_NOTICE,
+    SOUND_CUES_PICTURES_LEFT_OUT_NOTICE,
     SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE,
     SPEAKER_BACKGROUND_NOTICES,
     SPEAKER_FULL_OPENING_NOTICES,
@@ -368,6 +369,10 @@ _KNOWN_TR: dict[str, str] = {
     DROPPED_TREATMENT_NOTICES["looks"]: "Geniş görünümler bu düzenleme için henüz yok; koymadım.",
     SFX_ASK_UNAVAILABLE_NOTICE: (
         "Senin için seçilen ses efektleri bu düzenleme için henüz yok; koymadım."
+    ),
+    SOUND_CUES_PICTURES_LEFT_OUT_NOTICE: (
+        "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, o yüzden "
+        "koymadım; sözlerine göre ses yine çalabilir."
     ),
 }
 _SHAPE_NAMES_TR = {"Day vlog": "Günlük vlog", "Single-hero": "Tek kahraman"}

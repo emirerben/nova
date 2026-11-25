@@ -2115,6 +2115,25 @@ def phone_voiceover_reaction_beats_supported(*, require_client: bool | None = No
     )
 
 
+def phone_voiceover_montage_sound_cues_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "can a phone montage-family edit WITH a recorded voiceover
+    (`_run_phone_voiceover_montage_job`, archetype `voiceover`) play the creator's named sound
+    cues at words of the voice right now" (KRI-1598). Sound only: no picture is drawn.
+
+    Consulted by `creator_capabilities.resolve_creator_manifest` (whether
+    `reaction_beats:sound_only` is advertised) and by the montage worker (whether it grounds the
+    cues at all), so the Main Creator is never offered a cue the worker then skips.
+
+    True iff `phone_voiceover_montage_sound_cues_enabled` AND
+    `phone_voiceover_reaction_beats_supported(require_client=...)`: the cues are the Voiceover
+    beats' own grounding and KRI-281 sound-effect lane, on the montage clock.
+    """
+    return bool(
+        settings.phone_voiceover_montage_sound_cues_enabled
+        and phone_voiceover_reaction_beats_supported(require_client=require_client)
+    )
+
+
 # Device features an exact-timed small card needs: the same ones the Talking overlay lane
 # compiles against (`subtitled-overlays` is the track the card lands on).
 PHONE_TIMED_CARD_FEATURES: tuple[str, ...] = PHONE_SUBTITLED_OVERLAY_FEATURES

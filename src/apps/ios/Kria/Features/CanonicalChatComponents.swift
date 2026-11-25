@@ -218,6 +218,8 @@ struct ChatMessageRow: View {
     var voiceoverScriptMode: VoiceoverScriptCardMode? = nil
     /// "Type my own" on a choice card: hands the creator the composer for this question; nil hides the row.
     var answerOwn: (() -> Void)? = nil
+    /// KRI-1560: the pencil beside a title Kria wrote from the creator's words: hands those words to the composer.
+    var editOption: ((String) -> Void)? = nil
     /// The creator is typing their own answer, so every answer block is disabled.
     var isAnsweringOwn = false
     /// KRI-802: undoes the held choice of a reply that also asks for clips.
@@ -343,8 +345,8 @@ struct ChatMessageRow: View {
             ChoiceQuestionCard(question: question, mode: choiceQuestionMode,
                                heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote,
                                changeHeld: questionBatch?.choice != nil ? changeHeldChoice : nil,
-                               typeMyOwn: answerOwn, isTyping: isAnsweringOwn, allowsDecide: questionBatch == nil,
-                               projectID: projectID)
+                               typeMyOwn: answerOwn, edit: editOption, isTyping: isAnsweringOwn,
+                               allowsDecide: questionBatch == nil, projectID: projectID)
                 .id(question.questionID)
         }
     }

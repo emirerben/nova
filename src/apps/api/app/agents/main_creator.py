@@ -66,6 +66,7 @@ from app.schemas.text_style_intent import normalize_label_position, normalize_ti
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_SFX_ASK,
+    CAPABILITY_SOUND_CUES,
     CAPABILITY_TIMED_CARDS,
     TalkingCutawayAvailability,
     ending_clip_candidates,
@@ -742,6 +743,28 @@ that the effects are placed where the speech, the pauses and the cuts call for t
 This section overrides any earlier line that says a bare "add sound effects" adds nothing, or
 only sounds tied to the moments the creator named: for the general ask, set `sfx_ask` and say
 that instead.
+""".strip("\n")
+
+
+# KRI-1598: sound cues on a phone montage WITH a recorded voiceover. Appended to the
+# `$reaction_beats_section` slot ONLY when the manifest advertises `reaction_beats:sound_only`
+# (`creator_capabilities.CAPABILITY_SOUND_CUES`); "" otherwise, so every other prompt stays
+# byte-identical. `repair_creator_reaction_beats` keeps only the sounds whatever the model writes.
+_MONTAGE_SOUND_CUES_PROMPT_SECTION = """
+SOUND CUES ON THE VOICEOVER (iPhone Montage with a recorded voiceover)
+When the creator wants a sound effect to play when their recorded voiceover says something ("a
+whoosh when I say Barcelona", "play a ding at 'the medal'", "'Barselona' dediğimde vınn sesi
+çal"), set `reaction_beats`: up to 24 objects, each {"beat_id": "short-slug", "trigger": "the
+exact words to listen for, copied as the creator quoted them, in their language", "after": "only
+count `trigger` when heard after this phrase, else null", "occurrence": "first"|"every",
+"sound": "a sound_effect catalog_id from the manifest's catalog if one matches, else the
+creator's own words such as \"whoosh\"/\"ding\""}. Every beat on this edit needs a `sound`
+and nothing else on screen: leave out `visual_id`, `display_mode`, `following_clip_id` and
+`closing_media`. Photos and stickers cannot pop up on the words of this edit; when the creator
+asks for one, keep any sound they asked for and say plainly in `summary` that the picture is
+not available on this edit yet. Never set `licensed_sfx` for a sound tied to the voiceover's
+words: the beat's `sound` plays it. Keep `edit_format` as it is. A general "add sound effects
+where they fit" with no named words is never a beat.
 """.strip("\n")
 
 
@@ -1733,6 +1756,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if _sfx_ask_available(input.capability_manifest)
                     else ""
                 )
+                # KRI-1598: sound cues on a voiceover montage; "" unless the manifest advertises
+                # them.
+                + (
+                    "\n" + _MONTAGE_SOUND_CUES_PROMPT_SECTION
+                    if _sound_cues_available(input.capability_manifest)
+                    else ""
+                )
                 # Qendresa item 21: middle line + TikTok look; "" unless the flag is on.
                 + (
                     "\n" + _CLIP_TEXT_LOOK_PROMPT_SECTION
@@ -2651,6 +2681,15 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
     """
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    return bool(capability is not None and capability.available)
+
+
+def _sound_cues_available(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-1598: whether the SOUND CUES ON THE VOICEOVER guidance is shown: a read of the
+    manifest's own `reaction_beats:sound_only` capability (`resolve_creator_manifest` owns the
+    gate; `repair_creator_reaction_beats` keeps only the sounds whatever the model writes)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SOUND_CUES)
     return bool(capability is not None and capability.available)
 
 

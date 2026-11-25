@@ -470,7 +470,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     # ----------------------------------------------------------- not an edit
     "lifecycle_and_sync": _g(
         "not_an_edit",
-        "load save reconcileOnOpen reconcilePlaybackState needsReload isBehindActiveJob "
+        "load save forgetSaveKeptForLoad reconcileOnOpen reconcilePlaybackState needsReload "
+        "isBehindActiveJob "
         "loadForEditorOpen setObserversVisible "
         "openOrWarm claimWarm cancelWarm releaseWarmForMemoryPressure "
         "beginPreviewPresentation endPreviewPresentation previewFrameWasShown "

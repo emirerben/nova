@@ -2457,6 +2457,11 @@
    "{v1} dediğinde ekranda başka bir klip var ({step_start_s:.1f}–{step_end_s:.1f} sn); söylediğin klip {shown_at} sn arasında oynuyor"
   ],
   [
+   "app/kria/narrated_render_checks.py",
+   "I couldn't find {v1} in the finished voiceover; the clip you named plays at {shown_at} s",
+   "Bitmiş seslendirmede {v1} sözünü bulamadım; söylediğin klip {shown_at} sn arasında oynuyor"
+  ],
+  [
    "app/kria/brief_checks.py",
    "Left out {missing} of your {total} clips",
    "{total} klibinden {missing} tanesi dışarıda kaldı"
@@ -2555,6 +2560,36 @@
    "app/services/sfx_capability.py",
    "Nothing in this video clearly called for a sound effect, so I added none",
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/opening_titles.py",
+   "Your first sentence already pulls people in: “{line}”. I'd keep it without a title, or you can pick one of these.",
+   "İlk cümlen zaten izleyiciyi içine çekiyor: “{line}”. Başlıksız bırakmanı öneririm, istersen bunlardan birini seç."
+  ],
+  [
+   "app/services/opening_titles.py",
+   "I found one opening in what you said. Use it, or type your own.",
+   "Söylediklerinde bir açılış buldum. Bunu kullan ya da kendin yaz."
+  ],
+  [
+   "app/services/opening_titles.py",
+   "Here are {count} openings from what you said. Pick one and I'll open the video with it.",
+   "Söylediklerinden {count} açılış çıkardım. Birini seç, videoyu onunla açayım."
+  ],
+  [
+   "app/kria/planner.py",
+   "Do you have an idea, or would you like me to write one?",
+   "Aklında bir fikir var mı, yoksa ben mi yazayım?"
+  ],
+  [
+   "app/kria/planner.py",
+   "Which opening title should I use? Pick one, type your own, or skip it.",
+   "Hangi açılış başlığını kullanayım? Birini seç, kendin yaz ya da atla."
+  ],
+  [
+   "app/kria/planner.py",
+   "Once you choose, I'll do the rest of what you asked.",
+   "Sen seçince isteğinin kalanını da yapacağım."
   ],
   [
    "app/services/sfx_capability.py",
@@ -2928,8 +2963,38 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "Photos and stickers can't pop up on your words in this edit yet, only sounds",
+   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, sadece ses"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Photos and stickers can't pop up on your words in this edit yet, so I left them out; sounds can still play on your words.",
+   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, o yüzden koymadım; sözlerine göre ses yine çalabilir."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll play it when I hear those words in your voiceover",
+   "Seslendirmende o sözleri duyduğumda çalarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you after if any stay longer",
+   "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır (gürültülü çekimler hariç), daha uzun kalan olursa sonra sana söylerim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Choose Clean up speech when you approve: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” seçeneğini seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "If Clean up speech is offered when you approve, choose it: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” çıkarsa onu seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
   ]
  ],
  "retired": [

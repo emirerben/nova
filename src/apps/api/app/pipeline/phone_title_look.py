@@ -41,11 +41,20 @@ from app.pipeline.cloud_render_evidence import normalize_text
 from app.pipeline.narrated_title import TITLE_FONT_FAMILY, narrated_title_placement
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import NormalizedBox
+from app.pipeline.title_family import (  # noqa: F401
+    _MIN_LINES,
+    TITLE_FAMILY_IDS,
+    TITLE_LOOK_PARAM,
+    _look_params,
+    is_title_look_row,
+    title_family_of,
+    title_look_line_ids,
+    title_stack_rows,
+)
+from app.text_fold import fold_text
 
 log = structlog.get_logger(__name__)
 
-TITLE_LOOK_PARAM = "title_look"
-_MIN_LINES = 2
 _MAX_LINES = 5
 _MIN_LINE_CHARS = 2
 
@@ -133,16 +142,6 @@ def split_title_lines(title: str | None) -> list[str] | None:
     return parts
 
 
-def _look_params(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    params = row.get("source_params")
-    look = params.get(TITLE_LOOK_PARAM) if isinstance(params, Mapping) else None
-    return look if isinstance(look, Mapping) else None
-
-
-def is_title_look_row(row: Mapping[str, Any]) -> bool:
-    return _look_params(row) is not None
-
-
 def title_look_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
     """Her title in typed form (`` / `` between lines), or ``None`` without look rows."""
     look_rows = [row for row in rows if is_title_look_row(row)]
@@ -150,6 +149,111 @@ def title_look_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
         return None
     look_rows.sort(key=lambda row: int(_look_params(row).get("line") or 0))  # type: ignore[union-attr]
     return " / ".join(str(row.get("text") or "") for row in look_rows)
+
+
+def intro_plain_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
+    """Her title as she wrote it (words joined by spaces) when every look row is an intro-scene
+    line (KRI-1611: the scene sets her slashless words as several rows), else ``None``."""
+    look_rows = [row for row in rows if is_title_look_row(row)]
+    if not look_rows or not all(
+        str((_look_params(row) or {}).get("style") or "").startswith("intro_") for row in look_rows
+    ):
+        return None
+    look_rows.sort(key=lambda row: int(_look_params(row).get("line") or 0))  # type: ignore[union-attr]
+    return " ".join(str(row.get("text") or "") for row in look_rows)
+
+
+assert TITLE_FAMILY_IDS[0] == title_mod.TALKING_TITLE_ELEMENT_ID
+
+
+def intro_stack_as_one_row(rows: Sequence[Any]) -> list[Any]:
+    """KRI-1633: ``rows`` with an intro scene's lines (2-5 look rows of one title family, every
+    style ``intro_*``) folded into ONE row carrying her whole title (`intro_plain_text`), so the
+    render contract treats a picked look as one text, not as line 1's words. Anything that is not
+    such a stack (a typed " / " stack, a plain title, any other row) is returned as it was."""
+    live = [row for row in rows if isinstance(row, Mapping) and not row.get("removed")]
+    stack = [row for row in live if is_title_look_row(row) and title_family_of(row.get("id"))]
+    plain = intro_plain_text(stack) if len(stack) >= 2 else None
+    if plain is None or len({title_family_of(row.get("id")) for row in stack}) != 1:
+        return list(rows)
+    ordered = sorted(stack, key=lambda row: int((_look_params(row) or {}).get("line") or 0))
+    first = ordered[0]
+    gone = {id(row) for row in ordered[1:]}
+    return [{**row, "text": plain} if row is first else row for row in rows if id(row) not in gone]
+
+
+def collapse_title_look(
+    live: Sequence[dict[str, Any]], targeted: Sequence[dict[str, Any]]
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """A whole-title text rewrite of a stacked title (KRI-1611 review: an intro scene's lines or
+    her typed " / " stack). ``live`` are every live row; ``targeted`` the rows the edit hit.
+
+    Only when the edit hits EVERY line of one stack does it mean "this is the title now": the
+    first line becomes her one plain row (she typed those words, so no generated capitals or
+    scene styling decide how they read) and the other lines are returned to be removed. Hitting
+    some lines is a line edit and returns ``None``, as does any title that is not a stack."""
+    look = [row for row in live if is_title_look_row(row)]
+    hit = {id(row) for row in targeted}
+    if len(look) < 2 or any(id(row) not in hit for row in look):
+        return None
+    look.sort(key=lambda row: int(_look_params(row).get("line") or 0))  # type: ignore[union-attr]
+    first, rest = look[0], look[1:]
+    params = dict(first.get("source_params") or {})
+    params[TITLE_LOOK_PARAM] = {"line": 1, "lines": 1, "style": "plain"}
+    first["source_params"] = params
+    first.pop("text_case", None)
+    return first, rest
+
+
+def _case_blind(value: object) -> str:
+    """``normalize_text`` without letter case, Turkish-safe: a caps face draws "bu yılın" as
+    "BU YILIN" and "trendi" as "TRENDİ", and no stock casefold maps those back ("İ" lowers to
+    "i" plus a combining dot). The dotted and dotless i all read as "i" here."""
+    return fold_text(normalize_text(value))
+
+
+def _intro_stack_matches(
+    pool: Sequence[Mapping[str, Any]], wanted: str, *, tolerance_s: float
+) -> list[dict]:
+    """KRI-1611: ``wanted`` (her slashless title) drawn as an intro scene's stacked lines: 2-5
+    rows shown together (their start and end within ``tolerance_s``), strictly top to bottom,
+    that read as exactly her words in order. A recipe layer carries no element id, so this reads
+    text, time and ``anchor_y`` only, like the typed-stack check. Case is style: the scene's
+    caps faces draw her lowercase words in capitals (`text_case`), so the words are compared
+    without it; spelling, order and spacing still must match."""
+    target = _case_blind(re.sub(r"\s+/\s+", " ", wanted))
+    timed: list[tuple[float, float, float, Mapping[str, Any]]] = []
+    for row in pool:
+        text = _case_blind(row.get("text", ""))
+        if not text or text not in target:
+            continue
+        try:
+            timed.append((float(row["anchor_y"]), float(row["start_s"]), float(row["end_s"]), row))
+        except (KeyError, TypeError, ValueError):
+            continue
+    timed.sort(key=lambda item: item[0])
+    for first in range(len(timed)):
+        for last in range(first + _MIN_LINES, min(len(timed), first + _MAX_LINES) + 1):
+            window = timed[first:last]
+            ys = [item[0] for item in window]
+            starts = [item[1] for item in window]
+            ends = [item[2] for item in window]
+            if any(lower <= upper for upper, lower in zip(ys, ys[1:], strict=False)):
+                continue
+            if max(starts) - min(starts) > tolerance_s or max(ends) - min(ends) > tolerance_s:
+                continue
+            if _case_blind(" ".join(str(item[3].get("text", "")) for item in window)) != target:
+                continue
+            return [
+                {
+                    "text": wanted,
+                    "start_s": starts[0],
+                    "end_s": min(ends),
+                    "role": None,
+                    "stacked_lines": [str(item[3].get("element_id")) for item in window],
+                }
+            ]
+    return []
 
 
 # --- her ask -----------------------------------------------------------------------------
@@ -961,9 +1065,9 @@ def stacked_title_matches(
     Needs a distinct non-caption row per line with her exact words, all starting (and all
     ending) together, stacked top to bottom in line order."""
     lines = split_title_lines(wanted)
-    if lines is None:
-        return []
     pool = [row for row in rows if not str(row.get("element_id") or "").startswith("caption-")]
+    if lines is None:
+        return _intro_stack_matches(pool, wanted, tolerance_s=tolerance_s)
     options = [
         [r for r in pool if normalize_text(r.get("text", "")) == normalize_text(line)]
         for line in lines
