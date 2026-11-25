@@ -41,6 +41,12 @@ os.environ.setdefault("ALLOWED_ORIGINS", '["http://localhost:3000"]')
 # to exercise the real check (rather than relying on a fail-open bypass).
 os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key")
 
+# One database per xdist worker where the runner made them (KRI-1534 train; off by default).
+# Here, before any app module reads DATABASE_URL.
+from tests import _worker_database  # noqa: E402
+
+_worker_database.select(os.environ)
+
 
 @pytest.fixture
 def prod_profile(monkeypatch):
