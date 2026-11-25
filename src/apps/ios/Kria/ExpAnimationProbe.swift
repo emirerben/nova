@@ -17,13 +17,49 @@ import UIKit
     /// UIKit animation groups (one `UIViewAnimationState` each) whose animations reported more starts than stops.
     /// XCTest counts the same two calls (it hooks `UIViewAnimationState animationDidStart:` and
     /// `animationDidStop:finished:`) and calls the app idle only at zero.
+    private final class Attached {
+        weak var layer: CALayer?
+        let key: String
+        let keyPath: String
+        let owner: String
+        init(layer: CALayer, key: String, keyPath: String, owner: String) { self.layer = layer; self.key = key; self.keyPath = keyPath; self.owner = owner }
+    }
     private final class OpenState {
         let state: AnyObject
         let since = CACurrentMediaTime()
         var balance = 0
         var total = 0
         var sample = ""
+        var attached: [Attached] = []
+        var seen: Set<String> = []
+        var scans = 0
         init(_ state: AnyObject) { self.state = state }
+    }
+
+    /// Where each animation of a group sits, read while it is still attached. All of a group's animations are added
+    /// in one transaction, so the first start usually finds them all; a group is scanned at most four times.
+    private static func recordLayers(of entry: OpenState) {
+        guard entry.attached.count < entry.total, entry.scans < 4 else { return }
+        entry.scans += 1
+        for window in allWindows() {
+            var stack: [CALayer] = [window.layer]
+            while let layer = stack.popLast() {
+                if let sublayers = layer.sublayers { stack.append(contentsOf: sublayers) }
+                for key in layer.animationKeys() ?? [] {
+                    guard let animation = layer.animation(forKey: key), let delegate = animation.delegate, delegate === entry.state else { continue }
+                    let id = "\(ObjectIdentifier(layer).hashValue)|\(key)"
+                    guard entry.seen.insert(id).inserted else { continue }
+                    entry.attached.append(Attached(layer: layer, key: key, keyPath: (animation as? CAPropertyAnimation)?.keyPath ?? "-",
+                                                   owner: "\(String(describing: type(of: window))) \(owners(of: layer))"))
+                }
+            }
+        }
+    }
+
+    private static func inWindow(_ layer: CALayer, _ roots: Set<ObjectIdentifier>) -> Bool {
+        var current: CALayer? = layer
+        while let next = current { if roots.contains(ObjectIdentifier(next)) { return true }; current = next.superlayer }
+        return false
     }
     private static var open: [ObjectIdentifier: OpenState] = [:]
     private static var starts = 0
@@ -48,6 +84,7 @@ import UIKit
                     let entry = open[ObjectIdentifier(state)] ?? OpenState(state)
                     open[ObjectIdentifier(state)] = entry
                     entry.balance += 1; entry.total += 1
+                    recordLayers(of: entry)
                     if entry.sample.isEmpty, animation == nil { entry.sample = "no animation object" }
                     if entry.sample.isEmpty, let animation {
                         entry.sample = String(format: "class=%@ keyPath=%@ duration=%.2f repeat=%.0f removed=%d fill=%@",
@@ -107,6 +144,25 @@ import UIKit
                 now - entry.since, entry.balance, entry.total, String(describing: entry.state), entry.sample,
                 owners[id]?.joined(separator: " ; ") ?? "no layer in any window"
             )
+            let roots = Set(windows.map { ObjectIdentifier($0.layer) })
+            var gone = 0, detached = 0, finished = 0, running = 0
+            for record in entry.attached {
+                guard let layer = record.layer else {
+                    gone += 1
+                    NSLog("KBDPROBE open layer freed key=%@ keyPath=%@ was=%@", record.key, record.keyPath, record.owner)
+                    continue
+                }
+                let stillAnimating = layer.animation(forKey: record.key) != nil
+                if !inWindow(layer, roots) {
+                    detached += 1
+                    NSLog("KBDPROBE open layer out of every window stillHasAnimation=%d key=%@ keyPath=%@ was=%@", stillAnimating ? 1 : 0, record.key, record.keyPath, record.owner)
+                } else if stillAnimating {
+                    running += 1
+                    NSLog("KBDPROBE open layer in a window and still animating key=%@ keyPath=%@ on=%@", record.key, record.keyPath, record.owner)
+                } else { finished += 1 }
+            }
+            NSLog("KBDPROBE open group recorded=%d of %d scans=%d freed=%d detached=%d stillAnimating=%d finished=%d",
+                  entry.attached.count, entry.total, entry.scans, gone, detached, running, finished)
         }
     }
 
@@ -236,6 +292,8 @@ import UIKit
             )
             NSLog("KBDPROBE uikit starts=%d stops=%d strayStops=%d groups=%d balance=%d xctestAnimating=%d", starts, stops, strayStops, open.count, balance, xctestSaysAnimating())
             starts = 0; stops = 0; strayStops = 0
+            // Any group still unfinished 3 s after it began is listed, hang or not: the keyboard's group lasts 0.38 s.
+            if open.values.contains(where: { CACurrentMediaTime() - $0.since > 3 }) { logOpenAnimations(windows) }
             held = responder is ExplicitLineTextView ? held + 1 : 0
             if held == 4 || held == 8 { NSLog("KBDPROBE stall held=%d", held) }
             // While a UI test drives the app the run loop wakes hundreds of times per beat. In both hangs of
