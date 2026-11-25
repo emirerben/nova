@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.21.0] - 2026-11-25
+
+### Changed
+- ci(api): one test database per xdist worker, behind a switch that is off (KRI-1637) (#2526) <!-- release-pr: 2526 -->
+
 ## [0.90.20.0] - 2026-11-25
 
 ### Changed
