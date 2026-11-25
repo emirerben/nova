@@ -1,0 +1,125 @@
+name: exp-per-worker-db
+on:
+  push:
+    branches: [codex/exp-per-worker-db]
+permissions:
+  contents: read
+env:
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
+  REDIS_URL: redis://localhost:6379
+  STORAGE_BUCKET: nova-test
+  STORAGE_PROVIDER: gcs
+  OPENAI_API_KEY: sk-test
+  WHISPER_BACKEND: local
+  TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+  WAITLIST_ADMIN_SECRET: test-admin-secret
+  ALLOWED_ORIGINS: '["http://localhost:3000"]'
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nova_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/api-env
+        with:
+          extras: dev analysis
+      - name: Migrate
+        working-directory: src/apps/api
+        run: python -m alembic upgrade head
+      - name: Notification file without its lock, shared vs one database per worker
+        run: bash scripts/exp-per-worker-control.sh 12
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exp-control
+          path: src/apps/api/exp-control
+          retention-days: 3
+  full:
+    name: ${{ matrix.arm }} r${{ matrix.repeat }} api (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        arm: [shared, per-worker]
+        repeat: [1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nova_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
+      - name: Install FFmpeg and Skia runtime libs
+        timeout-minutes: 40
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
+      - uses: ./.github/actions/api-env
+        with:
+          extras: dev analysis
+      - name: Migrate
+        working-directory: src/apps/api
+        run: python -m alembic upgrade head
+      - name: Run API test shard
+        env:
+          NOVA_REQUIRE_POSTGRES_TESTS: "1"
+          NOVA_TEST_DB_PER_WORKER: ${{ matrix.arm == 'per-worker' && '1' || '0' }}
+        run: |
+          start=$(date +%s)
+          python3 scripts/ci/api-tests.py "${{ matrix.shard }}" 2>&1 | tee shard.log | grep -E "Worker databases|created: |workers \[|^(FAILED|ERROR) |passed|failed| error" | tail -40
+          status=${PIPESTATUS[0]}
+          echo "arm=${{ matrix.arm }} shard=${{ matrix.shard }} exit=$status seconds=$(( $(date +%s) - start ))"
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.arm }}__api-times-${{ matrix.repeat }}-${{ matrix.shard }}-1
+          path: src/apps/api/test-results/ci-times
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ${{ matrix.arm }}__log-${{ matrix.repeat }}-${{ matrix.shard }}
+          path: shard.log
+          retention-days: 3

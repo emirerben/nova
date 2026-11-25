@@ -197,6 +197,9 @@ def exclusive_notification_delivery():
     database per worker would remove all of these locks.
     """
 
+    if os.environ.get("EXP_NO_NOTIFICATION_LOCK") == "1":  # throwaway red control
+        yield
+        return
     db_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
     engine = create_engine(db_url, pool_pre_ping=True)
     # Once these tests are collected, failure to acquire their lock must fail rather than skip.
