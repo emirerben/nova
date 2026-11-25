@@ -105,9 +105,15 @@ def _face_sampler(face: tuple[float, float, float, float] | None):
     return sample
 
 
-def _job(variant: dict[str, Any], extra: dict[str, Any], recipe: Any, bindings: tuple) -> Any:
+def _job(
+    variant: dict[str, Any],
+    extra: dict[str, Any],
+    recipe: Any,
+    bindings: tuple,
+    job_id: uuid.UUID | None = None,
+) -> Any:
     job = SimpleNamespace(
-        id=uuid.uuid4(),
+        id=job_id or uuid.uuid4(),
         user_id=USER_ID,
         status="awaiting_device",
         current_phase=None,
@@ -129,7 +135,9 @@ def _job(variant: dict[str, Any], extra: dict[str, Any], recipe: Any, bindings: 
     return job
 
 
-def talking_job(title: str = EN_TITLE, *, face: tuple | None = FACE) -> tuple[Any, str, list[dict]]:
+def talking_job(
+    title: str = EN_TITLE, *, face: tuple | None = FACE, job_id: uuid.UUID | None = None
+) -> tuple[Any, str, list[dict]]:
     """``(job, variant_id, title_rows)`` for a phone Talking edit with a plain one-row title."""
     from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan  # noqa: PLC0415
     from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
@@ -164,10 +172,12 @@ def talking_job(title: str = EN_TITLE, *, face: tuple | None = FACE) -> tuple[An
         "text_elements_user_edited": True,
         "opening_title_placement": receipt,
     }
-    return _job(variant, {}, recipe, bindings), "subtitled", [copy.deepcopy(placed)]
+    return _job(variant, {}, recipe, bindings, job_id), "subtitled", [copy.deepcopy(placed)]
 
 
-def narrated_job(title: str = EN_TITLE) -> tuple[Any, str, list[dict]]:
+def narrated_job(
+    title: str = EN_TITLE, *, job_id: uuid.UUID | None = None
+) -> tuple[Any, str, list[dict]]:
     from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
         NarratedPhoneStep,
         compile_phone_narrated_plan,
@@ -227,10 +237,12 @@ def narrated_job(title: str = EN_TITLE) -> tuple[Any, str, list[dict]]:
         "voiceover_bed_level": 0.3,
         "ok": False,
     }
-    return _job(variant, {}, recipe, bindings), "narrated", [row]
+    return _job(variant, {}, recipe, bindings, job_id), "narrated", [row]
 
 
-def montage_job(title: str = EN_TITLE) -> tuple[Any, str, list[dict]]:
+def montage_job(
+    title: str = EN_TITLE, *, job_id: uuid.UUID | None = None
+) -> tuple[Any, str, list[dict]]:
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
     from app.pipeline.guided_story import GuidedStoryExecutionPlan  # noqa: PLC0415
     from app.pipeline.intro_styles import _guided_plain_title  # noqa: PLC0415
@@ -297,7 +309,7 @@ def montage_job(title: str = EN_TITLE) -> tuple[Any, str, list[dict]]:
         "intro_layout": "linear",
         "text_elements": copy.deepcopy(raw["text_elements"]),
     }
-    job = _job(variant, {"guided_story_execution_plan": raw}, recipe, (bind,))
+    job = _job(variant, {"guided_story_execution_plan": raw}, recipe, (bind,), job_id)
     _make_guided_v2(job, bind, title)
     rows = [
         r for r in job.assembly_plan["variants"][0]["text_elements"] if r["id"] == "guided-title"
