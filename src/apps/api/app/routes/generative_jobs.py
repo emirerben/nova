@@ -8030,6 +8030,12 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         and protocol >= CAPTION_STYLE_SCOPE_PROTOCOL
     ):
         capabilities["caption_style_scope"] = True
+    from app.pipeline.intro_styles import capability as intro_styles_capability  # noqa: PLC0415
+
+    if intro_styles_capability(job, variant, capabilities, protocol):
+        # KRI-1633: present only when ON (flag, admitted account, a build at the protocol, a
+        # route that can save a title), so every closed payload keeps its exact shape.
+        capabilities["intro_styles"] = True
     return capabilities
 
 
