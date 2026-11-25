@@ -92,6 +92,8 @@ enum NativeEditorUITestFixtures {
         if arguments.contains("-ui-testing-editor-gameday-reset") { UserDefaults.standard.removeObject(forKey: gamedaySavedKey) }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         var value = draft(for: shape)
+        // A test that taps play and then pause needs a video that cannot end between the two taps on a slow Mac.
+        if shape == .captionVisuals, arguments.contains("-ui-testing-editor-long-video") { value = captionVisuals(clipCount: 5) }
         if arguments.contains("-ui-testing-editor-dual-captions") { value = dualCaptions(arguments: arguments) }
         if IntroStylesUITestFixture.isEnabled { value = introStyles(variant: IntroStylesUITestFixture.editorVariant) }
         if arguments.contains("-ui-testing-editor-text-bend") {
@@ -413,8 +415,11 @@ enum NativeEditorUITestFixtures {
         return value
     }()
 
-    static let captionVisuals: EditorDraft = {
-        let clips = [clip(0, start: 0, duration: 4)]
+    static let captionVisuals: EditorDraft = captionVisuals(clipCount: 1)
+
+    /// One 4 s cut by default; `clipCount` more of the same cut make the video longer and change nothing else.
+    static func captionVisuals(clipCount: Int) -> EditorDraft {
+        let clips = (0..<clipCount).map { clip($0, start: Double($0) * 4, duration: 4) }
         return draft(clips: clips, text: [], captions: true, music: false, sections: [
             "timeline_slots": slots(for: clips),
             "caption_cues": .array([.object(["id": .string("cue-paper"), "text": .string("One more game!"), "start_s": .number(0), "end_s": .number(2)])]),
@@ -428,7 +433,7 @@ enum NativeEditorUITestFixtures {
             "text_elements": .bool(true), "timeline": .bool(true), "visual_blocks": .bool(true),
             "camera_effects": .bool(true), "motion_scenes": .bool(true), "caption_editor_style": .bool(true),
             "visual_editor_style": .bool(true)])])
-    }()
+    }
 
     static let gamedaySavedKey = "native-editor-gameday-saved"
     static let gamedayPoolKey = "native-editor-gameday-pool"

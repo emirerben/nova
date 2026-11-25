@@ -739,7 +739,10 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
     func testConnectedPanelsKeepRailAndPreviewStableAndCollapseActiveTool() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        // The long video: this test taps play and then pause, and on a slow Mac the two taps reached the app 5.4 s
+        // apart (nightly 45534171654). The usual 5.6 s fixture had ended by then, so the second tap started it
+        // over and the button read "Pause preview". Twenty seconds cannot end in between.
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text", "-ui-testing-editor-long-video"]
         app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "390"
         app.launch()
         let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
