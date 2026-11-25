@@ -333,6 +333,8 @@ protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeC
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     /// KRI-1501: translates the given caption cues for the translated-line track. Persists nothing.
     func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse
+    /// KRI-1633: the fitted intro looks for a video's title. Persists nothing; the picked rows ride the ordinary Save.
+    func introStyles(itemID: String, variantID: String, request: IntroStylesRequest) async throws -> IntroStylesResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
     /// Live plan & review (contract v2): `GET creation-threads/{id}/plan`.
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot
@@ -618,6 +620,11 @@ extension KriaAPIClient {
     }
 
     func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
+        _ = itemID; _ = variantID; _ = request
+        throw APIError.unsupported
+    }
+
+    func introStyles(itemID: String, variantID: String, request: IntroStylesRequest) async throws -> IntroStylesResponse {
         _ = itemID; _ = variantID; _ = request
         throw APIError.unsupported
     }
@@ -1860,6 +1867,10 @@ struct KriaAPI: KriaAPIClient {
     func captionTranslation(itemID: String, variantID: String, request translation: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
         try await request(path: "plan-items/\(itemID)/variants/\(variantID)/caption-translation", method: "POST",
                           bodyData: try JSONEncoder().encode(translation), decode: CaptionTranslationResponse.self)
+    }
+    func introStyles(itemID: String, variantID: String, request styles: IntroStylesRequest) async throws -> IntroStylesResponse {
+        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/intro-styles", method: "POST",
+                          bodyData: try JSONEncoder().encode(styles), decode: IntroStylesResponse.self)
     }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
         struct Body: Encodable {

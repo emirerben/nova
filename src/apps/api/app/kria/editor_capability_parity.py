@@ -128,6 +128,22 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Read-only lookups the translated-line panel and gestures use, and the gesture "
         "bookkeeping that the move or size step it records then writes.",
     ),
+    # KRI-1633: the "Try intro styles" offer. The server builds the looks (POST intro-styles);
+    # the editor stages the picked rows and Save persists them. No copilot op picks a look yet.
+    "intro_styles": _g(
+        "agent_unsupported",
+        "loadIntroStyles applyIntroStyle",
+        reason="KRI-1633 offers fitted intro looks only from the editor's Text tool; the copilot "
+        "changes title words and styling through its own text ops and has no op that picks one "
+        "of the server's offered looks.",
+    ),
+    "intro_styles_queries": _g(
+        "not_an_edit",
+        "isIntroStyleTitleRow introStylesContext introStyleSelectedKey introStyleStartTime "
+        "reloadLatestAfterPreviewConflict",
+        reason="Read-only lookups for the intro styles panel and the reload that follows a "
+        "stale-preview conflict.",
+    ),
     # --------------------------------------------------------------- timeline
     "clip_trim_and_move": _g(
         "agent_ops",

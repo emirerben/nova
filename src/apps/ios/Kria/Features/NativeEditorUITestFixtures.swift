@@ -93,6 +93,7 @@ enum NativeEditorUITestFixtures {
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         var value = draft(for: shape)
         if arguments.contains("-ui-testing-editor-dual-captions") { value = dualCaptions(arguments: arguments) }
+        if IntroStylesUITestFixture.isEnabled { value = introStyles(variant: IntroStylesUITestFixture.editorVariant) }
         if arguments.contains("-ui-testing-editor-text-bend") {
             // KRI-646: the server advertises `editor_capabilities.text_bend` to a protocol-9 build on a device-rendered variant.
             var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
@@ -739,6 +740,19 @@ enum NativeEditorUITestFixtures {
         ])
     }
 
+    /// `-ui-testing-editor-intro-styles` (KRI-1633): a phone edit whose server opens `editor_capabilities.intro_styles`, with the
+    /// plain title rows of the fixture's `editor_<block>` variant.
+    static func introStyles(variant: [String: JSONValue]) -> EditorDraft {
+        let clips = [clip(901, start: 0, duration: 6)]
+        return draft(clips: clips, text: [], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": variant["text_elements"] ?? .array([]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "editor_capabilities": variant["editor_capabilities"] ?? .object([:]),
+        ])
+    }
+
     /// The translate route's stand-in for UI tests: each cue's text is looked up in `dualCaptionLines`; a text it does
     /// not know comes back dropped, like a line the server's language check refuses.
     static func dualCaptionTranslation(for request: CaptionTranslationRequest) -> CaptionTranslationResponse {
@@ -1255,6 +1269,11 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
+            if let reply = IntroStylesUITestFixture.respond(request) {
+                let http = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+                deliver(http, body: reply.data)
+                return
+            }
             let splitImport = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
             if splitImport, url.path.hasSuffix("/upload-urls"), request.httpMethod == "POST" {
                 let files = requestFields()["files"]?.arrayValue ?? []
