@@ -156,7 +156,7 @@ def test_the_name_list_is_exactly_the_databases_a_worker_can_select():
     [
         "postgresql://db.internal:5432/nova_test",
         "postgresql://10.0.0.5/nova_test",
-        "postgresql://nova-video.flycast/nova_test",
+        "postgresql://database.example/nova_test",
     ],
 )
 def test_databases_are_only_made_on_this_machine(url):
