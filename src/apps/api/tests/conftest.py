@@ -47,6 +47,21 @@ from tests import _worker_database  # noqa: E402
 
 _worker_database.select(os.environ)
 
+if os.environ.get("EXP_TRACE_BASE_CONNECT") == "1":  # throwaway: who connects outside a worker
+    import traceback
+
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    @event.listens_for(Engine, "connect")
+    def _exp_trace_connect(dbapi_connection, record):  # noqa: ARG001
+        with open(f"/tmp/base-connect-{os.getpid()}.log", "a") as handle:
+            handle.write(
+                f"--- pid {os.getpid()} worker={os.environ.get('PYTEST_XDIST_WORKER', 'CONTROLLER')} "
+                f"url={os.environ.get('DATABASE_URL', '').rsplit('/', 1)[-1]}\n"
+            )
+            handle.write("".join(traceback.format_stack(limit=28)))
+
 
 @pytest.fixture
 def prod_profile(monkeypatch):

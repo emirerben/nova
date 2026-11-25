@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 3]
+        shard: [3]
     services:
       postgres:
         image: postgres:16-alpine
@@ -95,6 +95,7 @@ jobs:
           # One database per xdist worker (tests/_worker_database.py). Set the repository
           # variable CI_API_DB_PER_WORKER to "on" to use it; anything else is the shared one.
           NOVA_TEST_DB_PER_WORKER: "1"
+          EXP_TRACE_BASE_CONNECT: "1"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
           REDIS_URL: redis://localhost:6379
           STORAGE_BUCKET: nova-test
@@ -109,6 +110,8 @@ jobs:
         if: always()
         run: |
           echo "MARK after $(date -u +%H:%M:%S.%3N)"
+          for f in /tmp/base-connect-*.log; do if grep -q "worker=CONTROLLER" "$f"; then echo "TRACE file $f: $(grep -c '^--- pid' "$f") connects"; grep -E "^--- pid|File \".*(tests|app|scripts)/" "$f" | sed 's/^/TRACE /' | head -80; fi; done
+          echo "TRACE worker files: $(grep -L 'worker=CONTROLLER' /tmp/base-connect-*.log 2>/dev/null | wc -l)"
           sleep 3
           docker logs "$(docker ps -q --filter ancestor=postgres:16-alpine)" 2>&1 | grep -E "db=nova_test |database=nova_test( |$)" | sed 's/^/PGLOG /' | head -60
           echo "PGLOG lines for worker copies: $(docker logs "$(docker ps -q --filter ancestor=postgres:16-alpine)" 2>&1 | grep -cE "connection authorized.*database=nova_gw[0-9]+_test")"
