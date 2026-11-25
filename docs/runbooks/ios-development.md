@@ -1248,7 +1248,12 @@ hiding anything a test checks:
   `UI_TEST_ANIMATION_START_GUARD=off`.
 
 A 60 s wait with the guard on is a second cause, not this one: look at what
-was animating, do not add a retry.
+was animating, do not add a retry. `verify.sh` raises it as a warning
+annotation and a job-summary line, the same way a test that passed only on
+retry is raised. It does not turn the run red by itself yet.
+
+The performance tests (`KriaPerfUITests`) launch with the guard off, so they
+measure the app as UIKit ships it.
 
 ## Native editor source assets
 
