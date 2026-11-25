@@ -4,28 +4,15 @@ on:
     branches: [codex/exp-per-worker-db]
 permissions:
   contents: read
-env:
-  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
-  REDIS_URL: redis://localhost:6379
-  STORAGE_BUCKET: nova-test
-  STORAGE_PROVIDER: gcs
-  OPENAI_API_KEY: sk-test
-  WHISPER_BACKEND: local
-  TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
-  WAITLIST_ADMIN_SECRET: test-admin-secret
-  ALLOWED_ORIGINS: '["http://localhost:3000"]'
 jobs:
-  full:
-    name: ${{ matrix.arm }} r${{ matrix.repeat }} api (${{ matrix.shard }})
+  real:
+    name: real job, switch on, api (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 80
     strategy:
       fail-fast: false
-      max-parallel: 12
       matrix:
-        arm: [shared, per-worker]
-        repeat: [1, 2, 3, 4, 5]
-        shard: [0]
+        shard: [0, 1, 2, 3, 4, 5]
     services:
       postgres:
         image: postgres:16-alpine
@@ -51,9 +38,120 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - name: Runner CPU
+      - name: Disable unused Chrome apt source
+        run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
+      - name: Install FFmpeg and Skia runtime libs
+        # libegl1 + libgl1 are needed by skia-python (used by
+        # app/pipeline/text_overlay_skia.py). On macOS these ship with the OS;
+        # the Ubuntu runner needs them installed explicitly or the module
+        # import fails with `libEGL.so.1: cannot open shared object file`.
+        # apt-install.sh kills and retries a stalled mirror within minutes; the
+        # step cap sits above the slowest green install (32 min, slow mirror).
+        # The composite action caches the .debs so that cost is paid once.
+        timeout-minutes: 40
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ffmpeg libegl1 libgl1 tesseract-ocr tesseract-ocr-tur
+      - uses: ./.github/actions/api-env
+        with:
+          # analysis: pytesseract, so the OCR engine test runs against the
+          # tesseract binary installed above instead of skipping.
+          extras: dev analysis
+      - name: Verify Alembic upgrade-downgrade roundtrip
+        working-directory: src/apps/api
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
+          REDIS_URL: redis://localhost:6379
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          OPENAI_API_KEY: sk-test
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+          ALLOWED_ORIGINS: '["http://localhost:3000"]'
         run: |
-          echo "CPU: $(lscpu | sed -n 's/^Model name: *//p') | cores $(nproc) | $(lscpu | sed -n 's/^Thread(s) per core: *//p') threads per core"
+          python -m alembic upgrade 0072
+          python scripts/verify_content_plan_owner_constraint.py seed-mismatch
+          if python -m alembic upgrade 0073; then
+            echo "0073 unexpectedly accepted a cross-owner plan/persona row"
+            exit 1
+          fi
+          python scripts/verify_content_plan_owner_constraint.py repair-mismatch
+          python -m alembic upgrade 0073
+          python scripts/verify_content_plan_owner_constraint.py verify-installed
+          python -m alembic downgrade -1
+          python -m alembic upgrade 0103
+          python scripts/verify_0103_downgrade_state.py seed
+          python -m alembic downgrade -1
+          python scripts/verify_0103_downgrade_state.py verify
+          python -m alembic upgrade head
+      - name: Sessions per database, before
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -At -c "select pg_stat_force_next_flush(); select 'BEFORE '||datname||' sessions='||sessions||' commits='||xact_commit from pg_stat_database where datname like 'nova%' order by datname"
+      - name: Run API test shard with timing reports
+        env:
+          NOVA_REQUIRE_POSTGRES_TESTS: "1"
+          # One database per xdist worker (tests/_worker_database.py). Set the repository
+          # variable CI_API_DB_PER_WORKER to "on" to use it; anything else is the shared one.
+          NOVA_TEST_DB_PER_WORKER: "1"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
+          REDIS_URL: redis://localhost:6379
+          STORAGE_BUCKET: nova-test
+          STORAGE_PROVIDER: gcs
+          OPENAI_API_KEY: sk-test
+          WHISPER_BACKEND: local
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+          WAITLIST_ADMIN_SECRET: test-admin-secret
+          ALLOWED_ORIGINS: '["http://localhost:3000"]'
+        run: python3 scripts/ci/api-tests.py "${{ matrix.shard }}"
+      - name: Sessions per database, after
+        if: always()
+        run: |
+          sleep 3
+          PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -At -c "select pg_stat_force_next_flush(); select 'AFTER '||datname||' sessions='||sessions||' commits='||xact_commit from pg_stat_database where datname like 'nova%' order by datname"
+  paired:
+    name: paired ${{ matrix.order }} r${{ matrix.repeat }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        order: ["shared per-worker", "per-worker shared"]
+        repeat: [1, 2, 3, 4, 5]
+    env:
+      NOVA_REQUIRE_POSTGRES_TESTS: "1"
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
+      REDIS_URL: redis://localhost:6379
+      STORAGE_BUCKET: nova-test
+      STORAGE_PROVIDER: gcs
+      OPENAI_API_KEY: sk-test
+      WHISPER_BACKEND: local
+      TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
+      WAITLIST_ADMIN_SECRET: test-admin-secret
+      ALLOWED_ORIGINS: '["http://localhost:3000"]'
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nova_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
       - name: Disable unused Chrome apt source
         run: sudo bash scripts/ci/disable-unused-chrome-apt-source.sh
       - name: Install FFmpeg and Skia runtime libs
@@ -67,25 +165,11 @@ jobs:
       - name: Migrate
         working-directory: src/apps/api
         run: python -m alembic upgrade head
-      - name: Run API test shard
-        env:
-          NOVA_REQUIRE_POSTGRES_TESTS: "1"
-          NOVA_TEST_DB_PER_WORKER: ${{ matrix.arm == 'per-worker' && '1' || '0' }}
-        run: |
-          start=$(date +%s)
-          python3 scripts/ci/api-tests.py "${{ matrix.shard }}" 2>&1 | tee shard.log | grep -E "Worker databases|created: |workers \[|^(FAILED|ERROR) |passed|failed| error" | tail -40
-          status=${PIPESTATUS[0]}
-          echo "arm=${{ matrix.arm }} shard=${{ matrix.shard }} exit=$status seconds=$(( $(date +%s) - start ))"
-          exit "$status"
+      - name: Shard 0 under both arms on this runner
+        run: bash scripts/exp-per-worker-paired.sh "${{ matrix.order }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ matrix.arm }}__api-times-${{ matrix.repeat }}-${{ matrix.shard }}-1
-          path: src/apps/api/test-results/ci-times
-          retention-days: 3
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: ${{ matrix.arm }}__log-${{ matrix.repeat }}-${{ matrix.shard }}
-          path: shard.log
+          name: paired-${{ strategy.job-index }}
+          path: paired
           retention-days: 3
