@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.20.0] - 2026-11-25
+
+### Changed
+- test(ios): the connected-panels test plays a video that cannot end between its play and pause taps (KRI-1604) (#2525) <!-- release-pr: 2525 -->
+
 ## [0.90.19.0] - 2026-11-25
 
 ### Changed
