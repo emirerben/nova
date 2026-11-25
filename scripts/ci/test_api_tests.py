@@ -36,8 +36,10 @@ Ways the weight-packed shards can go wrong, written before the packing (KRI-1544
 19. The switch is on and a worker ran on the shared database anyway (a later
     edit moves the selection, a plugin imports the app first), and the shard is
     green: the isolation is claimed and absent. Or the proof itself is hollow:
-    a worker wrote no row, the rows carry no database name, or pytest's own
-    exit code is lost when the proof passes.
+    a worker wrote no row, the rows carry no database name, the name comes from
+    the environment while the already-imported app is on another database
+    (tests/test_ci_times_recorder.py), or pytest's own exit code is lost when
+    the proof passes.
 """
 
 import contextlib
