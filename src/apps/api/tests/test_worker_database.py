@@ -4,9 +4,12 @@ Written before the code, as the list of failures the module has to rule out:
 
 1. A worker selects a database the runner never made (worker count mismatch, a renamed base)
    and quietly keeps using the shared one, so the isolation is claimed and absent.
-2. The switch is off, or pytest runs without xdist, and the URL changes anyway (laptop runs,
-   the git-history job, the journey jobs, which bring other databases).
-3. A pytest started by a test inherits the worker's environment and maps the URL twice.
+2. The runner made no copies, or pytest runs without xdist, and the URL changes anyway (laptop
+   runs, the git-history job, the journey jobs, which bring other databases).
+3. A pytest started by a test inherits the worker's environment. It either keeps the URL the
+   worker already selected, and maps it twice, or brings a URL of its own on purpose (the "wrong
+   database must be refused" tests pass ``nova_prod`` and an unreachable host) and is mapped or
+   stopped although it is not one of this run's workers. Both happened in the first hosted run.
 4. The worker database's name stops ending in ``_test``, and every "refusing to write to a
    non-test database" check in the suite turns its file into a skip.
 5. The base URL carries options, a second path part or a name that is not ``*_test``, and the
@@ -27,7 +30,7 @@ BASE = "postgresql://postgres:postgres@localhost:5432/nova_test"
 
 
 def _environ(**changes):
-    return {"DATABASE_URL": BASE, wd.SWITCH: "1", "PYTEST_XDIST_WORKER": "gw2", **changes}
+    return {"DATABASE_URL": BASE, wd.COPIED_FROM: BASE, "PYTEST_XDIST_WORKER": "gw2", **changes}
 
 
 def test_a_worker_gets_its_own_database_and_the_name_still_ends_in_test():
@@ -41,7 +44,8 @@ def test_a_worker_gets_its_own_database_and_the_name_still_ends_in_test():
 
 
 def test_the_async_url_form_keeps_its_driver():
-    environ = _environ(DATABASE_URL="postgresql+asyncpg://localhost/nova_test")
+    url = "postgresql+asyncpg://localhost/nova_test"
+    environ = _environ(DATABASE_URL=url, **{wd.COPIED_FROM: url})
     wd.select(environ, probe=lambda url: None)
     assert environ["DATABASE_URL"] == "postgresql+asyncpg://localhost/nova_gw2_test"
 
@@ -57,33 +61,45 @@ def test_a_missing_worker_database_stops_the_worker_and_leaves_the_url_alone():
     assert environ["DATABASE_URL"] == BASE
 
 
+def _never(url):
+    raise AssertionError("no database may be probed")
+
+
+@pytest.mark.parametrize("changes", [{wd.COPIED_FROM: ""}, {"PYTEST_XDIST_WORKER": ""}])
+def test_without_copies_or_a_worker_nothing_changes(changes):
+    environ = _environ(**changes)
+    assert wd.select(environ, probe=_never) is None
+    assert environ["DATABASE_URL"] == BASE
+
+
+def test_the_switch_alone_selects_nothing_because_only_the_runner_knows_copies_exist():
+    environ = {"DATABASE_URL": BASE, wd.SWITCH: "1", "PYTEST_XDIST_WORKER": "gw2"}
+    assert wd.select(environ, probe=_never) is None
+    assert environ["DATABASE_URL"] == BASE
+
+
 @pytest.mark.parametrize(
-    "changes",
+    "own",
     [
-        {wd.SWITCH: "0"},
-        {wd.SWITCH: ""},
-        {wd.SWITCH: "true"},
-        {"PYTEST_XDIST_WORKER": ""},
+        "postgresql://postgres:postgres@localhost:5432/nova_prod",
+        "postgresql://postgres:postgres@127.0.0.1:1/nova_unreachable_test",
+        "postgresql://localhost/nova_test?host=production",
+        "not a url",
     ],
 )
-def test_without_the_switch_or_a_worker_nothing_changes(changes):
-    environ = _environ(**changes)
-
-    def never(url):
-        raise AssertionError("no database may be probed")
-
-    assert wd.select(environ, probe=never) is None
-    assert environ["DATABASE_URL"] == BASE
+def test_a_pytest_started_by_a_test_with_its_own_database_is_left_alone(own):
+    environ = _environ(DATABASE_URL=own)
+    assert wd.select(environ, probe=_never) is None
+    assert environ["DATABASE_URL"] == own
 
 
 def test_a_pytest_started_by_a_test_keeps_the_workers_database():
     environ = _environ()
     wd.select(environ, probe=lambda url: None)
     first = environ["DATABASE_URL"]
-    probed = []
-    assert wd.select(environ, probe=probed.append) == first
+    assert first != BASE
+    assert wd.select(environ, probe=_never) is None
     assert environ["DATABASE_URL"] == first
-    assert probed == []
 
 
 @pytest.mark.parametrize(
@@ -105,7 +121,7 @@ def test_a_base_that_is_not_a_plain_test_database_is_refused(url):
     with pytest.raises(ValueError):
         wd.worker_url(url, "gw0")
     with pytest.raises(ValueError):
-        wd.select(_environ(DATABASE_URL=url), probe=lambda url: None)
+        wd.select(_environ(DATABASE_URL=url, **{wd.COPIED_FROM: url}), probe=lambda url: None)
 
 
 @pytest.mark.parametrize(

@@ -42,6 +42,9 @@ EXPECTED_SKIPS = Path(__file__).resolve().with_name("api-expected-skips.json")
 # (src/apps/api/tests/_worker_database.py). ci.yml sets it from the repository
 # variable CI_API_DB_PER_WORKER, which is also the way back.
 WORKER_DB_SWITCH = "NOVA_TEST_DB_PER_WORKER"
+# Set for pytest once the copies exist: the URL they were copied from. conftest
+# moves a worker only while its DATABASE_URL is still this one.
+WORKER_DB_COPIED_FROM = "NOVA_TEST_DB_WORKER_COPIES_OF"
 
 
 def test_files(api_root: Path) -> list[Path]:
@@ -274,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         if made:
             print("error: the per-worker test databases were not created", file=sys.stderr)
             return made
+        env[WORKER_DB_COPIED_FROM] = env["DATABASE_URL"]
     status = subprocess.run(
         pytest_command(selected, workers),
         cwd=api_root,

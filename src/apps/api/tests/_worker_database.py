@@ -6,10 +6,13 @@ an advisory-lock fixture in ``conftest.py``. With the switch on, each worker get
 migrated database instead:
 
 - ``scripts/ci/api-tests.py`` makes the copies before pytest starts (``python -m
-  tests._worker_database COUNT``). Postgres refuses to copy a database that has open
-  connections, so this cannot happen once tests are running.
+  tests._worker_database COUNT``) and tells pytest which URL they are copies of. Postgres
+  refuses to copy a database that has open connections, so this cannot happen once tests run.
 - ``conftest.py`` calls ``select`` before any app module is imported. A worker whose copy is
   missing stops; it never falls back to the shared database.
+- Only a process whose ``DATABASE_URL`` is still the copied one is moved. A pytest that a test
+  starts inherits the worker's id; it keeps whatever URL the test gave it, be that the
+  worker's own copy or a wrong database the test wants refused.
 
 Off (the default) nothing changes. ``test_worker_database.py`` lists the failures this rules out.
 Not isolated yet: Redis, and the scripts that hardcode the ``nova_test`` URL.
@@ -23,7 +26,10 @@ import sys
 from collections.abc import Callable, MutableMapping
 from urllib.parse import urlsplit, urlunsplit
 
+# What ci.yml asks the runner for.
 SWITCH = "NOVA_TEST_DB_PER_WORKER"
+# What the runner tells pytest once the copies exist: the URL they are copies of.
+COPIED_FROM = "NOVA_TEST_DB_WORKER_COPIES_OF"
 # The name checks that admit worker databases list exactly this many names.
 MAX_WORKERS = 16
 _SUFFIX = "_test"
@@ -77,7 +83,7 @@ def _probe(url: str) -> None:
     except Exception as error:
         name = urlsplit(url).path[1:]
         raise RuntimeError(
-            f"{SWITCH}=1 but this worker's database {name!r} cannot be opened. "
+            f"{COPIED_FROM} is set but this worker's database {name!r} cannot be opened. "
             "scripts/ci/api-tests.py creates it before pytest starts; "
             "`python -m tests._worker_database COUNT` does the same by hand."
         ) from error
@@ -89,14 +95,10 @@ def select(environ: MutableMapping[str, str], probe: Callable[[str], None] = _pr
     """Point ``DATABASE_URL`` at this worker's database. Returns it, or None when not in use."""
 
     worker = environ.get("PYTEST_XDIST_WORKER")
-    if environ.get(SWITCH) != "1" or not worker:
+    copied_from = environ.get(COPIED_FROM)
+    if not worker or not copied_from or environ.get("DATABASE_URL") != copied_from:
         return None
-    url = environ["DATABASE_URL"]
-    base = _base_name(url)
-    # A pytest started by a test inherits a URL this worker already selected.
-    if base.endswith(f"_{worker}{_SUFFIX}"):
-        return url
-    selected = worker_url(url, worker)
+    selected = worker_url(copied_from, worker)
     probe(selected)
     environ["DATABASE_URL"] = selected
     return selected

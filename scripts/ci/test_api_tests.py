@@ -396,7 +396,7 @@ class ApiTestShardTests(unittest.TestCase):
         calls = []
 
         def fake_run(command, **kwargs):
-            calls.append((command, kwargs["env"]))
+            calls.append((command, dict(kwargs["env"])))
             return mock.Mock(returncode=statuses[len(calls) - 1])
 
         with (
@@ -410,13 +410,16 @@ class ApiTestShardTests(unittest.TestCase):
             return api_tests.main(["0"]), calls
 
     def test_the_databases_are_made_before_pytest_and_a_failure_stops_the_shard(self):
-        on = {api_tests.WORKER_DB_SWITCH: "1"}
+        url = "postgresql://postgres:postgres@localhost:5432/nova_test"
+        on = {api_tests.WORKER_DB_SWITCH: "1", "DATABASE_URL": url}
         status, calls = self.run_main(on, [0, 0])
         self.assertEqual(status, 0)
         self.assertEqual(calls[0][0][1:4], ["-m", "tests._worker_database", "4"])
         self.assertEqual(calls[1][0][0], "pytest")
         self.assertIn("4", calls[1][0][calls[1][0].index("-n") + 1])
-        self.assertEqual(calls[1][1][api_tests.WORKER_DB_SWITCH], "1")
+        # Only pytest is told the copies exist, and only after they were made.
+        self.assertNotIn(api_tests.WORKER_DB_COPIED_FROM, calls[0][1])
+        self.assertEqual(calls[1][1][api_tests.WORKER_DB_COPIED_FROM], url)
 
         status, calls = self.run_main(on, [3])
         self.assertEqual(status, 3)
@@ -425,6 +428,7 @@ class ApiTestShardTests(unittest.TestCase):
         status, calls = self.run_main({}, [0])
         self.assertEqual(status, 0)
         self.assertEqual([call[0][0] for call in calls], ["pytest"])
+        self.assertNotIn(api_tests.WORKER_DB_COPIED_FROM, calls[0][1])
         self.assertEqual(calls[0][0][calls[0][0].index("-n") + 1], "auto")
 
     def test_the_workflow_and_conftest_carry_their_half_of_the_switch(self):
@@ -447,6 +451,7 @@ class ApiTestShardTests(unittest.TestCase):
         self.assertNotIn("\nimport app", conftest.split(select, 1)[0])
         module = (repo / "src/apps/api/tests/_worker_database.py").read_text()
         self.assertIn(f'SWITCH = "{api_tests.WORKER_DB_SWITCH}"\n', module)
+        self.assertIn(f'COPIED_FROM = "{api_tests.WORKER_DB_COPIED_FROM}"\n', module)
 
 
 if __name__ == "__main__":

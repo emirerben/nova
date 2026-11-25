@@ -11,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.models import AppleRevocationOutbox
 from app.services.auth_locks import account_lifecycle_lock_key
+from tests._worker_database import worker_database_names
 
 
 @pytest.fixture(scope="module")
@@ -26,6 +27,7 @@ def pg_engine():
             assert connection.scalar(text("SELECT current_database()")) in {
                 "nova_test",
                 "kri55_test",
+                *worker_database_names("nova_test"),
             }
             connection.execute(text("SELECT 1 FROM apple_revocation_outbox LIMIT 1"))
     except OperationalError as exc:
