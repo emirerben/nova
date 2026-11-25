@@ -14,10 +14,10 @@ while [ "$i" -le "$TRIES" ]; do
   for arm in shared per-worker; do
     sql 'DROP DATABASE IF EXISTS nova_test WITH (FORCE)' && sql 'CREATE DATABASE nova_test TEMPLATE nova_pristine_test' || exit 2
     if [ "$arm" = per-worker ]; then
-      export NOVA_TEST_DB_PER_WORKER=1
       python -m tests._worker_database 4 >/dev/null || exit 2
+      export NOVA_TEST_DB_WORKER_COPIES_OF="$DATABASE_URL"
     else
-      export NOVA_TEST_DB_PER_WORKER=0
+      unset NOVA_TEST_DB_WORKER_COPIES_OF
     fi
     log="exp-control/$arm-$i.log"
     pytest tests/routes/test_notification_delivery_postgres.py -n 4 -q -p no:cacheprovider --timeout=60 > "$log" 2>&1
