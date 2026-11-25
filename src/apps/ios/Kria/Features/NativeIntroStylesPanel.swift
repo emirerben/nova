@@ -18,7 +18,6 @@ struct NativeIntroStylesPanel: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button {
-                    session.finishIntroStyles()
                     onDone()
                 } label: {
                     Text("Done").frame(minWidth: 64, minHeight: 44)
@@ -40,7 +39,6 @@ struct NativeIntroStylesPanel: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-intro-styles-panel")
         .task(id: session.introStylesContext()) { await session.loadIntroStyles() }
-        .onDisappear { session.finishIntroStyles() }
     }
 
     @ViewBuilder private var content: some View {

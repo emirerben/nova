@@ -659,8 +659,12 @@ struct ClipPreviewPage: View {
         // `KRIA_CHAT_CLIP_QUESTION=1`: the first fixture clip has a local original (a generated clip), the others
         // do not, so a UI test sees both the playing and the poster-only page. `KRIA_CHAT_DESIGN_PICKER=1` (KRI-1582)
         // draws the design previews over the same clip.
-        if ["KRIA_CHAT_CLIP_QUESTION", "KRIA_CHAT_CLIP_ORDER", "KRIA_CHAT_DESIGN_PICKER", "KRIA_EDITOR_INTRO_STYLES"].contains(where: { ProcessInfo.processInfo.environment[$0] == "1" }), mediaID == "fixture-clip" {
+        if ["KRIA_CHAT_CLIP_QUESTION", "KRIA_CHAT_CLIP_ORDER", "KRIA_CHAT_DESIGN_PICKER"].contains(where: { ProcessInfo.processInfo.environment[$0] == "1" }), mediaID == "fixture-clip" {
             return SongTimelineFixture.clipURL(mediaID: mediaID, force: true)
+        }
+        // KRI-1633: the backend's offers name their own source clips (`clip-0`, `source`, `c0`); every one is drawn over the fixture clip.
+        if ProcessInfo.processInfo.environment["KRIA_EDITOR_INTRO_STYLES"] == "1" {
+            return SongTimelineFixture.clipURL(mediaID: "fixture-clip", force: true)
         }
         #endif
         guard let projectID else { return nil }

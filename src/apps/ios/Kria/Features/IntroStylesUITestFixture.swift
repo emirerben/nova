@@ -33,7 +33,19 @@ enum IntroStylesUITestFixture {
     }()
 
     /// The editor variant block: `editor_capabilities` (with `intro_styles`) and the plain title rows.
-    static var editorVariant: [String: JSONValue] { fixture["editor_" + block]?.objectValue ?? [:] }
+    static var editorVariant: [String: JSONValue] { editorVariant(block: block, in: fixture) }
+
+    /// The backend writes ONE editor payload (`editor_talking_en`). The montage and narrated edits open on the plain
+    /// title the server's own "none" option for that route carries (`current: true`: the rows the title shows now), with
+    /// the same capability map, so no block is invented here.
+    static func editorVariant(block: String, in fixture: [String: JSONValue]) -> [String: JSONValue] {
+        if let editor = fixture["editor_" + block]?.objectValue { return editor }
+        var editor = fixture["editor_talking_en"]?.objectValue ?? [:]
+        let none = fixture["offer_" + block]?.objectValue?["options"]?.arrayValue?
+            .compactMap(\.objectValue).last { $0["key"] == .string("none") }
+        if let rows = none?["rows"] { editor["text_elements"] = rows }
+        return editor
+    }
 
     static func respond(_ request: URLRequest) -> (status: Int, data: Data)? {
         guard isEnabled, let path = request.url?.path, request.httpMethod == "POST" else { return nil }

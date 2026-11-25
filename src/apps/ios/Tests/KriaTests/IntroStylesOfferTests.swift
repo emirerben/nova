@@ -22,8 +22,10 @@ import XCTest
 /// - F20 a route that cannot save a title: the capability is absent (no entry), or the answer is unavailable with its
 ///   own line; a refusal (404/426/409/422/429) maps to its own outcome.
 /// - F21 the model is called from the phone: the client only ever calls the one route.
-/// - F22 the replace transaction deletes rows outside the title family, removes a protected row, or leaves a
-///   half-applied state on undo: only `replace_ids` and rows inserted earlier in the panel go, in one undo step.
+/// - F22 the replace transaction deletes rows outside the title family, removes a protected row, leaves a half-applied
+///   state on undo, or leaves a line of the old stack behind (a pick, Done, reopen, pick): the whole title-family stack
+///   on screen is replaced, nothing else, in one undo step. A pending deletion of a line the look puts back is cleared,
+///   or Save would drop that line (F9).
 /// - F23 `source_params` (`title_look.intro_style`, `text_case`, `line_spacing`, `text_language`) is dropped on the
 ///   round trip so the server saves plain rows: the Save lane equals `option.rows` raw.
 /// - F24 the entry shows in the cloud or web editor, a slide post, or a variant without a title row.
@@ -38,6 +40,15 @@ final class IntroStylesOfferTests: XCTestCase {
         return try XCTUnwrap(JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url)).objectValue)
     }
 
+    /// `editor_talking_en` is the backend's own editor payload; the other routes open on the plain title their offer's
+    /// "none" option carries (the rows the title shows now), with the same capability map.
+    private func editorVariant(_ block: String) throws -> [String: JSONValue] {
+        let key = String(block.dropFirst("editor_".count))
+        let variant = IntroStylesUITestFixture.editorVariant(block: key, in: try fixture())
+        XCTAssertFalse(variant.isEmpty, block)
+        return variant
+    }
+
     private func offer(_ block: String) throws -> IntroStylesOffer {
         guard case .offer(let offer) = IntroStylesOffer.parse(try XCTUnwrap(try fixture()[block])) else {
             XCTFail("\(block) is not an offer"); throw XCTSkip()
@@ -47,7 +58,7 @@ final class IntroStylesOfferTests: XCTestCase {
 
     /// A session on the fixture's plain-title edit with the offer shown for it.
     private func session(editor: String, offer block: String, capability: Bool = true) throws -> (NativeEditorSession, IntroStylesOffer) {
-        var variant = try XCTUnwrap(try fixture()[editor]?.objectValue)
+        var variant = try editorVariant(editor)
         if !capability { variant["editor_capabilities"] = .object(["text_elements": .object(["editable": .bool(true)])]) }
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: variant), operations: LocalEditorOperations())
         let offer = try offer(block)
@@ -79,7 +90,9 @@ final class IntroStylesOfferTests: XCTestCase {
         }
         XCTAssertEqual(IntroStylesOffer.parse(try XCTUnwrap(blocks["unavailable_nothing_fits"])), .unavailable(reason: "nothing_fits"))
         for key in ["editor_talking_en", "editor_montage_tr", "editor_narrated_en"] {
-            XCTAssertEqual(blocks[key]?.objectValue?["editor_capabilities"]?.objectValue?["intro_styles"], .bool(true), key)
+            let variant = try editorVariant(key)
+            XCTAssertEqual(variant["editor_capabilities"]?.objectValue?["intro_styles"], .bool(true), key)
+            XCTAssertFalse(variant["text_elements"]?.arrayValue?.isEmpty ?? true, "\(key): a plain title row to restyle")
         }
         XCTAssertNotNil(blocks["save_body_expected"])
     }
@@ -159,7 +172,7 @@ final class IntroStylesOfferTests: XCTestCase {
         let (old, _) = try session(editor: "editor_talking_en", offer: "offer_talking_en", capability: false)
         XCTAssertFalse(old.canOfferIntroStyles, "no capability key, no entry (old build, flag off, unadmitted account)")
 
-        var wordBars = try XCTUnwrap(try fixture()["editor_montage_tr"]?.objectValue)
+        var wordBars = try editorVariant("editor_montage_tr")
         wordBars["text_elements"] = .array([.object(["id": .string("guided-title::sequence-1"), "text": .string("Bu"),
                                                      "start_s": .number(0), "end_s": .number(1), "role": .string("generative_intro")]),
                                             .object(["id": .string("clip-label-1"), "text": .string("Kadıköy"),
@@ -167,12 +180,12 @@ final class IntroStylesOfferTests: XCTestCase {
         let bars = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: wordBars), operations: LocalEditorOperations())
         XCTAssertFalse(bars.canOfferIntroStyles, "word bars and clip labels are not a title")
 
-        var locked = try XCTUnwrap(try fixture()["editor_talking_en"]?.objectValue)
+        var locked = try editorVariant("editor_talking_en")
         locked["editor_capabilities"] = .object(["intro_styles": .bool(true), "text_elements": .object(["editable": .bool(false)])])
         let closed = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: locked), operations: LocalEditorOperations())
         XCTAssertFalse(closed.canOfferIntroStyles, "a locked text lane has no entry")
 
-        var readOnly = try XCTUnwrap(try fixture()["editor_talking_en"]?.objectValue)
+        var readOnly = try editorVariant("editor_talking_en")
         var title = try XCTUnwrap(readOnly["text_elements"]?.arrayValue?.first?.objectValue)
         title["source_params"] = .object(["read_only": .bool(true)])
         readOnly["text_elements"] = .array([.object(title)])
@@ -219,7 +232,7 @@ final class IntroStylesOfferTests: XCTestCase {
         XCTAssertEqual(session.introStyleSelectedKey(in: offer), offer.options[0].key)
 
         XCTAssertTrue(session.applyIntroStyle(offer.options[2]))
-        XCTAssertEqual(session.introStyleTitleRows.count, offer.options[2].rows.count, "a 3-line look replaces a 2-line look")
+        XCTAssertEqual(session.introStyleTitleRows.count, offer.options[2].rows.count, "a look replaces the whole stack on screen")
         XCTAssertEqual(session.document.textElements.map(\.id), offer.options[2].rows.compactMap { $0.objectValue?["id"]?.stringValue })
 
         XCTAssertTrue(session.applyIntroStyle(offer.options[0]), "re-apply")
@@ -245,6 +258,65 @@ final class IntroStylesOfferTests: XCTestCase {
         }
     }
 
+    /// A session whose title is the stack of `look` (as after a pick and a Save, or a pick, Done and reopen), with the
+    /// offer still the one fetched for the plain title: its `replace_ids` name only the old plain row.
+    private func stackedSession(look: IntroStylesOffer.Option, editor: String, offer block: String) throws -> NativeEditorSession {
+        var variant = try editorVariant(editor)
+        variant["text_elements"] = .array(look.rows)
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: variant), operations: LocalEditorOperations())
+        session.introStylesState = .ready(try offer(block))
+        session.introStylesOfferContext = session.introStylesContext()
+        return session
+    }
+
+    func testAPickOverAnEarlierPickLeavesNoLineOfTheOldStackBehind() throws {
+        // Narrated has 3-line and 2-line looks: the stale `replace_ids` (["narrated-title"]) never names the old extra lines.
+        let offer = try offer("offer_narrated_en")
+        let three = try XCTUnwrap(offer.options.first { $0.rows.count == 3 })
+        let two = try XCTUnwrap(offer.options.first { $0.rows.count == 2 })
+        let session = try stackedSession(look: three, editor: "editor_narrated_en", offer: "offer_narrated_en")
+        XCTAssertEqual(session.introStyleTitleRows.count, 3)
+
+        XCTAssertTrue(session.applyIntroStyle(two))
+        XCTAssertEqual(session.document.textElements.map(\.id), two.rows.compactMap { $0.objectValue?["id"]?.stringValue },
+                       "the third line of the earlier look is gone")
+        XCTAssertEqual(titleLane(session), two.rows)
+
+        let again = try stackedSession(look: three, editor: "editor_narrated_en", offer: "offer_narrated_en")
+        let none = try XCTUnwrap(offer.options.last)
+        XCTAssertTrue(again.applyIntroStyle(none))
+        XCTAssertEqual(titleLane(again), none.rows, "No intro style restores today's plain title, her words once")
+        again.undo()
+        XCTAssertEqual(again.introStyleTitleRows.count, 3, "undo brings the whole stack back")
+    }
+
+    func testAPendingDeletionOfALineTheLookPutsBackIsClearedSoSaveKeepsIt() throws {
+        let offer = try offer("offer_talking_en")
+        let look = try XCTUnwrap(offer.options.first { $0.rows.count == 3 })
+        let session = try stackedSession(look: look, editor: "editor_talking_en", offer: "offer_talking_en")
+        // She deleted the middle line of the saved stack (what `deleteSelection` records for a persisted row).
+        XCTAssertTrue(session.deleteText(id: "opening-title-line-2"))
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "text", id: "opening-title-line-2")])
+        session.introStylesOfferContext = session.introStylesContext()
+        let before = session.document
+
+        XCTAssertTrue(session.applyIntroStyle(offer.options[1]))
+        XCTAssertEqual(titleLane(session), offer.options[1].rows)
+        XCTAssertTrue(session.document.deletions.isEmpty, "the text deletion would make Save drop the re-inserted line")
+
+        session.undo()
+        XCTAssertEqual(session.document, before, "undo restores the lane and the deletion record together")
+
+        // The first line deleted, then No intro style: the plain title must not be filtered out on the server.
+        let other = try stackedSession(look: look, editor: "editor_talking_en", offer: "offer_talking_en")
+        XCTAssertTrue(other.deleteText(id: "opening-title"))
+        XCTAssertEqual(other.document.deletions, [EditorDeletion(kind: "text", id: "opening-title")])
+        other.introStylesOfferContext = other.introStylesContext()
+        XCTAssertTrue(other.applyIntroStyle(try XCTUnwrap(offer.options.last)))
+        XCTAssertEqual(titleLane(other), offer.options.last?.rows)
+        XCTAssertTrue(other.document.deletions.isEmpty)
+    }
+
     func testNoneOnAnUnstyledTitleChangesNothing() throws {
         let (session, offer) = try session(editor: "editor_talking_en", offer: "offer_talking_en")
         let before = session.document
@@ -254,7 +326,7 @@ final class IntroStylesOfferTests: XCTestCase {
     }
 
     func testApplyTouchesOnlyTheTitleFamilyAndNeverAProtectedRow() throws {
-        var variant = try XCTUnwrap(try fixture()["editor_talking_en"]?.objectValue)
+        var variant = try editorVariant("editor_talking_en")
         let others: [JSONValue] = [
             .object(["id": .string("clip-label-1"), "text": .string("Kadıköy"), "start_s": .number(0), "end_s": .number(2), "role": .string("generative_intro")]),
             .object(["id": .string("closing-title"), "text": .string("See you"), "start_s": .number(4), "end_s": .number(6), "role": .string("generative_intro")]),
@@ -313,17 +385,30 @@ final class IntroStylesOfferTests: XCTestCase {
             asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100), duration: 6),
             url: URL(fileURLWithPath: "/fixture/original.mp4"))
         func squeezed(_ text: String) -> String { text.filter { !$0.isWhitespace } }
-        var sawDottedCapital = false
-        for option in offer.options {
-            XCTAssertTrue(session.applyIntroStyle(option), option.key)
+        func drawnText() throws -> [String] {
             let clips = session.timelineClips.map { clip -> EditorClip in var clip = clip; clip.sourceClipIndex = 0; return clip }
             let live = try compiler().compile(document: session.document, clips: clips, items: session.timelineItems,
                                               sources: [0: source], deviceCaptions: true).recipe.textLayers
-            let drawn = live.map { squeezed($0.runs.map(\.text).joined()) }.sorted()
+            return live.map { squeezed($0.runs.map(\.text).joined()) }.sorted()
+        }
+        var sawDotlessCapital = false
+        for option in offer.options {
+            XCTAssertTrue(session.applyIntroStyle(option), option.key)
+            let drawn = try drawnText()
             let served = try XCTUnwrap(option.preview).layers.map { squeezed($0.runs.map(\.text).joined()) }.sorted()
             XCTAssertEqual(drawn, served, "\(option.key): the live preview draws the server's preview text")
-            sawDottedCapital = sawDottedCapital || drawn.contains { $0.contains("TRENDİ") }
+            sawDotlessCapital = sawDotlessCapital || drawn.contains { $0.contains("YILIN") }
         }
-        XCTAssertTrue(sawDottedCapital, "'trendi' in a caps pair is 'TRENDİ', not 'TRENDI'")
+        XCTAssertTrue(sawDotlessCapital, "'yılın' in a caps pair is 'YILIN' (dotless ı), as the server draws it")
+
+        // The fixture's title has no dotted i in a caps line, so the rule is checked on her own edit of a caps look:
+        // 'trendi' is 'TRENDİ', not 'TRENDI'.
+        let caps = try XCTUnwrap(offer.options.first { option in
+            option.rows.first?.objectValue?["text_case"] == .string("upper")
+        })
+        XCTAssertTrue(session.applyIntroStyle(caps))
+        let first = try XCTUnwrap(session.introStyleTitleRows.first)
+        session.updateTextContent(id: first.id, content: "trendi")
+        XCTAssertTrue(try drawnText().contains { $0.contains("TRENDİ") }, "a Turkish caps line draws the dotted capital")
     }
 }

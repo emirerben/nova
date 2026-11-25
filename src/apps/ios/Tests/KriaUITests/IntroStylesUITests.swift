@@ -94,13 +94,15 @@ final class IntroStylesUITests: XCTestCase {
         XCTAssertTrue(none.waitForExistence(timeout: 15), "the offer loads")
         let tiles = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'intro-style-option-'"))
         XCTAssertGreaterThanOrEqual(tiles.count, 4, "three or more looks plus none")
-        XCTAssertTrue(waitFor(app.buttons["intro-style-option-serif_italic"], "value == %@", "Preview drawn over your clip", timeout: 20),
-                      "a tile is drawn over her clip; reads \(app.buttons["intro-style-option-serif_italic"].value ?? "nil")")
-        XCTAssertTrue(app.buttons["intro-style-option-grotesk_hand"].label.hasSuffix("recommended"))
+        let looks = try options("offer_talking_en")
+        let recommended = try XCTUnwrap(looks[0]["key"] as? String)
+        XCTAssertTrue(waitFor(app.buttons["intro-style-option-\(recommended)"], "value == %@", "Preview drawn over your clip", timeout: 20),
+                      "a tile is drawn over her clip; reads \(app.buttons["intro-style-option-\(recommended)"].value ?? "nil")")
+        XCTAssertTrue(app.buttons["intro-style-option-\(recommended)"].label.hasSuffix("recommended"),
+                      "the first look is the recommended one; reads \(app.buttons["intro-style-option-\(recommended)"].label)")
         attach(app, "Intro styles panel (English)")
 
         // 3: the second look, then Save: the body carries its rows.
-        let looks = try options("offer_talking_en")
         let second = try XCTUnwrap(looks[1]["key"] as? String)
         app.buttons["intro-style-option-\(second)"].tap()
         XCTAssertTrue(waitFor(app.buttons["intro-style-option-\(second)"], "selected == true", timeout: 10), "the tapped look is marked")

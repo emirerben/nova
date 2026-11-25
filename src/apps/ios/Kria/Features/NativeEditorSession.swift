@@ -8503,8 +8503,6 @@ enum EditorOpenIntent { case warm, open }
     /// The title (baseline + words + window) the shown offer was built for, and the one a request is in flight for.
     var introStylesOfferContext: String?
     var introStylesLoadContext: String?
-    /// Rows the panel put in the document with earlier taps; the next tap replaces them with the same swap.
-    var introStylesInsertedIDs: Set<String> = []
     /// The intro-styles route for this variant; nil without a signed-in target.
     var introStylesAPI: ((IntroStylesRequest) async throws -> IntroStylesResponse)? {
         guard let api, let itemID, let variantKey else { return nil }

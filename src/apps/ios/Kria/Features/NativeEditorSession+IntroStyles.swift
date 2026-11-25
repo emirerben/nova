@@ -120,17 +120,20 @@ extension NativeEditorSession {
     // MARK: Apply
 
     /// Puts `option.rows` in the title's place as ONE undoable change, raw: no `source_params` key is dropped on the
-    /// way. Removes only this offer's `replace_ids` and the rows an earlier tap in this panel inserted (all in the
-    /// offer's title family), never a protected row, and writes no deletion record (a text row is replaced by the lane
-    /// Save sends). Returns false, changing nothing, when the offer no longer fits the document.
+    /// way. Removes every row of the offer's title family that is in the document now (the stack on screen, whether it
+    /// is the title as loaded or an earlier pick, even one made before the panel was closed and opened again), never a
+    /// protected row, and clears any pending deletion of an id the look puts back (Save would drop that line from the
+    /// lane). Returns false, changing nothing, when the offer no longer fits the document.
     @discardableResult
     func applyIntroStyle(_ option: IntroStylesOffer.Option) -> Bool {
         guard canOfferIntroStyles, let offer = introStylesCurrentOffer, offer.options.contains(option) else { return false }
         let incoming = EditorDocument.textElements(fromRows: option.rows)
         guard incoming.count == option.rows.count, !incoming.isEmpty,
               incoming.allSatisfy({ IntroStyleFamily.family(of: $0.id) == offer.titleFamily }) else { return false }
-        var removable = Set(offer.replaceIDs).union(introStylesInsertedIDs).union(incoming.map(\.id))
-        removable = removable.filter { IntroStyleFamily.family(of: $0) == offer.titleFamily }
+        let incomingIDs = Set(incoming.map(\.id))
+        let onScreen = introStyleTitleRows.map(\.id)
+        let removable = Set(offer.replaceIDs).union(onScreen).union(incomingIDs)
+            .filter { IntroStyleFamily.family(of: $0) == offer.titleFamily }
         // A protected title row cannot be replaced: refuse the whole change rather than half apply it.
         if document.textElements.contains(where: { removable.contains($0.id) && $0.isReadOnly }) { return false }
         let applied = transactDocument(sections: [.text]) { doc in
@@ -138,9 +141,9 @@ extension NativeEditorSession {
             let position = first.map { doc.textElements[..<$0].filter { !removable.contains($0.id) }.count } ?? doc.textElements.count
             doc.textElements.removeAll { removable.contains($0.id) }
             doc.textElements.insert(contentsOf: incoming, at: min(position, doc.textElements.count))
+            doc.deletions.removeAll { $0.kind == "text" && incomingIDs.contains($0.id) }
         }
         guard applied else { return false }
-        introStylesInsertedIDs = Set(incoming.map(\.id))
         introStylesOfferContext = introStylesContext()
         replayIntroStyle(titleID: incoming[0].id)
         return true
@@ -151,10 +154,5 @@ extension NativeEditorSession {
         guard let start = introStyleStartTime(titleID: titleID) else { return }
         seek(to: start)
         if !isPlaying { togglePlayback() }
-    }
-
-    /// Forgets what this panel inserted (the panel closed): a later open starts from the document as it is.
-    func finishIntroStyles() {
-        introStylesInsertedIDs = []
     }
 }
