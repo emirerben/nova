@@ -616,10 +616,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
-        let card = app.buttons["format-montage"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        app.chooseFormat("montage")
         let chooseVideos = app.buttons["choose-videos"]
         XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
         chooseVideos.tap()
@@ -690,10 +687,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
-        let card = app.buttons["format-montage"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        app.chooseFormat("montage")
         let chooseVideos = app.buttons["choose-videos"]
         XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
         chooseVideos.tap()
@@ -737,10 +731,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
-        let card = app.buttons["format-montage"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        app.chooseFormat("montage")
         func allowFullAccess(_ alert: XCUIElement) -> Bool {
             guard alert.buttons.count == 3 else { return false }
             alert.buttons.element(boundBy: 1).tap()
@@ -811,10 +802,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_SEND_DELAY"] = "4"
         app.launch()
         createFreshChat(in: app)
-        let card = app.buttons["format-montage"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        app.chooseFormat("montage")
         func allowFullAccess(_ alert: XCUIElement) -> Bool {
             guard alert.buttons.count == 3 else { return false }
             alert.buttons.element(boundBy: 1).tap()
@@ -943,10 +931,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_TALKING_MAX_CLIPS"] = "1"
         app.launch()
         createFreshChat(in: app)
-        let card = app.buttons["format-talking_to_camera"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        app.chooseFormat("talking_to_camera")
         let chooseVideos = app.buttons["choose-videos"]
         XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
         chooseVideos.tap()
@@ -1040,10 +1025,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
-        let card = app.buttons["format-talking_to_camera"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        app.chooseFormat("talking_to_camera")
         XCTAssertTrue(app.staticTexts["Record yourself talking, or upload that video. Add clips to show while you talk."].waitForExistence(timeout: 5),
                       app.debugDescription)
         XCTAssertTrue(app.staticTexts["Up to 10 clips"].exists)
@@ -1094,7 +1076,7 @@ final class CreationUITests: XCTestCase {
             app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
             app.launch()
             createFreshChat(in: app)
-            app.buttons["format-montage"].tap()
+            app.chooseFormat("montage")
             let next = app.buttons["Send clips"]
             XCTAssertTrue(next.waitForExistence(timeout: 5))
             next.tap()
@@ -1120,7 +1102,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_RENDER_SHAPE_EXPECT"] = expect
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5), file: file, line: line)
         next.tap()
@@ -1176,7 +1158,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_FIXTURE_BRIEF"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -1292,7 +1274,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
 
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
@@ -1313,7 +1295,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
 
         let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "won\u{2019}t be sent", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 8))
@@ -1339,7 +1321,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_FIXTURE_UPLOAD_FAILURE"] = "record"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
 
         let banner = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS[c] %@", "couldn\u{2019}t upload", "couldn\u{2019}t be")).firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 8))
@@ -1443,7 +1425,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
         send.tap()
@@ -1513,7 +1495,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
 
         let receipt = app.descendants(matching: .any)["chat-media-fixture-clip"]
         XCTAssertTrue(receipt.waitForExistence(timeout: 5))
@@ -1547,7 +1529,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = capability
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -1912,7 +1894,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -2041,7 +2023,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -2109,7 +2091,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -2151,7 +2133,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_SLOW_CREATION"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -2246,7 +2228,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_EXPIRED_APPROVAL"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
             let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -2336,7 +2318,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertGreaterThan(lipsync.frame.minX, slider.frame.minX, "Lip-sync is the far-right card, after Slider")
         for _ in 0..<5 where !lipsync.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
         XCTAssertTrue(lipsync.isHittable, "the far-right card can be scrolled to")
-        lipsync.tap()
+        app.chooseFormatCard(lipsync)
 
         let bubble = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Let’s make a lip-sync video")).firstMatch
         XCTAssertTrue(bubble.waitForExistence(timeout: 10), "choosing the card posts its sentence")
@@ -2372,10 +2354,7 @@ final class CreationUITests: XCTestCase {
         // transcript control — the format card should still select immediately.
         composer.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        let card = app.buttons["format-montage"]
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        XCTAssertTrue(card.waitForExistence(timeout: 5))
-        card.tap()
+        app.chooseFormat("montage")
         XCTAssertTrue(app.buttons["choose-videos"].waitForExistence(timeout: 5))
     }
 
@@ -2435,7 +2414,7 @@ final class CreationUITests: XCTestCase {
                                  "KRIA_SUGGESTION_CHIPS": "1", "KRIA_SUGGESTION_CHIPS_PENDING": "hold"]
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         XCTAssertTrue(app.buttons["Let Kria decide"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Add captions"].exists)
         XCTAssertFalse(app.buttons["Add sound effects"].exists)
@@ -2453,7 +2432,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
 
         // Pending rendering is checked separately with a held server response. Polling may
         // finish before XCUITest observes it; this journey starts with the delivered set.
@@ -2509,7 +2488,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
 
         let chip = app.buttons["Let Kria decide"]
         XCTAssertTrue(chip.waitForExistence(timeout: 10))
@@ -2554,7 +2533,7 @@ final class CreationUITests: XCTestCase {
             app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
             app.launch()
             createFreshChat(in: app)
-            app.buttons["format-montage"].tap()
+            app.chooseFormat("montage")
             let chip = app.buttons["Let Kria decide"]
             XCTAssertTrue(chip.waitForExistence(timeout: 10), name)
             XCTAssertFalse(app.staticTexts["Recommended"].exists, "no Recommended tag on a chip (\(name))")
@@ -2576,7 +2555,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS_ECHO"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
 
         let captions = app.buttons["Add captions"]
         XCTAssertTrue(captions.waitForExistence(timeout: 15))
@@ -2811,7 +2790,7 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment.merge(environment) { _, new in new }
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -2886,7 +2865,7 @@ final class CreationUITests: XCTestCase {
         if let cancel { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] = cancel }
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let next = app.buttons["Send clips"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         next.tap()
@@ -3398,7 +3377,7 @@ final class CreationUITests: XCTestCase {
                                  "KRIA_CHAT_FIXTURE_MEDIA": "1", "KRIA_CHAT_SEND_DELAY": "15"]
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let composer = app.textFields["Message Kria"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         composer.tap()
@@ -3582,7 +3561,7 @@ final class CreationUITests: XCTestCase {
                                  "KRIA_CHAT_SEND_FAILURE": mode]
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        app.chooseFormat("montage")
         let composer = app.textFields["Message Kria"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         composer.tap()

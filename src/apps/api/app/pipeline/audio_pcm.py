@@ -18,8 +18,12 @@ def decode_pcm_f32(
     sr: int = DEFAULT_SAMPLE_RATE,
     *,
     timeout_s: float = 60.0,
+    highpass_hz: float | None = None,
 ) -> np.ndarray:
     """Return ``path``'s audio as mono float32 samples at ``sr`` Hz.
+
+    ``highpass_hz`` runs ffmpeg's ``highpass`` filter first (KRI-1524: the pause measure of a
+    hot take reads the same 90 Hz high-passed audio as the acceptance definition).
 
     Returns an empty array when ffmpeg exits non-zero or produces no audio
     (missing audio stream, unreadable file). A hung ffmpeg raises
@@ -35,6 +39,7 @@ def decode_pcm_f32(
             "-i",
             path,
             "-vn",
+            *(["-af", f"highpass=f={highpass_hz:g}"] if highpass_hz else []),
             "-ac",
             "1",
             "-ar",

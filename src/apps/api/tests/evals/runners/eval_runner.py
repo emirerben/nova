@@ -144,6 +144,7 @@ class CassetteModelClient(ModelClient):
         self.tokens_out = tokens_out
         self.invocations = 0
         self.prompt_sha: str | None = None
+        self.response_schema: dict[str, Any] | None = None
 
     def invoke(
         self,
@@ -157,10 +158,12 @@ class CassetteModelClient(ModelClient):
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
         timeout_s: float = 30.0,
+        response_schema: dict[str, Any] | None = None,
     ) -> ModelInvocation:
         self.invocations += 1
         if self.invocations == 1:
             self.prompt_sha = prompt_sha(prompt)
+            self.response_schema = response_schema  # an agent that binds a per-call schema
         if self.invocations > 1:
             raise TerminalError("CassetteModelClient: agent retried more than once during replay")
         return ModelInvocation(
@@ -314,6 +317,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.intro_writer import IntroTextWriterAgent
 
         return IntroTextWriterAgent
+    if agent_name == "nova.compose.intro_scene":
+        from app.agents.intro_scene_designer import IntroSceneDesignerAgent
+
+        return IntroSceneDesignerAgent
     if agent_name == "nova.compose.visual_treatment_planner":
         from app.agents.visual_treatment_planner import VisualTreatmentPlannerAgent
 

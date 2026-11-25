@@ -179,9 +179,7 @@ final class DeviceRenderUITests: XCTestCase {
     /// the device render status card that replaces the cloud rendering stage.
     private func startPhoneEdit(in app: XCUIApplication) -> XCUIElement {
         createFreshChat(in: app)
-        let montage = app.buttons["format-montage"]
-        XCTAssertTrue(montage.waitForExistence(timeout: 10))
-        montage.tap()
+        app.chooseFormat("montage")
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 10))
         send.tap()

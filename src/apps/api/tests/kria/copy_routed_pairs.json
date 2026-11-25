@@ -2892,6 +2892,21 @@
    "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
   ],
   [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you after if any stay longer",
+   "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır (gürültülü çekimler hariç), daha uzun kalan olursa sonra sana söylerim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Choose Clean up speech when you approve: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” seçeneğini seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "If Clean up speech is offered when you approve, choose it: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” çıkarsa onu seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+  ],
+  [
    "app/kria/clip_ties.py",
    "More than one of your clips shows {shown}{more}. For each one, keep the clips to use ticked and untick the others.",
    "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klipleri işaretli bırak, diğerlerinin işaretini kaldır."

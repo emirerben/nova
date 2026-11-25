@@ -131,7 +131,7 @@ def test_worker_stores_long_receipt_separately_and_counts_the_cut(monkeypatch):
     monkeypatch.setattr(settings, "speech_cleanup_long_pauses_enabled", True)
     seen: dict = {}
 
-    def apply(plan, _path, _words, _duration, *, min_pause_s=None):
+    def apply(plan, _path, _words, _duration, *, min_pause_s=None, relative_noise=False):
         seen["min_pause_s"] = min_pause_s
         added = sc.Removal(5.0, 5.2, sc.REASON_SILENCE)
         keeps = [
