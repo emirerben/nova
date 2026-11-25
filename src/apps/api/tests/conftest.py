@@ -45,6 +45,9 @@ os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key")
 # Here, before any app module reads DATABASE_URL.
 from tests import _worker_database  # noqa: E402
 
+if os.environ.get("PYTEST_XDIST_WORKER") == os.environ.get("EXP_LATE_SELECT_FOR", "none"):
+    import app.config  # noqa: F401  throwaway red control: the app is imported before the move
+
 if os.environ.get("PYTEST_XDIST_WORKER") != os.environ.get("EXP_BREAK_SELECT_FOR", "none"):
     # Throwaway red control: the named worker is left on the shared database.
     _worker_database.select(os.environ)

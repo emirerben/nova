@@ -6,17 +6,15 @@ permissions:
   contents: read
 jobs:
   real:
-    name: real job, switch on, api (${{ matrix.shard }}) broken=${{ matrix.broken }}
+    name: real job, switch on, api (${{ matrix.shard }}) late=${{ matrix.late }}
     runs-on: ubuntu-latest
     timeout-minutes: 80
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [3]
         broken: [none]
-        include:
-          - shard: 3
-            broken: gw1
+        late: [none, gw2]
     services:
       postgres:
         image: postgres:16-alpine
@@ -100,6 +98,7 @@ jobs:
           # variable CI_API_DB_PER_WORKER to "on" to use it; anything else is the shared one.
           NOVA_TEST_DB_PER_WORKER: "1"
           EXP_BREAK_SELECT_FOR: ${{ matrix.broken }}
+          EXP_LATE_SELECT_FOR: ${{ matrix.late }}
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nova_test
           REDIS_URL: redis://localhost:6379
           STORAGE_BUCKET: nova-test
