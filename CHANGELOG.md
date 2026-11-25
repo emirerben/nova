@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.15.0] - 2026-11-25
+
+### Changed
+- fix(ios): Save tapped while the editor is still loading runs when it is ready (KRI-1617) (#2518) <!-- release-pr: 2518 -->
+
 ## [0.90.14.0] - 2026-11-24
 
 ### Changed
