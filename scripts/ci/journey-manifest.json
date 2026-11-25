@@ -4058,6 +4058,25 @@
       ]
     },
     {
+      "id": "kri-1633-intro-styles-api",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_styles.py tests/pipeline/test_intro_styles_ios_fixture.py tests/pipeline/test_intro_scene_pick.py tests/services/test_intro_styles_contract.py tests/services/test_intro_styles_edit_ops.py tests/routes/test_intro_styles_e2e.py",
+      "paths": [
+        "src/apps/api/app/pipeline/intro_styles.py",
+        "src/apps/api/app/routes/intro_styles.py",
+        "src/apps/api/app/cli/intro_styles_fixtures.py",
+        "src/apps/api/app/cli/verify_intro_styles.py",
+        "src/apps/api/app/pipeline/intro_scene_pick.py",
+        "src/apps/api/tests/pipeline/test_intro_styles.py",
+        "src/apps/api/tests/pipeline/test_intro_styles_ios_fixture.py",
+        "src/apps/api/tests/services/test_intro_styles_contract.py",
+        "src/apps/api/tests/services/test_intro_styles_edit_ops.py",
+        "src/apps/api/tests/routes/test_intro_styles_e2e.py",
+        "src/apps/api/tests/fixtures/kri1633_old_stamp_rows.json",
+        "src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json"
+      ]
+    },
+    {
       "id": "kri-1614-intro-variety-intake",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_intro_variety.py tests/pipeline/test_intro_intake.py tests/pipeline/test_intro_scene.py",
