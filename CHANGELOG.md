@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.26.0] - 2026-11-26
+
+### Changed
+- feat(ios): dim a clip or photo 0-100% in the editor and from chat, drawn on the phone under text (KRI-1608) (#2499) <!-- release-pr: 2499 -->
+
 ## [0.90.25.0] - 2026-11-26
 
 ### Changed
