@@ -4841,7 +4841,9 @@ What the creator sees: a clip or photo drawn darker evenly, 0 to 100% (100% is b
 and drawings stay at full brightness. This is separate from a text design's scrim (`TextScrim`), which is unchanged.
 
 Wire: the editor row stores `clips[i]["dim"]`, a strength 0.01..1 in hundredths, absent when off
-(`app.kria.clip_dim`, `Kria/Core/ClipDim.swift`, shared fixture `tests/fixtures/clip-dim-row/v1.json`). A Save that
+(`app.kria.clip_dim`, `Kria/Core/ClipDim.swift`, shared fixture `tests/fixtures/clip-dim-row/v1.json`). Both sides
+read a value the same way: negative is refused, below 0.01 is no dim, the rest rounds half up to hundredths as
+`floor(dim * 100 + 0.5) / 100` in doubles, and above 1 is refused. A Save that
 omits `dim` keeps the stored value; an explicit null (or 0) removes it. Every phone writer that recompiles row
 fields (`phone_authored_timeline`, `phone_guided_plan` through the guided segment, `phone_voiceover_cut`) copies it
 to `TimelineClip.dim`, the voiceover timeline projects it back to the row, and a Talking lane Save carries the
@@ -4850,7 +4852,9 @@ previous recipe's dims (`_with_previous_clip_dims`). An undimmed row compiles by
 Drawing: `RecipeVideoCompositor.dimmed` multiplies each ENCODED sRGB channel by `1 - dim` (the compositor works in
 linear light, so it converts, multiplies and converts back; a linear multiply would leave 50% at about 73%). It runs
 on the clip's picture and its tilt backdrop, before the clip's fade or transition blend and below every text layer.
-A Talking speaker's person mask is found on the undimmed picture. `LivePreviewComposition` takes a dim change in
+A Talking speaker's person mask and the text-behind-subject matte are both found on the undimmed picture (the text
+matte's scene is a second below-text pass with the dims removed that replays the frame's speaker matte answers).
+`LivePreviewComposition` takes a dim change in
 place, so the editor slider updates the paused preview without a rebuild.
 
 Editor: `clips.dim` in `editor_capabilities` (same edits as `clips.tilt`: device render, an authored timeline, a
@@ -4862,8 +4866,9 @@ build replacing the timeline of a dimmed edit or polling a dimmed recipe.
 
 Chat: `patch_slots` `{"dim": 0.4}` or `{"dim": null}` with the usual selectors (`{"all": true}` for the whole
 edit, `slot_indexes` for one clip, EDITOR FOCUS for "this clip"), taught by `prompts/edit_copilot_ops/clip_dim.txt`
-only while `timeline_patch_capabilities.dim` is open. Receipts read "Dimmed 3 clips 40%", "Removed the dim from
-clip 2".
+only while `timeline_patch_capabilities.dim` is open. In tools mode the `patch_slots` tool offers `dim` (nullable)
+only while it is open too (`offered_patch_keys`, shared with the parser). Receipts read "Dimmed 3 clips 40%",
+"Removed the dim from clip 2".
 
 Rollout order: physical-iPhone preview and export check, then add `clipDim` to `PHONE_RENDER_VERIFIED_FEATURES`
 (a JSON array) and set `CLIP_DIM_ENABLED=true` (api + worker, restart), then ship the TestFlight build at the
