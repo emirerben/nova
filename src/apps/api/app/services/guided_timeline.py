@@ -251,6 +251,11 @@ def build_guided_segments(
             segment["tilt"] = inherited_segment["tilt"]
         if segment.get("tilt") and segment["look_preset"] != "none":
             raise GuidedTimelineError("TIMELINE_TILT_WITH_LOOK")
+        if "dim" in slot.model_fields_set:
+            if slot.dim is not None:
+                segment["dim"] = slot.dim
+        elif isinstance(inherited_segment, dict) and inherited_segment.get("dim"):
+            segment["dim"] = inherited_segment["dim"]
         if playback_rate_set and slot.playback_rate is not None:
             segment["playback_rate"] = playback_rate
         elif not playback_rate_set and isinstance(inherited_segment, dict):

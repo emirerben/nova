@@ -133,7 +133,7 @@ import XCTest
         XCTAssertTrue(carousel.waitForExistence(timeout: 12))
         expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: carousel); waitForExpectations(timeout: 20)
         carousel.swipeLeft()
-        XCTAssertTrue(app.buttons["format-slides"].waitForExistence(timeout: 5)); app.buttons["format-slides"].tap()
+        app.chooseFormat("slides")
         XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 12), "the one slide layout appears with its tool dock")
         if save { saveDraft(app) }
         return app

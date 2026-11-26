@@ -867,6 +867,11 @@ class Settings(BaseSettings):
     # read once at dispatch and stamped, so a worker never re-reads it. Off = the seeded pick,
     # byte-identical to KRI-1611.
     intro_scene_model_enabled: bool = False
+    # KRI-1633: "Try intro styles" (`pipeline/intro_styles`, `routes/intro_styles`) reuses the two
+    # flags above and needs a build at this protocol (set by scripts/bump-protocol.py). The
+    # `intro_styles` editor capability is sent, and the route answers, only at or above it;
+    # INTRO_STYLES_MIN_CLIENT_PROTOCOL=999 removes the entry for every build.
+    intro_styles_min_client_protocol: int = 57
 
     def intro_scene_for(self, user_id: object) -> bool:
         if not self.intro_scene_enabled or user_id is None:
@@ -1303,6 +1308,17 @@ class Settings(BaseSettings):
     # round-trips `zoom`). A save carrying a zoomed tilt from an older build, or one that would
     # overwrite a stored zoom, answers 426 `client_update_required` (`slide_tilt_zoom`).
     media_tilt_zoom_min_client_protocol: int = 33
+    # Clip dim: a main-track clip or photo drawn darker by a strength 0..1 (`TimelineClip.dim`,
+    # each encoded pixel times `1 - dim`, under text, captions, stickers and drawings), drawn ON
+    # DEVICE by `KriaMediaEngine` only (the cloud has no `clipDim`). The editor's `clips.dim`
+    # and the chat's patch_slots `dim` need this flag on, `clipDim` in
+    # PHONE_RENDER_VERIFIED_FEATURES (a JSON array; set after a physical-device preview + export
+    # check) and a build declaring protocol >= `clip_dim_min_client_protocol`. A pinned recipe
+    # that carries a dim answers 426 `client_update_required` (`clip_dim`) to an older build.
+    # Default FALSE (dark ship). Apply: token first, then `CLIP_DIM_ENABLED=true` (api + worker)
+    # + restart. Rollback = `...=false` + restart; recipes already pinned keep their dim.
+    clip_dim_enabled: bool = False
+    clip_dim_min_client_protocol: int = 58
     # KRI-1350: colour moments on a phone Talking edit -- black-and-white / warm / faded windows
     # of the finished video with white-flash, light-leak or dip-to-black edges, an end fade to
     # black, and an optional library sound locked to an edge. Kill switch for the chat op that

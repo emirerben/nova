@@ -115,6 +115,12 @@ INFORMATIVE_TEXT_DESIGNS_PROTOCOL = 55
 # text-only cards.
 TEXT_DESIGN_PICKER_PROTOCOL = 56
 
+INTRO_STYLES_PROTOCOL = 57
+
+# The first build that draws a clip's `dim` (the `clipDim` capability) and keeps a row's `dim`
+# on Save; an older build would fail the whole recipe on the unknown token.
+CLIP_DIM_PROTOCOL = 58
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

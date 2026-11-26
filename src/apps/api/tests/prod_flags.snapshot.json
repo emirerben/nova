@@ -161,6 +161,14 @@
       "source": "default",
       "value": true
     },
+    "clip_dim_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "clip_dim_min_client_protocol": {
+      "source": "default",
+      "value": 58
+    },
     "clip_exposure_fact_enabled": {
       "source": "default",
       "value": false
@@ -484,6 +492,10 @@
     "intro_scene_user_ids": {
       "source": "default",
       "value": []
+    },
+    "intro_styles_min_client_protocol": {
+      "source": "default",
+      "value": 57
     },
     "ios_device_only_mode": {
       "source": "decisions-md:2026-11-02",

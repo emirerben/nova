@@ -18,6 +18,7 @@
     "FootageSourcesUITests": "creation",
     "GamedayAddClipUITests": "editor",
     "GeneratedMediaUITests": "creation",
+    "IntroStylesUITests": "editor",
     "LongApprovalCardUITests": "creation",
     "MomentOrderUITests": "creation",
     "NativeCaptionAnimationUITests": "editor",
@@ -29,6 +30,7 @@
     "NativeSourceWindowUITests": "editor",
     "NativeSpeedUITests": "editor",
     "NativeTalkingRangeUITests": "editor",
+    "NativeDimUITests": "editor",
     "NativeTiltUITests": "editor",
     "NativeUpdateRequiredUITests": "projects",
     "ObjectMarkUITests": "creation",
@@ -56,6 +58,35 @@
     "TeleprompterUITests": "creation",
     "VoiceoverScriptCardUITests": "creation",
     "WhatsNewUITests": "projects"
+  },
+  "also": {
+    "CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo": "editor",
+    "CreationUITests/testEditorAIActivityCompletingLifecycleCapture": "editor",
+    "CreationUITests/testEditorAIActivityCompletingOpaqueCapture": "editor",
+    "CreationUITests/testEditorAIActivityCompletingReducedMotionCapture": "editor",
+    "CreationUITests/testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft": "editor",
+    "CreationUITests/testEditorAIActivityUsesTheLiveRequestAcrossRepeatedPromptsAndBackgrounding": "editor",
+    "CreationUITests/testEditorAIHaloWorkingAndOpaqueAccessibilitySurfaces": "editor",
+    "CreationUITests/testEditorChatDraftPersistsWhenReturningToTheMainChat": "editor",
+    "CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries": "editor",
+    "CreationUITests/testGeneratedImageReviewOpensFromTheEditorsChatSheet": "editor",
+    "CreationUITests/testOpenEditorInsideTheEditorsKriaSheetReturnsToTheEditor": "editor",
+    "CreationUITests/testOpenEditorInsideTheEditorsKriaSheetWithKeyboardOpenReturnsToTheEditor": "editor",
+    "CreationUITests/testTheEditorHasNoImproveButtonAndItsChatSheetOffersTheSuggestionChips": "editor",
+    "DesignPickerUITests/testFourDesignsRenderOnThePhoneThePickRendersAndHerHeadingColourSticks": "editor",
+    "SlidePostUITests/testAddStyleAndApplyTextToAllSlides": "editor",
+    "SlidePostUITests/testBendSliderCurvesTheTextAndApplyToAllCopiesIt": "editor",
+    "SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching": "editor",
+    "SlidePostUITests/testReEnteringAfterBackAlwaysLandsInTheSlideEditor": "editor",
+    "SlidePostUITests/testReadySlidePostOpenedFromDrawerNeverReachesVideoEditor": "editor",
+    "SlidePostUITests/testRichLayoutFromTheDrawerWhenCapabilitiesFailToLoad": "editor",
+    "SlidePostUITests/testRichLayoutFromTheGalleryForEveryCapabilityState": "editor",
+    "SlidePostUITests/testSlideScreensAtAccessibilityTypeSizeStayReachable": "editor",
+    "SlidePostUITests/testSlideTextSelectDragPinchRotateAndDeselect": "editor",
+    "SlidePostUITests/testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField": "editor",
+    "SlidePostUITests/testTappingTextOnACreatedPostOpensEditTextWithKeyboard": "editor",
+    "SlidePostUITests/testTiltZoomShowsOnlyWithItsCapabilityAndSurvivesSaveAndReset": "editor",
+    "SlidePostUITests/testTypedLongLineWrapsInsideTheFrameAndShrinksToFewerRows": "editor"
   },
   "overrides": {
     "AccountPrivacyUITests/testATypeFollowsAllTextUntilItIsChangedByHand": "creation",
@@ -229,6 +260,10 @@
     "src/apps/ios/Kria/Features/DesignPreviewStrip.swift": "creation",
     "src/apps/ios/Kria/Features/DesignPickerUITestFixture.swift": "creation",
     "src/apps/ios/Kria/Core/ChoiceQuestion.swift": "creation",
-    "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift": "creation"
+    "src/apps/ios/Kria/Features/ChoiceQuestionCard.swift": "creation",
+    "src/apps/ios/Kria/Core/IntroStyles.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorSession+IntroStyles.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeIntroStylesPanel.swift": "editor",
+    "src/apps/ios/Kria/Features/IntroStylesUITestFixture.swift": "editor"
   }
 }

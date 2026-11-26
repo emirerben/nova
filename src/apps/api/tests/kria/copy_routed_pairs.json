@@ -2372,6 +2372,11 @@
    "{v1} dediğinde ekranda başka bir klip var ({step_start_s:.1f}–{step_end_s:.1f} sn); söylediğin klip {shown_at} sn arasında oynuyor"
   ],
   [
+   "app/kria/narrated_render_checks.py",
+   "I couldn't find {v1} in the finished voiceover; the clip you named plays at {shown_at} s",
+   "Bitmiş seslendirmede {v1} sözünü bulamadım; söylediğin klip {shown_at} sn arasında oynuyor"
+  ],
+  [
    "app/kria/brief_checks.py",
    "Left out {missing} of your {total} clips",
    "{total} klibinden {missing} tanesi dışarıda kaldı"
@@ -2935,6 +2940,31 @@
    "app/kria/brief_checks.py",
    "If Clean up speech is offered when you approve, choose it: every pause is cut to about 0.3 s unless a take is noisy",
    "Onaylarken “Konuşmayı temizle” çıkarsa onu seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "A dim is a strength from 0 to 1: 0.4 is 40% darker, 1 is black.",
+   "Karartma 0 ile 1 arasında bir güçtür: 0.4 yüzde 40 daha koyu, 1 siyahtır."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "I can't dim clips on this edit.",
+   "Bu videoda klipleri karartamıyorum."
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the dim from {who}",
+   "{who} karartması kaldırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the dim of {who}",
+   "{who} karartması değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Dimmed {who} {percent}%",
+   "{who} %{percent} karartıldı"
   ]
  ],
  "retired": [

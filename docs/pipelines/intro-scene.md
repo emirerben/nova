@@ -192,3 +192,79 @@ Renders the seeded pick and the model pick for each Talking fixture through the 
 unlabeled frames in shuffled order and random sides, with a sealed `key.json` (its sha256 is on the page
 and checked by `score`). `--demo` is a check of the tool on synthetic plates, never the compare.
 Real stills stay out of git. Done when five real Talking edits have been compared and Emir has decided.
+
+## Intro styles on tap (KRI-1633)
+
+The automatic single pick (KRI-1611) is retired. Emir's ruling (2026-11-25): Kria OFFERS several
+fitted intro looks on tap ("Try intro styles") plus "No intro style", for any video with an
+approved title (not only Talking), English and Turkish; the creator picks one; it applies as
+ordinary editable title rows and her edits override it. No model: the model arm
+(`INTRO_SCENE_MODEL_ENABLED`) stays off and the offer never imports its agent. iPhone only.
+
+**Contract** (`app/pipeline/intro_styles.py`, `app/routes/intro_styles.py`; the failure-mode list
+F1-F26 with each guard is in the module docstring):
+
+* Capability: `editor_capabilities.intro_styles: true`, present only when `INTRO_SCENE_ENABLED` +
+  `INTRO_SCENE_USER_IDS` admit the account, the request's `X-Kria-Client-Protocol` is at or above
+  `INTRO_STYLES_MIN_CLIENT_PROTOCOL` (`INTRO_STYLES_PROTOCOL`, assigned by
+  `scripts/bump-protocol.py`; `=999` is the kill switch), the variant is a phone portrait variant
+  on a route below, its title lane is saveable and she asked for no look for this title.
+* `POST /plan-items/{item}/variants/{variant}/intro-styles` `{version, base_generation,
+  title_rows}` answers up to 4 looks (distinct font pair, never the `pen` entrance) plus one
+  `none`, each with complete `TextElement` rows and a server-compiled `preview` (the A1-B1
+  PortableTextLayer shape; all or nothing, 192 KiB cap). It computes and STORES NOTHING. Gates in
+  order: 404 `intro_styles_disabled`, 426 `client_update_required`, the usual 404, 409
+  `baseline_conflict` (editor-commit's body), 422 `intro_styles_title_rows_invalid`; 10/min per IP,
+  60/hour per caller. Unavailable reasons: `not_phone_render`, `route_unsupported`,
+  `canvas_unsupported`, `no_title`, `title_look_asked`, `title_too_short`, `nothing_fits`,
+  `save_refused`.
+* Apply: the editor stages `option.rows` and her normal editor-commit Save persists them. Each row
+  carries `source_params.title_look.intro_style` so the next offer can mark the current look; line
+  1 also carries `restore`, the title rows the look replaced. "No intro style" over a stack gives
+  `restore` back exactly (the worker's font, size and place are kept nowhere else) while the words
+  are still hers, else her words as one plain row under the pinned text policy (an approximation of
+  the route's builder, notably on montage).
+
+| Route | Title family | Face evidence | In |
+| --- | --- | --- | --- |
+| Talking (`subtitled`) | `opening-title` | saved `opening_title_placement.face_band` (canvas space) | yes |
+| Narrated (phone voiceover) | `narrated-title` | none (top-band zones only) | yes |
+| Guided story / unified montage | `guided-title` | none (top-band zones only) | yes |
+| Voiceover montage, speech montage, authored timelines, slides, cloud, landscape | | | no (a reason code) |
+
+Each look is compiled with `compile_intro_scene`, placed with the real `place_title_look` against
+the variant's own evidence (a stub sampler replays the saved face; the other text layers of the
+pinned recipe are avoided) and kept only on a clean receipt, then dry-run through the route's real
+phone Save on a detached copy (a refused look is dropped). Ink is the first light ink of the
+seeded order; nothing is measured on her footage at request time (KRI-1619 owns per-footage ink).
+A caption layer is never treated as her own title, even when it repeats her words; layers are
+matched whole, not by substring. Known v1 limit: placement works on layout boxes and a few script
+faces draw ink a hair outside them (under 1% of looks on random jobs); the tile is drawn over her
+frame so she can judge.
+
+**`has_text_ask`** is True only when `requested.title` holds `font_family`, `color`,
+`stroke_width` or `shadow_enabled` (`TITLE_LOOK_ASK_KEYS`). Saved preferences, `all_text` (the
+strategy writer's own knobs), a position and font lists never block; `excluded_fonts` only removes
+the pairs set in them. `stamp_intro_scene` now stamps only for the model arm, so no new job gets a
+scene she did not pick; a KRI-1611 stamp still renders byte-identically (golden
+`tests/fixtures/kri1633_old_stamp_rows.json`).
+
+**Her edits win.** A stack is one text for the render contract (`intro_plain_text`; `any`
+requirements fall back to `stacked_title_matches` like `opening`). Chat ops and the Review Plan
+title field address every line of a title family: a style patch, an id selector, an index op on
+the title bar and the appearance group `titles` reach every line; a whole-title rewrite or
+`set_title` collapses the stack and a remove takes every line (edits aimed at one `-line-N` stay
+line edits).
+
+**Deliberately not gates:** `TITLE_LOOK_ENABLED` (it gates typed stacks and the worker's look pass;
+the Save path does not read it), the job's `informative_text_shapes` stamp (the live protocol gate
+replaces it), suggestion chips and cards.
+
+**Checks:** `make verify-intro-styles` (prod image; `.intro-styles-verify/{report.json,montage.png}`,
+eight negative controls (N7: captions that repeat her words; N8: "none" rebuilt without the saved title)), `tests/pipeline/test_intro_styles.py`, `tests/routes/test_intro_styles_e2e.py`
+(real PostgreSQL, three routes, EN and TR), `tests/services/test_intro_styles_{contract,edit_ops}.py`,
+and the generated iOS fixture `src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json`
+(`KRI1633_REGENERATE=1 pytest tests/pipeline/test_intro_styles_ios_fixture.py`).
+
+**Rollback:** `INTRO_SCENE_ENABLED=false` or `INTRO_STYLES_MIN_CLIENT_PROTOCOL=999` removes the
+key and the route answers 404/426; looks she already saved stay as her rows.

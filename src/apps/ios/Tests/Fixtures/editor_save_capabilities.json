@@ -841,6 +841,40 @@
       }
     },
     {
+      "editor": "dim a panel clip",
+      "id": "panel-dim",
+      "sections": {
+        "split_screen_sections": [
+          {
+            "duration_s": 4.0,
+            "id": "s",
+            "panel_count": 2
+          }
+        ],
+        "timeline_slots": [
+          {
+            "clip_index": 0,
+            "dim": 0.4,
+            "duration_s": 4.0,
+            "in_s": 0.0,
+            "slot_id": "bc45b530-b839-56e8-b91c-be02605aad9b",
+            "split_offset_s": 0.0,
+            "split_panel_index": 0,
+            "split_section_id": "s"
+          },
+          {
+            "clip_index": 2,
+            "duration_s": 4.0,
+            "in_s": 0.0,
+            "slot_id": "4ddb8b72-401b-599e-a110-b5f89f33f480",
+            "split_offset_s": 0.0,
+            "split_panel_index": 1,
+            "split_section_id": "s"
+          }
+        ]
+      }
+    },
+    {
       "editor": "full screen clips around a split section",
       "id": "full-screen-before-and-after",
       "sections": {

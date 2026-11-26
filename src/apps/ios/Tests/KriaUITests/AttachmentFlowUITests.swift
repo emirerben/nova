@@ -99,10 +99,7 @@ final class AttachmentFlowUITests: XCTestCase {
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
         newChat.tap()
-        let narrated = app.buttons["format-narrated"]
-        XCTAssertTrue(narrated.waitForExistence(timeout: 10))
-        if !narrated.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        narrated.tap()
+        app.chooseFormat("narrated")
         // With a clip attached the stage has no Upload row; the composer's + is the way in. Add voiceover opens
         // Add media on the voiceover step, and one swipe back is the footage step.
         let attach = app.buttons["chat-attach"]

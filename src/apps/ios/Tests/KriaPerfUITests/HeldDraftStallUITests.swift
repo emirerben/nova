@@ -40,6 +40,8 @@ final class HeldDraftStallUITests: XCTestCase {
             "KRIA_CHAT_REPLAY": "held-draft",
             "KRIA_CHAT_REPLAY_POLLS": "\(Self.polls)",
             "KRIA_PERF_COUNTERS": "1",
+            // Measured as UIKit ships it: the UI-test animation guard does a little work on every animation (KRI-1604).
+            "UI_TEST_ANIMATION_START_GUARD": "off",
         ]
         app.launch()
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))

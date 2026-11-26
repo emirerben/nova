@@ -38,6 +38,7 @@ from app.agents.model_registry import JSON_COPILOT_MODEL, cross_provider_fallbac
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
+from app.kria.clip_dim import stored_row_dim
 from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import prompt_language_line, say
 from app.pipeline.prompt_loader import load_prompt
@@ -159,7 +160,10 @@ log = structlog.get_logger()
 # v132 (KRI-1578): a phone Talking edit's song is the creator's own upload (YOUR SONG,
 # set_user_song); MUSIC shows library_closed=True while TALKING_LIBRARY_MUSIC_ENABLED is off, and
 # then a music ask is answered "send me the song you want", never swap_music.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-22-v132"
+# v133: CLIP DIM: patch_slots "dim" (a strength 0..1, null removes it) on one clip or every clip,
+# taught only where the snapshot's timeline_patch_capabilities opens `dim`
+# (prompts/edit_copilot_ops/clip_dim.txt); every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-24-v133"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1496,6 +1500,12 @@ def _format_slot_tilt(raw: object) -> str:
     return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{zoom}{behind})"
 
 
+def _format_slot_dim(raw: object) -> str:
+    """` dim=0.4` for a dimmed clip row, else nothing."""
+    dim = stored_row_dim(raw)
+    return "" if dim is None else f" dim={_fmt_num(dim)}"
+
+
 def _format_snapshot(snapshot: dict) -> str:
     if not isinstance(snapshot, dict) or not snapshot:
         return "(empty snapshot)"
@@ -1838,6 +1848,7 @@ def _format_snapshot(snapshot: dict) -> str:
                 f"transition_after={transition!r} "
                 f"transition_duration_s={_fmt_num(_first_number(slot, ('transition_duration_s',)))}"
                 f"{_format_slot_tilt(slot.get('tilt'))}"
+                f"{_format_slot_dim(slot.get('dim'))}"
                 f"{facts_text}"
                 f"{_context_row_suffix(slot, component_context_enabled)}"
             )

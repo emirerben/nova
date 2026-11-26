@@ -14,6 +14,30 @@ def test_exact_trusted_databases(name, host):
     assert validate_database_url(f"postgresql://test@{host}:5432/{name}", TRUSTED) == name
 
 
+@pytest.mark.parametrize("name", ["nova_gw0_test", "nova_gw3_test", "nova_gw15_test"])
+def test_the_api_shards_per_worker_databases_are_trusted_only_in_ci(name):
+    assert validate_database_url(f"postgresql://localhost/{name}", TRUSTED) == name
+    with pytest.raises((AssertionError, ValueError)):
+        validate_database_url(f"postgresql://localhost/{name}", {})
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "nova_gw_test",
+        "nova_gw16_test",
+        "nova_gw00_test",
+        "nova_gw0x_test",
+        "nova_gw0_test2",
+        "nova_journey_gw0_test",
+        "production_gw0_test",
+    ],
+)
+def test_a_look_alike_of_a_per_worker_database_is_refused(name):
+    with pytest.raises((AssertionError, ValueError)):
+        validate_database_url(f"postgresql://localhost/{name}", TRUSTED)
+
+
 def test_private_database_requires_no_ci_environment():
     assert validate_database_url(f"postgres://localhost/{PRIVATE}", {}) == PRIVATE
 

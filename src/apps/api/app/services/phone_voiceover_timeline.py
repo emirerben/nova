@@ -143,14 +143,18 @@ def _crop_field(clip: Any, binding: PhoneSourceBinding, canvas: Any) -> dict:
     """``{"source_crop": {...}}`` for a cropped clip, else nothing (KRI-44).
 
     A tilted clip also carries ``{"tilt": {...}}`` (KRI-1136), so the editor opens on it. Its
-    zoom (KRI-1169) is the part of ``transform.scale`` beyond the clip's letterbox scale.
+    zoom (KRI-1169) is the part of ``transform.scale`` beyond the clip's letterbox scale. A
+    dimmed clip carries its ``{"dim": ...}`` the same way.
     """
     crop = getattr(clip, "source_crop", None)
     fields = {"source_crop": crop.model_dump()} if crop is not None else {}
     letterbox = letterbox_scale(display_dims(binding.original), canvas)
     _, zoom = split_clip_scale(clip.transform.scale, letterbox)
-    tilt = row_tilt_from_clip(clip, zoom=zoom)
-    return {**fields, "tilt": tilt} if tilt is not None else fields
+    if (tilt := row_tilt_from_clip(clip, zoom=zoom)) is not None:
+        fields["tilt"] = tilt
+    if (dim := getattr(clip, "dim", None)) is not None:
+        fields["dim"] = dim
+    return fields
 
 
 def _selected_source_audio_ids(variant: dict) -> frozenset[str] | None:
