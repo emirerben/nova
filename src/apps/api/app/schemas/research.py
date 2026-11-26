@@ -186,3 +186,6 @@ class PreparedResearch(BaseModel):
     evidence_facts: list[ResearchFact] = Field(
         default_factory=list, max_length=30, exclude_if=lambda value: not value
     )
+    # CA-5: the creator kept none of the facts. Still pinned (``ready``, no texts), so the render
+    # shows no sourced text and never researches again. Omitted when false.
+    waived: bool = Field(default=False, exclude_if=lambda value: not value)

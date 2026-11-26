@@ -2038,6 +2038,11 @@
             "title": "Request Outcome Context",
             "type": "boolean"
           },
+          "research_selections": {
+            "default": false,
+            "title": "Research Selections",
+            "type": "boolean"
+          },
           "runtime_versions": {
             "items": {
               "enum": [
@@ -11401,6 +11406,30 @@
         "title": "ResearchFact",
         "type": "object"
       },
+      "ResearchSelectionIn": {
+        "additionalProperties": false,
+        "description": "The sourced facts the creator keeps on a research draft (CA-5): ``selection_id`` and the\n``fact_id`` values of its ``research_preview``. An id the preview never showed is ignored;\nan empty list continues without the facts.",
+        "properties": {
+          "kept_fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 24,
+            "title": "Kept Fact Ids",
+            "type": "array"
+          },
+          "selection_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Selection Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "selection_id"
+        ],
+        "title": "ResearchSelectionIn",
+        "type": "object"
+      },
       "ResearchSource": {
         "properties": {
           "title": {
@@ -14021,6 +14050,11 @@
           },
           "protected_region": {
             "$ref": "#/components/schemas/ProtectedRegionIn",
+            "default": null,
+            "nullable": true
+          },
+          "research_selection": {
+            "$ref": "#/components/schemas/ResearchSelectionIn",
             "default": null,
             "nullable": true
           },

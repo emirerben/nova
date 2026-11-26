@@ -16268,6 +16268,18 @@ def _check_research(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
         return None
     if prepared.status == "failed":
         return research_preview.blocker_receipt(prepared, req)
+    if prepared.waived:
+        # CA-5: the creator saw the sourced facts and kept none; the ask is settled as they chose.
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="You chose to continue without the sourced facts.",
+                tr="Kaynaklı bilgiler olmadan devam etmeyi seçtin.",
+            ),
+            verification="checked",
+            stage="applied",
+        )
     if not prepared.texts and not prepared.layers:
         return None
     return _receipt(req, "met", None, verification="checked", stage="applied")

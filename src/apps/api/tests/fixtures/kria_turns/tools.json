@@ -4212,6 +4212,30 @@
           "title": "RequestOutcomeContext",
           "type": "object"
         },
+        "ResearchSelectionIn": {
+          "additionalProperties": false,
+          "description": "The sourced facts the creator keeps on a research draft (CA-5): ``selection_id`` and the\n``fact_id`` values of its ``research_preview``. An id the preview never showed is ignored;\nan empty list continues without the facts.",
+          "properties": {
+            "kept_fact_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 24,
+              "title": "Kept Fact Ids",
+              "type": "array"
+            },
+            "selection_id": {
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Selection Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "selection_id"
+          ],
+          "title": "ResearchSelectionIn",
+          "type": "object"
+        },
         "SolidBackground": {
           "properties": {
             "color": {
@@ -5099,6 +5123,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/ProtectedRegionIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "research_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResearchSelectionIn"
             },
             {
               "type": "null"

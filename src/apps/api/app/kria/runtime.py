@@ -225,6 +225,7 @@ def request_digest(body: SubmitTurnBody) -> str:
         | ({"moment_order"} if body.moment_order is None else set())
         # The order card's drag: additive the same way.
         | ({"clip_order_ops"} if body.clip_order_ops is None else set())
+        | ({"research_selection"} if body.research_selection is None else set())
     )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
@@ -1144,6 +1145,13 @@ async def submit_turn(
         # Never silently dropped: that would turn a scoped ask into an unscoped re-plan.
         raise RuntimeFailure(
             404, "live_plan_review_unavailable", "Plan review is unavailable", phase="accept"
+        )
+    if body.research_selection is not None and settings.kria_research_selection_enabled:
+        # Before the thread lock: the selection locks the approval chain in canonical order.
+        from app.kria.research_selection import submit_research_selection  # noqa: PLC0415
+
+        return await submit_research_selection(
+            db, thread_id=thread_id, creator_id=creator_id, body=body, digest=request_digest(body)
         )
     if body.clip_order_ops is not None:
         # The drag writes events and updates the thread row, whose foreign-key checks re-lock the

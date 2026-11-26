@@ -929,6 +929,7 @@ _ANSWER_PAYLOAD_KEYS = (
     "song_order",
     "song_range",
     "clip_order_ops",
+    "research_selection",
 )
 
 
