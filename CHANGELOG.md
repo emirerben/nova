@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.25.0] - 2026-11-26
+
+### Changed
+- ci(api): the shard fails unless every xdist worker ran on its own database (KRI-1637) (#2528) <!-- release-pr: 2528 -->
+
 ## [0.90.24.0] - 2026-11-26
 
 ### Changed
