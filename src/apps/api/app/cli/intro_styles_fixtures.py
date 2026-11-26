@@ -54,6 +54,9 @@ CUES = [
 ]
 # A speaker standing a little left of centre, head high: the saved Talking face band.
 FACE = (0.30, 0.30, 0.62, 0.62)
+# The job id seeds which looks are offered. A test that asserts on the looks sets this so a failure
+# repeats; the route tests leave it unset, because their jobs are database rows and need unique ids.
+DEFAULT_JOB_ID: uuid.UUID | None = None
 
 
 def flag_overrides() -> dict[str, Any]:
@@ -113,7 +116,7 @@ def _job(
     job_id: uuid.UUID | None = None,
 ) -> Any:
     job = SimpleNamespace(
-        id=job_id or uuid.uuid4(),
+        id=job_id or DEFAULT_JOB_ID or uuid.uuid4(),
         user_id=USER_ID,
         status="awaiting_device",
         current_phase=None,
