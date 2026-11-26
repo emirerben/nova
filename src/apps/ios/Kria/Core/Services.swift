@@ -1463,8 +1463,17 @@ enum KriaClientProtocolContract {
     /// 58: draws a clip's `dim` (`TimelineClip.dim`, the `clipDim` capability) in the preview and the export, and keeps a
     /// row's `dim` on Save. The server offers `editor_capabilities.clips.dim` only to this protocol (and only with `clipDim`
     /// verified) and answers 426 `client_update_required` (`clip_dim`) to an older build that polls a dimmed recipe.
-    static let version = 58
+    /// 59 (KRI-1558): draws the speaker's layout per section (`speaker_background.layout_windows`, needs `speakerSections`)
+    /// and plays a take split with nothing removed as one shot: no declick at the join and the cut-out keeps its state
+    /// across it. The server plans layouts per topic only for this protocol.
+    static let version = 59
     static let header = "X-Kria-Client-Protocol"
+    /// KRI-1558 (Tadic, #prs 2026-11-26): renderer features this build advertises in `X-Kria-Client-Features`. Another
+    /// branch's build can take the same protocol number without the renderer, so the server offers these only to a build
+    /// that names them, on top of the protocol number.
+    static let features: [String] = [MediaCapability.speakerSections.rawValue]
+    static let featuresHeader = "X-Kria-Client-Features"
+    static var featuresValue: String { features.joined(separator: ",") }
 }
 
 /// Process-wide: every `KriaAPI` instance (AuthModel, AppModel, the library
@@ -1499,6 +1508,7 @@ private actor MobileSessionRefreshCoordinator {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
+            request.setValue(KriaClientProtocolContract.featuresValue, forHTTPHeaderField: KriaClientProtocolContract.featuresHeader)
             request.httpBody = try JSONEncoder().encode(["refresh_token": current.refreshToken])
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
@@ -2053,6 +2063,7 @@ struct KriaAPI: KriaAPIClient {
         if let acceptLanguage = Self.acceptLanguage() { request.setValue(acceptLanguage, forHTTPHeaderField: "Accept-Language") }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
+        request.setValue(KriaClientProtocolContract.featuresValue, forHTTPHeaderField: KriaClientProtocolContract.featuresHeader)
         var storedSession = requiresAuth ? try tokenStore.read() : nil
         try validateNotificationOwner(expectedOwner, session: storedSession)
         // A token that is about to expire (or already has) is refreshed BEFORE the request, instead of the request
@@ -2414,6 +2425,9 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_windows_disabled": String(localized: "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here."),
             "speaker_full_opening_disabled": String(localized: "Starting full screen isn’t available right now. Remove it and save again. Your edits are still here."),
             "speaker_full_opening_invalid": String(localized: "The full-screen opening doesn’t fit this video. Remove it and save again. Your edits are still here."),
+            // KRI-1558: the speaker's layout per part of the talk.
+            "speaker_sections_disabled": String(localized: "Changing where you are part by part isn’t available right now. Put yourself in one place for the whole video and save again. Your edits are still here."),
+            "speaker_sections_invalid": String(localized: "The parts where you change place overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here."),
             "background_focus_disabled": String(localized: "Aiming the background isn’t available for this video yet. Your edits are still here."),
             "background_focus_invalid": String(localized: "That background aim isn’t valid. Pick left, centre or right and a zoom between 0.3x and 3x, then save again. Your edits are still here."),
             "speaker_background_window_invalid": String(localized: "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here."),

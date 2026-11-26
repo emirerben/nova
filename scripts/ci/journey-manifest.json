@@ -3339,6 +3339,35 @@
       ]
     },
     {
+      "id": "kri-1558-speaker-sections",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri1558_section_layouts.py tests/kria/test_kri1558_saved_split_unchanged.py tests/kria/test_kri1558_client_features_stamp_postgres.py tests/kria/test_speaker_sections_contract.py tests/routes/test_speaker_sections_editor.py tests/tasks/test_speaker_sections_worker.py tests/pipeline/test_speaker_sections_text_placement.py tests/kria/test_editor_capability_parity.py tests/kria/test_brief_checks_speaker_background.py",
+      "xctests": [
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testLayoutWindowsRoundTripAndCompileToTheLayerTheExportDraws",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testAnOldShapeLaneEncodesAndCompilesWithoutAnyTraceOfSections",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testEveryOtherBackgroundEditKeepsTheLayoutWindows",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testAPresetInsideASectionChangesOnlyThatSection",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testRemovingTimeMovesTheSectionsAndKeepsThemValid",
+        "KriaUITests/SpeakerSectionsUITests/testACornerPickedInsideASectionChangesThatSectionAndSurvivesSave"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/talking_sections.py",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_sections.txt",
+        "src/apps/api/tests/kria/test_kri1558_section_layouts.py",
+        "src/apps/api/tests/kria/test_kri1558_saved_split_unchanged.py",
+        "src/apps/api/tests/kria/test_kri1558_client_features_stamp_postgres.py",
+        "src/apps/api/tests/fixtures/kri1558_saved_split_request_main.json",
+        "src/apps/api/tests/kria/test_speaker_sections_contract.py",
+        "src/apps/api/tests/routes/test_speaker_sections_editor.py",
+        "src/apps/api/tests/tasks/test_speaker_sections_worker.py",
+        "src/apps/api/tests/pipeline/test_speaker_sections_text_placement.py",
+        "tests/fixtures/speaker-background-parity/v6.json",
+        "docs/reviews/kri-1558-section-layout-failure-modes.md",
+        "src/apps/ios/Tests/KriaTests/SpeakerLayoutWindowsEditorTests.swift",
+        "src/apps/ios/Tests/KriaUITests/SpeakerSectionsUITests.swift"
+      ]
+    },
+    {
       "id": "generated-image-autoplace",
       "needs_native": false,
       "api_tests": "tests/agents/test_overlay_placement_cross_language.py tests/agents/test_brief_extractor_generated_image.py tests/services/test_generated_image_grounding.py tests/services/test_phone_overlay_grounding.py tests/services/test_generated_media_admission.py tests/tasks/test_phone_overlay_spoken_language_worker.py",

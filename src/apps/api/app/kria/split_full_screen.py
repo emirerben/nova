@@ -706,7 +706,7 @@ def remove_time(lanes: Lanes, lost: Iterable[tuple[float, float]]) -> Lanes:
         for row in lane:
             _move_span(row, spans)
     if out.speaker_background is not None:
-        for key in ("windows", "full_screen_windows"):
+        for key in ("windows", "full_screen_windows", "layout_windows"):
             windows = out.speaker_background.get(key)
             if not isinstance(windows, list):
                 continue

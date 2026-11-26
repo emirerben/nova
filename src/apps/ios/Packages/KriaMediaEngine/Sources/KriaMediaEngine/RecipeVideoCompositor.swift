@@ -45,6 +45,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     /// Set only when the recipe has a `speakerBackground` (KRI-1116).
     var speakerRole: SpeakerBackgroundRole? = nil
     var speakerFrameOverride: SpeakerFrameOverride? = nil
+    /// KRI-1558: shared by the pieces of one take split with nothing removed (`ShotContinuity`), so the speaker's
+    /// cut-out carries on across the split; nil keys the matte by `clipID` as before.
+    var shotKey: String? = nil
     func fadeAlpha(at time: Double) -> Double {
         fadeIn > 0 ? min(1, max(0, (time - (fadeStart ?? start)) / fadeIn)) : 1
     }
@@ -195,6 +198,8 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     /// Qendresa item 16: spans (edit seconds) where the speaker's own take is drawn full-frame, unmasked, with no background. Decided
     /// per frame by `time` in `composeBelowText`, never by this instruction's range, so the edges are frame-exact (S81).
     let fullScreenWindows: [SpeakerFullScreenWindow]
+    /// KRI-1558: the speaker's layout per section, decided per frame like `fullScreenWindows` (which win over these).
+    let layoutWindows: [SpeakerLayoutWindow]
     /// `.whole` everywhere except the editor's speaker-manipulation stills.
     let speakerSlice: SpeakerSlice
     let speakerSliceClipID: String?
@@ -203,7 +208,7 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let playbackRevision: UUID?
     /// KRI-1350: tone windows and the end fade, decided per frame by `time` (never by this instruction's range).
     let colorMoments: ColorMomentProgram?
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], speakerSlice: SpeakerSlice = .whole, speakerSliceClipID: String? = nil, playbackRevision: UUID? = nil, colorMoments: ColorMomentProgram? = nil) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil, speakerFrame: SpeakerFrame? = nil, fullScreenWindows: [SpeakerFullScreenWindow] = [], layoutWindows: [SpeakerLayoutWindow] = [], speakerSlice: SpeakerSlice = .whole, speakerSliceClipID: String? = nil, playbackRevision: UUID? = nil, colorMoments: ColorMomentProgram? = nil) {
         self.playbackRevision = playbackRevision
         self.colorMoments = colorMoments
         self.speakerSlice = speakerSlice
@@ -214,6 +219,7 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
         self.speakerMatte = speakerMatte
         self.speakerFrame = speakerFrame
         self.fullScreenWindows = fullScreenWindows
+        self.layoutWindows = layoutWindows
         self.cameraPulses = cameraPulses
         self.motionScenes = motionScenes
         self.timeRange = timeRange
@@ -235,7 +241,35 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
             cameraPulses: cameraPulses, motionScenes: motionScenes, textStore: textStore, drawings: drawings,
             transparentBackground: part == .speakerOnly || part == .aboveSpeaker,
             subjectMatte: part == .aboveSpeaker ? nil : subjectMatte, speakerMatte: speakerMatte,
-            speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, speakerSlice: part, speakerSliceClipID: clipID,
+            speakerFrame: speakerFrame, fullScreenWindows: fullScreenWindows, layoutWindows: layoutWindows, speakerSlice: part, speakerSliceClipID: clipID,
+            colorMoments: colorMoments)
+    }
+    /// KRI-1558: the layout window drawing `time`, unless a full-screen window (which wins) covers it.
+    func layout(at time: Double) -> SpeakerLayoutWindow? {
+        guard !layoutWindows.isEmpty, !SpeakerBackgroundLayer.fullScreen(fullScreenWindows, at: time) else { return nil }
+        return SpeakerBackgroundLayer.layout(layoutWindows, at: time)
+    }
+    /// The speaker's default frame at `time`: a `small` layout's frame, nil (full size) for a `full` one, else the layer's.
+    func speakerFrame(at time: Double) -> SpeakerFrame? {
+        guard let window = layout(at: time) else { return speakerFrame }
+        return window.layout == .small ? window.frame : nil
+    }
+    /// The speaker's own take is drawn untouched at `time`: a full-screen window or an `own` layout.
+    func drawsOwnTake(at time: Double) -> Bool {
+        SpeakerBackgroundLayer.fullScreen(fullScreenWindows, at: time) || layout(at: time)?.layout == .own
+    }
+    /// The picture alone at `time` (a `picture` layout): the speaker is not drawn.
+    func hidesSpeaker(at time: Double) -> Bool { layout(at: time)?.layout == .picture }
+    /// This instruction with the layout windows resolved for the frame at `time`: the default frame is the layout's, and an
+    /// `own` / `picture` layout is kept as the only window so `drawsOwnTake` / `hidesSpeaker` still answer. Self when unused.
+    func resolvingLayout(at time: Double) -> RecipeVideoInstruction {
+        guard let window = layout(at: time) else { return self }
+        let kept = window.layout == .own || window.layout == .picture ? [window] : []
+        return RecipeVideoInstruction(timeRange: timeRange, layers: layers, text: text, canvas: canvas.size,
+            cameraPulses: cameraPulses, motionScenes: motionScenes, textStore: textStore, drawings: drawings,
+            transparentBackground: transparentBackground, subjectMatte: subjectMatte, speakerMatte: speakerMatte,
+            speakerFrame: speakerFrame(at: time), fullScreenWindows: fullScreenWindows, layoutWindows: kept,
+            speakerSlice: speakerSlice, speakerSliceClipID: speakerSliceClipID, playbackRevision: playbackRevision,
             colorMoments: colorMoments)
     }
     /// The framed speaker is on screen at `time`: a frame is set and one of this range's speaker clips is active
@@ -243,8 +277,8 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     /// Inside a full-screen window (Qendresa item 16) the speaker fills the canvas, so there is no framed speaker to select.
     func showsFramedSpeaker(at time: Double) -> Bool {
         speakerMatte != nil
-            && !SpeakerBackgroundLayer.fullScreen(fullScreenWindows, at: time)
-            && layers.contains { $0.speakerRole == .speaker && $0.effectiveSpeakerFrame(speakerFrame) != nil && time >= $0.start && time < $0.end }
+            && !drawsOwnTake(at: time) && !hidesSpeaker(at: time)
+            && layers.contains { $0.speakerRole == .speaker && $0.effectiveSpeakerFrame(speakerFrame(at: time)) != nil && time >= $0.start && time < $0.end }
             && layers.contains { $0.speakerRole == .background && time >= $0.start && time < $0.end }
     }
     /// More than one matte per frame (split panels, per-clip speaker frames): the frame draws alone, as the serial queue did.
@@ -445,6 +479,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                                   request: AVAsynchronousVideoCompositionRequest, time: Double,
                                   turn: RecipeFramePipeline.Frame? = nil, answers: SpeakerAnswers) throws -> CIImage {
         let layers = candidates.filter { $0.backdropAssetID == nil }
+        // KRI-1558: the section's layout decides the default frame (and own take / picture alone) for this frame only.
+        let instruction = instruction.resolvingLayout(at: time)
         if layers.contains(where: { $0.speakerRole == .speaker && $0.panelViewport != nil }) {
             return try composePanelSpeakers(layers, onto: canvas, instruction: instruction, request: request, time: time, answers: answers)
         }
@@ -457,10 +493,20 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         // failed or slow mask can never show here), no background and no frame; every other layer draws as usual. The
         // editor never slices here (`showsFramedSpeaker` is false inside a window), so only the whole scene or the part
         // "below" paints anything.
-        if !instruction.fullScreenWindows.isEmpty, SpeakerBackgroundLayer.fullScreen(instruction.fullScreenWindows, at: time) {
+        if instruction.drawsOwnTake(at: time) {
             guard slice == .whole || slice == .belowSpeaker else { return frame }
             answers.trace { recordInOrder(turn) { instruction.speakerMatte?.trace.record(.fullScreen, at: time) } }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
+            return frame
+        }
+        // KRI-1558: a `picture` layout draws the picture alone (the window covering the time, else the fill) where the
+        // speaker would be, and every other layer as usual; her voice plays on. No matte is asked.
+        if instruction.hidesSpeaker(at: time) {
+            guard slice == .whole || slice == .belowSpeaker else { return frame }
+            let first = layers.firstIndex(where: { $0.speakerRole != nil }) ?? layers.endIndex
+            for layer in layers[..<first] where layer.speakerRole == nil { try compose(layer) }
+            if let background = backgrounds.first(where: \.speakerBackgroundWindow) ?? backgrounds.first { try compose(background) }
+            for layer in layers[first...] where layer.speakerRole == nil { try compose(layer) }
             return frame
         }
         guard let matte = instruction.speakerMatte,
@@ -505,7 +551,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             }
         }
         EngineSignpost.stage("talk.stage.speakerLayer", since: speakerStart)
-        let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
+        let key = speakers.map { $0.shotKey ?? $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
         switch answers.answer(of: matte, asking: { matte.answer(for: maskSource, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil, frame: turn) }) {
         case .cutout(let mask):
             if slice != .speakerOnly { try compose(background) }
@@ -572,7 +618,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 layers: localBackgrounds + speakers + instruction.layers.filter { $0.backdropAssetID != nil }, text: [], canvas: viewport.size,
                 cameraPulses: instruction.cameraPulses, transparentBackground: true,
                 speakerMatte: instruction.speakerMatte?.forPanel(key), speakerFrame: instruction.speakerFrame,
-                fullScreenWindows: instruction.fullScreenWindows, speakerSlice: localSlice, speakerSliceClipID: instruction.speakerSliceClipID)
+                fullScreenWindows: instruction.fullScreenWindows, layoutWindows: instruction.layoutWindows,
+                speakerSlice: localSlice, speakerSliceClipID: instruction.speakerSliceClipID)
             let picture = try composeBelowText(localBackgrounds + speakers,
                 onto: CIImage(color: .clear).cropped(to: localCanvas), instruction: localInstruction, request: request, time: time, answers: answers)
             frame = picture.cropped(to: localCanvas)
@@ -612,7 +659,10 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 let solo = RecipeVideoInstruction(timeRange: instruction.timeRange,
                     layers: backgrounds + [raw] + instruction.layers.filter { $0.backdropAssetID != nil }, text: [], canvas: instruction.canvas.size,
                     cameraPulses: instruction.cameraPulses, transparentBackground: true,
-                    speakerMatte: instruction.speakerMatte?.forPanel("occurrence:" + (layer.clipID ?? "")),
+                    // One speaker on screen draws through the composition's own matte, so a layout change on a split
+                    // with nothing removed keeps the cut-out's state (KRI-1558); overlapping speakers keep a panel each.
+                    speakerMatte: speakers.count == 1 ? instruction.speakerMatte
+                        : instruction.speakerMatte?.forPanel("occurrence:" + (layer.shotKey ?? layer.clipID ?? "")),
                     speakerFrame: layer.effectiveSpeakerFrame(instruction.speakerFrame),
                     speakerSlice: whole ? .whole : .speakerOnly)
                 let picture = try composeBelowText(backgrounds + [raw], onto: CIImage(color: .clear).cropped(to: bounds),

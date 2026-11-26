@@ -1531,6 +1531,14 @@
       "source": "default",
       "value": 41
     },
+    "speaker_sections_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "speaker_sections_min_client_protocol": {
+      "source": "default",
+      "value": 59
+    },
     "speech_cleanup_budget_clamp_enabled": {
       "source": "default",
       "value": true

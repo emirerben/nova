@@ -293,6 +293,34 @@ def _full_opening(variant: dict[str, Any]) -> None:
     ]
 
 
+# KRI-1558: a three-topic talk (coffee, tea, water) as caption words, so the edit has sections.
+_SECTIONED_TALK = (
+    "Bugün size kahve hakkında konuşacağım. Kahve sabahları enerji verir. "
+    "Şimdi çay konusuna geçelim. Çay daha hafiftir. "
+    "Son olarak su içmeyi unutmayın. Takip etmeyi unutmayın!"
+)
+SECTIONS_OPEN = {**BACKGROUND_OPEN, "background_sections_open": lambda *_: True}
+
+
+def _sectioned(variant: dict[str, Any]) -> None:
+    _talking(variant)
+    from app.services.kria_editor_ops import background_duration_s  # noqa: PLC0415
+
+    duration = background_duration_s(variant)
+    words = _SECTIONED_TALK.split()
+    step = (duration - 1.0) / len(words)
+    cues = []
+    for index, word in enumerate(words):
+        start, end = round(0.3 + index * step, 3), round(0.3 + index * step + step * 0.8, 3)
+        timed = {"text": word, "start_s": start, "end_s": end}
+        cues.append({**timed, "words": [dict(timed)]})
+    variant["caption_cues"] = cues
+    variant["speaker_background"]["windows"] = [
+        {"media_id": "bg-1", "kind": "image", "source_start_s": 0.0, "start_s": 1.0, "end_s": 3.0},
+        {"media_id": "bg-2", "kind": "video", "source_start_s": 0.0, "start_s": 4.0, "end_s": 6.0},
+    ]
+
+
 def _speaker_take(variant: dict[str, Any]) -> None:
     _talking(variant)
     variant["user_timeline"]["slots"][0]["speaker_subject"] = True
@@ -1121,6 +1149,48 @@ PHONE_OP_PROBES: list[Scenario] = [
         **_BACKGROUND,
     ),
     _probe("speaker_background", {"op": "clear_speaker_frame"}, variant=_cornered, **_BACKGROUND),
+    # KRI-1558: the speaker's layout per section and one timed background at a time.
+    _probe(
+        "speaker_background",
+        {"op": "arrange_sections", "asset_ids": ["bg-1", "bg-2"]},
+        variant=_sectioned,
+        context={"background_pool": BACKGROUND_POOL},
+        patches=SECTIONS_OPEN,
+    ),
+    _probe(
+        "speaker_background",
+        {"op": "set_section_layout", "speaker_layout": "own", "section_numbers": [2]},
+        variant=_sectioned,
+        context={"background_pool": BACKGROUND_POOL},
+        patches=SECTIONS_OPEN,
+    ),
+    _probe(
+        "speaker_background",
+        {
+            "op": "set_section_layout",
+            "speaker_layout": "small",
+            "preset": "small_bottom_left",
+            "start_s": 2.0,
+            "end_s": 5.0,
+        },
+        variant=_sectioned,
+        context={"background_pool": BACKGROUND_POOL},
+        patches=SECTIONS_OPEN,
+    ),
+    _probe(
+        "speaker_background",
+        {"op": "remove_background_window", "window_index": 2},
+        variant=_sectioned,
+        context={"background_pool": BACKGROUND_POOL},
+        patches=SECTIONS_OPEN,
+    ),
+    _probe(
+        "speaker_background",
+        {"op": "retime_background_window", "window_index": 1, "start_s": 0.5, "end_s": 3.5},
+        variant=_sectioned,
+        context={"background_pool": BACKGROUND_POOL},
+        patches=SECTIONS_OPEN,
+    ),
     _probe(
         "speaker_frame_by_hand",
         {

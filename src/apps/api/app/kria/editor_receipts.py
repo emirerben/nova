@@ -288,7 +288,11 @@ _ORDINALS = {
     "dorduncu": 4,
     "son": -1,
 }
-_SPEAKER_SIZE: Alts = _alts(("speaker_background", ["speaker_frame"]))
+# KRI-1558: "make me smaller in part 1" changes that part's layout, not the whole-video corner.
+_SPEAKER_SIZE: Alts = _alts(("speaker_background", ["speaker_frame", "layout"]))
+# How big each part layout draws the speaker (her own take and the full-size cut-out are both
+# full size; the picture alone hides her), so a size ask's direction can be checked.
+_SPEAKER_LAYOUT_SIZE = {"own": 2, "full": 2, "small": 1, "picture": 0}
 # KRI-1563: a caption field named inside a caption ask, and the cue that proves it.
 _CAPTION_FIELD_CUES = {
     "position": "caption_position",
@@ -336,6 +340,8 @@ class AskShape:
     literal: str = ""
     clip_scope: str = ""
     ordinal: int | None = None
+    # KRI-1558: the talk's parts the ask names (`facts.speaker_parts`; -1 = the last one).
+    parts: frozenset[int] = field(default_factory=frozenset)
     quantified_named_scope: bool = False
     # KRI-1563: the caption look the brief writer typed (never read from the words, KRI-667).
     caption_position: str | None = None  # the typed `caption_position` (KRI-1177 vocabulary)
@@ -477,6 +483,33 @@ def _ordinal(text: str) -> int | None:
     return next(iter(found)) if len(found) == 1 else None
 
 
+# KRI-1558: the parts of the talk a speaker ask names, as the brief writer records them in
+# `facts.speaker_parts` while speaker sections are open (1 = first part, -1 = the last). Read from
+# that structured field, never guessed from the words (KRI-667).
+_MAX_SPEAKER_PART = 40
+
+
+def _speaker_parts(facts: Mapping[str, Any]) -> frozenset[int]:
+    raw = facts.get("speaker_parts")
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(
+        n
+        for n in raw
+        if isinstance(n, int)
+        and not isinstance(n, bool)
+        and (n == -1 or 1 <= n <= _MAX_SPEAKER_PART)
+    )
+
+
+def _part_ok(t: DiffTarget, parts: frozenset[int]) -> bool:
+    """A part-layout target (``part-N``, extra ``(N, total)``) is one of the asked parts."""
+    if not t.id.startswith("part-") or not isinstance(t.extra, tuple):
+        return False
+    number, total = int(t.extra[0]), int(t.extra[1])
+    return number in parts or (-1 in parts and number == total)
+
+
 def _wanted(req: BriefRequirement) -> Mapping[str, str]:
     """The typed values the ask names, keyed by the diff field that must hold them."""
     if req.kind == "style":
@@ -563,6 +596,7 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
         and req.scope == "global"
         and bool(_QUANTIFIER.search(text))
         and not _wanted(req),
+        parts=_speaker_parts(req.facts or {}),
         ordinal=(
             None
             if req.kind == "timing"
@@ -607,6 +641,13 @@ def _destination_ok(field_name: str, after: Any, wanted: frozenset[str]) -> bool
         if word in ("top", "bottom", "middle") and vertical not in (None, word):
             return False
     return True
+
+
+def _speaker_size(state: Any) -> int | None:
+    """The size rank of a part-layout diff value ``(layout, corner)``."""
+    if isinstance(state, tuple) and state:
+        return _SPEAKER_LAYOUT_SIZE.get(str(state[0]))
+    return None
 
 
 def _sign_ok(before: Any, after: Any, direction: int) -> bool:
@@ -749,6 +790,12 @@ def _violation(entry: DiffEntry, t: DiffTarget, shape: AskShape) -> str | None:
     elif lane == "speaker_background":
         if name == "removed" and pol == "add":
             return "polarity"
+        if (
+            name == "layout"
+            and shape.size_dir
+            and not _sign_ok(_speaker_size(t.before), _speaker_size(after), shape.size_dir)
+        ):
+            return "direction"
     elif lane == "visual_media":
         if pol == "add":
             return "polarity"
@@ -779,6 +826,9 @@ def _judge(entry: DiffEntry, shape: AskShape) -> tuple[DiffEntry | None, str]:
         if entry.field != "order":
             targets = [t for t in targets if _clip_ordinal_ok(t, shape.ordinal)]
             narrowed_by_name = True
+    if shape.parts and entry.lane == "speaker_background" and entry.field == "layout":
+        # KRI-1558: "make me smaller in part 1" is answered by part 1, never by part 3 alone.
+        targets = [t for t in targets if _part_ok(t, shape.parts)]
     if not targets:
         return None, "off_target"
     checked = [(t, _violation(entry, t, shape)) for t in targets]

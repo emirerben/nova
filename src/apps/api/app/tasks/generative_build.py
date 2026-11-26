@@ -9291,10 +9291,13 @@ def _resolve_strategy_background(
     keep_segments: list[tuple[float, float]] | None = None,
     take_s: float | None = None,
     creator_client_protocol: int | None = None,
+    creator_client_features: object = (),
     title_end_s: float | None = None,
     layout_out: dict[str, Any] | None = None,
     entries_out: list[dict[str, Any]] | None = None,
     rhythm_out: dict[str, Any] | None = None,
+    source_take_s: float | None = None,
+    sections_out: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -9334,6 +9337,16 @@ def _resolve_strategy_background(
     "phrase": <spoken_phrase or None>, "media_id": <pool row id, or None when it did not
     resolve>}`` so the lane receipt can name an asked recording the compiled windows never show
     (`_unshown_background_entries`).
+
+    KRI-1558: when the approving build can draw the speaker per section
+    (`speaker_sections_planned_for`) and the strategy puts pictures behind her without naming a
+    pace, the take is cut into sections (`talking_sections`, on the ORIGINAL take clock from the
+    kept words; ``source_take_s`` is the uncut take's length) and `arrange_layouts` gives each a
+    layout: one window per section that shows a picture (spanning it), a layout window for every
+    section, and NO global ``speaker_frame``. The phrase / cadence layout is not run then (its
+    anchors are not offered to the list labels). Given ``sections_out``, the sections are appended
+    as `TalkingSection.as_dict` rows. Nothing arranged (one section, no picture, gate closed, a
+    named pace): exactly today's layout.
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
@@ -9342,6 +9355,7 @@ def _resolve_strategy_background(
         SubtitledBackgroundFocus,
         SubtitledBackgroundWindow,
         SubtitledFullScreenWindow,
+        SubtitledLayoutWindow,
         SubtitledSpeakerFrame,
         strip_unsupported_background,
     )
@@ -9471,6 +9485,19 @@ def _resolve_strategy_background(
                     ),
                 )
 
+    # KRI-1558: the speaker's layout per section, when the approving build can draw it.
+    arranged, sections = _speaker_section_layout(
+        request,
+        entry_rows=entry_rows,
+        fill_row=fill_row,
+        words=words,
+        keep_segments=keep_segments,
+        take_s=take_s,
+        source_take_s=source_take_s,
+        creator_client_protocol=creator_client_protocol,
+        creator_client_features=creator_client_features,
+    )
+
     # Qendresa item 18: what the creator named for the recordings (None while nothing is named).
     named_focus: SubtitledBackgroundFocus | None = None
     if request.get("focus") is not None or request.get("focus_zoom") is not None:
@@ -9480,7 +9507,16 @@ def _resolve_strategy_background(
             named_focus = SubtitledBackgroundFocus(x=named_x, zoom=named_zoom)
 
     windows: list[SubtitledBackgroundWindow] = []
-    if entry_rows:
+    layout_windows: tuple[SubtitledLayoutWindow, ...] = ()
+    if arranged:
+        windows, layout_windows = _section_lane_windows(
+            arranged, entry_rows=entry_rows, fill_row=fill_row, fill_start=fill_start
+        )
+        if named_focus is not None:
+            windows = [window.model_copy(update={"focus": named_focus}) for window in windows]
+        if sections_out is not None:
+            sections_out.extend(section.as_dict() for section in sections)
+    elif entry_rows:
         by_index = {index: (entry, row) for index, entry, row in entry_rows}
         layout = sequence_mod.lay_out(
             [
@@ -9570,7 +9606,7 @@ def _resolve_strategy_background(
     frame_preset = request.get("speaker_frame")
     frame = (
         SubtitledSpeakerFrame(**SPEAKER_FRAME_PRESETS[frame_preset])
-        if frame_preset in SPEAKER_FRAME_PRESETS
+        if frame_preset in SPEAKER_FRAME_PRESETS and not layout_windows
         else None
     )
     try:
@@ -9581,6 +9617,7 @@ def _resolve_strategy_background(
                 windows=tuple(windows),
                 speaker_frame=frame,
                 full_screen_windows=full_screen_windows,
+                layout_windows=layout_windows,
             )
         else:
             background = SubtitledBackground(
@@ -9592,6 +9629,7 @@ def _resolve_strategy_background(
                 windows=tuple(windows),
                 speaker_frame=frame,
                 full_screen_windows=full_screen_windows,
+                layout_windows=layout_windows,
                 **({"focus": named_focus} if named_focus is not None else {}),
             )
     except ValueError as exc:
@@ -9618,6 +9656,112 @@ def _resolve_strategy_background(
             else _pool_media_keys(request["media_id"]) | _pool_media_keys(str(fill_row["id"]))
         )
     return kept, reserved
+
+
+def _speaker_section_layout(
+    request: Mapping[str, Any],
+    *,
+    entry_rows: Sequence[tuple[int, dict, dict]],
+    fill_row: Mapping[str, Any] | None,
+    words: Sequence[Mapping[str, Any]] | None,
+    keep_segments: Sequence[tuple[float, float]] | None,
+    take_s: float | None,
+    source_take_s: float | None,
+    creator_client_protocol: int | None,
+    creator_client_features: object = (),
+) -> tuple[list[Any], list[Any]]:
+    """KRI-1558: ``(arranged, sections)`` for a strategy background, or ``([], [])``.
+
+    Arranged only when the approving build can draw the speaker per section
+    (`phone_rollout.speaker_sections_planned_for`), the creator named no pace for the pictures
+    (``cadence_s``: a named pace is kept, KRI-1494) and the strategy puts at least one picture
+    behind her: the sequence's pool rows in strategy order (each once), else the fill picture.
+    The sections are cut from the KEPT words on the ORIGINAL take clock (the lane's clock), over
+    the uncut take (``source_take_s``; without it the last kept second or the kept take)."""
+    from app.services.phone_rollout import speaker_sections_planned_for  # noqa: PLC0415
+
+    if request.get("cadence_s") is not None or not speaker_sections_planned_for(
+        creator_client_protocol, creator_client_features
+    ):
+        return [], []
+    pictures: list[str] = []
+    for _index, _entry, row in entry_rows:
+        if str(row["id"]) not in pictures:
+            pictures.append(str(row["id"]))
+    if not pictures and fill_row is not None:
+        pictures.append(str(fill_row["id"]))
+    if not pictures:
+        return [], []
+    from app.pipeline.talking_sections import (  # noqa: PLC0415
+        arrange_layouts,
+        talking_sections,
+    )
+
+    keep = [(float(a), float(b)) for a, b in keep_segments or ()]
+    clock_s = (
+        float(source_take_s)
+        if source_take_s is not None
+        else max(float(take_s or 0.0), max((b for _a, b in keep), default=0.0))
+    )
+
+    def kept(word: Mapping[str, Any]) -> bool:
+        if not keep:
+            return True
+        middle = (float(word.get("start_s") or 0.0) + float(word.get("end_s") or 0.0)) / 2
+        return any(a - 1e-6 <= middle < b + 1e-6 for a, b in keep)
+
+    sections = talking_sections([w for w in words or () if kept(w)], clock_s)
+    arranged = arrange_layouts(sections, pictures)
+    return (arranged, sections) if arranged else ([], [])
+
+
+def _section_lane_windows(
+    arranged: Sequence[Any],
+    *,
+    entry_rows: Sequence[tuple[int, dict, dict]],
+    fill_row: Mapping[str, Any] | None,
+    fill_start: float,
+) -> tuple[list[Any], tuple[Any, ...]]:
+    """KRI-1558: the lane windows (one per arranged section showing a picture, spanning it) and
+    layout windows (one per section) of an arrangement, on the ORIGINAL take clock. A video
+    window plays from the start the strategy gave its first entry (the fill's for the fill)."""
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        SubtitledBackgroundWindow,
+        SubtitledLayoutWindow,
+        SubtitledSpeakerFrame,
+    )
+
+    rows: dict[str, tuple[float, Mapping[str, Any]]] = {}
+    for _index, entry, row in entry_rows:
+        rows.setdefault(str(row["id"]), (float(entry.get("source_start_s") or 0.0), row))
+    if fill_row is not None:
+        rows.setdefault(str(fill_row["id"]), (float(fill_start or 0.0), fill_row))
+    windows: list[Any] = []
+    layouts: list[Any] = []
+    for placed in arranged:
+        if placed.media_id is not None and placed.media_id in rows:
+            start, row = rows[placed.media_id]
+            windows.append(
+                SubtitledBackgroundWindow(
+                    media_id=str(row["id"]),
+                    gcs_path=str(row["gcs_path"]),
+                    generation=str(row["gcs_generation"]),
+                    kind=row["kind"],
+                    source_start_s=start if row["kind"] == "video" else 0.0,
+                    start_s=placed.start_s,
+                    end_s=placed.end_s,
+                )
+            )
+        frame = SPEAKER_FRAME_PRESETS.get(placed.preset or "") if placed.layout == "small" else None
+        layouts.append(
+            SubtitledLayoutWindow(
+                start_s=placed.start_s,
+                end_s=placed.end_s,
+                layout=placed.layout,
+                speaker_frame=SubtitledSpeakerFrame(**frame) if frame is not None else None,
+            )
+        )
+    return windows, tuple(layouts)
 
 
 def _background_take_s(keep_segments: list[tuple[float, float]] | None, full_s: float) -> float:
@@ -12560,6 +12704,8 @@ def _run_phone_subtitled_job(
                 # Qendresa case 5: every asked recording, so the receipt names one never shown.
                 background_entries: list[dict[str, Any]] = []
                 background_rhythm: dict[str, Any] = {}
+                # KRI-1558: the take's sections when the background is laid out per section.
+                background_sections: list[dict[str, Any]] = []
                 background_request = _strategy_background_request(all_candidates)
                 if background_request is not None:
                     if ending_lane_only:
@@ -12588,6 +12734,10 @@ def _run_phone_subtitled_job(
                                 creator_client_protocol=_stamped_protocol(
                                     all_candidates.get("creator_client_protocol")
                                 ),
+                                creator_client_features=all_candidates.get(
+                                    "creator_client_features"
+                                )
+                                or (),
                                 title_end_s=(
                                     max(float(row["end_s"]) for row in title_rows)
                                     if title_rows
@@ -12596,6 +12746,8 @@ def _run_phone_subtitled_job(
                                 layout_out=list_label_layout if list_label_asks else None,
                                 entries_out=background_entries,
                                 rhythm_out=background_rhythm,
+                                source_take_s=float(probe.duration_s),
+                                sections_out=background_sections,
                             )
                         )
 
@@ -13468,6 +13620,10 @@ def _run_phone_subtitled_job(
                         ),
                         # KRI-1484: where her recordings play behind her (cut time).
                         backdrop_spans=_list_label_backdrop_spans(lanes, talking_timeline_s),
+                        # KRI-1558: how she is drawn per section (cut time, like the rows).
+                        layout_windows=_lane_layout_spans(
+                            lanes.background if lanes is not None else None
+                        ),
                         protected=protected_plan,
                         **text_canvas,
                     )
@@ -13632,6 +13788,7 @@ def _run_phone_subtitled_job(
                         or _bg.uses_color
                         or _bg.uses_full_screen
                         or _bg.uses_focus
+                        or _bg.uses_layouts
                     ):
                         lane_receipt["background"] = {
                             # KRI-1173: a plain colour names itself; a media fill adds no key.
@@ -13647,6 +13804,20 @@ def _run_phone_subtitled_job(
                                 None,
                             ),
                         }
+                        _small_part = next(
+                            (w for w in _bg.layout_windows if w.layout == "small"), None
+                        )
+                        if _small_part is not None and _small_part.speaker_frame is not None:
+                            # KRI-1558: small in a corner in some parts (layout per section);
+                            # the review says so instead of "you stay full size".
+                            lane_receipt["background"]["speaker_frame_in_parts"] = next(
+                                (
+                                    name
+                                    for name, preset in SPEAKER_FRAME_PRESETS.items()
+                                    if _small_part.speaker_frame.model_dump() == preset
+                                ),
+                                None,
+                            )
                         if _bg.windows:
                             # KRI-1177: the windows cycle the sequence, so the review counts the
                             # distinct photos / videos behind the speaker, not the windows.
@@ -14002,6 +14173,12 @@ def _run_phone_subtitled_job(
             if not ending_lane_only:
                 new_entry["overlay_transcript"] = raw_words
             new_entry["phone_lane_receipt"] = lane_receipt
+            if background_sections and getattr(
+                getattr(recipe, "speaker_background", None), "uses_layouts", False
+            ):
+                # KRI-1558: the sections the speaker's layout follows (ORIGINAL take clock), only
+                # when the compiled recipe really draws them, so chat and checks can name them.
+                new_entry["speaker_sections"] = background_sections
         if ending_receipt is not None:
             new_entry[PHONE_ENDING_CLIP_FIELD] = ending_receipt
         if insert_receipt is not None:
@@ -16430,16 +16607,47 @@ def _closing_speaker_frame_kwargs(
     before) without a frame, or with ``SPEAKER_FRAME_CAPTION_FACES_ENABLED`` off."""
     background = lanes.background if lanes is not None else None
     frame = background.speaker_frame if background is not None else None
-    if frame is None or not settings.speaker_frame_caption_faces_enabled:
+    layouts = _lane_layout_spans(background)
+    if (frame is None and not layouts) or not settings.speaker_frame_caption_faces_enabled:
         return {}
     return {
-        "speaker_frame": (frame.width_fraction, frame.x_fraction, frame.y_fraction),
+        "speaker_frame": (
+            (frame.width_fraction, frame.x_fraction, frame.y_fraction)
+            if frame is not None
+            else None
+        ),
         "full_screen_windows": tuple(
             (float(span.start_s), float(span.end_s)) for span in background.full_screen_windows
         ),
+        # KRI-1558: how she is drawn per section (only while the lane has layouts).
+        **({"layout_windows": layouts} if layouts else {}),
         "shown_rows": list(shown_rows),
         "cards": _phone_list_label_card_boxes(lanes, visuals, canvas),
     }
+
+
+def _lane_layout_spans(background: Any) -> tuple[tuple[float, float, str, Any], ...]:
+    """KRI-1558: a lane background's layout windows as text placement reads them
+    (`phone_subtitled_title.LayoutSpan`: start, end, layout, the ``small`` frame's
+    ``(width, x, y)``), on the lane's clock. Empty without a background or layouts."""
+    spans = getattr(background, "layout_windows", None) or ()
+    return tuple(
+        (
+            float(span.start_s),
+            float(span.end_s),
+            str(span.layout),
+            (
+                (
+                    span.speaker_frame.width_fraction,
+                    span.speaker_frame.x_fraction,
+                    span.speaker_frame.y_fraction,
+                )
+                if span.speaker_frame is not None
+                else None
+            ),
+        )
+        for span in spans
+    )
 
 
 def _captions_touch_ending(
@@ -16643,6 +16851,7 @@ def _phone_talking_closing_rows(
     full_screen_windows: tuple[tuple[float, float], ...] = (),
     shown_rows: Sequence[Mapping[str, Any]] = (),
     cards: Sequence[tuple[float, float, Any]] = (),
+    layout_windows: tuple[tuple[float, float, str, Any], ...] = (),
 ) -> tuple[list[dict], dict[str, Any] | None, list[dict]]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
     receipt and its drawings (item 14's arrow; ``[]`` for the tag); ``([], None, [])``
@@ -16655,7 +16864,9 @@ def _phone_talking_closing_rows(
     KRI-1482: ``speaker_frame`` / ``full_screen_windows`` (`_closing_speaker_frame_kwargs`)
     say where the matted speaker is drawn, so the ending keeps off her face and her cut-out
     in the corner, and off the ``shown_rows`` (other text) and ``cards`` (start, end, box) on
-    screen with it. Without a frame the placement is exactly what it was."""
+    screen with it. Without a frame the placement is exactly what it was. KRI-1558:
+    ``layout_windows`` (`_lane_layout_spans`) say how she is drawn per section, read the same
+    way (a corner section's frame, her full-frame face, or no face under a picture)."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
@@ -16696,7 +16907,7 @@ def _phone_talking_closing_rows(
         )
         # KRI-1482: with her in a corner frame, what else is on screen during the ending.
         on_screen: list[Any] = []
-        if speaker_frame is not None:
+        if speaker_frame is not None or layout_windows:
             from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: PLC0415
 
             on_screen = [
@@ -16706,9 +16917,11 @@ def _phone_talking_closing_rows(
             ] + [box for a, b, box in cards if float(a) < end_s and float(b) > start_s]
         frame_kwargs: dict[str, Any] = (
             {"speaker_frame": speaker_frame, "full_screen_windows": full_screen_windows}
-            if speaker_frame is not None
+            if speaker_frame is not None or layout_windows
             else {}
         )
+        if layout_windows:
+            frame_kwargs["layout_windows"] = layout_windows
         if cta and not insert_in_ending and not keeps_off_object:
             from app.pipeline.phone_cta_ending import build_cta_ending  # noqa: PLC0415
             from app.pipeline.phone_cta_text import cta_ending_parts  # noqa: PLC0415
@@ -17399,9 +17612,11 @@ def _phone_spoken_text_placer(
     canvas: Any,
     speaker_frame: tuple[float, float, float] | None = None,
     full_screen_windows: tuple[tuple[float, float], ...] = (),
+    layout_windows: tuple[tuple[float, float, str, Any], ...] = (),
 ) -> Any:
     """``place(row, avoid)`` for a KRI-707 spoken-text row: off the speaker's face where it is
-    drawn (``speaker_frame`` / ``full_screen_windows`` once the lanes know them, KRI-1284) and
+    drawn (``speaker_frame`` / ``full_screen_windows`` / KRI-1558 ``layout_windows`` once the
+    lanes know them, KRI-1284) and
     clear of ``avoid``. ``binding`` / ``clip_path`` / ``keep_segments`` are the first speaker's,
     so a row past its span (a KRI-719 extra speaker) protects the fallback face."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
@@ -17434,6 +17649,7 @@ def _phone_spoken_text_placer(
             picture_band=band if float(row["start_s"]) < speaker_span_s else None,
             **({"speaker_frame": speaker_frame} if speaker_frame is not None else {}),
             **({"full_screen_windows": full_screen_windows} if full_screen_windows else {}),
+            **({"layout_windows": layout_windows} if layout_windows else {}),
             **_protected_placement_kwargs(protected),
         )
 
@@ -17466,7 +17682,8 @@ def _phone_spoken_list_on_lanes(
 
     background = lanes.background if lanes is not None else None
     frame = background.speaker_frame if background is not None else None
-    if not rows or receipt is None or frame is None:
+    layouts = _lane_layout_spans(background)
+    if not rows or receipt is None or (frame is None and not layouts):
         return rows, receipt
     if not any((row.get("source_params") or {}).get("list_label_look") for row in rows):
         return rows, receipt
@@ -17479,10 +17696,15 @@ def _phone_spoken_list_on_lanes(
         position_x=position_x,
         protected=protected,
         canvas=canvas,
-        speaker_frame=(frame.width_fraction, frame.x_fraction, frame.y_fraction),
+        speaker_frame=(
+            (frame.width_fraction, frame.x_fraction, frame.y_fraction)
+            if frame is not None
+            else None
+        ),
         full_screen_windows=tuple(
             (float(span.start_s), float(span.end_s)) for span in background.full_screen_windows
         ),
+        layout_windows=layouts,
     )
     rows, receipt = share_list_spot(
         rows,
@@ -17602,6 +17824,7 @@ def _phone_talking_list_label_rows(
     phrases: Any = None,
     full_screen_windows: tuple[tuple[float, float], ...] = (),
     backdrop_spans: tuple[tuple[float, float], ...] = (),
+    layout_windows: tuple[tuple[float, float, str, Any], ...] = (),
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """Item 19: one text row per numbered list label that has its moment, plus the receipt.
 
@@ -17614,8 +17837,9 @@ def _phone_talking_list_label_rows(
     of the cards on screen. ``speaker_frame`` maps the sampled face to where the matted speaker
     is drawn, so a label stays off the corner face. ``full_screen_windows`` (Qendresa item 16, the
     cut timeline like the rows) are where she is drawn full-frame instead: a label's time inside
-    one keeps off her full-frame face. The receipt keeps every ask that is a list item; ``None``
-    when none is."""
+    one keeps off her full-frame face. KRI-1558: ``layout_windows`` (`_lane_layout_spans`, same
+    clock) say how she is drawn per section. The receipt keeps every ask that is a list item;
+    ``None`` when none is."""
     from app.pipeline.phone_list_labels import list_label_rows  # noqa: PLC0415
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import _text_boxes, caption_boxes  # noqa: PLC0415
@@ -17653,6 +17877,7 @@ def _phone_talking_list_label_rows(
             avoid=avoid,
             speaker_frame=speaker_frame,
             **({"full_screen_windows": full_screen_windows} if full_screen_windows else {}),
+            **({"layout_windows": layout_windows} if layout_windows else {}),
             **_protected_placement_kwargs(protected),
         )
 
@@ -17713,6 +17938,22 @@ def _list_label_backdrop_spans(lanes: Any, timeline_s: float) -> tuple[tuple[flo
     lane, without a speaker frame (a picture behind her full-size cut-out keeps today's label),
     or with a plain colour fill and no windows."""
     background = lanes.background if lanes is not None else None
+    layouts = getattr(background, "layout_windows", None) or ()
+    if layouts:
+        # KRI-1558: where a section shows her small over a picture, or the picture alone.
+        spans = [
+            (float(w.start_s), float(w.end_s)) for w in layouts if w.layout in ("small", "picture")
+        ]
+        for cut in sorted(
+            (float(w.start_s), float(w.end_s)) for w in background.full_screen_windows
+        ):
+            spans = [
+                part
+                for start, end in spans
+                for part in ((start, min(end, cut[0])), (max(start, cut[1]), end))
+                if part[1] - part[0] > 1e-6
+            ]
+        return tuple(spans)
     if background is None or background.speaker_frame is None:
         return ()
     if background.kind in ("image", "video"):

@@ -275,6 +275,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if speakerBackground?.windows != nil || speakerBackground?.speakerFrame != nil || tracks.flatMap(\.clips).contains(where: { $0.speakerFrameOverride?.mode == .custom }) { result.insert(.speakerBackgroundWindows) }
         // Qendresa item 16 (protocol 41): a full-screen opening/ending is a layer property an older build would silently ignore.
         if speakerBackground?.fullScreenWindows != nil { result.insert(.speakerFrameWindows) }
+        // KRI-1558: the speaker's layout per section. Derived from the layout windows only (mirrors `EditRecipeV2`): a take
+        // split whose pieces draw her differently was saved before this capability and keeps its requirements.
+        if speakerBackground?.layoutWindows != nil { result.insert(.speakerSections) }
         // Qendresa item 18 (protocol 42): an aimed background (fill or any window) is a layer property an older build would silently ignore.
         if speakerBackground?.focus != nil || speakerBackground?.windows?.contains(where: { $0.focus != nil }) == true { result.insert(.backgroundFocus) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
@@ -627,7 +630,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, textDesigns, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
          speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse, splitBlankPanel,
-         colorMoments, speechDuck, clipDim
+         colorMoments, speechDuck, clipDim, speakerSections
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

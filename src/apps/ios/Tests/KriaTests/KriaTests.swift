@@ -265,6 +265,8 @@ final class KriaTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.url?.path, "/creation-threads/capabilities")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), String(KriaClientProtocolContract.version))
+            // KRI-1558: the build names the renderer features the server must not infer from the number alone.
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Features"), "speakerSections")
             return (200, Data(#"{"formats":[{"id":"montage","edit_format":"montage","max_clips":20},{"id":"narrated","edit_format":"narrated_planned","max_clips":20}]}"#.utf8))
         }
         let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())

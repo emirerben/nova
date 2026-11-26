@@ -118,6 +118,25 @@ final class SpeakerBackgroundTests: XCTestCase {
         }
     }
 
+    // MARK: - KRI-1558 wire (v6.json: layout_windows)
+
+    func testSharedFixtureV6() throws {
+        let valid = try cases("valid", file: "v6")
+        XCTAssertGreaterThanOrEqual(valid.count, 8)
+        for item in valid {
+            let layer = try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer)
+            XCTAssertEqual(layer, try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: XCTUnwrap(item.normalized)), item.name)
+            try layer.validate()
+            let rewritten = try XCTUnwrap(JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(layer)) as? NSDictionary)
+            XCTAssertEqual(rewritten, try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(item.normalized)) as? NSDictionary), item.name)
+        }
+        let invalid = try cases("invalid", file: "v6")
+        XCTAssertGreaterThanOrEqual(invalid.count, 20)
+        for item in invalid {
+            XCTAssertThrowsError(try RecipeJSON.decoder().decode(SpeakerBackgroundLayer.self, from: item.layer), item.name)
+        }
+    }
+
     /// Qendresa item 18: focus bounds, strict keys, colour rejection, capability, omitted while nil.
     func testFocusValidationAndCapability() throws {
         XCTAssertNoThrow(try SpeakerBackgroundFocus(x: 0, y: 1, zoom: 0.2).validate())

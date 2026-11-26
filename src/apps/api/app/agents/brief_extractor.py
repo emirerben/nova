@@ -19,11 +19,13 @@ from app.agents.main_creator import (
     CHANGED_REQUEST_SECTION,
     music_ask_taught,
     sfx_ask_taught,
+    speaker_parts_taught,
     with_full_opening_brief,
     with_insert_clip_brief,
     with_long_request_cap,
     with_music_ask_brief,
     with_sfx_ask_brief,
+    with_speaker_parts_brief,
 )
 from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
@@ -150,6 +152,8 @@ def _narrow_brief_section(insert_clips_open: bool) -> str:
         section = with_music_ask_brief(section)
     if sfx_ask_taught():
         section = with_sfx_ask_brief(section)
+    if speaker_parts_taught():
+        section = with_speaker_parts_brief(section)
     # Qendresa item 16: "" unless SPEAKER_FULL_OPENING_ENABLED; flag off keeps the bytes.
     return with_full_opening_brief(section) if settings.speaker_full_opening_enabled else section
 

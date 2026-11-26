@@ -761,7 +761,7 @@ def project_canvas_background(
     old_canvas = canvas_speech_slots(old_slots, old_sections)
     new_canvas = canvas_speech_slots(new_slots, new_sections)
     result = deepcopy(background)
-    for key in ("windows", "full_screen_windows"):
+    for key in ("windows", "full_screen_windows", "layout_windows"):
         if not isinstance(background.get(key), list):
             continue
         projected = project_speech_basis(

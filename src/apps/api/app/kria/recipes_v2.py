@@ -221,6 +221,15 @@ class EditRecipeV2(EditRecipeV1):
             # Qendresa item 18: a background picture aimed at its readable text.
             if self.speaker_background.uses_focus:
                 self.required_capabilities |= {"backgroundFocus"}
+            # KRI-1558: the speaker's layout per section (layout windows) needs the build that
+            # draws them. Derived from the windows only: a take split whose pieces draw her
+            # differently (per-clip `speaker_frame_override`) was already saved and pinned before
+            # this capability existed, and must reopen with the same capabilities and digest.
+            for layout_window in self.speaker_background.layout_windows or ():
+                if layout_window.end > self.duration + 1e-6:
+                    raise ValueError("a layout window exceeds the timeline")
+            if self.speaker_background.uses_layouts:
+                self.required_capabilities |= {"speakerSections"}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
         # KRI-1192: a run drawn in a script-fallback face needs a build that bundles it.

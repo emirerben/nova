@@ -83,8 +83,11 @@ from app.services.choice_questions import (
     tag_event,
 )
 from app.services.client_protocol import (
+    APPROVAL_CLIENT_FEATURES_FIELD,
     APPROVAL_CLIENT_PROTOCOL_FIELD,
+    current_client_features,
     current_client_protocol,
+    parse_client_features,
 )
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
@@ -175,6 +178,21 @@ async def _render_client_protocol(db: AsyncSession, turn: Any) -> int | None:
     if drafted is None or approver is None:
         return drafted
     return min(drafted, approver)
+
+
+async def _render_client_features(db: AsyncSession, turn: Any) -> list[str]:
+    """KRI-1558: what the approved render may plan for, of the features a build advertises
+    (`X-Kria-Client-Features`). Like `_render_client_protocol`, the approving build can only
+    narrow what the drafting build advertised: both must name a feature. A legacy turn with no
+    source event falls back to the approver; a drafting message that recorded nothing (an older
+    build, the web) advertised nothing."""
+    approver = current_client_features()
+    source_id = getattr(turn, "source_event_id", None)
+    source = await db.get(CreationThreadEvent, source_id) if source_id is not None else None
+    if source is None:
+        return sorted(approver)
+    payload = source.payload if isinstance(source.payload, dict) else {}
+    return sorted(approver & parse_client_features(payload.get("client_features")))
 
 
 def request_digest(body: SubmitTurnBody) -> str:
@@ -927,6 +945,12 @@ async def _submit_clip_order_turn(
             if current_client_protocol() is not None
             else {}
         ),
+        # KRI-1558: what that build advertises; nothing stored when it names nothing.
+        **(
+            {"client_features": sorted(current_client_features())}
+            if current_client_features()
+            else {}
+        ),
     }
     answer_payload: dict[str, Any] = {
         "turn_id": str(turn_id),
@@ -1632,6 +1656,14 @@ async def submit_turn(
             **(
                 {"client_protocol": current_client_protocol()}
                 if current_client_protocol() is not None
+                else {}
+            ),
+            # KRI-1558: what the sending build advertises (`X-Kria-Client-Features`), so the draft
+            # plans speaker sections only for a build that names them. Not part of
+            # `request_digest`; a build that names nothing stores nothing.
+            **(
+                {"client_features": sorted(current_client_features())}
+                if current_client_features()
                 else {}
             ),
             # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
@@ -3990,6 +4022,12 @@ async def decide_approval(
             stashed[APPROVAL_CLIENT_PROTOCOL_FIELD] = render_protocol
         else:
             stashed.pop(APPROVAL_CLIENT_PROTOCOL_FIELD, None)
+        # KRI-1558: set-or-clear the advertised features the same way.
+        render_features = await _render_client_features(db, turn)
+        if render_features:
+            stashed[APPROVAL_CLIENT_FEATURES_FIELD] = render_features
+        else:
+            stashed.pop(APPROVAL_CLIENT_FEATURES_FIELD, None)
         if stashed != (execution.result or {}):
             execution.result = stashed
     elif render_shape_stash is not None:

@@ -468,6 +468,9 @@ class SpeakerBackgroundFact:
     asked_media_count: int | None = None
     windows_open: bool = False
     frame: str | None = None
+    # KRI-1558: ``frame`` is the corner of the parts drawn small (a layout per section), not one
+    # corner for the whole video.
+    frame_in_parts: bool = False
     asked_frame: str | None = None
     # KRI-1173: the plain colour (``#RRGGBB``) the plan / finished video holds as its fill, and
     # why a colour is not available on this edit ("unavailable" | "app_too_old"; None = it is).
@@ -1429,7 +1432,8 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
                 else None
             ),
             windows_open=True,
-            frame=_frame_preset_name(doc.get("speaker_frame")),
+            frame=_frame_preset_name(doc.get("speaker_frame")) or _small_part_preset(doc),
+            frame_in_parts=not doc.get("speaker_frame") and _small_part_preset(doc) is not None,
             color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
             # The document is the creator's own edit: its windows decide, never the lane receipt.
             full_screen_opening_s=_opening_seconds(doc.get("full_screen_windows")),
@@ -1460,7 +1464,13 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         # (8 windows over 5 photos); a receipt from before that keeps the window count.
         media_count=int(media) if isinstance(media, int) and not isinstance(media, bool) else None,
         windows_open=True,
-        frame=detail.get("speaker_frame") if isinstance(detail.get("speaker_frame"), str) else None,
+        frame=detail.get("speaker_frame")
+        if isinstance(detail.get("speaker_frame"), str)
+        else detail.get("speaker_frame_in_parts")
+        if isinstance(detail.get("speaker_frame_in_parts"), str)
+        else None,
+        frame_in_parts=not isinstance(detail.get("speaker_frame"), str)
+        and isinstance(detail.get("speaker_frame_in_parts"), str),
         color=detail.get("color") if isinstance(detail.get("color"), str) else None,
         full_screen_opening_s=opening_s,
         asked_full_opening=opening_s is not None or opening_code is not None,
@@ -5848,6 +5858,23 @@ _FRAME_WORDS = {
 }
 
 
+def _corner_words(fact: SpeakerBackgroundFact) -> tuple[str, str] | None:
+    """The corner the speaker sits in as (en, tr) words; "in some parts" when she is small only in
+    the parts a layout per section draws small (KRI-1558)."""
+    corner = _FRAME_WORDS.get(fact.frame or "")
+    if corner is None or not fact.frame_in_parts:
+        return corner
+    return (f"{corner[0]} in some parts", f"bazı bölümlerde {corner[1]}")
+
+
+def _small_part_preset(doc: Mapping[str, Any]) -> str | None:
+    """KRI-1558: the corner of the first part a layout per section draws small, else None."""
+    for window in doc.get("layout_windows") or ():
+        if isinstance(window, Mapping) and window.get("layout") == "small":
+            return _frame_preset_name(window.get("speaker_frame"))
+    return None
+
+
 def _sb(text: str, suffix: str = ".") -> str:
     """A static background reason in the chat's language (its Turkish twin is in `_REASON_TR`)."""
     return say(en=text, tr=_REASON_TR[text]) + suffix
@@ -5970,7 +5997,7 @@ def _check_background_color(
         # One photo repeated in every window does not take turns with anything.
         en += "; one photo or video sits over it"
         tr += "; üstünde tek bir fotoğraf ya da video duruyor"
-    corner = _FRAME_WORDS.get(fact.frame or "")
+    corner = _corner_words(fact)
     if corner:
         en += f"; you're {corner[0]}"
         tr += f"; sen {corner[1]}sın"
@@ -6185,7 +6212,7 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
                 asked=asked,
             ),
         )
-    corner = _FRAME_WORDS.get(fact.frame or "")
+    corner = _corner_words(fact)
     if not _background_never_changes(fact):
         shown = _background_media_shown(fact)
         en = f"{shown} photos or videos take turns behind you"

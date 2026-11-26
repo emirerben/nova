@@ -1363,6 +1363,28 @@ class EditorCommitSpeakerFrame(BaseModel):
     y_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
 
 
+class EditorCommitSpeakerLayoutWindow(BaseModel):
+    """One layout span of the Save section (KRI-1558): from ``start_s`` to ``end_s`` of the
+    edit's timeline the speaker is drawn with ``layout`` (``own`` her own take, ``full`` the
+    cut-out at full size, ``small`` the cut-out at ``speaker_frame``, ``picture`` the picture
+    alone). Order, overlap, the 0.5 s minimum, the count, the edit end and the frame-iff-small
+    rule are checked by `_validate_speaker_layout_windows` so they answer with their own code."""
+
+    model_config = {"extra": "forbid"}
+
+    start_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    end_s: float = Field(ge=0.0, le=1800.0, allow_inf_nan=False)
+    layout: Literal["own", "full", "small", "picture"]
+    speaker_frame: EditorCommitSpeakerFrame | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("speaker_frame") is None:
+            data.pop("speaker_frame", None)
+        return data
+
+
 class EditorCommitSpeakerBackground(BaseModel):
     """Editor Save section for the Talk-to-camera background (KRI-1117).
 
@@ -1399,6 +1421,10 @@ class EditorCommitSpeakerBackground(BaseModel):
     full_screen_windows: list[EditorCommitSpeakerFullScreenWindow] | None = None
     # Qendresa item 18: the fill's focus (photo/video only), omitted while None.
     focus: EditorCommitBackgroundFocus | None = None
+    # KRI-1558: the speaker's layout per span of the cut timeline, omitted from the dump while
+    # unused (an old-shape Save still equals the stored document). No length bounds here:
+    # `_validate_speaker_layout_windows` answers a bad list with `speaker_sections_invalid`.
+    layout_windows: list[EditorCommitSpeakerLayoutWindow] | None = None
 
     @field_validator("color", mode="before")
     @classmethod
@@ -1427,6 +1453,8 @@ class EditorCommitSpeakerBackground(BaseModel):
             data.pop("full_screen_windows", None)
         if data.get("focus") is None:
             data.pop("focus", None)
+        if not data.get("layout_windows"):
+            data.pop("layout_windows", None)
         return data
 
 
@@ -7995,6 +8023,9 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # Qendresa item 18: aim a background at its text, present only when ON.
         if _background_focus_capability(job, variant):
             capabilities["background_focus"] = {"editable": True}
+        # KRI-1558: the speaker's place and size per section, present only when ON.
+        if _speaker_sections_capability(job, variant):
+            capabilities["speaker_sections"] = {"editable": True}
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
     if _caption_translation_capability(variant, capabilities):
@@ -12316,6 +12347,18 @@ def _speaker_full_opening_capability(job: Job, variant: dict) -> bool:
     )
 
 
+def _speaker_sections_capability(job: Job, variant: dict) -> bool:
+    """KRI-1558: may the app author ``layout_windows`` (``editor_capabilities.speaker_sections``)?
+    The base capability AND the sections gate (flag, windows gate, ``speakerSections`` verified,
+    protocol >= ``speaker_sections_min_client_protocol``)."""
+    from app.services.phone_rollout import speaker_sections_supported  # noqa: PLC0415
+
+    return bool(
+        _speaker_background_capability(job, variant)
+        and speaker_sections_supported(require_client=True)
+    )
+
+
 def _background_focus_capability(job: Job, variant: dict) -> bool:
     """Qendresa item 18: may the app aim a background (``editor_capabilities.background_focus``)?
     The base capability AND the focus gate (flag, ``backgroundFocus`` verified, protocol >= 42)."""
@@ -12461,6 +12504,38 @@ def _validate_speaker_full_screen_windows(
         )
 
 
+def _validate_speaker_layout_windows(
+    requested: EditorCommitSpeakerBackground, variant: dict
+) -> None:
+    """KRI-1558: refuse layout spans the phone cannot draw. 1..40, sorted, never overlapping
+    (touching is fine), each at least 0.5 s, a ``speaker_frame`` exactly on a ``small`` span, and
+    inside the edit when its length is known. Answers ``speaker_sections_invalid``."""
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        MAX_LAYOUT_WINDOWS,
+        MIN_BACKGROUND_WINDOW_S,
+    )
+
+    spans = requested.layout_windows or []
+    duration = variant.get("duration_s")
+    previous_end = 0.0
+    ok = len(spans) <= MAX_LAYOUT_WINDOWS
+    for span in spans:
+        if (
+            span.end_s - span.start_s < MIN_BACKGROUND_WINDOW_S - 1e-9
+            or span.start_s < previous_end
+            or (span.layout == "small") != (span.speaker_frame is not None)
+        ):
+            ok = False
+        if isinstance(duration, int | float) and span.end_s > duration + 1e-6:
+            ok = False
+        previous_end = span.end_s
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "speaker_sections_invalid"},
+        )
+
+
 _BACKGROUND_COLOR_RE = re.compile(r"^#[0-9A-F]{6}$")
 
 
@@ -12590,6 +12665,7 @@ def _validate_speaker_background_section(
         SubtitledBackgroundFocus,
         SubtitledBackgroundWindow,
         SubtitledFullScreenWindow,
+        SubtitledLayoutWindow,
         SubtitledSpeakerFrame,
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
@@ -12597,6 +12673,7 @@ def _validate_speaker_background_section(
         speaker_background_unavailable_reason,
         speaker_background_windows_unavailable_reason,
         speaker_full_opening_unavailable_reason,
+        speaker_sections_unavailable_reason,
     )
     from app.services.phone_subtitled_editor import (  # noqa: PLC0415
         pinned_visual,
@@ -12722,6 +12799,28 @@ def _validate_speaker_background_section(
             )
         if new_spans != stored_spans:
             _validate_speaker_full_screen_windows(requested, variant)
+    stored_layouts = current.get("layout_windows") if isinstance(current, dict) else None
+    new_layouts = [span.model_dump() for span in requested.layout_windows or []]
+    if new_layouts and new_layouts != stored_layouts:
+        # KRI-1558: the sections gate on top of the windows gate above. Only a Save that sets or
+        # changes the layouts needs it; one that keeps what the variant already carries (a fill
+        # change) is not refused by a gate closed since. Clearing them is never gated.
+        sections_reason = speaker_sections_unavailable_reason()
+        if sections_reason == "client_protocol_below_min":
+            raise HTTPException(
+                426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "speaker_sections",
+                    "minimum_client_protocol": settings.speaker_sections_min_client_protocol,
+                },
+            )
+        if sections_reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "speaker_sections_disabled", "reason": sections_reason},
+            )
+        _validate_speaker_layout_windows(requested, variant)
     _validate_background_focus_change(requested, job, variant, is_color=is_color)
     auto_focus = _new_recording_focus(job, variant, assembly)
     fill: dict[str, Any]
@@ -12794,6 +12893,19 @@ def _validate_speaker_background_section(
             full_screen_windows=tuple(
                 SubtitledFullScreenWindow(start_s=span.start_s, end_s=span.end_s)
                 for span in requested.full_screen_windows or []
+            ),
+            layout_windows=tuple(
+                SubtitledLayoutWindow(
+                    start_s=span.start_s,
+                    end_s=span.end_s,
+                    layout=span.layout,
+                    speaker_frame=(
+                        SubtitledSpeakerFrame(**span.speaker_frame.model_dump())
+                        if span.speaker_frame is not None
+                        else None
+                    ),
+                )
+                for span in requested.layout_windows or []
             ),
         )
     )

@@ -190,8 +190,10 @@ from app.services.choice_questions import (
     tag_event,
 )
 from app.services.client_protocol import (
+    APPROVAL_CLIENT_FEATURES_FIELD,
     APPROVAL_CLIENT_PROTOCOL_FIELD,
     bind_sending_build,
+    parse_client_features,
     unbind_sending_build,
 )
 from app.services.creation_thread_titles import (
@@ -504,6 +506,9 @@ class _ApprovalDispatchClaim:
     # as `creator_client_protocol` so the render plans a freeze only for a build that plays
     # it. None = unknown (web approval, a legacy approval), so no freeze is planned.
     client_protocol: int | None = None
+    # KRI-1558: what that build advertised (`X-Kria-Client-Features`), stamped on the Job as
+    # `creator_client_features`; empty = nothing (no speaker sections are planned).
+    client_features: tuple[str, ...] = ()
     # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
     # failure after the pointer moves can put it back (never leave an orphan target).
     prior_item_status: str | None = None
@@ -7548,6 +7553,13 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             client_protocol=stamped_client_protocol(
                 (execution.result or {}).get(APPROVAL_CLIENT_PROTOCOL_FIELD)
             ),
+            client_features=tuple(
+                sorted(
+                    parse_client_features(
+                        (execution.result or {}).get(APPROVAL_CLIENT_FEATURES_FIELD)
+                    )
+                )
+            ),
             prior_item_status=(
                 str(getattr(item, "item_status", None))
                 if getattr(item, "item_status", None) is not None
@@ -8941,6 +8953,12 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             **(
                 {"creator_client_protocol": claim.client_protocol}
                 if getattr(claim, "client_protocol", None) is not None
+                else {}
+            ),
+            # KRI-1558: what the approving build advertised (absent = byte-identical call).
+            **(
+                {"creator_client_features": list(claim.client_features)}
+                if getattr(claim, "client_features", ())
                 else {}
             ),
             # KRI-722: the verified snapshot + attempt (absent = legacy call).

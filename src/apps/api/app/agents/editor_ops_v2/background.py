@@ -39,6 +39,28 @@ Qendresa item 18 (family ``background_focus``, open only while the snapshot says
   right of the picture and/or zoom them. It is about the RECORDING; the corner the speaker sits
   in is ``set_speaker_frame``'s.
 
+KRI-1558 (family ``speaker_sections``, open only while the snapshot says ``sections_available``:
+the windows gate AND the build that draws the speaker's layout per section, protocol 59). The
+snapshot lists the take's SECTIONS (`talking_sections` over the caption words, output seconds) and
+the ``layout_windows`` in force. A layout is ``own`` (her own take, full screen), ``full`` (her
+cut-out full size over the picture), ``small`` (her cut-out small in a corner over the picture) or
+``picture`` (the picture alone, her voice on):
+
+* ``arrange_sections {asset_ids?}``: the planner's layout per section. The pictures (the named
+  ones, else the ones already behind her, in order) go on the middle sections, which alternate
+  ``small`` and ``picture``; the first and last sections are ``own``. Replaces the timed
+  backgrounds and the one corner; "add pictures" no longer means one corner for the whole take.
+* ``set_section_layout {speaker_layout, section_numbers? | start_s?/end_s?, preset?}``: one
+  layout for some sections, for a stretch "from A to B", or (neither) the whole video; the rest
+  keep theirs. No new picture is needed.
+* ``remove_background_window {window_index}`` / ``retime_background_window {window_index,
+  start_s, end_s}``: one timed background (1-based, as listed) taken away or moved.
+
+``clear_speaker_frame`` ("put me back full screen") clears every place that makes her small: the
+one corner, the ``small``/``picture`` sections and any clip's own corner, so it always applies.
+``set_speaker_frame`` without a selector ("keep me in the corner the whole time") is one corner
+for the whole video again: it clears the layouts per section.
+
 All of them compile into the editor Save's ``speaker_background`` section. The Save
 (`generative_jobs._validate_speaker_background_section`, after
 `phone_speaker_background.pin_pool_visual_for_background`) stays the authority on what the
@@ -352,6 +374,153 @@ def _coerce_remove_full_screen_opening(
     return None
 
 
+# KRI-1558: the speaker's layout per section.
+SPEAKER_LAYOUTS = ("own", "full", "small", "picture")
+MAX_LAYOUT_WINDOWS = 40
+MIN_LAYOUT_S = 0.5
+DEFAULT_SMALL_PRESET = "small_bottom_right"
+
+
+def _sections_section(snapshot: dict) -> dict | None:
+    section = snapshot.get("background") if isinstance(snapshot, dict) else None
+    if isinstance(section, dict) and section.get("sections_available") is True:
+        return section
+    return None
+
+
+def _sections_closed(name: str, state: Any) -> None:
+    detail = say(
+        en="I can't change where you are part by part on this edit yet.",
+        tr="Bu düzenlemede yerini bölüm bölüm henüz değiştiremiyorum.",
+    )
+    state.reject(op=name, reason="capability_unavailable", detail=detail)
+    if detail not in state.reply_notes:
+        state.reply_notes.append(detail)
+
+
+def _coerce_arrange_sections(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    if _sections_section(snapshot) is None:
+        _sections_closed(name, state)
+        return None
+    out: dict[str, Any] = {"op": name}
+    ids = payload.get("asset_ids")
+    if ids is not None:
+        if not isinstance(ids, list) or not 1 <= len(ids) <= MAX_LAYOUT_WINDOWS:
+            state.invalid_value()
+            return None
+        rows = [_pool_row(snapshot, asset_id) for asset_id in ids]
+        if any(row is None or row.get("kind") not in ("image", "video") for row in rows):
+            state.invalid_value()
+            return None
+        out["asset_ids"] = [row["id"] for row in rows if row is not None]
+        out["kinds"] = [row["kind"] for row in rows if row is not None]
+    return out
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _coerce_set_section_layout(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
+    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS  # noqa: PLC0415
+
+    section = _sections_section(snapshot)
+    if section is None:
+        _sections_closed(name, state)
+        return None
+    layout = payload.get("speaker_layout")
+    if layout not in SPEAKER_LAYOUTS:
+        state.invalid_value()
+        return None
+    out: dict[str, Any] = {"op": name, "speaker_layout": layout}
+    preset = payload.get("preset")
+    if preset is not None:
+        if layout != "small" or preset not in SPEAKER_FRAME_PRESETS:
+            state.invalid_value()
+            return None
+        out["preset"] = preset
+    numbers = payload.get("section_numbers")
+    has_span = "start_s" in payload or "end_s" in payload
+    if numbers is not None and has_span:
+        state.invalid_value()
+        return None
+    if numbers is not None:
+        listed = section.get("sections") or []
+        if (
+            not isinstance(numbers, list)
+            or not numbers
+            or any(isinstance(n, bool) or not isinstance(n, int) for n in numbers)
+            or any(not 1 <= n <= len(listed) for n in numbers)
+        ):
+            state.invalid_value()
+            return None
+        out["section_numbers"] = sorted(set(numbers))
+    elif has_span:
+        duration = _number(section.get("duration_s")) or 0.0
+        start = _number(payload.get("start_s", 0.0))
+        end = _number(payload.get("end_s", duration))
+        if start is None or end is None:
+            state.invalid_value()
+            return None
+        start, end = max(0.0, start), min(end, duration) if duration > 0 else end
+        if end - start < MIN_LAYOUT_S:
+            state.invalid_value()
+            return None
+        out["start_s"], out["end_s"] = round(start, 3), round(end, 3)
+    return out
+
+
+def _window_index(payload: dict, snapshot: dict, state: Any) -> int | None:
+    section = snapshot.get("background") if isinstance(snapshot, dict) else None
+    windows = section.get("windows") if isinstance(section, dict) else None
+    index = payload.get("window_index")
+    if (
+        isinstance(index, bool)
+        or not isinstance(index, int)
+        or not isinstance(windows, list)
+        or not 1 <= index <= len(windows)
+    ):
+        state.invalid_value()
+        return None
+    return index
+
+
+def _coerce_remove_background_window(
+    name: str, payload: dict, snapshot: dict, state: Any
+) -> dict | None:
+    if _sections_section(snapshot) is None:
+        _sections_closed(name, state)
+        return None
+    index = _window_index(payload, snapshot, state)
+    return None if index is None else {"op": name, "window_index": index}
+
+
+def _coerce_retime_background_window(
+    name: str, payload: dict, snapshot: dict, state: Any
+) -> dict | None:
+    if _sections_section(snapshot) is None:
+        _sections_closed(name, state)
+        return None
+    index = _window_index(payload, snapshot, state)
+    if index is None:
+        return None
+    out: dict[str, Any] = {"op": name, "window_index": index}
+    for key in ("start_s", "end_s"):
+        if key in payload:
+            number = _number(payload[key])
+            if number is None or number < 0:
+                state.invalid_value()
+                return None
+            out[key] = round(number, 3)
+    if "start_s" not in out and "end_s" not in out:
+        state.invalid_value()
+        return None
+    return out
+
+
 SPECS: list[OpSpec] = [
     OpSpec(
         name="set_background",
@@ -414,6 +583,35 @@ SPECS: list[OpSpec] = [
         family=frozenset({"background_windows"}),
         coerce=_coerce_clear_speaker_frame,
     ),
+    # KRI-1558: their own family, in `allowed_op_families` only while the sections gate is open.
+    OpSpec(
+        name="arrange_sections",
+        required=frozenset(),
+        fields=frozenset({"asset_ids"}),
+        family=frozenset({"speaker_sections"}),
+        coerce=_coerce_arrange_sections,
+    ),
+    OpSpec(
+        name="set_section_layout",
+        required=frozenset({"speaker_layout"}),
+        fields=frozenset({"speaker_layout", "section_numbers", "start_s", "end_s", "preset"}),
+        family=frozenset({"speaker_sections"}),
+        coerce=_coerce_set_section_layout,
+    ),
+    OpSpec(
+        name="remove_background_window",
+        required=frozenset({"window_index"}),
+        fields=frozenset({"window_index"}),
+        family=frozenset({"speaker_sections"}),
+        coerce=_coerce_remove_background_window,
+    ),
+    OpSpec(
+        name="retime_background_window",
+        required=frozenset({"window_index"}),
+        fields=frozenset({"window_index", "start_s", "end_s"}),
+        family=frozenset({"speaker_sections"}),
+        coerce=_coerce_retime_background_window,
+    ),
 ]
 
 
@@ -431,6 +629,9 @@ def _keep_full_screen(document: dict, working: object) -> None:
     background op changes the fill, the timed backgrounds or the corner, never the opening."""
     if isinstance(working, dict) and working.get("full_screen_windows"):
         document["full_screen_windows"] = [dict(span) for span in working["full_screen_windows"]]
+    # KRI-1558: the speaker's layout per section is kept the same way.
+    if isinstance(working, dict) and working.get("layout_windows"):
+        document["layout_windows"] = _copy_layouts(working["layout_windows"])
 
 
 def _focus_of(entry: object) -> dict[str, float]:
@@ -695,9 +896,11 @@ def _op_set_speaker_frame(state: Any, op: dict[str, Any]) -> None:
             "Put a photo or video behind you first, then I can place you small in a corner"
         )
     frame = dict(SPEAKER_FRAME_PRESETS[op["preset"]])
-    if working.get("speaker_frame") == frame:
+    if working.get("speaker_frame") == frame and not working.get("layout_windows"):
         raise KriaEditorOpError("You're already there")
-    state.speaker_background = {**working, "speaker_frame": frame}
+    # KRI-1558: one corner for the whole video replaces the layouts per section.
+    rest = {key: value for key, value in working.items() if key != "layout_windows"}
+    state.speaker_background = {**rest, "speaker_frame": frame}
     state.changed.add("speaker_background")
     state.summary = "Made you small in the corner"
 
@@ -709,11 +912,35 @@ def _op_clear_speaker_frame(state: Any, op: dict[str, Any]) -> None:  # noqa: AR
         _set_occurrence_frame(state, op, {"mode": "full"})
         return
     working = _working_document(state)
-    if not isinstance(working, dict) or not working.get("speaker_frame"):
+    # KRI-1558: "put me back full screen" clears EVERY place that makes her small: the one corner,
+    # the sections drawn small or as the picture alone, and any clip's own corner (a per-clip
+    # frame answered "you're already full screen" before). Her full-screen sections stay.
+    reset_rows = False
+    for row in state.slots:
+        override = row.get("speaker_frame_override")
+        if isinstance(override, dict) and override.get("mode") not in (None, "inherit"):
+            row["speaker_frame_override"] = {"mode": "inherit"}
+            reset_rows = True
+    if reset_rows:
+        state.changed.add("timeline")
+    document = dict(working) if isinstance(working, dict) else None
+    changed = False
+    if document is not None and document.pop("speaker_frame", None) is not None:
+        changed = True
+    if document is not None and document.get("layout_windows"):
+        # Her own take and her cut-out at full size are full screen already.
+        kept = [w for w in document["layout_windows"] if w.get("layout") in ("own", "full")]
+        if len(kept) != len(document["layout_windows"]):
+            changed = True
+        if kept:
+            document["layout_windows"] = _copy_layouts(kept)
+        else:
+            document.pop("layout_windows")
+    if not changed and not reset_rows:
         raise KriaEditorOpError("You're already full screen")
-    document = {key: value for key, value in working.items() if key != "speaker_frame"}
-    state.speaker_background = document
-    state.changed.add("speaker_background")
+    if changed:
+        state.speaker_background = document
+        state.changed.add("speaker_background")
     state.summary = "Put you back full screen"
 
 
@@ -758,6 +985,253 @@ def _op_remove_background(state: Any, op: dict[str, Any]) -> None:  # noqa: ARG0
     state.summary = "Removed the background behind you"
 
 
+def _copy_layouts(windows: object) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for window in windows or ():
+        if not isinstance(window, dict):
+            continue
+        row = {k: window[k] for k in ("start_s", "end_s", "layout") if k in window}
+        if isinstance(window.get("speaker_frame"), dict):
+            row["speaker_frame"] = dict(window["speaker_frame"])
+        out.append(row)
+    return out
+
+
+def _layout_row(start: float, end: float, layout: str, preset: str | None) -> dict[str, Any]:
+    from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS  # noqa: PLC0415
+
+    row: dict[str, Any] = {"start_s": round(start, 3), "end_s": round(end, 3), "layout": layout}
+    if layout == "small":
+        row["speaker_frame"] = dict(SPEAKER_FRAME_PRESETS[preset or DEFAULT_SMALL_PRESET])
+    return row
+
+
+def _merge_layouts(
+    current: list[dict[str, Any]], spans: list[tuple[float, float]], new: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """``current`` with ``spans`` (sorted, disjoint) set to ``new`` (a row without times).
+
+    Windows they overlap are clipped around them; a piece left under half a second goes, and
+    touching windows with the same layout merge."""
+    pieces: list[dict[str, Any]] = []
+    for window in current:
+        parts = [(float(window["start_s"]), float(window["end_s"]))]
+        for start, end in spans:
+            parts = [
+                piece
+                for a, b in parts
+                for piece in ((a, min(b, start)), (max(a, end), b))
+                if piece[1] - piece[0] >= MIN_LAYOUT_S - 1e-9
+            ]
+        pieces.extend({**window, "start_s": round(a, 3), "end_s": round(b, 3)} for a, b in parts)
+    pieces.extend({**new, "start_s": round(a, 3), "end_s": round(b, 3)} for a, b in spans)
+    pieces.sort(key=lambda row: row["start_s"])
+    merged: list[dict[str, Any]] = []
+    for row in pieces:
+        last = merged[-1] if merged else None
+        if (
+            last is not None
+            and abs(last["end_s"] - row["start_s"]) < 1e-6
+            and last.get("layout") == row.get("layout")
+            and last.get("speaker_frame") == row.get("speaker_frame")
+        ):
+            last["end_s"] = row["end_s"]
+        else:
+            merged.append(dict(row))
+    return merged
+
+
+def _fill_and_kinds(working: object, ids: list[str], kinds: list[str]) -> dict[str, Any]:
+    """The fill a rebuilt document keeps: the colour or picture now behind her, else the first
+    picture named."""
+    if isinstance(working, dict) and working.get("color"):
+        return {"kind": "color", "color": working["color"]}
+    if isinstance(working, dict) and working.get("media_id"):
+        fill = {
+            "media_id": working["media_id"],
+            "kind": working["kind"],
+            "source_start_s": working.get("source_start_s", 0.0),
+        }
+        if working.get("focus"):
+            fill["focus"] = dict(working["focus"])
+        return fill
+    return {"media_id": ids[0], "kind": kinds[0], "source_start_s": 0.0}
+
+
+def _op_arrange_sections(state: Any, op: dict[str, Any]) -> None:
+    from app.pipeline.talking_sections import arrange_layouts  # noqa: PLC0415
+    from app.services.kria_editor_ops import (  # noqa: PLC0415
+        KriaEditorOpError,
+        background_current,
+        speaker_sections_for,
+    )
+
+    working = _working_document(state)
+    ids: list[str] = list(op.get("asset_ids") or ())
+    kinds: list[str] = list(op.get("kinds") or ())
+    if not ids and isinstance(working, dict):
+        # The pictures already behind her, in the order they show (each once).
+        for window in working.get("windows") or ():
+            if isinstance(window, dict) and window.get("media_id") not in ids:
+                ids.append(window["media_id"])
+                kinds.append(window.get("kind", "image"))
+        if not ids and working.get("media_id"):
+            ids, kinds = [working["media_id"]], [working.get("kind", "image")]
+    if not ids:
+        raise KriaEditorOpError(
+            "Add photos or videos from the Visuals tab first, then I can lay them over the parts"
+        )
+    sections = speaker_sections_for(state.variant)
+    arranged = arrange_layouts(sections, ids)
+    if not arranged:
+        raise KriaEditorOpError("This video is too short to change where you are part by part")
+    kind_of = dict(zip(ids, kinds, strict=False))
+    known_focus = _focus_by_media(working)
+    document: dict[str, Any] = _fill_and_kinds(working, ids, kinds)
+    windows = [
+        {
+            "media_id": row.media_id,
+            "kind": kind_of.get(row.media_id, "image"),
+            "source_start_s": 0.0,
+            "start_s": row.start_s,
+            "end_s": row.end_s,
+            **({"focus": dict(known_focus[row.media_id])} if row.media_id in known_focus else {}),
+        }
+        for row in arranged
+        if row.media_id is not None
+    ]
+    if windows:
+        document["windows"] = windows
+    document["layout_windows"] = [
+        _layout_row(row.start_s, row.end_s, row.layout, row.preset) for row in arranged
+    ]
+    if isinstance(working, dict) and working.get("full_screen_windows"):
+        document["full_screen_windows"] = [dict(span) for span in working["full_screen_windows"]]
+    if document == background_current(state.job, state.variant):
+        raise KriaEditorOpError("That's already how you're laid out")
+    state.speaker_background = document
+    state.changed.add("speaker_background")
+    shown = sum(1 for row in arranged if row.layout != "own")
+    state.summary = (
+        f"Laid {len(windows)} picture{'s' if len(windows) != 1 else ''} over the parts of your "
+        f"video: you're full screen at the start and the end, and {shown} "
+        f"part{'s' if shown != 1 else ''} in between show the picture"
+    )
+
+
+def _op_set_section_layout(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import (  # noqa: PLC0415
+        KriaEditorOpError,
+        background_current,
+        background_duration_s,
+        speaker_sections_for,
+    )
+
+    working = _working_document(state)
+    layout = op["speaker_layout"]
+    if layout != "own" and not (
+        isinstance(working, dict) and (working.get("media_id") or working.get("color"))
+    ):
+        raise KriaEditorOpError("Put a photo or video behind you first")
+    duration = background_duration_s(state.variant)
+    if "section_numbers" in op:
+        sections = speaker_sections_for(state.variant)
+        chosen = [s for s in sections if s.index in op["section_numbers"]]
+        if len(chosen) != len(op["section_numbers"]):
+            raise KriaEditorOpError("I couldn't find that part of the video")
+        spans = [(s.start_s, s.end_s) for s in chosen]
+        where = "in that part" if len(spans) == 1 else "in those parts"
+    elif "start_s" in op:
+        spans = [(float(op["start_s"]), float(op["end_s"]))]
+        where = f"from {op['start_s']:g}s to {op['end_s']:g}s"
+    else:
+        if duration < MIN_LAYOUT_S:
+            raise KriaEditorOpError("I can't tell how long this video is")
+        spans = [(0.0, duration)]
+        where = "for the whole video"
+    # Touching spans (neighbouring sections) are one.
+    joined: list[tuple[float, float]] = []
+    for start, end in sorted(spans):
+        if joined and start <= joined[-1][1] + 1e-6:
+            joined[-1] = (joined[-1][0], max(joined[-1][1], end))
+        else:
+            joined.append((start, end))
+    new = _layout_row(0.0, 0.0, layout, op.get("preset"))
+    new = {k: v for k, v in new.items() if k not in ("start_s", "end_s")}
+    current = _copy_layouts(working.get("layout_windows")) if isinstance(working, dict) else []
+    merged = _merge_layouts(current, joined, new)
+    if len(merged) > MAX_LAYOUT_WINDOWS:
+        raise KriaEditorOpError("That's more changes of place than one video can hold")
+    document: dict[str, Any] = dict(working) if isinstance(working, dict) else {}
+    if not document:
+        raise KriaEditorOpError("Put a photo or video behind you first")
+    document["layout_windows"] = merged
+    if document == background_current(state.job, state.variant):
+        raise KriaEditorOpError("You're already like that there")
+    state.speaker_background = document
+    state.changed.add("speaker_background")
+    state.summary = {
+        "own": "Put you full screen",
+        "full": "Put you big over the picture",
+        "small": "Made you small in the corner",
+        "picture": "Showed the picture alone",
+    }[layout] + f" {where}"
+
+
+def _op_remove_background_window(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import KriaEditorOpError  # noqa: PLC0415
+
+    working = _working_document(state)
+    windows = list(working.get("windows") or ()) if isinstance(working, dict) else []
+    index = int(op["window_index"])
+    if not 1 <= index <= len(windows):
+        raise KriaEditorOpError("I couldn't find that picture")
+    document = dict(working)
+    rest = [dict(window) for i, window in enumerate(windows, start=1) if i != index]
+    if rest:
+        document["windows"] = rest
+    else:
+        document.pop("windows", None)
+    state.speaker_background = document
+    state.changed.add("speaker_background")
+    state.summary = "Took that picture away"
+
+
+def _op_retime_background_window(state: Any, op: dict[str, Any]) -> None:
+    from app.services.kria_editor_ops import (  # noqa: PLC0415
+        KriaEditorOpError,
+        background_duration_s,
+    )
+
+    working = _working_document(state)
+    windows = [dict(w) for w in (working.get("windows") or ())] if isinstance(working, dict) else []
+    index = int(op["window_index"])
+    if not 1 <= index <= len(windows):
+        raise KriaEditorOpError("I couldn't find that picture")
+    window = windows[index - 1]
+    start = float(op.get("start_s", window["start_s"]))
+    end = float(op.get("end_s", window["end_s"]))
+    duration = background_duration_s(state.variant)
+    if duration > 0:
+        end = min(end, duration)
+    if end - start < MIN_LAYOUT_S:
+        raise KriaEditorOpError("A picture needs to show for at least half a second")
+    before = windows[index - 2] if index >= 2 else None
+    after = windows[index] if index < len(windows) else None
+    if (before is not None and start < float(before["end_s"]) - 1e-6) or (
+        after is not None and end > float(after["start_s"]) + 1e-6
+    ):
+        raise KriaEditorOpError("That would run over the next picture; move or remove it first")
+    if abs(start - float(window["start_s"])) < 1e-6 and abs(end - float(window["end_s"])) < 1e-6:
+        raise KriaEditorOpError("That picture already shows then")
+    window["start_s"], window["end_s"] = round(start, 3), round(end, 3)
+    document = dict(working)
+    document["windows"] = windows
+    state.speaker_background = document
+    state.changed.add("speaker_background")
+    state.summary = f"Moved that picture to {start:g}s-{end:g}s"
+
+
 def register_handlers() -> None:
     from app.services import kria_editor_ops  # noqa: PLC0415
 
@@ -769,3 +1243,7 @@ def register_handlers() -> None:
     kria_editor_ops.register_handler("set_background_focus", _op_set_background_focus)
     kria_editor_ops.register_handler("set_speaker_frame", _op_set_speaker_frame)
     kria_editor_ops.register_handler("clear_speaker_frame", _op_clear_speaker_frame)
+    kria_editor_ops.register_handler("arrange_sections", _op_arrange_sections)
+    kria_editor_ops.register_handler("set_section_layout", _op_set_section_layout)
+    kria_editor_ops.register_handler("remove_background_window", _op_remove_background_window)
+    kria_editor_ops.register_handler("retime_background_window", _op_retime_background_window)

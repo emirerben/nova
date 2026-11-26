@@ -68,7 +68,7 @@
       },
       {
         "file": "app/kria/plan_review.py",
-        "line": 270,
+        "line": 277,
         "tr": "başlık"
       },
       {
@@ -85,7 +85,7 @@
       },
       {
         "file": "app/services/kria_editor_ops_diff.py",
-        "line": 873,
+        "line": 940,
         "tr": "{count} {noun_tr}"
       }
     ]

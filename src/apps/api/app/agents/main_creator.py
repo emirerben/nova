@@ -1489,6 +1489,33 @@ _BRIEF_MUSIC_ASK_SENTENCE = (
 )
 
 
+# KRI-1558: appended to the brief section ONLY while speaker sections are open, so every other
+# prompt keeps its bytes. The ask ledger reads `facts.speaker_parts` to check that "make me smaller
+# in part 1" was answered in part 1, never guessing the part from the words (KRI-667).
+_BRIEF_SPEAKER_PARTS_SENTENCE = (
+    'When the creator asks for their own place or size in a named part of their talk ("make me'
+    ' smaller in part 1", "put me full screen in the last part", "ilk bölümde beni küçült",'
+    ' "im zweiten Teil groß"), add "speaker_parts": [the part numbers: 1 is the first part, -1 the'
+    " last] to that requirement's `facts`. Only parts of the talk, never clip numbers."
+)
+
+
+def speaker_parts_taught() -> bool:
+    """KRI-1558: can a chat edit change the speaker's layout part by part right now? Closed, the
+    brief section keeps the bytes it had before."""
+    from app.services.phone_rollout import speaker_sections_supported  # noqa: PLC0415
+
+    return speaker_sections_supported(require_client=False)
+
+
+def with_speaker_parts_brief(section: str) -> str:
+    """``section`` (the shared brief section, or the extractor's narrowing of it) with the
+    speaker-parts fact added at its end (before any trailing newlines, which stay as they were).
+    Only called while `speaker_parts_taught`."""
+    body = section.rstrip("\n")
+    return f"{body}\n{_BRIEF_SPEAKER_PARTS_SENTENCE}{section[len(body) :]}"
+
+
 def music_ask_taught() -> bool:
     """KRI-1562: may a phone Talking edit play a library song right now (the worker decides the
     app build)? Closed, the brief section keeps the bytes it had before the music fact."""
@@ -1561,6 +1588,8 @@ def brief_prompt_section(
         section = with_music_ask_brief(section)
     if sfx_ask_taught():
         section = with_sfx_ask_brief(section)
+    if speaker_parts_taught():
+        section = with_speaker_parts_brief(section)
     return with_full_opening_brief(section) if full_opening_open else section
 
 

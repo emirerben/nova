@@ -257,8 +257,13 @@ enum NativeEditorUITestFixtures {
         caps["speaker_background_color"] = .object(["editable": .bool(true)])
         // KRI-1162: `-ui-testing-editor-speaker-background-windows` also opens the timed-background gate and, until a
         // save has been kept (reset forgets it), seeds the lane with a photo fill and two windows (a photo 0-2 s, a video 2.5-5 s).
-        let windowsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-windows")
+        // KRI-1558: `-ui-testing-editor-speaker-sections` opens the frame controls and the section gate and, until a save has
+        // been kept, seeds a colour fill with four sections (own 0-1.5 s, bottom-right corner 1.5-3.5 s, picture 3.5-4.5 s,
+        // bottom-left corner 4.5-6 s) and no whole-video frame, as the planner's arrangement writes them.
+        let sectionsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-sections")
+        let windowsOn = sectionsOn || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-windows")
         if windowsOn { caps["speaker_background_windows"] = .object(["editable": .bool(true)]) }
+        if sectionsOn { caps["speaker_sections"] = .object(["editable": .bool(true)]) }
         // Qendresa item 18: the Aim and Zoom controls (`background_focus`) open with the windows gate or on their own.
         if windowsOn || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-focus") {
             caps["background_focus"] = .object(["editable": .bool(true)])
@@ -267,6 +272,8 @@ enum NativeEditorUITestFixtures {
         var lane: JSONValue?
         if let data = defaults.data(forKey: savedSpeakerBackgroundKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {
             lane = saved
+        } else if sectionsOn {
+            lane = seededSpeakerSections
         } else if windowsOn, ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-frame") {
             lane = seededSpeakerFrame
         } else if windowsOn {
@@ -287,6 +294,19 @@ enum NativeEditorUITestFixtures {
     static let seededSpeakerFrame: JSONValue = .object([
         "kind": .string("color"), "color": .string("#2B6CB0"),
         "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.76), "y_fraction": .number(0.8)]),
+    ])
+
+    /// The lane `-ui-testing-editor-speaker-sections` starts from (KRI-1558).
+    static let seededSpeakerSections: JSONValue = .object([
+        "kind": .string("color"), "color": .string("#2B6CB0"),
+        "layout_windows": .array([
+            .object(["start_s": .number(0), "end_s": .number(1.5), "layout": .string("own")]),
+            .object(["start_s": .number(1.5), "end_s": .number(3.5), "layout": .string("small"),
+                     "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.76), "y_fraction": .number(0.8)])]),
+            .object(["start_s": .number(3.5), "end_s": .number(4.5), "layout": .string("picture")]),
+            .object(["start_s": .number(4.5), "end_s": .number(6), "layout": .string("small"),
+                     "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.24), "y_fraction": .number(0.8)])]),
+        ]),
     ])
 
     /// The lane `-ui-testing-editor-speaker-background-windows` starts from.

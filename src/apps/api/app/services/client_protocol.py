@@ -19,6 +19,15 @@ from contextvars import ContextVar, Token
 # KRI-898: where `decide_approval` records the approving app build on the render execution
 # (read back by `_claim_approval_dispatch`, stamped on the Job as `creator_client_protocol`).
 APPROVAL_CLIENT_PROTOCOL_FIELD = "approval_client_protocol"
+# KRI-1558 (Tadic, #prs 2026-11-26): what the calling build says it can draw, beside its protocol.
+# A protocol number alone also admits other branches' builds that took the same number, so a
+# feature whose renderer must be present (speaker sections) is offered only to a build that names
+# it in `X-Kria-Client-Features` (comma-separated `MediaCapability` tokens). Recorded on the
+# approval like the protocol, and stamped on the Job as `creator_client_features`.
+CLIENT_FEATURES_HEADER = "X-Kria-Client-Features"
+APPROVAL_CLIENT_FEATURES_FIELD = "approval_client_features"
+SPEAKER_SECTIONS_FEATURE = "speakerSections"
+_MAX_CLIENT_FEATURES = 32
 CAPTION_STYLE_SCOPE_PROTOCOL = 25
 RENDERED_TIMELINE_CLOCK_PROTOCOL = 26
 # The app build skipped 26 and went straight to 27: the first build that decodes
@@ -121,6 +130,12 @@ INTRO_STYLES_PROTOCOL = 57
 # on Save; an older build would fail the whole recipe on the unknown token.
 CLIP_DIM_PROTOCOL = 58
 
+# KRI-1558: the first build that draws the speaker's layout per section
+# (`speaker_background.layout_windows`, the `speakerSections` capability) and plays a take split
+# with nothing removed as one shot (no declick at the join, the cut-out carries on). An older
+# build keeps one layout for the whole video and is told to update for a recipe that has more.
+SPEAKER_SECTIONS_PROTOCOL = 59
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
@@ -131,6 +146,30 @@ def caption_style_scope_supported() -> bool:
 
 _client_protocol: ContextVar[int | None] = ContextVar("kria_client_protocol", default=None)
 _in_http_request: ContextVar[bool] = ContextVar("kria_in_http_request", default=False)
+_client_features: ContextVar[frozenset[str]] = ContextVar(
+    "kria_client_features", default=frozenset()
+)
+
+
+def parse_client_features(value: object) -> frozenset[str]:
+    """``X-Kria-Client-Features`` (or a stored list) read back: well-formed tokens only."""
+    if isinstance(value, str):
+        raw = value.split(",")
+    elif isinstance(value, (list, tuple, frozenset, set)):
+        raw = list(value)
+    else:
+        return frozenset()
+    tokens = (str(item).strip() for item in raw[:_MAX_CLIENT_FEATURES] if isinstance(item, str))
+    return frozenset(t for t in tokens if t and len(t) <= 40 and t.isascii() and t.isalnum())
+
+
+def set_client_features(value: object) -> None:
+    """Record what the calling build advertises (missing or malformed = nothing)."""
+    _client_features.set(parse_client_features(value))
+
+
+def current_client_features() -> frozenset[str]:
+    return _client_features.get()
 
 
 def set_client_protocol(value: int | None) -> None:
@@ -156,6 +195,7 @@ def unbind_sending_build(token: Token[int | None]) -> None:
 def clear_request_context() -> None:
     _client_protocol.set(None)
     _in_http_request.set(False)
+    _client_features.set(frozenset())
 
 
 def current_client_protocol() -> int | None:

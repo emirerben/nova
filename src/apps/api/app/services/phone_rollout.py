@@ -1289,6 +1289,112 @@ def speaker_full_opening_planned_for(client_protocol: int | None) -> bool:
     return speaker_full_opening_planned_reason(client_protocol) is None
 
 
+def speaker_sections_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode ``speaker_background.layout_windows`` (KRI-1558)?
+
+    At least ``speaker_sections_min_client_protocol`` (`SPEAKER_SECTIONS_PROTOCOL`) knows the key
+    and plays a take split where her layout changes as one shot; an older build refuses the whole
+    layer (strict decoder). Same ``require_client`` contract as
+    `speaker_background_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPEAKER_SECTIONS_FEATURE,
+        current_client_features,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    # Tadic (#prs 2026-11-26): a build that took the same number on another branch has no
+    # sections renderer, so the build must also advertise the feature (`X-Kria-Client-Features`).
+    return (
+        protocol is not None
+        and protocol >= settings.speaker_sections_min_client_protocol
+        and SPEAKER_SECTIONS_FEATURE in current_client_features()
+    )
+
+
+def speaker_sections_supported(*, require_client: bool | None = None) -> bool:
+    """May a phone recipe carry ``layout_windows`` (the speaker's place and size per section) now?
+
+    ``SPEAKER_SECTIONS_ENABLED`` AND the windows gate (`speaker_background_windows_supported`: the
+    pictures behind her and the corner frame) AND ``speakerSections`` in
+    ``phone_render_verified_features`` AND the app-build gate (`speaker_sections_client_supported`).
+    When False, `strip_unsupported_background` drops the layout windows and keeps everything else.
+    """
+    return bool(
+        settings.speaker_sections_enabled
+        and speaker_background_windows_supported(require_client=require_client)
+        and "speakerSections" in set(settings.phone_render_verified_features)
+        and speaker_sections_client_supported(require_client=require_client)
+    )
+
+
+def speaker_sections_unavailable_reason(*, require_client: bool | None = None) -> str | None:
+    """Why `speaker_sections_supported` is False, or None when open.
+
+    The windows gate's reasons first (`disabled`, `token_not_verified`,
+    `client_protocol_below_min`, `windows_token_not_verified`), then ``sections_disabled`` (the
+    kill switch), ``sections_token_not_verified`` and ``client_protocol_below_min``. The build is
+    checked only inside a request (a worker has no app build), like
+    `speaker_full_opening_unavailable_reason`. Named for the job-debug trace
+    (`speaker_sections_phone_fallback`) and the editor's 422/426 answers.
+    """
+    base = speaker_background_windows_unavailable_reason(require_client=require_client)
+    if base is not None:
+        return base
+    if not settings.speaker_sections_enabled:
+        return "sections_disabled"
+    if "speakerSections" not in set(settings.phone_render_verified_features):
+        return "sections_token_not_verified"
+    if not speaker_sections_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
+def speaker_sections_planned_reason(
+    client_protocol: int | None, client_features: object = ()
+) -> str | None:
+    """Why a plan may NOT lay the speaker out per section for the app build ``client_protocol``, or
+    None when it may (the planner's twin of `speaker_sections_unavailable_reason`).
+
+    Same reading as `speaker_full_opening_planned_reason`: ``client_protocol`` is the build the
+    creator acted from (the drafting message, then ``creator_client_protocol`` on the Job), never
+    the request context. Codes: ``disabled`` (the kill switch is off), ``unavailable`` (the
+    background / windows lane or the ``speakerSections`` token is closed), ``app_too_old`` (no
+    stamp, a build below ``speaker_sections_min_client_protocol``, or one that does not advertise
+    ``speakerSections`` in ``client_features``).
+    """
+    if not settings.speaker_sections_enabled:
+        return "disabled"
+    if not (
+        speaker_background_windows_supported(require_client=False)
+        and "speakerSections" in set(settings.phone_render_verified_features)
+    ):
+        return "unavailable"
+    if client_protocol is None or client_protocol < settings.speaker_sections_min_client_protocol:
+        return "app_too_old"
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPEAKER_SECTIONS_FEATURE,
+        parse_client_features,
+    )
+
+    # ``client_features``: what that build advertised (``creator_client_features`` on the Job).
+    # A build that does not name the feature has no sections renderer, whatever its number.
+    if SPEAKER_SECTIONS_FEATURE not in parse_client_features(client_features):
+        return "app_too_old"
+    return None
+
+
+def speaker_sections_planned_for(client_protocol: int | None, client_features: object = ()) -> bool:
+    """May a plan for the app build ``client_protocol`` lay the speaker out per section?"""
+    return speaker_sections_planned_reason(client_protocol, client_features) is None
+
+
 def background_focus_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build decode ``speaker_background.focus`` / ``windows[i].focus``?
 

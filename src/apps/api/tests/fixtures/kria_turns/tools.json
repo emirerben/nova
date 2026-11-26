@@ -2175,6 +2175,21 @@
               "title": "Kind",
               "type": "string"
             },
+            "layout_windows": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/EditorCommitSpeakerLayoutWindow"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Layout Windows"
+            },
             "media_id": {
               "anyOf": [
                 {
@@ -2344,6 +2359,52 @@
             "end_s"
           ],
           "title": "EditorCommitSpeakerFullScreenWindow",
+          "type": "object"
+        },
+        "EditorCommitSpeakerLayoutWindow": {
+          "additionalProperties": false,
+          "description": "One layout span of the Save section (KRI-1558): from ``start_s`` to ``end_s`` of the\nedit's timeline the speaker is drawn with ``layout`` (``own`` her own take, ``full`` the\ncut-out at full size, ``small`` the cut-out at ``speaker_frame``, ``picture`` the picture\nalone). Order, overlap, the 0.5 s minimum, the count, the edit end and the frame-iff-small\nrule are checked by `_validate_speaker_layout_windows` so they answer with their own code.",
+          "properties": {
+            "end_s": {
+              "maximum": 1800.0,
+              "minimum": 0.0,
+              "title": "End S",
+              "type": "number"
+            },
+            "layout": {
+              "enum": [
+                "own",
+                "full",
+                "small",
+                "picture"
+              ],
+              "title": "Layout",
+              "type": "string"
+            },
+            "speaker_frame": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitSpeakerFrame"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "start_s": {
+              "maximum": 1800.0,
+              "minimum": 0.0,
+              "title": "Start S",
+              "type": "number"
+            }
+          },
+          "required": [
+            "start_s",
+            "end_s",
+            "layout"
+          ],
+          "title": "EditorCommitSpeakerLayoutWindow",
           "type": "object"
         },
         "EditorCommitUserSong": {
