@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.30.0] - 2026-11-26
+
+### Changed
+- fix(kria): Cusco T3 "Sticker 1": cleanup cuts a pause whisper stretched both neighbouring words into (KRI-1627) (#2514) <!-- release-pr: 2514 -->
+
 ## [0.90.29.0] - 2026-11-26
 
 ### Fixed
