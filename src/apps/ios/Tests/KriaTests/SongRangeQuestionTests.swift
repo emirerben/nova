@@ -183,60 +183,6 @@ final class SongRangeQuestionTests: XCTestCase {
         }
     }
 
-    // MARK: folding the transcript
-
-    private func asked(_ message: String, _ id: String) -> SongRangeFold.Entry {
-        .init(messageID: message, question: SongRangeQuestion(questionID: id), isUser: false)
-    }
-    private func reply(_ message: String, answer: SongRangeAnswer? = nil) -> SongRangeFold.Entry {
-        .init(messageID: message, question: nil, isUser: true, answer: answer)
-    }
-
-    func testAnOpenQuestionIsActive() {
-        XCTAssertEqual(SongRangeFold.phases([asked("a1", "q1")])["a1"], .active)
-    }
-
-    func testOnlyAMatchingAnswerClosesTheCard() {
-        let answer = SongRangeAnswer.wholeSong(questionID: "q1")
-        XCTAssertEqual(SongRangeFold.phases([asked("a1", "q1"), reply("u1", answer: answer)])["a1"], .answered(answer))
-        XCTAssertEqual(SongRangeFold.phases([asked("a1", "q1"), reply("u1")])["a1"], .active, "a plain message does not close it")
-        let other = SongRangeAnswer.wholeSong(questionID: "other")
-        XCTAssertEqual(SongRangeFold.phases([asked("a1", "q1"), reply("u1", answer: other)])["a1"], .active, "an answer to another question does not close it")
-    }
-
-    func testANewerQuestionSupersedesAnUnansweredOne() {
-        let entries = [asked("a1", "q1"), reply("u1"), asked("a2", "q2")]
-        let phases = SongRangeFold.phases(entries)
-        XCTAssertEqual(phases["a1"], .superseded)
-        XCTAssertEqual(phases["a2"], .active)
-    }
-
-    func testAnAnsweredQuestionStaysAnsweredWhenAnotherIsAskedLater() {
-        let answer = SongRangeAnswer.part(questionID: "q1", range: SongFilmingRange(start: 40, end: 80))
-        let phases = SongRangeFold.phases([asked("a1", "q1"), reply("u1", answer: answer), reply("u2"), asked("a2", "q2")])
-        XCTAssertEqual(phases["a1"], .answered(answer))
-        XCTAssertEqual(phases["a2"], .active)
-    }
-
-    func testTheServerSayingStaleClosesAnOtherwiseOpenCardButNeverAnAnsweredOne() {
-        XCTAssertEqual(SongRangeFold.phases([asked("a1", "q1")], closed: ["q1"])["a1"], .superseded)
-        let answer = SongRangeAnswer.wholeSong(questionID: "q1")
-        XCTAssertEqual(SongRangeFold.phases([asked("a1", "q1"), reply("u1", answer: answer)], closed: ["q1"])["a1"], .answered(answer))
-        XCTAssertEqual(SongRangeFold.phases([asked("a1", "q1")], closed: ["other"])["a1"], .active)
-    }
-
-    func testMessagesWithoutAQuestionHaveNoPhase() {
-        let phases = SongRangeFold.phases([reply("u1"), asked("a1", "q1")])
-        XCTAssertNil(phases["u1"])
-    }
-
-    func testTwoMessagesAskingTheSameQuestionBothFollowTheAnswer() {
-        let answer = SongRangeAnswer.wholeSong(questionID: "q1")
-        let phases = SongRangeFold.phases([asked("a1", "q1"), asked("a2", "q1"), reply("u1", answer: answer)])
-        XCTAssertEqual(phases["a1"], .answered(answer))
-        XCTAssertEqual(phases["a2"], .answered(answer))
-    }
-
     // MARK: pickers and validation
 
     func testPickersDefaultToTheWholeSong() throws {

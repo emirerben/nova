@@ -143,46 +143,6 @@ struct SongRangeAnswer: Encodable, Equatable, Sendable {
     }
 }
 
-/// How a song-range question in the transcript is presented.
-enum SongRangePhase: Equatable {
-    /// The newest question that no `song_range` has answered: interactive.
-    case active
-    /// A later user message carried a `song_range` for this question: read-only.
-    case answered(SongRangeAnswer)
-    /// A newer question replaced it (or the server said it is closed) and nobody answered it: hidden.
-    case superseded
-}
-
-/// Folds the transcript into per-question phases, like `SongOrderFold`: only a user message carrying a matching
-/// `song_range` closes a card, so a plain reply about something else leaves it open.
-enum SongRangeFold {
-    struct Entry: Equatable {
-        let messageID: String
-        let question: SongRangeQuestion?
-        let isUser: Bool
-        /// The `song_range` this message carried (user messages only).
-        var answer: SongRangeAnswer? = nil
-    }
-
-    /// `closed` holds question ids the server has said are no longer open (409 `song_range_stale`) that no
-    /// transcript message answers, so the card does not keep offering a send the server will refuse.
-    static func phases(_ entries: [Entry], closed: Set<String> = []) -> [String: SongRangePhase] {
-        var result: [String: SongRangePhase] = [:]
-        for (index, entry) in entries.enumerated() {
-            guard let question = entry.question else { continue }
-            let later = entries[(index + 1)...]
-            if let answer = later.lazy.compactMap({ $0.isUser ? $0.answer : nil }).first(where: { $0.questionID == question.questionID }) {
-                result[entry.messageID] = .answered(answer)
-            } else if later.contains(where: { $0.question != nil }) || closed.contains(question.questionID) {
-                result[entry.messageID] = .superseded
-            } else {
-                result[entry.messageID] = .active
-            }
-        }
-        return result
-    }
-}
-
 /// A 422 `song_range_invalid` for one question, shown inline on its card.
 struct SongRangeProblem: Equatable {
     let questionID: String

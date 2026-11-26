@@ -250,44 +250,6 @@ struct MomentOrderAnswer: Encodable, Equatable, Sendable {
     }
 }
 
-/// How a moment question in the transcript is presented.
-enum MomentOrderPhase: Equatable {
-    /// The newest question nothing has answered: interactive.
-    case active
-    /// A later user message carried an answer to THIS question: read-only.
-    case answered(MomentOrderAnswer)
-    /// A newer moment question replaced it unanswered: hidden.
-    case superseded
-}
-
-/// Folds the transcript into per-question phases, like `ProtectedRegionFold`. Only an answer naming the same
-/// `question_id` closes a card, so a free-text reply leaves it open (the server asks again anyway).
-enum MomentOrderFold {
-    struct Entry: Equatable {
-        let messageID: String
-        let question: MomentOrderQuestion?
-        let isUser: Bool
-        var answer: MomentOrderAnswer? = nil
-    }
-
-    static func phases(_ entries: [Entry]) -> [String: MomentOrderPhase] {
-        var result: [String: MomentOrderPhase] = [:]
-        for (index, entry) in entries.enumerated() {
-            guard let question = entry.question else { continue }
-            let later = entries[(index + 1)...]
-            if let answer = later.lazy.compactMap({ $0.isUser ? $0.answer : nil })
-                .first(where: { $0.questionID == question.questionID }) {
-                result[entry.messageID] = .answered(answer)
-            } else if later.contains(where: { $0.question != nil }) {
-                result[entry.messageID] = .superseded
-            } else {
-                result[entry.messageID] = .active
-            }
-        }
-        return result
-    }
-}
-
 /// A 404 / 422 the server answered with, shown on its card (the card stays open, the creator's choices kept).
 struct MomentOrderProblem: Equatable {
     let questionID: String
