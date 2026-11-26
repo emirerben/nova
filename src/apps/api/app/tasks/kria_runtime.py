@@ -4845,20 +4845,26 @@ def _research_preview_payload(
 
     prepared = draft_research.prepared
     # CA-5: fact ids only where a selection would be applied, so an offered card never 409s.
-    with_ids = (
+    with_ids = False
+    if (
         settings.kria_research_selection_enabled
         and client_protocol is not None
         and client_protocol >= settings.research_selection_min_client_protocol
-        and research_preview.selection_basis_sync(
-            db,
-            document=document,
-            item=item,
-            creator_id=thread.creator_id,
-            source_event=db.get(CreationThreadEvent, turn.source_event_id),
-            language=thread_reply_language(thread),
-        )
-        == prepared.basis_digest
-    )
+    ):
+        try:
+            with_ids = (
+                research_preview.selection_basis_sync(
+                    db,
+                    document=document,
+                    item=item,
+                    creator_id=thread.creator_id,
+                    source_event=db.get(CreationThreadEvent, turn.source_event_id),
+                    language=thread_reply_language(thread),
+                )
+                == prepared.basis_digest
+            )
+        except Exception:  # noqa: BLE001 - ids are optional; the draft must still commit
+            log.exception("kria_research_selection_basis_failed", turn_id=str(turn.id))
     return research_preview.preview_payload(prepared, with_ids=with_ids)
 
 

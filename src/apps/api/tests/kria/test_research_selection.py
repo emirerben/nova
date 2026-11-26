@@ -29,6 +29,7 @@ S13 Approve and select race: both win, or the loser writes a draft.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 
@@ -39,7 +40,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.kria.api_schemas import ApprovalDecisionBody, ResearchSelectionIn, SubmitTurnBody
 from app.kria.brief_binding import BriefBinding
-from app.kria.drafts import KriaDraftDocument
+from app.kria.drafts import KriaDraftDocument, undo_draft
 from app.kria.runtime import RuntimeFailure, approval_fingerprint, decide_approval, submit_turn
 from app.models import (
     CreationThread,
@@ -49,6 +50,7 @@ from app.models import (
     CreatorEditDraft,
 )
 from app.services.client_protocol import RESEARCH_SELECTION_PROTOCOL, set_client_protocol
+from app.tasks.kria_runtime import execute_kria_approval
 from tests.evals.request_following.test_kri881_research_before_approval import (
     INSTITUTIONAL,
     _dispose_async_engine,  # noqa: F401 - autouse: the async engine per test
@@ -60,6 +62,7 @@ from tests.evals.request_following.test_kri881_research_before_approval import (
     _visual,
     readiness_on,  # noqa: F401 - fixture
 )
+from tests.kria.test_clip_order_card_turns_postgres import _capture_dispatch
 
 KEPT_TEXT = "Troy: Settled from the Bronze Age to Roman times"
 DROPPED_TEXT = "Troy Museum: Finds from Troy and the Troad"
@@ -135,6 +138,24 @@ def _document(draft_id: uuid.UUID) -> KriaDraftDocument:
 def _revision(thread_id: uuid.UUID) -> int:
     with sync_session() as db:
         return int(db.get(CreationThread, thread_id).revision)
+
+
+def _head_texts(thread_id: uuid.UUID) -> list[str]:
+    with sync_session() as db:
+        head = db.execute(
+            select(CreatorEditDraft).where(
+                CreatorEditDraft.thread_id == thread_id, CreatorEditDraft.is_head.is_(True)
+            )
+        ).scalar_one()
+        pinned = KriaDraftDocument.model_validate(head.snapshot_json).brief_binding
+    return [row["text"] for row in pinned.prepared_research["texts"]]
+
+
+async def _dispatched_research(monkeypatch, draft: SimpleNamespace, approval_id) -> dict:  # noqa: ANN001
+    seen = _capture_dispatch(monkeypatch, draft.user_id, draft.thread_id)
+    result = await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+    assert result["status"] == "dispatched", result
+    return seen[-1]["creator_brief_binding"]["prepared_research"]
 
 
 def _fact_id(draft: SimpleNamespace, text: str) -> str:
@@ -248,6 +269,8 @@ async def test_keeping_some_facts_saves_a_new_draft_that_approves_and_renders_on
 
     decided = await _approve(draft)
     assert decided.status == "approved"
+    dispatched = await _dispatched_research(monkeypatch, draft, new.id)
+    assert [row["text"] for row in dispatched["texts"]] == [KEPT_TEXT]
 
     strategy = _document(new.draft_id).strategy
     seen = _render_worker(monkeypatch, binding, strategy)
@@ -291,6 +314,7 @@ async def test_keeping_no_facts_pins_the_creators_waiver_and_never_researches_at
     for shown in (reply.content, new.consequence_summary):
         assert KEPT_TEXT not in shown and DROPPED_TEXT not in shown
     assert (await _approve(draft)).status == "approved"
+    assert (await _dispatched_research(monkeypatch, draft, new.id))["waived"] is True
 
     strategy = _document(new.draft_id).strategy
     before = draft.calls["search"]
@@ -334,6 +358,54 @@ async def test_a_fact_id_the_client_never_saw_is_dropped(monkeypatch) -> None:
     assert reply.payload["research_selection"]["kept_fact_ids"] == [_fact_id(draft, KEPT_TEXT)]
     pinned = _document(_pending(draft.thread_id).draft_id).brief_binding.prepared_research
     assert [row["text"] for row in pinned["texts"]] == [KEPT_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_ids_that_match_no_shown_fact_are_stale_never_a_waiver(monkeypatch) -> None:
+    """S7, S8: only an empty list waives; a card older than the narrowed draft is stale."""
+    draft = await _research_draft(monkeypatch)
+    await _select(draft, [_fact_id(draft, KEPT_TEXT)])
+    after = (_revisions(draft.thread_id), _pending(draft.thread_id).id)
+
+    for kept in (["not-a-shown-fact"], [_fact_id(draft, DROPPED_TEXT)]):
+        with pytest.raises(RuntimeFailure) as refused:
+            await _select(draft, kept)
+        assert (refused.value.status_code, refused.value.code) == (409, "research_selection_stale")
+
+    assert (_revisions(draft.thread_id), _pending(draft.thread_id).id) == after
+    assert _head_texts(draft.thread_id) == [KEPT_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_waiver_writes_nothing(monkeypatch) -> None:
+    """S9."""
+    draft = await _research_draft(monkeypatch)
+    first = await _select(draft, [])
+    after = (_revisions(draft.thread_id), _pending(draft.thread_id).id)
+
+    again = await _select(draft, [])
+
+    assert again.replayed and again.turn_id == first.turn_id
+    assert (_revisions(draft.thread_id), _pending(draft.thread_id).id) == after
+
+
+@pytest.mark.asyncio
+async def test_undo_after_a_selection_restores_every_fact(monkeypatch) -> None:
+    """The selection's reply offers Undo: it puts the full research back and closes the card."""
+    draft = await _research_draft(monkeypatch)
+    await _select(draft, [_fact_id(draft, KEPT_TEXT)])
+    narrowed = _pending(draft.thread_id)
+
+    async with AsyncSessionLocal() as db:
+        await undo_draft(
+            db,
+            thread_id=draft.thread_id,
+            creator_id=draft.user_id,
+            expected_revision=narrowed.draft_revision,
+        )
+
+    assert _head_texts(draft.thread_id) == [KEPT_TEXT, DROPPED_TEXT]
+    assert not [row for row in _approvals(draft.thread_id) if row.status == "pending"]
 
 
 @pytest.mark.asyncio

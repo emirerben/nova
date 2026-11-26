@@ -153,11 +153,14 @@ async def submit_research_selection(
         draft_ref is None
         or not draft_ref.is_head
         or pinned is None
-        or not research_preview.selectable(pinned)
         or pinned.basis_digest != selection.selection_id
     ):
         raise _stale("These facts belong to research this draft no longer uses.")
     old_turn = await db.get(CreatorAgentTurn, approval_ref.turn_id)
+    if pinned.waived and not selection.kept_fact_ids:
+        return _accepted(old_turn, thread_peek, replayed=True), False
+    if not research_preview.selectable(pinned):
+        raise _stale("These facts belong to research this draft no longer uses.")
     item_peek = await db.get(PlanItem, draft_ref.item_id)
     source = await _research_source(db, old_turn)
     language = thread_reply_language(thread_peek)
@@ -174,6 +177,9 @@ async def submit_research_selection(
     if current != selection.selection_id:
         raise _stale("The footage changed after these facts were checked.")
     kept = research_preview.keep(pinned, selection.kept_fact_ids)
+    if selection.kept_fact_ids and kept.waived:
+        # Only an empty list waives; ids from an older card that match nothing are stale.
+        raise _stale("None of these facts are in this draft any more.")
     if kept.texts == pinned.texts:
         # Nothing narrows: the approval the creator is looking at already pins these facts.
         return _accepted(old_turn, thread_peek, replayed=True), False
@@ -183,6 +189,8 @@ async def submit_research_selection(
     item = await _lock_strategy_plan_item(
         db, session_id=approval_ref.session_id, creator_id=creator_id
     )
+    if item is not None:
+        await db.refresh(item)
     await acquire_key_share_rows(db, {Job: thread_peek.active_job_id})
     session = (
         await db.execute(

@@ -965,6 +965,9 @@ model call.
   {selection_id, kept_fact_ids, waived}`.
 - **Idempotent.** Selections only narrow. An id the current draft does not show is dropped. When
   nothing narrows, nothing is written and the reply is the awaiting turn with `replayed: true`.
+  The same holds for repeating an empty list on a waived draft. Only a literal empty list waives:
+  ids that match no shown fact (an older card) are stale. Undo on the selection's reply restores
+  the full research and closes its card, like any draft's Undo.
 - **Waived.** Keeping none pins `PreparedResearch(status="ready", texts=[], waived=true)`. A
   pin must stay: without one, the render's composer researches again.
   `pinned_research_operations` replays nothing for it. `brief_checks._check_research` records
