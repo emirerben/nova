@@ -1030,6 +1030,9 @@ class TimelineSlotEdit(BaseModel):
     # KRI-1136: the creator's tilt of this occurrence, ``{rotation_deg, backdrop}``. Omission
     # keeps the saved tilt, an explicit null (or an upright blank value) clears it.
     tilt: dict[str, Any] | None = None
+    # How dark the phone draws this occurrence's picture (`app.kria.clip_dim`). Omission keeps
+    # the saved dim; an explicit null (or 0) removes it.
+    dim: float | None = None
     playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
     # Explicit selected source edge for source-preserving speed edits. Omission
     # retains the legacy duration * rate window contract.
@@ -1077,6 +1080,16 @@ class TimelineSlotEdit(BaseModel):
         except ValueError as exc:
             raise ValueError(f"tilt is invalid: {exc}") from exc
 
+    @field_validator("dim", mode="before")
+    @classmethod
+    def validate_dim(cls, value: object) -> float | None:
+        from app.kria.clip_dim import parse_row_dim  # noqa: PLC0415
+
+        try:
+            return parse_row_dim(value)
+        except ValueError as exc:
+            raise ValueError(f"dim is invalid: {exc}") from exc
+
     @field_validator("look_preset", mode="before")
     @classmethod
     def reject_null_look_preset(cls, value: object) -> object:
@@ -1090,6 +1103,8 @@ class TimelineSlotEdit(BaseModel):
         if self.media_kind != "blank":
             payload.pop("media_kind", None)
             payload.pop("color", None)
+        if self.dim is None:
+            payload.pop("dim", None)
         return payload
 
     @model_validator(mode="after")
@@ -1108,6 +1123,7 @@ class TimelineSlotEdit(BaseModel):
             "source_end_s",
             "source_crop",
             "tilt",
+            "dim",
             "layout",
             "speaker_subject",
             "speaker_frame_override",
@@ -8004,6 +8020,12 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         if clip_tilt_zoom_supported():
             # KRI-1169: the Zoom slider. Present only when ON, like `tilt_backdrop_media`.
             capabilities["clips"]["tilt_zoom"] = {"editable": True, "reason": None}
+    if _clip_dim_capability(job, variant, capabilities):
+        # Present only when ON, like `tilt`: every closed-gate payload keeps its exact shape.
+        capabilities["clips"] = {
+            **(capabilities.get("clips") if isinstance(capabilities.get("clips"), dict) else {}),
+            "dim": {"editable": True, "reason": None},
+        }
     range_leaf = _talking_range_capability(job, variant)
     if range_leaf is not None:
         # Present only when ON: every closed-gate payload keeps its exact shape. `timeline`
@@ -8098,18 +8120,34 @@ def _media_overlay_style_capability(variant: dict, capabilities: dict) -> bool:
 def _clip_tilt_capability(job: Job, variant: dict, capabilities: dict) -> bool:
     """KRI-1136: may the app tilt a clip (``editor_capabilities.clips.tilt``)?
 
-    Device renders only (the cloud has no ``clipTilt``), on the shapes whose Save recompiles
-    a row ``tilt`` into the pinned recipe (an authored timeline, a guided/montage edit with
-    its revision, a phone Voiceover cut), and only while the kill switch, the verified token
-    and the requesting build's protocol all hold. A worker (no app build to ask) is judged
-    on the first two.
+    Only on `_recompiles_clip_rows` edits (the cloud has no ``clipTilt``), and only while the
+    kill switch, the verified token and the requesting build's protocol all hold. A worker (no
+    app build to ask) is judged on the first two.
     """
     from app.services.phone_rollout import clip_tilt_supported  # noqa: PLC0415
 
+    return _recompiles_clip_rows(job, variant, capabilities) and clip_tilt_supported()
+
+
+def _clip_dim_capability(job: Job, variant: dict, capabilities: dict) -> bool:
+    """May the app dim a clip (``editor_capabilities.clips.dim``)? The same edits as a tilt
+    (the cloud has no ``clipDim``), while `clip_dim_supported` holds for the build asking: in a
+    chat worker that is the build that sent the message, so an older build is never offered a
+    dim by chat that it could not draw or Save."""
+    from app.services.phone_rollout import clip_dim_supported  # noqa: PLC0415
+
+    return _recompiles_clip_rows(job, variant, capabilities) and clip_dim_supported(
+        require_client=True
+    )
+
+
+def _recompiles_clip_rows(job: Job, variant: dict, capabilities: dict) -> bool:
+    """A device render whose Save recompiles a clip row's own fields (``tilt``, ``dim``) into
+    the pinned recipe: an authored timeline, a guided/montage edit with its revision, or a
+    phone Voiceover cut."""
     if (
         variant.get("render_destination") != "device"
         or variant.get("resolved_archetype") == "slides"
-        or not clip_tilt_supported()
     ):
         return False
     return bool(
@@ -10149,6 +10187,7 @@ def _guided_v2_slot_rows(
                 ),
                 **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
                 **({"tilt": segment["tilt"]} if segment.get("tilt") else {}),
+                **({"dim": segment["dim"]} if segment.get("dim") else {}),
                 **(
                     {"playback_rate": segment["playback_rate"]}
                     if segment.get("playback_rate") is not None
@@ -11724,6 +11763,7 @@ def prepare_editor_commit(
         _require_caption_animation_client(job, variant, payload)
         _require_caption_translation_gate(variant, payload)
         _require_clip_tilt_gates(job, variant, payload)
+        _require_clip_dim_gates(job, variant, payload)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
         from app.services.phone_editor_sources import editor_sources_for_variant
@@ -11886,6 +11926,51 @@ def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitReque
             raise HTTPException(422, detail={"code": "clip_backdrop_media_unavailable"})
         if pinned_visual(job.assembly_plan or {}, media_id) is None:
             raise HTTPException(422, detail={"code": "clip_backdrop_media_not_in_pool"})
+
+
+def _require_clip_dim_gates(job: Job, variant: dict, payload: EditorCommitRequest) -> None:
+    """The Save-time gates of a clip dim, by the tilt's rules.
+
+    426 for an app build below ``clip_dim_min_client_protocol`` whose timeline Save lands on a
+    variant that already holds a dim: it previews the clip undimmed and cannot say the dim, so
+    replacing the timeline could silently drop it. 422 ``clip_dim_unavailable`` for a dim that
+    is new or changed while the gate is closed (keeping or removing a stored dim is allowed).
+    """
+    from app.kria.clip_dim import stored_row_dim  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        clip_dim_client_supported,
+        clip_dim_supported,
+    )
+
+    slots = payload.timeline_slots
+    if slots is None:
+        return
+    stored = {
+        row["slot_id"]: stored_row_dim(row.get("dim"))
+        for row in editor_deletion_timeline(job, variant)
+        if row.get("slot_id")
+    }
+    if not clip_dim_client_supported() and any(stored.values()):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "clip_dim",
+                "minimum_client_protocol": settings.clip_dim_min_client_protocol,
+            },
+        )
+    changed = any(
+        not slot.removed
+        and "dim" in slot.model_fields_set
+        and slot.dim is not None
+        and slot.dim != stored.get(slot.slot_id)
+        for slot in slots
+    )
+    if changed and (
+        variant.get("render_destination") != "device"
+        or not clip_dim_supported(require_client=False)
+    ):
+        raise HTTPException(422, detail={"code": "clip_dim_unavailable"})
 
 
 def _tilt_media_asset(tilt: dict[str, Any] | None) -> str | None:

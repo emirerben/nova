@@ -237,6 +237,8 @@ class GuidedStoryMoment(BaseModel):
     # KRI-1136: the creator's tilt (`app.kria.clip_tilt.ClipTilt.row()`). Omitted when unset so
     # every stored plan keeps its exact dump. Honoured by the phone compiler only.
     tilt: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
+    # The creator's dim (`app.kria.clip_dim`). Omitted when unset, like the tilt.
+    dim: float | None = Field(default=None, gt=0, le=1, exclude_if=lambda value: value is None)
     playback_rate: float | None = Field(default=None, ge=PLAYBACK_RATE_MIN, le=PLAYBACK_RATE_MAX)
     # The creator silenced this moment's own (camera) sound in the editor. Omitted when
     # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
@@ -3764,6 +3766,7 @@ def compile_guided_runtime_plan(
                         else {}
                     ),
                     **({"tilt": segment["tilt"]} if segment.get("tilt") else {}),
+                    **({"dim": segment["dim"]} if segment.get("dim") else {}),
                     **(
                         {"playback_rate": float(segment["playback_rate"])}
                         if segment.get("playback_rate") is not None

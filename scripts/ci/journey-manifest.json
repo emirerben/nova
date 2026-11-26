@@ -3810,6 +3810,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_add_remove__visual_media.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_audio.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_crop.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_clip_dim.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_duplicate.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look__custom_effect.json",
@@ -4130,6 +4131,33 @@
         "src/apps/ios/Tests/KriaTests/IntroStylesOfferTests.swift",
         "src/apps/ios/Tests/KriaUITests/IntroStylesUITests.swift",
         "src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json"
+      ]
+    },
+    {
+      "id": "clip-dim",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_clip_dim_writers.py tests/routes/test_clip_dim_editor_save.py tests/agents/test_clip_dim_ai.py tests/kria/test_editor_capability_parity.py tests/routes/test_editor_save_code_catalog.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py",
+      "xctests": [
+        "KriaTests/ClipDimTests/testSharedFixtureValidDimsNormalize",
+        "KriaTests/ClipDimTests/testSharedFixtureInvalidDimsAreRejected",
+        "KriaTests/ClipDimTests/testApplyToAllDimsEveryClipAndOneClipCanThenChangeOnItsOwn",
+        "KriaTests/ClipDimTests/testRemovingASavedDimSendsAnExplicitNullBecauseAnOmittedKeyKeepsIt",
+        "KriaTests/ClipDimRenderTests/testADimmedClipExportsDarkerByItsStrengthUnderEveryTextStickerAndDrawing",
+        "KriaTests/ClipDimRenderTests/testANoDimRowCompilesByteIdenticalToAnUntouchedOne"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/clip_dim.py",
+        "src/apps/api/prompts/edit_copilot_ops/clip_dim.txt",
+        "src/apps/api/tests/kria/test_clip_dim_writers.py",
+        "src/apps/api/tests/routes/test_clip_dim_editor_save.py",
+        "src/apps/api/tests/agents/test_clip_dim_ai.py",
+        "tests/fixtures/clip-dim-row/v1.json",
+        "src/apps/ios/Kria/Core/ClipDim.swift",
+        "src/apps/ios/Kria/Features/NativeDimSheet.swift",
+        "src/apps/ios/Tests/KriaTests/ClipDimTests.swift",
+        "src/apps/ios/Tests/KriaTests/ClipDimRenderTests.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeDimUITests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/ClipDimCompositionTests.swift"
       ]
     }
   ]

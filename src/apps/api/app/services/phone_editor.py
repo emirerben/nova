@@ -1844,6 +1844,7 @@ def _compile_subtitled_editor_commit(
             else {}
         ),
     )
+    recipe = _with_previous_clip_dims(recipe, previous.recipe)
     recipe = with_drawings(recipe, variant.get("drawings"))
     recipe = with_color_moments(recipe, variant.get("color_moments"))
     # KRI-1142: added pictures are rebuilt from the saved blocks on EVERY Talking Save, not only a
@@ -2276,6 +2277,8 @@ def _swap_voiceover_cut(
         # A cleared tilt was the compile's instruction; the stored row is simply upright.
         if "tilt" in slot and slot["tilt"] is None:
             del slot["tilt"]
+        if "dim" in slot and slot["dim"] is None:
+            del slot["dim"]
     return swapped
 
 
@@ -2712,6 +2715,27 @@ def _previous_clip_tilts(recipe: Any) -> dict[str, dict]:
                 if (tilt := row_tilt_from_clip(clip, zoom=zoom)) is not None:
                     tilts[clip.id] = tilt
     return tilts
+
+
+def _with_previous_clip_dims(recipe: EditRecipeV2, previous: Any) -> EditRecipeV2:
+    """``recipe`` with each main-track clip's dim from ``previous`` (same clip id), so a lane
+    Save that recompiles the speaker clips keeps what the creator dimmed."""
+    dims = {
+        clip.id: clip.dim
+        for track in getattr(previous, "tracks", None) or []
+        if track.kind == "video" and track.id in FIT_VIDEO_TRACK_IDS
+        for clip in track.clips
+        if clip.dim is not None
+    }
+    if not dims:
+        return recipe
+    payload = recipe.model_dump(mode="json")
+    for track in payload["tracks"]:
+        if track["kind"] == "video" and track["id"] in FIT_VIDEO_TRACK_IDS:
+            for clip in track["clips"]:
+                if (dim := dims.get(clip["id"])) is not None:
+                    clip["dim"] = dim
+    return EditRecipeV2.model_validate(payload)
 
 
 def _without_insert_splits(

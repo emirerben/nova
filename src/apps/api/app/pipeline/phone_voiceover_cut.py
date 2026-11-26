@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from app.kria.clip_dim import row_dim
 from app.kria.recipes import (
     AssetFingerprint,
     MediaAsset,
@@ -270,7 +271,7 @@ def _video_clips(
                 placed = old.model_copy(update={**update, "transform": transform})
             else:
                 placed = TimelineClip(**update, transform=transform, look=default_look)
-        clips.append(_with_tilt(placed, slot, old, letterbox))
+        clips.append(_with_dim(_with_tilt(placed, slot, old, letterbox), slot, old))
         cursor = timeline_start + source_duration / rate
     if per_clip_sound:
         clips = _keep_clip_sound(previous, clips, slots)
@@ -318,6 +319,19 @@ def _with_tilt(
             "backdrop": backdrop,
         }
     )
+
+
+def _with_dim(placed: TimelineClip, slot: dict, old: TimelineClip | None) -> TimelineClip:
+    """``placed`` carrying the slot's dim, by the tilt's rule: a slot that sends ``dim`` owns it
+    (``None`` removes it); one that omits it keeps the pinned clip's dim while it plays the same
+    footage, and a repointed or new slot starts undimmed."""
+    if "dim" in slot:
+        dim = row_dim(slot)
+    elif old is not None and old.source_asset_id == placed.source_asset_id:
+        dim = old.dim
+    else:
+        dim = None
+    return placed if dim == placed.dim else placed.model_copy(update={"dim": dim})
 
 
 def _step_slot_id(clip: TimelineClip) -> str | None:
@@ -526,6 +540,7 @@ def replace_voiceover_cut(
         "crossfade",
         "clipTilt",
         "clipBackdropMedia",
+        "clipDim",
     }
     if dropped & backdrop_asset_ids(video.clips):
         # A pool visual that only a backdrop used is gone; the recipe validator re-derives

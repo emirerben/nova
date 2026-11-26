@@ -231,6 +231,8 @@ def resolve_phone_voiceover_slots(job: Any, variant: dict, slots: list[Any]) -> 
         if "tilt" in slot.model_fields_set:
             # Same rule for the tilt (KRI-1136): omitted keeps the pinned one.
             row["tilt"] = slot.tilt
+        if "dim" in slot.model_fields_set:
+            row["dim"] = slot.dim
         if slot.parent_segment_id:
             row["parent_segment_id"] = slot.parent_segment_id
         resolved.append(row)

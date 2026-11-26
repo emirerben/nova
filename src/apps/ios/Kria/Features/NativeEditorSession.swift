@@ -2237,6 +2237,26 @@ enum EditorOpenIntent { case warm, open }
             variantKey = "initial"
             rendersOnDevice = true
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim") {
+            // A device-rendered montage whose server opens `clips.dim`; Save commits through the stub transport and every
+            // clip's saved dim comes back on the next launch (`-ui-testing-editor-dim-reset` starts undimmed).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-dim-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+            let defaults = UserDefaults.standard
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim-reset") {
+                defaults.removeObject(forKey: NativeEditorUITestFixtures.savedDimsKey)
+            }
+            if let data = defaults.data(forKey: NativeEditorUITestFixtures.savedDimsKey),
+               let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+                for index in document.clips.indices {
+                    if let id = document.clips[index].id, let value = saved[id] { document.clips[index].raw["dim"] = value }
+                }
+            }
+            document.capabilities["clips.dim"] = EditorCapability(editable: true)
+            cleanDocument = document
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range") {
             // KRI-717 on a Talking edit: Save goes through the real request encoder to the stub transport, which
             // keeps the saved rows and captions so a relaunch reopens the saved windows.

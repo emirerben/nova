@@ -1460,7 +1460,10 @@ enum KriaClientProtocolContract {
     /// 56 (KRI-1582): reads `choice_question` version 2, whose options may carry a `preview` (text layers drawn over a frame
     /// of the creator's own clip). The server sends the informative text design picker with previews only to this protocol;
     /// a 55 build gets the same question as text-only cards.
-    static let version = 57
+    /// 58: draws a clip's `dim` (`TimelineClip.dim`, the `clipDim` capability) in the preview and the export, and keeps a
+    /// row's `dim` on Save. The server offers `editor_capabilities.clips.dim` only to this protocol (and only with `clipDim`
+    /// verified) and answers 426 `client_update_required` (`clip_dim`) to an older build that polls a dimmed recipe.
+    static let version = 58
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2380,6 +2383,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_TILT_WITH_LOOK": String(localized: "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here."),
             "clip_backdrop_media_not_in_pool": String(localized: "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here."),
             "clip_backdrop_media_unavailable": String(localized: "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here."),
+            "clip_dim_unavailable": String(localized: "Dim isn’t available right now. Remove the dim on that clip and save again. Your edits are still here."),
             "clip_tilt_unavailable": String(localized: "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here."),
             "clip_tilt_zoom_unavailable": String(localized: "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here."),
             "transitions_disabled": String(localized: "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here."),

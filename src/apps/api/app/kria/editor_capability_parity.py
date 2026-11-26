@@ -214,6 +214,12 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         ("patch_slots",),
         fields=("tilt",),
     ),
+    "clip_dim": _g(
+        "agent_ops",
+        "setClipDim applyClipDimToAllClips",
+        ("patch_slots",),
+        fields=("dim",),
+    ),
     "clip_audio": _g(
         "agent_ops",
         "toggleClipAudio setOriginalAudioLevel setOriginalMixLevel",
@@ -530,7 +536,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
         "textElement textAnchor captionPosition captionStyleSize captionStill clipTilt "
-        "tiltBlockedReason tiltBackdropIsMissing "
+        "tiltBlockedReason tiltBackdropIsMissing clipDim dimBlockedReason "
         "canRotateVisual canStyleVisual speakerBackgroundFocus canEditSpeakerFrame "
         "speakerEditingFrame speakerFrame speakerFrameRect speakerSelection speakerViewport "
         "usesScopedSpeakerFrame ownsTimingGesture",
