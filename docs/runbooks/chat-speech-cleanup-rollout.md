@@ -334,6 +334,14 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   voicing (`diagnostics.voice_guard.dropped`) stays on purpose. Kill switch:
   `fly secrets set SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker
   restart. Failure modes: `docs/reviews/kri-1512-stretched-words-failure-modes.md`.
+- the same, but BOTH words beside the pause reach into it and their stamps meet inside it (Cusco T3
+  "Dağları'nın … bayırlarında", a 1.65 s mid-sentence pause, KRI-1627) → the head trim alone
+  refuses that shape as ambiguous. `SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED` (default on, needs
+  the switch above) trims both stamps to the silence edges when the voicing detector also hears
+  the previous word's voice end right before the pause and its stamp before the pause as voice;
+  a `tail: true` entry in `diagnostics.stretched_heads` marks each pair. Kill switch:
+  `fly secrets set SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED=false --app nova-video` + api and worker
+  restart. Failure modes: `docs/reviews/kri-1627-stretched-pairs-failure-modes.md`.
 - "cleanup cut whole words / a quiet second speaker" on a take with no real pause (two
   people talking, one far from the mic; a wrong-language or partial transcript) → the
   ambient silence floor sat above the quiet voice and the transcript had no token there.

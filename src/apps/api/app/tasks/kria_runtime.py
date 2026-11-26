@@ -9279,6 +9279,40 @@ def _phone_source_video_count(job: Any) -> int | None:
     )
 
 
+def _phone_video_use(job: Any) -> dict[str, Any]:
+    """KRI-1523: the creator's own videos (the approved media snapshot, in attach order) and the
+    ones a finished phone render was made from (the job's `_phone_sources_v1`), as
+    `own_video_ids` / `used_video_ids`; {} when either is not recorded."""
+    plan = job.assembly_plan or {}
+    sources = plan.get("_phone_sources_v1")
+    binding = plan.get("creator_brief_binding")
+    snapshot = binding.get("media_snapshot") if isinstance(binding, dict) else None
+    rows = snapshot.get("clip_assignments") if isinstance(snapshot, dict) else None
+    if not isinstance(sources, list) or not isinstance(rows, list):
+        return {}
+    own = tuple(
+        dict.fromkeys(
+            str(row["media_id"])
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("kind") == "video"
+            and row.get("media_id")
+            and not str(row["media_id"]).startswith("asset-")
+        )
+    )
+    used = tuple(
+        str(source["media_id"])
+        for source in sources
+        if isinstance(source, dict)
+        and source.get("media_id")
+        and isinstance(source.get("original"), dict)
+        and source["original"].get("kind") == "video"
+    )
+    if not own or not set(used) & set(own):
+        return {}  # ids written in another form must never read as "left out"
+    return {"own_video_ids": own, "used_video_ids": used}
+
+
 def _montage_media_use(binding: Any, job: Any, variant: Mapping[str, Any]) -> dict[str, Any]:
     """KRI-1515: the clips the creator approved (the binding's media snapshot, else the job's
     clip list) against every media id the finished timeline plays; {} when unknown."""
@@ -9522,6 +9556,8 @@ def _approved_generation_requirements_review(
             facts,
             original_audio_control=original_audio_recovery(job, variant),
             attached_video_count=_phone_source_video_count(job),
+            # KRI-1523: "use only the second clip" against the videos the phone rendered from.
+            **_phone_video_use(job),
         )
         if narrated is not None:
             # KRI-1357: which clip played under a named cue that had no pop-in.

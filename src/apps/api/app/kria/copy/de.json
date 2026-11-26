@@ -837,7 +837,7 @@
     "Montage format": "Format: Montage",
     "More than one clip says {quote}, so I couldn't tell which to keep whole": "Mehr als ein Clip sagt {quote}, deshalb konnte ich nicht erkennen, welchen ich ganz lassen soll",
     "More than one of your clips has someone talking.": "In mehr als einem deiner Clips spricht jemand.",
-    "More than one of your clips shows {shown}{more}. For each one, keep the clip to use ticked and untick the others.": "Mehr als einer deiner Clips zeigt {shown}{more}. Lass bei jedem den Clip angehakt, der verwendet werden soll, und nimm bei den anderen den Haken raus.",
+    "More than one of your clips shows {shown}{more}. For each one, keep the clips to use ticked and untick the others.": "Mehr als einer deiner Clips zeigt {shown}{more}. Lass bei jedem die Clips angehakt, die verwendet werden sollen, und nimm bei den anderen den Haken raus.",
     "Moved the captions to the bottom": "Untertitel nach unten verschoben",
     "Moved the captions to the middle": "Untertitel in die Mitte verschoben",
     "Moved the captions to the top": "Untertitel nach oben verschoben",
@@ -2239,6 +2239,17 @@
     "A fact's heading": "Die Überschrift einer Info",
     "Its detail sits right under it, on one short line": "Das Detail steht direkt darunter, in einer kurzen Zeile",
     "One line on every clip, as if you were telling it": "Eine Zeile auf jedem Clip, als würdest du es erzählen",
-    "You named a sound effect, so I played that one and added no others": "Du hast einen Soundeffekt genannt, deshalb habe ich diesen abgespielt und keine weiteren hinzugefügt"
+    "You named a sound effect, so I played that one and added no others": "Du hast einen Soundeffekt genannt, deshalb habe ich diesen abgespielt und keine weiteren hinzugefügt",
+    "Clip {n} still plays too": "Clip {n} läuft trotzdem auch",
+    "I can't tell which clip you mean: remove the clips you don't want from this chat and I'll make it from the rest": "Ich weiß nicht, welchen Clip du meinst: Entferne die Clips, die du nicht willst, aus diesem Chat, dann mache ich es aus den übrigen",
+    "Only clip {n} of your {total} is used": "Nur Clip {n} von deinen {total} wird verwendet",
+    "Only the {count} clips you picked of your {total} are used": "Nur die {count} Clips, die du gewählt hast, von deinen {total} werden verwendet",
+    "The clip you picked isn't in this edit": "Der Clip, den du gewählt hast, ist nicht in diesem Schnitt",
+    "{count} other clips still play too": "{count} andere Clips laufen trotzdem auch",
+    "A dim is a strength from 0 to 1: 0.4 is 40% darker, 1 is black.": "Abdunkeln ist eine Stärke von 0 bis 1: 0.4 ist 40 % dunkler, 1 ist schwarz.",
+    "Changed the dim of {who}": "Abdunkelung von {who} geändert",
+    "Dimmed {who} {percent}%": "{who} um {percent} % abgedunkelt",
+    "I can't dim clips on this edit.": "Bei dieser Bearbeitung kann ich Clips nicht abdunkeln.",
+    "Removed the dim from {who}": "Abdunkelung von {who} entfernt"
   }
 }

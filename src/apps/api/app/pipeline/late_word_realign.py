@@ -49,6 +49,17 @@ Two more shapes from the same T2 take (KRI-1512), behind ``straddle`` / their ow
   gap stays under ``MAX_PAUSE_S`` and rule 3 never sees the pause. The head is trimmed to the
   silence end (and the previous word's stamped end inside the silence back to its start) only
   when the whole silence is voiceless and the word's voice starts right after it.
+
+One more shape from Cusco T3 (KRI-1627), behind ``pairs``:
+
+* **a stretched pair**: whisper stretched BOTH the tail of the word before a pause and the head of
+  the word after it into the pause ("Dağları'nın" 41.46-42.76 s and "bayırlarında" 42.76-44.50 s
+  over the silence 42.028-43.617 s; voice to 42.031 s and from 43.593 s), so the stamps meet in
+  the pause and rule 3 sees no gap. KRI-1512 refuses it as "both edges in one pause"; rule 0
+  must, having only silencedetect. With the voicing detector as the second witness it is not
+  ambiguous: the head is trimmed as above and the tail goes back to the silence start, only when
+  the previous word also passes the mirror of the head's gates (its voice ends right before the
+  silence, the part before the silence is its voice and can hold it).
 """
 
 from __future__ import annotations
@@ -61,6 +72,7 @@ from typing import Any
 from app.pipeline.silence_cut import (
     MAX_PAUSE_S,
     SENTENCE_HEAD_MIN_VOICED_S,
+    SENTENCE_TAIL_MIN_VOICED_S,
     SENTENCE_TAIL_REACH_S,
     SQUEEZE_MAX_SYLLABLES_PER_S,
     TOKEN_SILENCE_MIN_OVERLAP_S,
@@ -127,6 +139,8 @@ class StretchedHead:
     stamped_start: float  # where whisper started it
     pause: tuple[float, float]  # the silence span its head lay in
     previous_end: float | None  # the previous word's stamped end when it lay in the pause
+    # KRI-1627: the previous word's stamped tail lay in the pause too (a stretched pair).
+    tail: bool = False
 
     def to_diagnostic(self) -> dict[str, Any]:
         """Content-safe receipt: times only."""
@@ -137,6 +151,9 @@ class StretchedHead:
         }
         if self.previous_end is not None:
             receipt["previous_end_s"] = [round(self.previous_end, 3), round(self.pause[0], 3)]
+        if self.tail:
+            # Only then: KRI-1512's receipts stay byte-identical.
+            receipt["tail"] = True
         return receipt
 
 
@@ -288,6 +305,8 @@ def find_stretched_heads(
     words: Sequence[tuple[str, float, float]],
     silence_spans: Sequence[tuple[float, float]],
     duration_s: float,
+    *,
+    pairs: bool = False,
 ) -> list[StretchedHead]:
     """Words whose stamped head lies in a pause rule 3 cannot see; the audio is not consulted.
 
@@ -298,6 +317,13 @@ def find_stretched_heads(
     is under ``MAX_PAUSE_S`` (rule 3 is blind to the pause); the previous word starts before the
     span and reaches into it by under ``TOKEN_SILENCE_MIN_OVERLAP_S``; no other word is stamped
     in the span; and the word is not the first of the take.
+
+    ``pairs`` (KRI-1627, docs/reviews/kri-1627-stretched-pairs-failure-modes.md): a previous word
+    whose stamped tail reaches into the same span by ``TOKEN_SILENCE_MIN_OVERLAP_S`` or more is
+    taken as a stretched pair (``tail=True``) instead of refused, when its stamped end is no later
+    than the word's start, no other long span overlaps it, and the part before the span can hold
+    it (``SENTENCE_TAIL_MIN_VOICED_S``, ``SQUEEZE_MAX_SYLLABLES_PER_S``). The audio decides in
+    ``realign_stretched_heads``.
     """
 
     spans = [
@@ -329,10 +355,11 @@ def find_stretched_heads(
             continue  # rule 3 already sees this pause
         if previous_start >= pause_lo - _EPS:
             continue  # the previous word lies in the pause itself: another shape
-        if _overlap(previous_start, previous_end, pause_lo, pause_hi) >= (
+        tail = _overlap(previous_start, previous_end, pause_lo, pause_hi) >= (
             TOKEN_SILENCE_MIN_OVERLAP_S - _EPS
-        ):
-            continue  # both edges in one pause: ambiguous (rule 0's F6)
+        )
+        if tail and not (pairs and _stretched_tail_fits(words[index - 1], start, spans, pause_lo)):
+            continue  # both edges in one pause: ambiguous without the audio (rule 0's F6)
         if any(
             other not in (index - 1, index)
             and (
@@ -348,9 +375,34 @@ def find_stretched_heads(
                 stamped_start=start,
                 pause=(pause_lo, pause_hi),
                 previous_end=previous_end if previous_end > pause_lo + _EPS else None,
+                tail=tail,
             )
         )
     return heads
+
+
+def _stretched_tail_fits(
+    previous: tuple[str, float, float],
+    next_start: float,
+    spans: Sequence[tuple[float, float]],
+    pause_lo: float,
+) -> bool:
+    """The geometry half of a stretched pair's tail (KRI-1627 failure modes 5-7)."""
+
+    text, start, end = previous
+    if end > next_start + _EPS:
+        return False  # overlapping stamps, not two stretched edges (fm7)
+    long_spans = [
+        (lo, hi)
+        for lo, hi in spans
+        if _overlap(start, end, lo, hi) >= TOKEN_SILENCE_MIN_OVERLAP_S - _EPS
+    ]
+    if len(long_spans) != 1:
+        return False  # several quiet patches in the word: a mumbled word (fm6)
+    remainder = pause_lo - start
+    if remainder < SENTENCE_TAIL_MIN_VOICED_S - _EPS:
+        return False  # the part before the pause cannot hold the word (fm5)
+    return _syllables(text) / remainder <= SQUEEZE_MAX_SYLLABLES_PER_S + _EPS
 
 
 def realign_stretched_heads(
@@ -359,6 +411,7 @@ def realign_stretched_heads(
     duration_s: float,
     *,
     voicing: Voicing,
+    pairs: bool = False,
 ) -> tuple[list[tuple[float, float]], list[StretchedHead]]:
     """Every word's ``(start_s, end_s)`` after trimming each confirmed stretched head.
 
@@ -366,11 +419,15 @@ def realign_stretched_heads(
     voice start within ``STRETCHED_HEAD_ONSET_REACH_S`` of the pause end, and hears the rest of
     the stamp as voice. The word then starts at the pause end; the previous word's stamped end
     inside the pause moves back to the pause start. Every other word keeps its times exactly.
+
+    A stretched pair (``pairs``, KRI-1627) also needs the mirror for the previous word: its voice
+    ends within ``STRETCHED_HEAD_ONSET_REACH_S`` before the pause start, and its stamp before the
+    pause is voice. Either side failing moves neither word.
     """
 
     times = [(start, end) for _text, start, end in words]
     trimmed: list[StretchedHead] = []
-    for head in find_stretched_heads(words, silence_spans, duration_s):
+    for head in find_stretched_heads(words, silence_spans, duration_s, pairs=pairs):
         pause_lo, pause_hi = head.pause
         _start, end = times[head.index]
         if voicing(pause_lo, pause_hi) > LATE_RUN_MAX_STAMP_VOICED_S + _EPS:
@@ -379,6 +436,16 @@ def realign_stretched_heads(
             continue  # unexplained sound between the pause and the voice
         if voicing(pause_hi, end) < LATE_RUN_MIN_VOICED_FRAC * (end - pause_hi) - _EPS:
             continue  # the rest of the stamp is not the word's voice
+        if head.tail:
+            previous_start, _previous_end = times[head.index - 1]
+            if voicing(max(previous_start, pause_lo - STRETCHED_HEAD_ONSET_REACH_S), pause_lo) <= (
+                _EPS
+            ):
+                continue  # unexplained sound between the previous voice and the pause (fm3)
+            if voicing(previous_start, pause_lo) < (
+                LATE_RUN_MIN_VOICED_FRAC * (pause_lo - previous_start) - _EPS
+            ):
+                continue  # the previous stamp before the pause is not its voice (fm4)
         times[head.index] = (pause_hi, end)
         if head.previous_end is not None:
             previous_start, _previous_end = times[head.index - 1]

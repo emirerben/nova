@@ -867,6 +867,11 @@ class Settings(BaseSettings):
     # read once at dispatch and stamped, so a worker never re-reads it. Off = the seeded pick,
     # byte-identical to KRI-1611.
     intro_scene_model_enabled: bool = False
+    # KRI-1633: "Try intro styles" (`pipeline/intro_styles`, `routes/intro_styles`) reuses the two
+    # flags above and needs a build at this protocol (set by scripts/bump-protocol.py). The
+    # `intro_styles` editor capability is sent, and the route answers, only at or above it;
+    # INTRO_STYLES_MIN_CLIENT_PROTOCOL=999 removes the entry for every build.
+    intro_styles_min_client_protocol: int = 57
 
     def intro_scene_for(self, user_id: object) -> bool:
         if not self.intro_scene_enabled or user_id is None:
@@ -1303,6 +1308,17 @@ class Settings(BaseSettings):
     # round-trips `zoom`). A save carrying a zoomed tilt from an older build, or one that would
     # overwrite a stored zoom, answers 426 `client_update_required` (`slide_tilt_zoom`).
     media_tilt_zoom_min_client_protocol: int = 33
+    # Clip dim: a main-track clip or photo drawn darker by a strength 0..1 (`TimelineClip.dim`,
+    # each encoded pixel times `1 - dim`, under text, captions, stickers and drawings), drawn ON
+    # DEVICE by `KriaMediaEngine` only (the cloud has no `clipDim`). The editor's `clips.dim`
+    # and the chat's patch_slots `dim` need this flag on, `clipDim` in
+    # PHONE_RENDER_VERIFIED_FEATURES (a JSON array; set after a physical-device preview + export
+    # check) and a build declaring protocol >= `clip_dim_min_client_protocol`. A pinned recipe
+    # that carries a dim answers 426 `client_update_required` (`clip_dim`) to an older build.
+    # Default FALSE (dark ship). Apply: token first, then `CLIP_DIM_ENABLED=true` (api + worker)
+    # + restart. Rollback = `...=false` + restart; recipes already pinned keep their dim.
+    clip_dim_enabled: bool = False
+    clip_dim_min_client_protocol: int = 58
     # KRI-1350: colour moments on a phone Talking edit -- black-and-white / warm / faded windows
     # of the finished video with white-flash, light-leak or dip-to-black edges, an end fade to
     # black, and an optional library sound locked to an edge. Kill switch for the chat op that
@@ -1654,6 +1670,16 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set SINGLE_TAKE_POINTER_ASK_ENABLED=false --app nova-video` + restart
     # (api + worker).
     single_take_pointer_ask_enabled: bool = True
+    # KRI-1523: a `select` row naming which of the creator's own videos to use (the typed
+    # `selected_media_ids` fact: "Use only the good take: the second clip", Cusco DJI T1
+    # 2026-11-17) keeps only those videos in a Talking plan (`clip_scope.apply_chosen_videos`)
+    # and is judged against the plan and the finished video (`brief_checks._check_chosen_videos`).
+    # A pick the server cannot tell apart (untyped, or ids naming no own video) on several videos
+    # says how to pick instead of "A Talking video can't do this". The Main Creator is taught the
+    # fact (`main_creator.CHOSEN_VIDEOS_BRIEF_SENTENCE`). Default TRUE. False: byte-identical
+    # (prompt included). Rollback: `fly secrets set CHOSEN_CLIPS_ASK_ENABLED=false --app
+    # nova-video` + restart (api + worker).
+    chosen_clips_ask_enabled: bool = True
     # KRI-1489: a pop-in ask that DESCRIBES its moments ("when I mention the launch and Vela's 2
     # posts") instead of quoting the spoken words is answered by the pop-ins the plan placed on
     # other words when there are at least as many spare pop-ins as unmatched names
@@ -2443,6 +2469,20 @@ class Settings(BaseSettings):
         "Off is byte-identical to the late-word fix alone. Part of the source policy fingerprint, "
         "so a flip re-analyzes. Kill switch: `fly secrets set "
         "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker restart.",
+    )
+    speech_cleanup_stretched_pairs_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup stretched-pair fix (KRI-1627, Cusco T3). whisper-1 can stretch "
+        "BOTH the tail of the word before a pause and the head of the word after it into the "
+        "pause, so the stamps meet inside it and rule 3 never sees it (\"Dağları'nın … "
+        'bayırlarında", a 1.65 s mid-sentence pause kept). On (and with '
+        "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED): the preflight analysis trims both stamps to "
+        "the silence edges, only when the KRI-1017 voicing detector hears the whole pause "
+        "voiceless, the previous voice ending and the next voice starting right at its edges "
+        "(app/pipeline/late_word_realign.py). Off is byte-identical to the stretched-word fix. "
+        "Part of the source policy fingerprint, so a flip re-analyzes. Kill switch: `fly secrets "
+        "set SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED=false --app nova-video` + api and worker "
+        "restart.",
     )
 
     speech_cleanup_aligner_model_dir: str = Field(

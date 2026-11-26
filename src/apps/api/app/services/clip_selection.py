@@ -112,6 +112,71 @@ def intent_key(intent: ClipIntent) -> str:
     return attribute_key(intent.op, intent.attribute)
 
 
+# ── The rest of the creator's clips (KRI-1519) ───────────────────────────────
+
+# Altının yolu (KRI-1517): "Fill the rest with the other clips" came back as `include: the
+# other clips`. It names no shot, only every clip not already placed. Words are `_words`
+# folded ("diğer" -> "diger", "übrigen" -> "ubrigen", "kalanları" -> "kalanlari").
+# A rest word says "the clips nothing else took"; one must be there.
+_REST_WORDS = frozenset(
+    {
+        # English
+        "other", "others", "rest", "remaining", "remainder", "leftover", "leftovers", "left",
+        "else", "everything", "all", "unused", "additional",
+        # Turkish ("her şey" is joined to "hersey" first)
+        "diger", "digerleri", "digerlerini", "digerleriyle", "obur", "oburleri", "oburlerini",
+        "baska", "kalan", "kalani", "kalanlar", "kalanlari", "kalanlarini", "kalanlarla",
+        "kalanlariyla", "geri", "geriye", "gerisi", "gerisini", "gerisiyle", "artakalan", "tum",
+        "tumu", "tumunu", "butun", "hepsi", "hepsini", "hepsiyle", "hersey", "kullanilmayan",
+        "kullanmadigim",
+        # German
+        "andere", "anderen", "anderer", "anderes", "ubrige", "ubrigen", "uebrige", "uebrigen",
+        "restliche", "restlichen", "verbleibende", "verbleibenden", "sonstige", "sonstigen",
+        "weitere", "weiteren", "alle", "allen", "alles",
+    }
+)  # fmt: skip
+# What may sit beside a rest word without naming a subject: articles, the creator's own
+# possessives (never "her"/"his"/"their": someone's clips are a subject) and PLURAL clip nouns
+# (a singular "the other clip" is one clip, a real shot).
+_REST_FILLER = frozenset(
+    {
+        # English
+        "the", "my", "our", "your", "of", "with", "over", "clips", "videos", "shots", "takes",
+        "ones", "footage", "photos", "pictures", "images", "files",
+        # Turkish
+        "benim", "ile", "klipler", "klipleri", "kliplerle", "kliplerim", "kliplerimi",
+        "kliplerimle", "videolar", "videolari", "videolarla", "videolarim", "videolarimi",
+        "cekimler", "cekimleri", "cekimlerle", "cekimlerim", "goruntuler", "goruntuleri",
+        "goruntulerle", "fotograflar", "fotograflari", "fotograflarla",
+        # German
+        "die", "der", "den", "dem", "des", "meine", "meinen", "unsere", "unseren", "mit",
+        "aufnahmen", "szenen", "fotos", "bilder", "dateien",
+    }
+)  # fmt: skip
+
+
+def fills_the_rest(intent: ClipIntent) -> bool:
+    """True when an ``include`` names only the creator's remaining clips (KRI-1519).
+
+    "Fill the rest with the other clips" asks to USE every clip not already placed. It is no
+    shot, so it is never a tie to pick (``clip_ties``) nor a clip to find (the resolver's
+    picker); the include itself stays, with the clips the resolver matched. The whole
+    attribute must be rest words: "the other clips of the city", "her clips" or the singular
+    "the other clip" still name a shot. An "only about" scope is never the rest.
+    """
+    if intent.op != "include" or intent.exclusive:
+        return False
+    words: list[str] = []
+    for word in _words(intent.attribute):
+        if word == "sey" and words[-1:] == ["her"]:
+            words[-1] = "hersey"
+        else:
+            words.append(word)
+    return any(w in _REST_WORDS for w in words) and all(
+        w in _REST_WORDS or w in _REST_FILLER for w in words
+    )
+
+
 def _key_attribute_tokens(key: str) -> set[str]:
     _op, _sep, rest = key.partition(":")
     return {t for t in rest.split("-") if t}

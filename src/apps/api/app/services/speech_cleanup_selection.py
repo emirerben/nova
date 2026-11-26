@@ -40,7 +40,7 @@ from app.services.speech_cleanup_identity import (
 # current_detector_policy() and therefore this constant - bumping it re-rolls
 # preflight membership (measured: 1979 of 2000 synthetic sources change
 # bucket), so a canary comparison must not be carried across the deploy.
-DETECTOR_VERSION = "mixed-gap-v11-stretched-words"
+DETECTOR_VERSION = "mixed-gap-v12-stretched-pairs"
 _MAX_ASR_SPANS = 128
 _MAX_SILENCE_SPANS = 128
 _MAX_LEXICAL_SPANS = 32

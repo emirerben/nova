@@ -701,6 +701,7 @@ struct NativeEditorView: View {
                                     onAdjust: { inspector = .adjust },
                                     onCrop: { inspector = .crop(selection) },
                                     onTilt: { inspector = .tilt(selection) },
+                                    onDim: { inspector = .dim(selection) },
                                     onRange: { inspector = .sourceWindow(selection) },
                                     onTransition: { inspector = .selection(selection) }
                                 )
@@ -784,7 +785,10 @@ struct NativeEditorView: View {
     @ViewBuilder private func panelContent(captionEditLines: Int) -> some View {
         switch panel {
         case .textCreation:
-            NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) })
+            NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) },
+                                    onOpenIntroStyles: session.canOfferIntroStyles ? { openIntroStyles() } : nil)
+        case .introStyles:
+            NativeIntroStylesPanel(session: session, projectID: project.id) { changePanel(to: nil) }
         case .text(let id):
             // KRI-508: an existing text opens on Edit text with the keyboard up; a text just created
             // from the Text tab keeps opening on Style.
@@ -793,7 +797,8 @@ struct NativeEditorView: View {
                 id: id, session: session, initialTab: startsOnEdit ? .edit : .style,
                 configuration: NativeTextPanelConfiguration(
                     focusesContentOnAppear: startsOnEdit,
-                    onTypingChange: { setTextTypingLines($0) }
+                    onTypingChange: { setTextTypingLines($0) },
+                    onOpenIntroStyles: session.isIntroStyleTitleRow(id) ? { openIntroStyles() } : nil
                 ),
                 onDone: textEditingDone
             ).id(id)
@@ -844,7 +849,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .translation, .visuals, .background, .sounds, .drawing, .split: changePanel(to: nil)
+        case .captions, .translation, .visuals, .background, .sounds, .drawing, .split, .introStyles: changePanel(to: nil)
         case .speaker:
             if session.selection?.kind == .speaker { session.select(nil, seekToStart: false) }
             changePanel(to: nil)
@@ -937,6 +942,16 @@ struct NativeEditorView: View {
         textEditOrigin = .list
         session.select(EditorSelection(kind: .text, id: id))
         changePanel(to: .text(id))
+    }
+
+    /// KRI-1633: "Try intro styles". Leaves the new-text draft (as opening a text row does) so the swap is its own undo step.
+    private func openIntroStyles() {
+        guard session.canOfferIntroStyles else { return }
+        session.cancelTextCreation()
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+            panelExpansion = max(panelExpansion, 0.55)
+        }
+        changePanel(to: .introStyles)
     }
 
     /// KRI-589: opens Draw mode. Playback pauses, the panel closes, the finger canvas covers the preview and a
@@ -1185,6 +1200,8 @@ private enum NativeEditorInspector: Identifiable {
     case crop(EditorSelection)
     /// KRI-1136: turn the selected clip to any angle and pick its corner background.
     case tilt(EditorSelection)
+    /// Darken the selected clip's picture, or every clip's.
+    case dim(EditorSelection)
     /// KRI-717: the Range picker for the selected clip's source window.
     case sourceWindow(EditorSelection)
     /// KRI-306: Vertical / Landscape and Black bars / Crop for the finished video.
@@ -1197,6 +1214,7 @@ private enum NativeEditorInspector: Identifiable {
         case .adjust: return "adjust"
         case .crop(let selection): return "crop-\(selection.kind.rawValue)-\(selection.id)"
         case .tilt(let selection): return "tilt-\(selection.kind.rawValue)-\(selection.id)"
+        case .dim(let selection): return "dim-\(selection.kind.rawValue)-\(selection.id)"
         case .sourceWindow(let selection): return "range-\(selection.kind.rawValue)-\(selection.id)"
         case .videoShape: return "video-shape"
         }
@@ -1223,6 +1241,7 @@ private enum NativeEditorInspector: Identifiable {
         case .adjust: return String(localized: "Adjust", comment: "Editor inspector title")
         case .crop: return String(localized: "Crop", comment: "Editor inspector title")
         case .tilt: return String(localized: "Tilt", comment: "Editor inspector title")
+        case .dim: return String(localized: "Dim", comment: "Editor inspector title: darken a clip's picture")
         case .sourceWindow: return String(localized: "Range", comment: "Editor inspector title: the part of the source clip used")
         case .videoShape: return String(localized: "Video shape")
         }
@@ -1254,6 +1273,7 @@ private struct NativeEditorInspectorView: View {
                 case .adjust: NativeAdjustInspector(session: session)
                 case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
                 case .tilt(let selection): NativeTiltSheet(session: session, uploads: uploads, projectID: projectID, selection: selection)
+                case .dim(let selection): NativeDimSheet(session: session, selection: selection)
                 case .sourceWindow(let selection): NativeSourceWindowSheet(session: session, selection: selection, embedded: true)
                 case .videoShape: NativeVideoShapeInspector(session: session)
                 }

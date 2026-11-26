@@ -75,7 +75,13 @@ from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.order_replacement_receipts import VerifiedOrderExecution
 from app.kria.reply_language import CATALOG_REPLY_LANGUAGES, current_reply_language, say
 from app.kria.route_disclosure import is_route_decline_reason
-from app.kria.select_asks import ExclusionFact, only_video_ask
+from app.kria.select_asks import (
+    ExclusionFact,
+    chosen_clips_on,
+    chosen_video_ids,
+    names_chosen_videos,
+    only_video_ask,
+)
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
 from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS, _fact_speaker, is_spoken_text_bar
@@ -829,6 +835,11 @@ class PlanFacts:
     # record heard in it (None = not known). False everywhere else: nothing is claimed.
     voiceover_file_narration: bool = False
     voiceover_file_language: str | None = None
+    # KRI-1523: the creator's own videos in attach order (never a photo or a Visuals `asset-`)
+    # and the ones the plan uses / the finished phone render was made from, for a typed "use
+    # only the second clip" ask (`_check_chosen_videos`). None = not known: nothing is claimed.
+    own_video_ids: tuple[str, ...] | None = None
+    used_video_ids: tuple[str, ...] | None = None
     # KRI-547: how a phone Talking render framed a sideways speaker clip for a
     # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
     # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
@@ -1691,6 +1702,32 @@ def _draft_media_use(strategy: Mapping[str, Any], manifest: ResolvedCreatorManif
     return media_use_facts(own, selected)
 
 
+def _draft_video_use(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
+    """KRI-1523: the creator's own videos and the ones the strategy uses (`own_video_ids` /
+    `used_video_ids`), read the way native dispatch narrows the clips
+    (`content_plan_build._creator_selected_clip_paths`): a selected list keeps only its own. A
+    video the strategy places itself (an insert, the ending, a backdrop) counts as used too, so a
+    clip that may still play is never reported as left out."""
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.kria.clip_scope import placed_media  # noqa: PLC0415
+
+    own = tuple(
+        m.media_id
+        for m in manifest.media
+        if m.kind == "video" and not m.media_id.startswith("asset-")
+    )
+    selected = {str(x) for x in strategy.get("selected_media_ids") or []}
+    # Native dispatch renders a non-empty list whatever the scope says; guided reads `all`.
+    native = strategy.get("render_program") == "native"
+    if not selected or (strategy.get("media_scope") == "all" and not native):
+        return {"own_video_ids": own, "used_video_ids": own}
+    try:
+        selected |= placed_media(CreativeStrategy.model_validate(strategy))
+    except ValueError:
+        return {}  # a strategy that does not parse claims nothing
+    return {"own_video_ids": own, "used_video_ids": tuple(m for m in own if m in selected)}
+
+
 def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> int:
     videos = [m.media_id for m in manifest.media if m.kind == "video"]
     selected = {str(x) for x in strategy.get("selected_media_ids") or []}
@@ -1889,6 +1926,7 @@ def plan_facts_from_strategy(
         extra["talking_cards_at_render"] = _draft_talking_cards(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra.update(_draft_media_use(strategy, manifest))
+        extra.update(_draft_video_use(strategy, manifest))
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
         spoken_cap = manifest.capabilities.get("phone_voiceover_spoken_text")
         extra["phone_voiceover_spoken_text"] = bool(spoken_cap and spoken_cap.available)
@@ -7948,6 +7986,13 @@ _TEXT_CURVED = "curved"
 _SKIPPED_CLIP_PLAYS = "The clip you asked to skip is still in the video"
 # KRI-1488: an untyped `select` row met by an edit made from the one video attached.
 _EDIT_USES_YOUR_TAKE = "This video is made from the one video you attached"
+# KRI-1523: a pick among several of the creator's videos the server cannot tell (an untyped
+# `select` row, or ids that name no own video) on a phone Talking edit. Not a format limit: the
+# creator can remove a clip or name one. Before, it read `_TALKING_NO_SUCH_EDIT`.
+_TALKING_WHICH_CLIP = (
+    "I can't tell which clip you mean: remove the clips you don't want from this chat and I'll "
+    "make it from the rest"
+)
 _PHOTO_IN_CLIPS_ONLY = "The video still has a photo in it"
 # KRI-828: the freeze is planned, but no analysed moment of the clips matches the creator's
 # words for it (or two do), so no frame is guessed.
@@ -8354,6 +8399,10 @@ _REASON_TR: dict[str, str] = {
     _TEXT_CURVED: "kavisli",
     _SKIPPED_CLIP_PLAYS: "Çıkarmanı istediğin klip hâlâ videoda",
     _EDIT_USES_YOUR_TAKE: "Bu video eklediğin tek videodan yapılıyor",
+    _TALKING_WHICH_CLIP: (
+        "Hangi klibi kastettiğini anlayamadım: istemediğin klipleri bu sohbetten çıkar, "
+        "kalanlardan yapayım"
+    ),
     _PHOTO_IN_CLIPS_ONLY: "Videoda hâlâ bir fotoğraf var",
     _NO_FREEZE_FRAME: (
         "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
@@ -17477,6 +17526,79 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
     return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
 
 
+def _talking_facts(facts: PlanFacts) -> bool:
+    return facts.phone_talking or (facts.edit_format or "") in _TALKING_FORMATS
+
+
+def _check_chosen_videos(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1523: a typed "use only the second clip" ask (`selected_media_ids`) on a Talking edit,
+    against the creator's own videos the plan uses or the finished phone render was made from.
+
+    Met only when exactly the named videos are used; another own video that still plays, or a
+    named one that is missing, is `partial`. None (not judged) off Talking (a montage keeps its
+    clip intents), on an editor turn with no render, when either video list is unknown, or when
+    the ids name no own video for sure.
+    """
+    if (
+        not _talking_facts(facts)
+        or (facts.editor and not facts.rendered_variant)
+        or facts.own_video_ids is None
+        or facts.used_video_ids is None
+    ):
+        return None
+    own = facts.own_video_ids
+    chosen = chosen_video_ids(req, own)
+    if chosen is None:
+        return None
+    used = [media_id for media_id in own if media_id in set(facts.used_video_ids)]
+    others = [media_id for media_id in used if media_id not in chosen]
+    if any(media_id not in used for media_id in chosen):
+        reason = say(
+            en="The clip you picked isn't in this edit", tr="Seçtiğin klip bu düzenlemede yok"
+        )
+        return _receipt(req, "partial", reason, verification="checked", stage="checked")
+    if others:
+        reason = (
+            say(
+                en="Clip {n} still plays too",
+                tr="{n}. klip de hâlâ oynuyor",
+                n=own.index(others[0]) + 1,
+            )
+            if len(others) == 1
+            else say(
+                en="{count} other clips still play too",
+                tr="{count} klip daha hâlâ oynuyor",
+                count=len(others),
+            )
+        )
+        return _receipt(req, "partial", reason, verification="checked", stage="checked")
+    if len(own) == 1:
+        # The only video attached: KRI-1488's sentence, never "clip 1 of your 1".
+        return _receipt(
+            req,
+            "met",
+            say(en=_EDIT_USES_YOUR_TAKE, tr=_REASON_TR[_EDIT_USES_YOUR_TAKE]),
+            verification="checked",
+            stage="checked",
+        )
+    reason = (
+        say(
+            en="Only clip {n} of your {total} is used",
+            tr="{total} klibinden sadece {n}. klip kullanılıyor",
+            n=own.index(chosen[0]) + 1,
+            total=len(own),
+        )
+        if len(chosen) == 1
+        else say(
+            en="Only the {count} clips you picked of your {total} are used",
+            tr="{total} klibinden sadece seçtiğin {count} klip kullanılıyor",
+            count=len(chosen),
+            total=len(own),
+        )
+    )
+    return _receipt(req, "met", reason, verification="checked", stage="checked")
+
+
 def _check_select_typed(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
     """A `select` ask the finished timeline proves or disproves (KRI-994); None = not judged.
 
@@ -18019,6 +18141,9 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                     return seated
             return _check_closing_speech(req, facts)
     if req.kind == "select":
+        chosen = _check_chosen_videos(req, facts)
+        if chosen is not None:
+            return chosen
         pointer = _check_single_take_pointer(req, facts)
         if pointer is not None:
             return pointer
@@ -18497,6 +18622,32 @@ def _check_single_take_pointer(
     )
 
 
+def _pick_not_told_apart(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """KRI-1523: a `select` row picking among SEVERAL of the creator's own videos that the server
+    cannot tell: untyped (`untyped_select`, "Use only the good take." filed with no fact), or typed
+    ids that name no own video. A typed row whose videos are not known claims nothing here."""
+    if not chosen_clips_on() or req.kind != "select":
+        return False
+    if names_chosen_videos(req):
+        own = facts.own_video_ids
+        return own is not None and len(own) > 1 and chosen_video_ids(req, own) is None
+    if not untyped_select(req):
+        return False
+    count = next(
+        (
+            n
+            for n in (
+                len(facts.own_video_ids) if facts.own_video_ids is not None else None,
+                facts.attached_video_count,
+                facts.video_clip_count,
+            )
+            if n is not None
+        ),
+        None,
+    )
+    return count is not None and count > 1
+
+
 def _talking_honest_receipt(
     req: BriefRequirement, receipt: RequirementReceipt, facts: PlanFacts
 ) -> RequirementReceipt:
@@ -18612,6 +18763,16 @@ def _talking_honest_receipt(
     # not keep an engine-noise ask silent.
     speech_unjudgeable = _wants_speech(req) and facts.speech_sections is None
     if _has_checker(req) and not bed_ask and not speech_unjudgeable:
+        return receipt
+    if _pick_not_told_apart(req, facts):
+        # KRI-1523: Talking keeps only the clips a pick names (`clip_scope.apply_chosen_videos`),
+        # so "can't" was never true; what is missing is which clip. Say how to pick one.
+        return _receipt(
+            req, "not_possible", _TALKING_WHICH_CLIP, verification="checked", stage="checked"
+        )
+    if chosen_clips_on() and names_chosen_videos(req):
+        # KRI-1523: a typed pick whose videos are not known here (no media snapshot) was never
+        # shown impossible: it stays unjudged ("have a look"), never "A Talking video can't".
         return receipt
     return _receipt(req, "not_possible", _TALKING_NO_SUCH_EDIT)
 

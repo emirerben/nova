@@ -776,7 +776,7 @@
     {
       "id": "kri-653-silent-take",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/pipeline/test_late_word_realign.py tests/tasks/test_kri1502_cusco_t2_replay.py tests/tasks/test_kri1512_cusco_t2_pauses_replay.py",
+      "api_tests": "tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/pipeline/test_late_word_realign.py tests/tasks/test_kri1502_cusco_t2_replay.py tests/tasks/test_kri1512_cusco_t2_pauses_replay.py tests/tasks/test_kri1627_cusco_t3_pause_replay.py",
       "paths": [
         "src/apps/api/app/pipeline/silence_cut.py",
         "src/apps/api/app/services/clip_speech.py",
@@ -795,7 +795,9 @@
         "src/apps/api/tests/tasks/test_kri1502_cusco_t2_replay.py",
         "src/apps/api/tests/fixtures/kri1502_cusco_t2/incident.json",
         "src/apps/api/tests/tasks/test_kri1512_cusco_t2_pauses_replay.py",
-        "src/apps/api/tests/fixtures/kri1502_cusco_t2/kri1512_pauses.json"
+        "src/apps/api/tests/fixtures/kri1502_cusco_t2/kri1512_pauses.json",
+        "src/apps/api/tests/tasks/test_kri1627_cusco_t3_pause_replay.py",
+        "src/apps/api/tests/fixtures/kri1627_cusco_t3/pause.json"
       ]
     },
     {
@@ -879,11 +881,13 @@
     {
       "id": "kri-962-voiceover-tie-question",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri962_voiceover_tie_question.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri692_spoken_text_is_not_a_clip_question.py",
+      "api_tests": "tests/kria/test_kri962_voiceover_tie_question.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri692_spoken_text_is_not_a_clip_question.py tests/kria/test_kri1519_rest_of_clips_never_asked.py",
       "paths": [
         "src/apps/api/app/kria/clip_ties.py",
         "src/apps/api/tests/fixtures/kri962_voiceover_tie_jobs.json",
-        "src/apps/api/tests/kria/test_kri962_voiceover_tie_question.py"
+        "src/apps/api/tests/kria/test_kri962_voiceover_tie_question.py",
+        "src/apps/api/tests/fixtures/kri1519_altinin_yolu_turn.json",
+        "src/apps/api/tests/kria/test_kri1519_rest_of_clips_never_asked.py"
       ]
     },
     {
@@ -1588,7 +1592,7 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_tahini_voiceover_hold.py tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py tests/kria/test_reply_consistency.py",
+      "api_tests": "tests/kria/test_tahini_voiceover_hold.py tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_render_entry_pins.py tests/kria/test_lane_targets_guard.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py tests/kria/test_green3_pr1_receipts.py tests/tasks/test_green3_caption_look_worker.py tests/agents/test_green3_brief_prompt.py tests/kria/test_reply_consistency.py tests/kria/test_kri1474_unasked_headsups.py",
       "paths": [
         "src/apps/api/tests/kria/test_tahini_voiceover_hold.py",
         "src/apps/api/tests/fixtures/tahini_voiceover_hold.json",
@@ -1603,6 +1607,8 @@
         "src/apps/api/tests/tasks/test_green3_caption_look_worker.py",
         "src/apps/api/tests/agents/test_green3_brief_prompt.py",
         "src/apps/api/app/kria/route_disclosure.py",
+        "src/apps/api/tests/kria/test_kri1474_unasked_headsups.py",
+        "src/apps/api/tests/kria/kri1474_unasked_headsups.json",
         "src/apps/api/app/kria/route_capabilities/",
         "src/apps/api/app/kria/animation_ask.py",
         "src/apps/api/app/pipeline/story_direction.py",
@@ -3819,6 +3825,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_add_remove__visual_media.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_audio.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_crop.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_clip_dim.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_duplicate.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look__custom_effect.json",
@@ -4067,6 +4074,26 @@
       ]
     },
     {
+      "id": "kri-1633-intro-styles-api",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_styles.py tests/pipeline/test_intro_styles_ios_fixture.py tests/pipeline/test_intro_scene_pick.py tests/services/test_intro_styles_contract.py tests/services/test_intro_styles_edit_ops.py tests/routes/test_intro_styles_e2e.py",
+      "paths": [
+        "src/apps/api/app/pipeline/intro_styles.py",
+        "src/apps/api/app/pipeline/title_family.py",
+        "src/apps/api/app/routes/intro_styles.py",
+        "src/apps/api/app/cli/intro_styles_fixtures.py",
+        "src/apps/api/app/cli/verify_intro_styles.py",
+        "src/apps/api/app/pipeline/intro_scene_pick.py",
+        "src/apps/api/tests/pipeline/test_intro_styles.py",
+        "src/apps/api/tests/pipeline/test_intro_styles_ios_fixture.py",
+        "src/apps/api/tests/services/test_intro_styles_contract.py",
+        "src/apps/api/tests/services/test_intro_styles_edit_ops.py",
+        "src/apps/api/tests/routes/test_intro_styles_e2e.py",
+        "src/apps/api/tests/fixtures/kri1633_old_stamp_rows.json",
+        "src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json"
+      ]
+    },
+    {
       "id": "kri-1614-intro-variety-intake",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_intro_variety.py tests/pipeline/test_intro_intake.py tests/pipeline/test_intro_scene.py",
@@ -4100,6 +4127,52 @@
         "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_light_wall.json",
         "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_mid.json",
         "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_decline_footage_unsuited.json"
+      ]
+    },
+    {
+      "id": "kri-1633-intro-styles-ios",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/IntroStylesOfferTests/testApplyReapplyAndUndoRestoreTheDocumentExactly",
+        "KriaTests/IntroStylesOfferTests/testTheSaveLaneEqualsTheOptionRowsRaw",
+        "KriaTests/IntroStylesOfferTests/testTurkishLooksDrawTheSameCapitalsAsTheServersPreview",
+        "KriaUITests/IntroStylesUITests/testOffersFittedLooksPickSavesAsEditableTitleRowsInEnglishAndTurkish"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/IntroStyles.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession+IntroStyles.swift",
+        "src/apps/ios/Kria/Features/NativeIntroStylesPanel.swift",
+        "src/apps/ios/Kria/Features/IntroStylesUITestFixture.swift",
+        "src/apps/ios/Tests/KriaTests/IntroStylesOfferTests.swift",
+        "src/apps/ios/Tests/KriaUITests/IntroStylesUITests.swift",
+        "src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json"
+      ]
+    },
+    {
+      "id": "clip-dim",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_clip_dim_writers.py tests/routes/test_clip_dim_editor_save.py tests/agents/test_clip_dim_ai.py tests/kria/test_editor_capability_parity.py tests/routes/test_editor_save_code_catalog.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py",
+      "xctests": [
+        "KriaTests/ClipDimTests/testSharedFixtureValidDimsNormalize",
+        "KriaTests/ClipDimTests/testSharedFixtureInvalidDimsAreRejected",
+        "KriaTests/ClipDimTests/testApplyToAllDimsEveryClipAndOneClipCanThenChangeOnItsOwn",
+        "KriaTests/ClipDimTests/testRemovingASavedDimSendsAnExplicitNullBecauseAnOmittedKeyKeepsIt",
+        "KriaTests/ClipDimRenderTests/testADimmedClipExportsDarkerByItsStrengthUnderEveryTextStickerAndDrawing",
+        "KriaTests/ClipDimRenderTests/testANoDimRowCompilesByteIdenticalToAnUntouchedOne"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/clip_dim.py",
+        "src/apps/api/prompts/edit_copilot_ops/clip_dim.txt",
+        "src/apps/api/tests/kria/test_clip_dim_writers.py",
+        "src/apps/api/tests/routes/test_clip_dim_editor_save.py",
+        "src/apps/api/tests/agents/test_clip_dim_ai.py",
+        "tests/fixtures/clip-dim-row/v1.json",
+        "src/apps/ios/Kria/Core/ClipDim.swift",
+        "src/apps/ios/Kria/Features/NativeDimSheet.swift",
+        "src/apps/ios/Tests/KriaTests/ClipDimTests.swift",
+        "src/apps/ios/Tests/KriaTests/ClipDimRenderTests.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeDimUITests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/ClipDimCompositionTests.swift"
       ]
     }
   ]

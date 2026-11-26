@@ -109,7 +109,12 @@ from app.kria.clip_exclusions import (
     still_played_notice,
     with_exclusion_categories,
 )
-from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
+from app.kria.clip_scope import (
+    apply_chosen_videos,
+    apply_clip_exclusions,
+    apply_clip_scope,
+    apply_subject_scope,
+)
 from app.kria.clip_ties import left_out, tie_question, voiceover_ties, with_tie_categories
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import KriaTurnPlan
@@ -5383,6 +5388,22 @@ async def _plan_creator_action(
                 selected=len(scoped.selected_media_ids),
             )
             action = action.model_copy(update={"strategy": scoped})
+        # KRI-1523: "Use only the good take: the second clip" (a typed `selected_media_ids`
+        # select ask) keeps only those videos in a Talking plan, whatever the model picked.
+        chosen = apply_chosen_videos(
+            manifest,
+            action.strategy,
+            effective_brief.live() if effective_brief is not None else (),
+        )
+        if chosen is not action.strategy:
+            log.info(
+                "kria_chosen_videos_applied",
+                thread_id=str(thread_id),
+                model_selected=len(action.strategy.selected_media_ids),
+                model_scope=action.strategy.media_scope,
+                selected=len(chosen.selected_media_ids),
+            )
+            action = action.model_copy(update={"strategy": chosen})
         from app.kria.draft_sound_carry import (  # noqa: PLC0415
             asks_camera_sound,
             asks_no_music,

@@ -157,6 +157,18 @@
       "source": "default",
       "value": 50
     },
+    "chosen_clips_ask_enabled": {
+      "source": "default",
+      "value": true
+    },
+    "clip_dim_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "clip_dim_min_client_protocol": {
+      "source": "default",
+      "value": 58
+    },
     "clip_exposure_fact_enabled": {
       "source": "default",
       "value": false
@@ -480,6 +492,10 @@
     "intro_scene_user_ids": {
       "source": "default",
       "value": []
+    },
+    "intro_styles_min_client_protocol": {
+      "source": "default",
+      "value": 57
     },
     "ios_device_only_mode": {
       "source": "decisions-md:2026-11-02",
@@ -1554,6 +1570,10 @@
     "speech_cleanup_slate_cut_enabled": {
       "source": "default",
       "value": false
+    },
+    "speech_cleanup_stretched_pairs_enabled": {
+      "source": "default",
+      "value": true
     },
     "speech_cleanup_stretched_words_enabled": {
       "source": "default",

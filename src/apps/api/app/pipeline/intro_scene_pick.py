@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import hashlib
 import random
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any
 
 import structlog
@@ -103,16 +103,32 @@ def accent_splits(title: str) -> list[tuple[str, ...]]:
     return found
 
 
-def pick_candidates(title: str, *, seed: str, recent: Sequence[str] = ()) -> list[dict[str, Any]]:
+def pair_uses_font(font_pair: str, families: Collection[str]) -> bool:
+    """True when either voice of ``font_pair`` is set in a family she excluded."""
+    pair = scene_mod.FONT_PAIRS[font_pair]
+    return bool(families) and any(
+        face.family.casefold() in families for face in (pair.solid, pair.accent)
+    )
+
+
+def pick_candidates(
+    title: str,
+    *,
+    seed: str,
+    recent: Sequence[str] = (),
+    excluded_fonts: Collection[str] = (),
+) -> list[dict[str, Any]]:
     """Up to ``MAX_CANDIDATES`` scenes for ``title`` in the order to try them. Footage-free: each
     names an accent split, a font pair that can draw the title, an entrance and a zone order. A
-    pair she has used lately is tried last; with no other pair it is still offered."""
+    pair she has used lately is tried last; with no other pair it is still offered. A pair set
+    in a font she excluded (``excluded_fonts``, casefolded families) is never picked."""
     splits = accent_splits(title)
     menu = scene_mod.issue_menu(title)
-    if not splits or not menu.font_pairs:
+    allowed = [pair for pair in menu.font_pairs if not pair_uses_font(pair, excluded_fonts)]
+    if not splits or not allowed:
         return []
     rng = _rng(seed, "candidates", title)
-    pairs = list(menu.font_pairs)
+    pairs = allowed
     rng.shuffle(pairs)
     pairs.sort(key=lambda pair: pair in recent)  # stable: only moves recent looks back
     out: list[dict[str, Any]] = []
@@ -147,16 +163,42 @@ def ink_order(seed: str) -> list[str]:
 # --- dispatch -------------------------------------------------------------------------------
 
 
-def has_text_ask(policy: Mapping[str, Any]) -> bool:
-    """Did the creator (or her saved rules) already say how the title or all text looks?"""
+# KRI-1633: the look asks that put her above a generated intro. They are her own words for THIS
+# title (`policy["requested"]["title"]`, from `explicit_text_rule(creator_request)`). Saved
+# preferences, `all_text` (it mixes the strategy writer's own font/colour knobs, KRI-1024) and a
+# title position or font-list say nothing about whether she asked for a look.
+TITLE_LOOK_ASK_KEYS = ("font_family", "color", "stroke_width", "shadow_enabled")
+
+
+def has_text_ask(policy: Mapping[str, Any] | None) -> bool:
+    """Did she ask for a look for THIS title (font, colour, stroke, shadow)? Only her own request
+    for the title counts: never saved preferences, `all_text`, a position or her font lists."""
+    requested = policy.get("requested") if isinstance(policy, Mapping) else None
+    rule = requested.get("title") if isinstance(requested, Mapping) else None
+    return isinstance(rule, Mapping) and any(
+        rule.get(key) not in (None, "", [], {}) for key in TITLE_LOOK_ASK_KEYS
+    )
+
+
+def excluded_font_families(policy: Mapping[str, Any] | None) -> frozenset[str]:
+    """Every font family she excluded (saved preferences or this request, `all_text` or
+    `title`). They never block an intro; they only remove the font pairs that use them."""
+    found: set[str] = set()
+    if not isinstance(policy, Mapping):
+        return frozenset()
     for source in (policy.get("requested"), policy.get("preferences")):
         if not isinstance(source, Mapping):
             continue
         for role in _ASK_ROLES:
             rule = source.get(role)
-            if isinstance(rule, Mapping) and any(k != "automatic_font" for k in rule):
-                return True
-    return False
+            if not isinstance(rule, Mapping):
+                continue
+            values = rule.get("excluded_fonts")  # font family names (phone_text_styling)
+            if isinstance(values, str):
+                values = [values]
+            if isinstance(values, list | tuple | set):
+                found.update(str(value).strip().casefold() for value in values if value)
+    return frozenset(found)
 
 
 def language_of(title: str, spoken: object = None) -> str | None:
@@ -187,6 +229,18 @@ def recent_intro_looks(session: Any, user_id: Any) -> tuple[str, ...]:
 
 
 def stamp_intro_scene(job: Any, *, session: Any = None) -> None:
+    """KRI-1633: the automatic pick is retired. Dispatch stamps a scene only for the MODEL arm
+    (`INTRO_SCENE_MODEL_ENABLED`, off): with the switch off no job gets a scene applied unless the
+    creator picks one from "Try intro styles" (`pipeline/intro_styles`). A job stamped under the
+    old rule is still drawn by the worker; anything True under the new `has_text_ask` was True
+    under the old one, so those re-render byte-identically."""
+    from app.config import settings  # noqa: PLC0415
+
+    if settings.intro_scene_model_enabled:
+        stamp_seeded_intro_scene(job, session=session)
+
+
+def stamp_seeded_intro_scene(job: Any, *, session: Any = None) -> None:
     """Initial dispatch pins the fitted scene's candidates on the job, after
     `stamp_phone_text_style` and `stamp_title_look` (it reads their pins). Nothing is stamped
     with the flag off or the account not admitted, on a legacy saved generation, for a title she
@@ -221,7 +275,9 @@ def stamp_intro_scene(job: Any, *, session: Any = None) -> None:
             f"{current.get('creator_generation_id') or ''}|{user_id}|{title}".encode()
         ).hexdigest()[:16]
         recent = recent_intro_looks(session, user_id) if session is not None else ()
-        picked = pick_candidates(title, seed=seed, recent=recent)
+        picked = pick_candidates(
+            title, seed=seed, recent=recent, excluded_fonts=excluded_font_families(policy)
+        )
     except Exception as exc:  # noqa: BLE001 - a styled intro never blocks a dispatch
         log.warning("intro_scene.stamp_failed", error=str(exc)[:200])
         return
