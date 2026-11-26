@@ -143,6 +143,54 @@ final class ClipDimCompositionTests: XCTestCase {
         XCTAssertTrue(isColor(frame.rgb(fx: 0.04, fy: 0.04), SpeakerColor.background), "the background is not dimmed: \(frame.rgb(fx: 0.04, fy: 0.04))")
     }
 
+    /// A title behind a person who stands on the left half of a dimmed clip. `GreenPersonSegmenter` only sees a person
+    /// brighter than green 150, so if the text matte read the dimmed picture (green about 128 at 50%, 0 at 100%) the
+    /// title would paint over the person instead of hiding behind them.
+    @MainActor func testABehindSubjectTitleHidesBehindADimmedPersonAsItDoesUndimmed() async throws {
+        let previous = NativeSubjectMatte.segmenterFactory
+        NativeSubjectMatte.segmenterFactory = { GreenPersonSegmenter() }
+        defer { NativeSubjectMatte.segmenterFactory = previous }
+        let (width, height) = (270, 480)
+        let directory = try makeDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let root = try XCTUnwrap(#filePath.range(of: "/src/apps/ios/"))
+        let font = URL(fileURLWithPath: String(#filePath[..<root.lowerBound])).appendingPathComponent("src/apps/api/assets/fonts/Inter-Bold.ttf")
+        let photo = directory.appendingPathComponent("person.png")
+        let person = CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: width / 2, height: height))
+        let room = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: width, height: height))
+        try CIContext().writePNGRepresentation(of: person.composited(over: room), to: photo, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let urls = ["photo": photo, "font-Inter-Bold.ttf": font]
+        let assets = try urls.map { MediaAsset(id: $0.key, relativePath: $0.key, fingerprint: try SHA256Fingerprinter().fingerprint(file: $0.value)) }
+        let references = try assets.map { asset in
+            RenderAssetReference(id: asset.id, fingerprint: try RenderFingerprint(asset.fingerprint!),
+                source: asset.id == "photo" ? .original(mediaID: "photo") : .library(catalog: .font, catalogID: "Inter-Bold.ttf", generation: asset.fingerprint!.hex))
+        }
+        var title = try AuthoredTextLayout.compile(id: "title", text: "WWWWWWWW", start: 0, end: 1,
+            style: .init(fontAssetID: "font-Inter-Bold.ttf", size: 44, widthFraction: 0.98,
+                         color: .init(red: 1, green: 1, blue: 1, alpha: 1), strokeWidth: 0, shadows: []),
+            fontURL: font, canvas: Canvas(width: width, height: height))
+        title.behindSubject = true
+        func inkPerHalf(dim: Double?) async throws -> (left: Int, right: Int) {
+            let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: width, height: height), assets: assets,
+                tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "photo", sourceDuration: 1, dim: dim)])],
+                assetManifest: RenderAssetManifest(assets: references), textLayers: [title])
+            try recipe.validate()
+            let frame = try await previewFrame(recipe, urls: urls)
+            var left = 0, right = 0
+            for y in 0..<frame.height { for x in 0..<frame.width where frame.pixel(x, y)[2] > 150 {
+                if x < frame.width / 2 - 15 { left += 1 } else if x > frame.width / 2 + 15 { right += 1 }
+            } }
+            return (left, right)
+        }
+        let undimmed = try await inkPerHalf(dim: nil)
+        XCTAssertLessThan(undimmed.left, 20, "the title hides behind the person: \(undimmed)")
+        XCTAssertGreaterThan(undimmed.right, 200, "the title shows over the room: \(undimmed)")
+        for dim in [0.5, 1.0] {
+            let dimmed = try await inkPerHalf(dim: dim)
+            XCTAssertLessThan(dimmed.left, 20, "dim \(dim): the title still hides behind the person: \(dimmed)")
+            XCTAssertEqual(Double(dimmed.right), Double(undimmed.right), accuracy: Double(undimmed.right) * 0.05, "dim \(dim): the title over the room is unchanged")
+        }
+    }
+
     func testADimOnAnOverlayClipOrOutsideZeroToOneIsRefused() throws {
         let overlay = EditRecipe(canvas: Canvas(width: width, height: height), assets: [MediaAsset(id: "scene", relativePath: "scene")], tracks: [
             TimelineTrack(id: "photos", kind: .video, clips: [TimelineClip(id: "clip", sourceAssetID: "scene", sourceDuration: 1)]),
