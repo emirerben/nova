@@ -444,6 +444,9 @@ app.include_router(slide_post_ai_requests.router, prefix="/plan-items", tags=["p
 app.include_router(editor_sources.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(generated_media.router, prefix="/plan-items", tags=["generated-media"])
 app.include_router(overlay_generation.router, prefix="/plan-items", tags=["generated-media"])
+app.include_router(
+    overlay_generation.thread_router, prefix="/creation-threads", tags=["generated-media"]
+)
 app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-agent"])
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])

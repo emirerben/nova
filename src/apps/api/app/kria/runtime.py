@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db_locks import CONTENT_PLAN_LOCK, acquire_key_share_rows
+from app.kria import overlay_set
 from app.kria.api_schemas import (
     ApprovalDecisionBody,
     ApprovalDecisionOut,
@@ -1796,7 +1797,7 @@ async def read_delta(
                 payload=row.payload,
                 created_at=row.created_at,
             )
-            for row in rows
+            for row in overlay_set.visible_events(rows)
         ],
         after_sequence=after_sequence,
         next_after_sequence=next_sequence,

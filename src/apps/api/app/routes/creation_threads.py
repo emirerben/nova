@@ -46,6 +46,7 @@ from app.db_locks import (
     acquire_locked_rows,
     transient_sqlstate,
 )
+from app.kria import overlay_set
 from app.kria.api_schemas import (
     EDITOR_STATE_MAX_BYTES,
     KriaProblemOut,
@@ -487,6 +488,7 @@ class CreationCapabilitiesOut(BaseModel):
     # send `research_selection` on a turn. Only builds at `research_selection_min_client_protocol`
     # get the ids. False = KRIA_RESEARCH_SELECTION_ENABLED is off or the kill switch (999) is on.
     research_selections: bool = False
+    overlay_sets: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -3660,6 +3662,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
     # KRI-756: the offered-chip ring is server bookkeeping for tap detection.
     public_state.pop("suggestion_sets", None)
     public_state.pop("suggestion_suppressed", None)
+    public_state.pop(overlay_set.STATE_KEY, None)
     private_direction = (
         thread.creator_direction_snapshot
         if isinstance(getattr(thread, "creator_direction_snapshot", None), dict)
@@ -3851,7 +3854,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 ),
                 created_at=event.created_at,
             )
-            for event in event_rows
+            for event in overlay_set.visible_events(event_rows)
         ],
         created_at=thread.created_at,
         updated_at=thread.updated_at,
@@ -4422,6 +4425,7 @@ async def capabilities(
             settings.kria_research_selection_enabled
             and settings.research_selection_min_client_protocol < 999
         ),
+        "overlay_sets": overlay_set.capability(user.id, native_client, client_protocol),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),

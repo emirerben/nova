@@ -2025,6 +2025,11 @@
             "title": "Moment Order Questions",
             "type": "boolean"
           },
+          "overlay_sets": {
+            "default": false,
+            "title": "Overlay Sets",
+            "type": "boolean"
+          },
           "phone_rendering": {
             "$ref": "#/components/schemas/DeviceRenderCapabilities"
           },

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.kria.approval_readiness import is_open_request
+from app.kria.overlay_set import EVENT_TYPE as OVERLAY_SET_EVENT
 from app.models import CreationThread, CreationThreadEvent
 
 log = structlog.get_logger()
@@ -150,6 +151,7 @@ def conversation_revision_matches_sync(
     return bool(rows) and all(
         (kind == "thread_title_generated" and revision == title_revision)
         or kind == "thread_renamed"
+        or kind == OVERLAY_SET_EVENT
         or (isinstance(payload, dict) and payload.get("duplicate_of"))
         or (
             kind == "user_message"
@@ -177,8 +179,13 @@ async def conversation_revision_matches(
     if matches_conversation_revision(thread, expected_revision):
         return True
     current = int(thread.revision)
-    if not settings.live_plan_review_enabled or current <= expected_revision:
+    if current <= expected_revision:
         return False
+    tolerated = (
+        _FEED_EVENT_TYPES | {OVERLAY_SET_EVENT}
+        if settings.live_plan_review_enabled
+        else frozenset({OVERLAY_SET_EVENT})
+    )
     rows = (
         (
             await db.execute(
@@ -191,7 +198,7 @@ async def conversation_revision_matches(
         .scalars()
         .all()
     )
-    return bool(rows) and all(kind in _FEED_EVENT_TYPES for kind in rows)
+    return bool(rows) and all(kind in tolerated for kind in rows)
 
 
 def start_title_generation(thread_id: uuid.UUID) -> None:
