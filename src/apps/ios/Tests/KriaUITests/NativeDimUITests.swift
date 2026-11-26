@@ -45,8 +45,8 @@ final class NativeDimUITests: XCTestCase {
             ?? app.descendants(matching: .any)["native-editor-preview"].firstMatch
     }
 
-    /// Mean Rec. 709 luma of a text-free patch of the preview (the middle half across, from 60% to 85% down: the
-    /// fixture's title sits at 40%), read from a screenshot of it.
+    /// Mean Rec. 709 luma of a text-free patch of the preview below the fixture's title (at 40% down), read from a
+    /// screenshot of it.
     private func previewLuma(_ app: XCUIApplication) throws -> Double {
         let image = try XCTUnwrap(preview(app).screenshot().image.cgImage)
         let width = image.width, height = image.height

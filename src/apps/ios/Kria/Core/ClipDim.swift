@@ -11,7 +11,6 @@ struct ClipDim: Equatable, Sendable {
 
     let strength: Double
 
-    /// A strength rounded half up to hundredths and limited to 1. Nil below 0.01 (no dim) or when not a number.
     init?(strength: Double) {
         guard strength.isFinite, strength >= 0.01 else { return nil }
         self.strength = Self.hundredths(min(strength, 1))
@@ -35,6 +34,5 @@ struct ClipDim: Equatable, Sendable {
         strength = rounded
     }
 
-    /// The same IEEE steps as `app.kria.clip_dim`, so both sides land on the same hundredth.
     private static func hundredths(_ value: Double) -> Double { (value * 100 + 0.5).rounded(.down) / 100 }
 }

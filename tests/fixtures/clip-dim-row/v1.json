@@ -1,5 +1,5 @@
 {
- "description": "Clip dim ROW contract. `clips[i].raw[\"dim\"]` is the share of the way to black the device draws a clip's picture at: 0.01..1 in hundredths, each encoded pixel times 1 - dim. Python (app.kria.clip_dim) and Swift (ClipDim) must each turn every `valid` value into `normalized` (null = the key is omitted from the row and the recipe clip has no `dim`), and reject every `invalid` value. One rule on both sides, in IEEE doubles: a negative value is invalid; a value below 0.01 is no dim; anything else rounds half up to hundredths as floor(dim * 100 + 0.5) / 100, and a result above 1 is invalid. So 0.125 is 0.13, 0.005 is no dim and 1.004 is black. 0.285 is stored as 0.28499999999999998, so it rounds down. A percent (40) is not a strength.",
+ "description": "Clip dim ROW contract. `clips[i].raw[\"dim\"]` is the share of the way to black the device draws a clip's picture at: 0.01..1 in hundredths, each encoded pixel times 1 - dim. Python (app.kria.clip_dim) and Swift (ClipDim) must each turn every `valid` value into `normalized` (null = the key is omitted from the row and the recipe clip has no `dim`), and reject every `invalid` value. One rule on both sides, in IEEE doubles: a value below 0 is invalid (-0.0 is not below 0); a value below 0.01 is no dim; anything else rounds half up to hundredths as floor(dim * 100 + 0.5) / 100, and a result above 1 is invalid. So 0.125 is 0.13, 0.005 is no dim and 1.004 is black. 0.285 * 100 + 0.5 is 28.999999999999996 in doubles, so 0.285 rounds down to 0.28. A percent (40) is not a strength.",
  "valid": [
   {"name": "half", "dim": 0.5, "normalized": 0.5},
   {"name": "forty-percent", "dim": 0.4, "normalized": 0.4},
@@ -11,7 +11,7 @@
   {"name": "half-hundredth-rounds-up-to-half", "dim": 0.495, "normalized": 0.5},
   {"name": "half-hundredth-rounds-up-past-forty", "dim": 0.405, "normalized": 0.41},
   {"name": "half-hundredth-rounds-up-to-black", "dim": 0.995, "normalized": 1.0},
-  {"name": "half-hundredth-stored-below-rounds-down", "dim": 0.285, "normalized": 0.28},
+  {"name": "half-hundredth-rounds-down-in-doubles", "dim": 0.285, "normalized": 0.28},
   {"name": "zero-is-no-dim", "dim": 0, "normalized": null},
   {"name": "negative-zero-is-no-dim", "dim": -0.0, "normalized": null},
   {"name": "below-one-percent-is-no-dim", "dim": 0.004, "normalized": null},

@@ -2,9 +2,10 @@
 
 The strength is the share of the way to black, 0.01..1 in hundredths (one per whole percent):
 the phone draws every pixel of the clip's picture at ``1 - dim`` of its encoded value, under
-text, captions, stickers and drawings. ``1`` is black. A value below 0.01 is no dim; anything
-else rounds half up to hundredths. No dim is absent from the row and from the recipe
-(``TimelineClip.dim``, the same number), so an undimmed clip stays byte-identical.
+text, captions, stickers and drawings. ``1`` is black. A negative value is invalid, a value below
+0.01 is no dim, and anything else rounds half up to hundredths. No dim is absent from the row
+and from the recipe (``TimelineClip.dim``, the same number), so an undimmed clip stays
+byte-identical.
 ``tests/fixtures/clip-dim-row/v1.json`` pins these rules for ``Kria/Core/ClipDim.swift``.
 """
 
@@ -26,7 +27,6 @@ def parse_row_dim(raw: object) -> float | None:
         raise ValueError("dim must not be negative")
     if value < 0.01:
         return None
-    # The same IEEE steps as ClipDim.swift, so both sides land on the same hundredth.
     strength = math.floor(value * 100 + 0.5) / 100
     if strength > 1:
         raise ValueError("dim must be at most 1")

@@ -66,7 +66,6 @@ final class ClipDimRenderTests: XCTestCase {
         input.markAsFinished(); await writer.finishWriting(); XCTAssertEqual(writer.status, .completed)
     }
 
-    /// A text row over the whole clip, drawn in Inter at `size` px of the 1080-wide canvas.
     private func textRow(_ id: String, _ text: String, x: Double, y: Double, size: Double, color: String,
                          extra: [String: JSONValue] = [:]) -> JSONValue {
         .object(["id": .string(id), "text": .string(text), "start_s": .number(0), "end_s": .number(1.5), "role": .string("generative_intro"),
@@ -74,8 +73,8 @@ final class ClipDimRenderTests: XCTestCase {
                  "size_px": .number(size), "color": .string(color)].merging(extra) { _, new in new })
     }
 
-    /// The device compiler's recipe for one grey clip whose row carries `dim`, under every layer `Layer.all` names,
-    /// read through the editor session the way the preview and the export read it.
+    /// The device compiler's recipe for one grey clip whose row carries `dim`, read through the editor session the way
+    /// the preview and the export read it.
     private func program(dim: JSONValue?, fixture: Fixture) throws -> NativeEditorRenderProgram {
         var slot: [String: JSONValue] = ["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(1.5),
                                          "source_duration_s": fixture.source.asset.duration.map(JSONValue.number) ?? .null]
@@ -169,7 +168,6 @@ final class ClipDimRenderTests: XCTestCase {
             Layer(name: "drawing", x: 0...0.58, y: 0.68...0.77, ink: (0, 229, 255)),
             Layer(name: "caption", x: 0...1, y: 0.84...0.97, ink: (255, 255, 255)),
         ]
-        /// Text-free picture, right of the pinned text and above the title.
         static let picture = Layer(name: "picture", x: 0.62...0.95, y: 0.15...0.23, ink: (128, 128, 128))
     }
 
