@@ -1813,7 +1813,7 @@ class Settings(BaseSettings):
     # The `overlay_set` thread events (KRIA_SUGGESTION_GENERATED_OVERLAY_ENABLED): only builds
     # declaring `X-Kria-Client-Protocol` >= this are told the capability, may write or read them.
     # Kill switch: `fly secrets set OVERLAY_SET_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
-    overlay_set_min_client_protocol: int = 59
+    overlay_set_min_client_protocol: int = 60
     # The suggestion agent (OpenAI Responses, strict json_schema). A model outside
     # `agents/model_registry.py` is refused at call time, not here.
     kria_suggester_model: str = "gpt-6.1-sol"

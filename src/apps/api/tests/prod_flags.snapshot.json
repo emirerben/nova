@@ -1027,7 +1027,7 @@
     },
     "overlay_set_min_client_protocol": {
       "source": "default",
-      "value": 59
+      "value": 60
     },
     "pace_drives_cuts_enabled": {
       "source": "default",
