@@ -256,9 +256,8 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
         return text.filter { $0.portable == nil && time >= $0.start && time < $0.end }
             + (try textStore.activeLayers(at: time))
     }
-    /// The person mask for `scene` (the composited frame below the text), or nil when no active text layer
-    /// is flagged or the matte declines (nobody in frame, frame swallowed, unstable, segmenter error).
-    /// `scene` is drawn only when a flagged layer is active.
+    /// The person mask for the picture `scene` returns, or nil when no active text layer is flagged or the matte
+    /// declines (nobody in frame, frame swallowed, unstable, segmenter error).
     func subjectOcclusion(activeText: [RecipeTextLayer], time: Double, scene: () throws -> CIImage) rethrows -> CIImage? {
         guard let subjectMatte, activeText.contains(where: { $0.portable?.behindSubject == true }) else { return nil }
         // Keyed by the primary clip(s) under this frame: a hard cut resets the temporal state (F6).
@@ -287,18 +286,28 @@ final class PreviewPlaybackFrameReceipt: @unchecked Sendable {
     }
 }
 
-/// One frame's speaker matte answers. The below-text pass asks each matte once; a second pass over the same layers
-/// with their dims removed (`replaying`, the picture the text matte reads) gets the same answers and records no trace.
+/// One frame's speaker matte answers, in the order each matte was asked, so a replayed below-text pass draws the
+/// same cut-outs without asking a matte or tracing again.
 final class SpeakerAnswers {
-    var replaying = false
-    private var answers: [ObjectIdentifier: SpeakerMatte.Answer] = [:]
+    private var asked: [ObjectIdentifier: [SpeakerMatte.Answer]] = [:]
+    private var replayed: [ObjectIdentifier: Int] = [:]
+    private var replaying = false
+
+    func replay() { replaying = true }
 
     func answer(of matte: SpeakerMatte, asking ask: () -> SpeakerMatte.Answer) -> SpeakerMatte.Answer {
-        if let answer = answers[ObjectIdentifier(matte)] { return answer }
+        let key = ObjectIdentifier(matte)
+        let index = replayed[key, default: 0]
+        if replaying, let answers = asked[key], index < answers.count {
+            replayed[key] = index + 1
+            return answers[index]
+        }
         let answer = ask()
-        answers[ObjectIdentifier(matte)] = answer
+        asked[key, default: []].append(answer)
         return answer
     }
+
+    func trace(_ record: () -> Void) { if !replaying { record() } }
 }
 
 class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
@@ -395,9 +404,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             do {
                 occlusion = try instruction.subjectOcclusion(activeText: activeText, time: time) {
                     guard belowText.contains(where: { $0.dim != nil }) else { return frame }
-                    // The person is found on the undimmed picture, as the speaker matte finds it, so a dark (or black)
-                    // clip keeps the text behind the same person. The matte answers this frame already got are replayed.
-                    answers.replaying = true
+                    answers.replay()
                     var scene = try composeBelowText(belowText.map { var layer = $0; layer.dim = nil; return layer }, onto: base,
                                                      instruction: instruction, request: request, time: time, answers: answers)
                     if let moment { scene = try ColorMomentPainter.image(scene, sample: moment, canvas: instruction.canvas) }
@@ -452,7 +459,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         // "below" paints anything.
         if !instruction.fullScreenWindows.isEmpty, SpeakerBackgroundLayer.fullScreen(instruction.fullScreenWindows, at: time) {
             guard slice == .whole || slice == .belowSpeaker else { return frame }
-            if !answers.replaying { recordInOrder(turn) { instruction.speakerMatte?.trace.record(.fullScreen, at: time) } }
+            answers.trace { recordInOrder(turn) { instruction.speakerMatte?.trace.record(.fullScreen, at: time) } }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
         }
@@ -464,8 +471,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             guard slice == .whole || slice == .belowSpeaker else { return frame }
             // A background is part of the edit but no clip can ever be cut out of it: say so instead of drawing the room
             // silently. A speaker-less stretch of an edit that does have speaker clips (the ending clip) is not this.
-            if slice == .whole, !answers.replaying, let matte = instruction.speakerMatte, !backgrounds.isEmpty, matte.trace.hasNoSpeakerClips {
-                recordInOrder(turn) { matte.trace.record(.noSpeakerLayer, at: time) }
+            if slice == .whole, let matte = instruction.speakerMatte, !backgrounds.isEmpty, matte.trace.hasNoSpeakerClips {
+                answers.trace { recordInOrder(turn) { matte.trace.record(.noSpeakerLayer, at: time) } }
             }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
