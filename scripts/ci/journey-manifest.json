@@ -4142,7 +4142,7 @@
         "KriaTests/ClipDimTests/testSharedFixtureInvalidDimsAreRejected",
         "KriaTests/ClipDimTests/testApplyToAllDimsEveryClipAndOneClipCanThenChangeOnItsOwn",
         "KriaTests/ClipDimTests/testRemovingASavedDimSendsAnExplicitNullBecauseAnOmittedKeyKeepsIt",
-        "KriaTests/ClipDimRenderTests/testADimmedClipExportsDarkerByItsStrengthUnderAFullBrightnessTitle",
+        "KriaTests/ClipDimRenderTests/testADimmedClipExportsDarkerByItsStrengthUnderEveryTextStickerAndDrawing",
         "KriaTests/ClipDimRenderTests/testANoDimRowCompilesByteIdenticalToAnUntouchedOne"
       ],
       "paths": [
