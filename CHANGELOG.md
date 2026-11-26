@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.32.0] - 2026-11-26
+
+### Changed
+- fix(kria): judge 'use my voiceover' and 'fill the rest' on a finished phone Voiceover (KRI-1517) (#2515) <!-- release-pr: 2515 -->
+
 ## [0.90.31.0] - 2026-11-26
 
 ### Changed
