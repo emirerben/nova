@@ -45,7 +45,8 @@ final class NativeDimUITests: XCTestCase {
             ?? app.descendants(matching: .any)["native-editor-preview"].firstMatch
     }
 
-    /// Mean Rec. 709 luma of the middle half of the preview, read from a screenshot of it.
+    /// Mean Rec. 709 luma of a text-free patch of the preview (the middle half across, from 60% to 85% down: the
+    /// fixture's title sits at 40%), read from a screenshot of it.
     private func previewLuma(_ app: XCUIApplication) throws -> Double {
         let image = try XCTUnwrap(preview(app).screenshot().image.cgImage)
         let width = image.width, height = image.height
@@ -54,7 +55,7 @@ final class NativeDimUITests: XCTestCase {
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         var sum = 0.0, count = 0
-        for y in stride(from: height / 4, to: height * 3 / 4, by: 2) { for x in stride(from: width / 4, to: width * 3 / 4, by: 2) {
+        for y in stride(from: height * 6 / 10, to: height * 85 / 100, by: 2) { for x in stride(from: width / 4, to: width * 3 / 4, by: 2) {
             let i = (y * width + x) * 4
             sum += 0.2126 * Double(pixels[i]) + 0.7152 * Double(pixels[i + 1]) + 0.0722 * Double(pixels[i + 2]); count += 1
         } }
@@ -95,9 +96,10 @@ final class NativeDimUITests: XCTestCase {
         XCTAssertEqual(app.sliders["native-editor-dim-slider"].value as? String, "50%")
         done(app)
 
-        let dimmed = try waitForPreview(app) { $0 < undimmed * 0.75 }
-        XCTAssertLessThan(dimmed, undimmed * 0.75, "the live preview darkened: \(dimmed) vs \(undimmed)")
-        XCTAssertGreaterThan(dimmed, undimmed * 0.25, "50% is not black: \(dimmed) vs \(undimmed)")
+        // An encoded multiply keeps half the luma; a multiply in linear light would keep about 0.73 of it.
+        let dimmed = try waitForPreview(app) { (0.45...0.58).contains($0 / undimmed) }
+        XCTAssertGreaterThanOrEqual(dimmed / undimmed, 0.45, "50% is not darker than half: \(dimmed) vs \(undimmed)")
+        XCTAssertLessThanOrEqual(dimmed / undimmed, 0.58, "50% halves the picture's luma: \(dimmed) vs \(undimmed)")
         attach(app, "Preview with the first clip dimmed 50%")
         let measured = XCTAttachment(string: "preview luma undimmed=\(undimmed) dimmed=\(dimmed) ratio=\(dimmed / undimmed)")
         measured.name = "Preview luma"
