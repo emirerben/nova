@@ -12344,6 +12344,38 @@
         }
       }
     },
+    "Couldn’t make this one" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese konnte nicht erstellt werden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu oluşturulamadı"
+          }
+        }
+      }
+    },
+    "Couldn’t make your overlays." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Einblendungen konnten nicht erstellt werden."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Katmanların oluşturulamadı."
+          }
+        }
+      }
+    },
     "Couldn’t open this project." : {
       "localizations" : {
         "de" : {
@@ -13688,6 +13720,38 @@
         }
       }
     },
+    "Describe an image" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beschreib ein Bild"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir görseli anlat"
+          }
+        }
+      }
+    },
+    "Describe another image" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch ein Bild beschreiben"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Başka bir görseli anlat"
+          }
+        }
+      }
+    },
     "Describe each overlay to start." : {
       "localizations" : {
         "de" : {
@@ -13768,6 +13832,22 @@
         }
       }
     },
+    "Describe them" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ich beschreibe sie"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ben anlatayım"
+          }
+        }
+      }
+    },
     "Describe what to change" : {
       "localizations" : {
         "de" : {
@@ -13828,6 +13908,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Başlamak için görselini anlat."
+          }
+        }
+      }
+    },
+    "Describe your overlays" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Beschreib deine Einblendungen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Katmanlarını anlat"
           }
         }
       }
@@ -22334,6 +22430,38 @@
         }
       }
     },
+    "Make %lld overlays · %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld Einblendungen erstellen · %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld katman oluştur · %@"
+          }
+        }
+      }
+    },
+    "Make 1 overlay · %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 Einblendung erstellen · %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 katman oluştur · %@"
+          }
+        }
+      }
+    },
     "Make a lip-sync video" : {
       "localizations" : {
         "de" : {
@@ -22494,6 +22622,22 @@
         }
       }
     },
+    "Making" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird erstellt"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oluşturuluyor"
+          }
+        }
+      }
+    },
     "Making %lld overlays" : {
       "localizations" : {
         "de" : {
@@ -22554,6 +22698,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Katmanın oluşturuluyor"
+          }
+        }
+      }
+    },
+    "Making your overlays" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Einblendungen werden erstellt"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Katmanların oluşturuluyor"
           }
         }
       }
@@ -26514,6 +26674,22 @@
         }
       }
     },
+    "Overlay images" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einblendungs-Bilder"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Katman görselleri"
+          }
+        }
+      }
+    },
     "Overlay scale" : {
       "localizations" : {
         "de" : {
@@ -26558,6 +26734,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Katmanlar"
+          }
+        }
+      }
+    },
+    "Overlays ready" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einblendungen fertig"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Katmanlar hazır"
           }
         }
       }
@@ -31000,6 +31192,22 @@
         }
       }
     },
+    "Remove image %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bild %lld entfernen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld. görseli kaldır"
+          }
+        }
+      }
+    },
     "Remove motion" : {
       "localizations" : {
         "de" : {
@@ -32506,6 +32714,38 @@
         }
       }
     },
+    "Review %lld images" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld Bilder ansehen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld görseli incele"
+          }
+        }
+      }
+    },
+    "Review 1 image" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 Bild ansehen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 görseli incele"
+          }
+        }
+      }
+    },
     "Review clips" : {
       "localizations" : {
         "de" : {
@@ -32566,6 +32806,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Resmi incele"
+          }
+        }
+      }
+    },
+    "Review images" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilder ansehen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Görselleri incele"
           }
         }
       }

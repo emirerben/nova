@@ -74,6 +74,7 @@ struct ChatTimelineEntry: Identifiable {
         case media(ThreadEvent)
         case pendingUpload(UUID)
         case thoughts([KriaThoughtSummary])
+        case overlaySet(OverlaySetEntry)
         case stage
     }
     let id: String
@@ -89,7 +90,8 @@ enum ChatTimeline {
         stage: ChatTimelineStageAnchor?,
         suppressedMessageIDs: Set<String> = [],
         uploads: [ChatPendingUpload] = [],
-        thoughtSummaries: [String: [KriaThoughtSummary]] = [:]
+        thoughtSummaries: [String: [KriaThoughtSummary]] = [:],
+        showsOverlaySets: Bool = false
     ) -> [ChatTimelineEntry] {
         let removals = removalSequences(events)
         var entries = ChatTranscriptHistory.merge([], with: events).compactMap { event -> ChatTimelineEntry? in
@@ -105,6 +107,11 @@ enum ChatTimeline {
         for event in events where event.role == "user" && event.eventType == "user_message" && !suppressedMessageIDs.contains(event.id) {
             guard let requestID = event.clientEventID, let summaries = thoughtSummaries[requestID], !summaries.isEmpty else { continue }
             entries.append(ChatTimelineEntry(id: "thought-\(requestID)", sequence: event.sequence, position: 1, content: .thoughts(summaries)))
+        }
+        if showsOverlaySets {
+            for set in OverlaySetThread.fold(events) {
+                entries.append(ChatTimelineEntry(id: set.id, sequence: set.sequence, position: 0, content: .overlaySet(set)))
+            }
         }
         if let stage {
             entries.append(ChatTimelineEntry(id: stage.id, sequence: stage.afterSequence, position: 1, content: .stage))

@@ -568,6 +568,7 @@ final class CreationChatFixture: @unchecked Sendable {
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ["1", "refuse-first"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"]) { capabilities["choice_questions"] = true }
             if HeldDraftReplayFixture.isEnabled || DesignPickerUITestFixture.isEnabled { capabilities["choice_questions"] = true }
+            if OverlaySetUITestFixture.isEnabled { capabilities["overlay_sets"] = true }
             // A server that still advertises the removed place-hint capability: the app must ignore it.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] == "1" { capabilities["upload_place_hint"] = true }
             // KRIA_CHAT_VOICEOVER_SCRIPT (KRI-815): "1" = server advertises voiceover_script_cards; "legacy" = it still
@@ -862,6 +863,10 @@ final class CreationChatFixture: @unchecked Sendable {
             append("song_range_set", role: "user", payload: ["start_s": start.map { $0 as Any } ?? NSNull(), "end_s": end.map { $0 as Any } ?? NSNull()], clientEventID: body["client_event_id"] as? String)
             thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
             return response(thread)
+        }
+        if let reply = OverlaySetUITestFixture.respond(method: request.httpMethod, parts: parts, body: body, thread: &thread, operations: &generatedMediaOperations) {
+            threads[id] = thread
+            return response(reply.1, status: reply.0)
         }
         if reviewEnabled {
             // An update render advances one step per read of the plan or the delta (like the staged feed).

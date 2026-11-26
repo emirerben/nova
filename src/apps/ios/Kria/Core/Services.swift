@@ -165,7 +165,7 @@ extension ReviewPlanTransport {
     func decideReviewApproval(threadID: UUID, approvalID: UUID, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, expectedOwner: String) async throws { throw APIError.unsupported }
 }
 
-protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeClient, SpeakerBackgroundClient, CameraRollItemsClient, Sendable {
+protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeClient, SpeakerBackgroundClient, CameraRollItemsClient, OverlaySetClient, Sendable {
     func editorialTaste() async throws -> EditorialTasteProfile
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
@@ -428,6 +428,10 @@ struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
 
 extension KriaAPIClient {
     func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan { throw APIError.unsupported }
+    func openOverlaySet(threadID: UUID, setID: String) async throws -> OverlaySet { throw APIError.unsupported }
+    func composeOverlaySet(threadID: UUID, setID: String, mode: OverlaySet.Mode, prompts: [String]) async throws -> OverlaySet { throw APIError.unsupported }
+    func planOverlaySet(threadID: UUID, setID: String, body: OverlayPlanRequest) async throws { throw APIError.unsupported }
+    func generateOverlay(threadID: UUID, setID: String, overlayID: String) async throws -> OverlaySet { throw APIError.unsupported }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
 
     func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript { throw APIError.unsupported }
@@ -1665,6 +1669,23 @@ struct KriaAPI: KriaAPIClient {
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan {
         try await request(path: "plan-items/\(itemID)/overlay-plan", method: "POST", bodyData: JSONEncoder().encode(body), decode: OverlayPlan.self)
+    }
+    func openOverlaySet(threadID: UUID, setID: String) async throws -> OverlaySet {
+        try await overlaySetRequest(threadID: threadID, path: "", body: ["set_id": .string(setID)])
+    }
+    func composeOverlaySet(threadID: UUID, setID: String, mode: OverlaySet.Mode, prompts: [String]) async throws -> OverlaySet {
+        try await overlaySetRequest(threadID: threadID, path: "/\(setID)/compose", body: ["mode": .string(mode.rawValue), "prompts": .array(prompts.map(JSONValue.string))])
+    }
+    func planOverlaySet(threadID: UUID, setID: String, body: OverlayPlanRequest) async throws {
+        let _: JSONValue = try await request(path: "creation-threads/\(threadID.uuidString)/overlay-sets/\(setID)/plan", method: "POST", bodyData: JSONEncoder().encode(body), decode: JSONValue.self, timeoutInterval: 120)
+    }
+    func generateOverlay(threadID: UUID, setID: String, overlayID: String) async throws -> OverlaySet {
+        try await overlaySetRequest(threadID: threadID, path: "/\(setID)/overlays/\(overlayID)/generate", body: nil, timeout: 180)
+    }
+    private func overlaySetRequest(threadID: UUID, path: String, body: [String: JSONValue]?, timeout: TimeInterval = 60) async throws -> OverlaySet {
+        let payload: [String: JSONValue] = try await request(path: "creation-threads/\(threadID.uuidString)/overlay-sets" + path, method: "POST", bodyData: JSONEncoder().encode(body ?? [:]), decode: [String: JSONValue].self, timeoutInterval: timeout)
+        guard let set = OverlaySet.parse(payload) else { throw APIError.invalidResponse }
+        return set
     }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation {
         try await request(path: "plan-items/\(itemID)/generated-media/by-event/\(clientEventID)", method: "GET", bodyData: nil, decode: GeneratedMediaOperation.self)

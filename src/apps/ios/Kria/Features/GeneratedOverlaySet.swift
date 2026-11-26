@@ -278,6 +278,17 @@ struct OverlayCard: Identifiable {
 
     func resumeScreen() { screen = initialScreen() }
 
+    /// The chat's finished set: its ready images are handed over as if this sheet had made them, and the sheet opens at
+    /// their results. Rows still being looked up show as making until the image arrives.
+    func openResults(of items: [OverlaySet.Overlay], api: any KriaAPIClient, itemID: String, accountID: String) {
+        for item in items {
+            guard let operationID = item.operationID else { continue }
+            Self.stage(prompt: item.prompt, eventID: item.id, operationID: operationID, accountID: accountID, itemID: itemID)
+        }
+        configure(api: api, itemID: itemID, accountID: accountID)
+        screen = hasContent ? .results : .choose
+    }
+
     // MARK: Composing
 
     func start(_ origin: Origin, ideas: [String] = []) {
