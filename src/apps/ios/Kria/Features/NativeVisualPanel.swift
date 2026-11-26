@@ -13,7 +13,6 @@ struct NativeVisualPanel: View {
     let projectID: UUID
     @ObservedObject var panelDrafts: NativeEditorPanelDrafts
     let onDone: () -> Void
-    @Environment(\.makeOverlaysInChat) private var makeOverlaysInChat
     @State private var showsGenerator = false
     @State private var showsImporter = false
     @State private var phase = "entrance"
@@ -211,7 +210,7 @@ struct NativeVisualPanel: View {
 
     private var mediaLibrary: some View {
         VStack(spacing: 12) {
-            Button { if let makeOverlaysInChat { makeOverlaysInChat() } else { showsGenerator = true } } label: {
+            Button { showsGenerator = true } label: {
                 Label("Generate media", systemImage: "sparkles")
             }.buttonStyle(KriaButtonStyle(role: .secondary, fullWidth: true))
                 .disabled(!session.canGenerateOverlayPlan)

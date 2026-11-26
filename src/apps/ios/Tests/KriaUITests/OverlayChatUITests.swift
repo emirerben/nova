@@ -9,7 +9,8 @@ import XCTest
 /// Failure modes pinned here: the Generate tile still opening the six-screen sheet when the server offers the chat flow
 /// (and the chat flow leaking in when it does not); the ask drawing twice or staying after the answer; the compose card
 /// pricing or counting the wrong rows; a failed overlay hiding the ready ones, or Retry making the others again; a
-/// relaunch mid-generation charging again; Review images opening anywhere but the sheet's results.
+/// relaunch mid-generation charging again; Review images opening anywhere but the sheet's results; and the editor's
+/// Generate media leaving its in-editor panel (and its "Add to timeline") when the chat flow is on.
 @MainActor
 final class OverlayChatUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
@@ -74,6 +75,64 @@ final class OverlayChatUITests: XCTestCase {
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         for _ in 0..<5 where !element.isHittable { app.swipeUp() }
+    }
+
+    private func launchEditorChat(overlaySets: Bool) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_FIXTURE_MEDIA": "1", "KRIA_CHAT_PLAN_BLOCKS": "1",
+                                 "KRIA_CHAT_DEVICE_RENDER": "ready", "KRIA_CHAT_PLAN_BLOCKS_DEVICE": "1", "KRIA_GENERATED_MEDIA": "1",
+                                 "KRIA_CHAT_DEVICE_SYNC_FAILURE": "1", "KRIA_CHAT_EDITOR_OVERLAY_PLAN": "1", "UI_TEST_REDUCE_MOTION": "1"]
+        if overlaySets { app.launchEnvironment["KRIA_CHAT_OVERLAY_SETS"] = "1" }
+        app.launch()
+        let openProjects = app.buttons["Open projects"]
+        XCTAssertTrue(openProjects.waitForExistence(timeout: 20))
+        openProjects.tap()
+        let newChat = app.buttons["drawer-new-chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)], timeout: 20), .completed)
+        newChat.tap()
+        app.chooseFormat("montage")
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 10))
+        send.tap()
+        let create = app.buttons["Create this video"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        create.tap()
+        XCTAssertTrue(app.buttons["device-render-play"].waitForExistence(timeout: 60))
+        app.buttons["workspace-mode-editor"].tap()
+        let visuals = app.buttons["native-editor-tool-visuals"]
+        XCTAssertTrue(visuals.waitForExistence(timeout: 30))
+        visuals.tap()
+        return app
+    }
+
+    private func assertEditorGenerateMediaKeepsItsPanelAndPlacesTheOverlay(overlaySets: Bool) {
+        let app = launchEditorChat(overlaySets: overlaySets)
+        let generate = app.buttons["native-editor-generate-media"]
+        XCTAssertTrue(generate.waitForExistence(timeout: 10))
+        XCTAssertTrue(eventuallyEnabled(generate))
+        generate.tap()
+        XCTAssertTrue(element(app, "native-editor-overlay-generator").waitForExistence(timeout: 10), "Generate media opens the in-editor panel")
+        XCTAssertFalse(element(app, "overlay-ask-card").exists, "the editor never starts the chat flow")
+        let choose = app.buttons["Let Kria choose"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 10))
+        for _ in 0..<3 where !choose.isSelected { choose.tap() }
+        XCTAssertTrue(choose.isSelected)
+        let plan = app.buttons["overlay-generation-plan"]
+        XCTAssertTrue(eventuallyEnabled(plan))
+        plan.tap()
+        let use = app.buttons["overlay-generation-use-DCC14763-5702-4AE3-8510-8C72845E6B15"]
+        for _ in 0..<5 where !use.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(use.waitForExistence(timeout: 10))
+        use.tap()
+        XCTAssertTrue(app.buttons["native-editor-timeline-text-DCC14763-5702-4AE3-8510-8C72845E6B15"].waitForExistence(timeout: 10),
+                      "Add to timeline places the overlay on the editor timeline")
+        shot("ca8-editor-timeline")
+    }
+
+    private func eventuallyEnabled(_ element: XCUIElement) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: element)], timeout: 10) == .completed
     }
 
     private func openAsk(_ app: XCUIApplication) {
@@ -240,5 +299,13 @@ final class OverlayChatUITests: XCTestCase {
         XCTAssertTrue(app.buttons["overlay-choice-describe"].exists)
         XCTAssertFalse(element(app, "overlay-ask-card").exists)
         shot("ca8-flag-off")
+    }
+
+    func testWithTheCapabilityOnTheEditorGenerateMediaStillOpensItsPanelAndAddsToTheTimeline() {
+        assertEditorGenerateMediaKeepsItsPanelAndPlacesTheOverlay(overlaySets: true)
+    }
+
+    func testWithTheCapabilityOffTheEditorGenerateMediaOpensItsPanelAndAddsToTheTimeline() {
+        assertEditorGenerateMediaKeepsItsPanelAndPlacesTheOverlay(overlaySets: false)
     }
 }

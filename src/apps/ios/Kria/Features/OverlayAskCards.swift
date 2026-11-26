@@ -1,18 +1,5 @@
 import SwiftUI
 
-private struct MakeOverlaysInChatKey: EnvironmentKey {
-    // Computed: the value carries a closure, so it can't be a stored static.
-    static var defaultValue: (() -> Void)? { nil }
-}
-
-extension EnvironmentValues {
-    /// Set by the chat while it can make overlays itself; the editor's Generate media then hands the creator back to it.
-    var makeOverlaysInChat: (() -> Void)? {
-        get { self[MakeOverlaysInChatKey.self] }
-        set { self[MakeOverlaysInChatKey.self] = newValue }
-    }
-}
-
 /// One overlay set in the transcript: the ask, the prompt rows, the per-image progress and the finished set. A card holds
 /// a heading, controls and state text only; the thread says where it is and `OverlaySetCoordinator` makes the calls.
 struct OverlaySetRow: View {

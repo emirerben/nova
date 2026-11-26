@@ -2470,7 +2470,6 @@ private struct CreationWorkspaceView: View {
                     onBack: close
                 )
                 .environmentObject(model)
-                .environment(\.makeOverlaysInChat, makesOverlaysInChat.map { start in { dismissEditor(); start() } })
                 }
             }
         }
@@ -2970,8 +2969,8 @@ private struct CreationWorkspaceView: View {
         return editorSession.loadState == .loaded && editorSession.canGenerateOverlayPlan
     }
 
-    /// The tray and the editor start the chat flow only when the server offers it and this edit can be planned from.
-    /// Otherwise they open the six-screen sheet exactly as before.
+    /// The tray starts the chat flow only when the server offers it and this edit can be planned from.
+    /// Otherwise it opens the six-screen sheet exactly as before. The editor always opens its own Generate media panel.
     private var makesOverlaysInChat: (() -> Void)? {
         guard capabilities?.overlaySetsEnabled == true, canPlanOverlaySet else { return nil }
         return { startOverlaysInChat() }
