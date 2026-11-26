@@ -215,7 +215,7 @@ Use subprocess FFmpeg directly; patterns in agents/VIDEO_CONTEXT.md.
 - `CAPTION_ANIMATION_ENABLED` — default `true` (KRI-1007): caption entrance/exit/loop (protocol 24, `authoredText`); off = old captions. `phone-rendering.md`.
 - `SPEAKER_BACKGROUND_ENABLED` — default **`false`**; token/protocol: `speakerBackground` 27, `speakerBackgroundWindows` 32, `speakerBackgroundColor` 34. `docs/pipelines/speaker-background.md`.
 - `MEDIA_TILT_ENABLED` — default **`false`** (KRI-1134). Clip tilt + backdrop; needs `clipTilt` verified + protocol ≥28. phone-rendering.md.
-- `CLIP_DIM_ENABLED` — default **`false`**. Phone-only clip/photo dim under text; needs `clipDim` verified + `CLIP_DIM_PROTOCOL`. phone-rendering.md.
+- `CLIP_DIM_ENABLED` — default **`false`**. Phone-only clip dim under text; needs `clipDim` verified + `CLIP_DIM_PROTOCOL`. phone-rendering.md.
 - `COLOR_MOMENTS_ENABLED` — default **`false`** (KRI-1350). Chat-set B&W/warm/faded windows, flash/dip edges, end fade; needs `colorMoments` verified + protocol ≥48. phone-rendering.md.
 - `INFORMATIVE_TEXT_DESIGNS_ENABLED` — default `false` (KRI-1585): hook/research roles, creator > design > prefs styles; stamped per job. Guard: `test_kri1579_creator_edits_win.py`.
 - `CREATOR_EDITORIAL_TASTE_ENABLED` / `_USER_IDS` — `false` / `[]` (`["*"]` = all accounts; ENABLED = kill switch). `docs/runbooks/editorial-taste-calibration.md`.

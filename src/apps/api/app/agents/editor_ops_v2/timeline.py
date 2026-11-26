@@ -65,8 +65,8 @@ _PATCH_KEYS = frozenset(
         "source_audio_volume",
     }
 )
-# Keys open only while `timeline_patch_capabilities[gate]` is true; an absent gate is closed, so
-# the snapshot shows the model nothing and only the tool schema can keep it from asking.
+# Keys open only while `timeline_patch_capabilities[gate]` is true (absent is closed); every other
+# key is open unless its own capability is false.
 _GATED_PATCH_KEYS = {"dim": "dim", "tilt": "tilt", "muted": "muted", "source_audio_volume": "muted"}
 _TILT_KEYS = frozenset({"rotation_deg", "rotation_delta_deg", "zoom", "zoom_delta", "backdrop"})
 _TILT_ZOOM_KEYS = ("zoom", "zoom_delta")
@@ -496,7 +496,10 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     if criterion == "custom":
         live = [index for index, slot in enumerate(slots) if not slot.get("removed")]
         order = payload.get("order")
-        from app.services.clip_order_ledger import apply_order, clip_order_ledger_on  # noqa: PLC0415
+        from app.services.clip_order_ledger import (  # noqa: PLC0415
+            apply_order,
+            clip_order_ledger_on,
+        )
 
         if (
             clip_order_ledger_on()
