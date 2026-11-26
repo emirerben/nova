@@ -100,4 +100,91 @@ final class ChoiceQuestionTests: XCTestCase {
         let explicitOff = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"choice_questions":false}"#.utf8))
         XCTAssertFalse(explicitOff.choiceQuestionsEnabled)
     }
+
+    // MARK: style strip (CA-4)
+
+    /// Failure modes pinned here: three tiles clip on a small iPhone; five tiles shrink instead of scrolling; the
+    /// primary does not name the selected style; the unchosen tiles stay at full strength while the send is out; a
+    /// second tap while sending changes the answer; Try again resends more than once or a different style; the
+    /// receipt cannot find the style the creator chose, or draws a preview for a typed answer; a style without a
+    /// preview is drawn as a tile.
+    private func styled(_ labels: [String], recommended: Int? = nil, previewed: Bool = true) -> ChoiceQuestion {
+        let preview = ChoiceQuestion.Preview(mediaID: "m", isPhoto: false, atSeconds: 0, timeSeconds: 0, layers: [], fonts: [:])
+        let options = labels.enumerated().map { index, label in
+            ChoiceQuestion.Option(key: "k\(index)", label: label, detail: nil, recommended: index == recommended,
+                                  preview: previewed || index > 0 ? preview : nil)
+        }
+        return ChoiceQuestion(version: 2, questionID: "q", options: options, allowFreeText: true)
+    }
+
+    func testThreeTilesFitAtEveryCardWidthAndFiveScroll() {
+        for stripWidth in stride(from: 300.0, through: 420.0, by: 5.0) {
+            let tile = DesignStripLayout.tileWidth(stripWidth: stripWidth, count: 3)
+            XCTAssertLessThanOrEqual(3 * tile + 2 * DesignStripLayout.gap, stripWidth + 0.001, "three tiles clip at \(stripWidth)")
+            XCTAssertLessThanOrEqual(tile, DesignStripLayout.tileOuterWidth)
+        }
+        XCTAssertEqual(DesignStripLayout.tileWidth(stripWidth: 340, count: 3), 108, "at a normal width the tile keeps its size")
+        for count in [4, 5, 6] {
+            XCTAssertEqual(DesignStripLayout.tileWidth(stripWidth: 340, count: count), 108)
+            XCTAssertGreaterThan(CGFloat(count) * 108 + CGFloat(count - 1) * DesignStripLayout.gap, 340, "\(count) tiles scroll")
+        }
+        XCTAssertEqual(DesignStripLayout.tileWidth(stripWidth: 0, count: 3), 108, "before the strip is measured")
+    }
+
+    func testPrimaryNamesTheSelectedStyleStartingFromTheRecommendedOne() {
+        let q = styled(["Editorial", "Clean", "Bold"], recommended: 1)
+        var pick = DesignPick(q)
+        XCTAssertEqual(pick.selected, "k1")
+        XCTAssertEqual(pick.primaryTitle(in: q), "Use Clean")
+        pick.select("k2")
+        XCTAssertEqual(pick.primaryTitle(in: q), "Use Bold")
+        XCTAssertEqual(DesignPick(styled(["Editorial", "Clean"])).selected, "k0", "nothing recommended: the first style")
+    }
+
+    func testSubmittingDimsTheOthersAndLocksTheSelection() {
+        let q = styled(["Editorial", "Clean", "Bold"], recommended: 1)
+        var pick = DesignPick(q)
+        XCTAssertEqual(pick.send(), "k1")
+        XCTAssertEqual(pick.primaryTitle(in: q), "Applying Clean")
+        XCTAssertEqual(pick.opacity(of: "k0"), 0.4)
+        XCTAssertEqual(pick.opacity(of: "k2"), 0.4)
+        XCTAssertEqual(pick.opacity(of: "k1"), 1)
+        pick.select("k2")
+        XCTAssertEqual(pick.selected, "k1", "a tap while the send is out changes nothing")
+        XCTAssertEqual(DesignPick(q).opacity(of: "k0"), 1, "nothing is dimmed before a send")
+    }
+
+    func testFailedSendOffersTheSameStyleOnceAndAnotherTapClearsIt() {
+        let q = styled(["Editorial", "Clean", "Bold"], recommended: 1)
+        var pick = DesignPick(q)
+        _ = pick.send()
+        pick.sendEnded()
+        XCTAssertNil(pick.sent)
+        XCTAssertEqual(pick.failed, "k1")
+        XCTAssertEqual(pick.opacity(of: "k0"), 1, "tiles are live again")
+        XCTAssertEqual(pick.retry(), "k1", "Try again sends the same style")
+        XCTAssertNil(pick.retry(), "and only once per tap")
+        XCTAssertEqual(pick.sent, "k1")
+        pick.sendEnded()
+        pick.select("k2")
+        XCTAssertNil(pick.failed, "choosing another style drops the failure")
+        XCTAssertEqual(pick.send(), "k2")
+        var idle = DesignPick(q)
+        idle.sendEnded()
+        XCTAssertNil(idle.failed, "a send this card never made is not its failure")
+    }
+
+    func testReceiptFindsThePreviewOfTheChosenStyleOnly() {
+        let q = styled(["Editorial", "Clean", "Bold"], recommended: 1)
+        XCTAssertEqual(q.previewedOption(answered: "Clean")?.key, "k1")
+        XCTAssertNil(q.previewedOption(answered: "Let Kria decide"))
+        XCTAssertNil(q.previewedOption(answered: "something I typed"))
+        XCTAssertNil(q.previewedOption(answered: ""))
+        XCTAssertNil(styled(["Editorial", "Clean"], previewed: false).previewedOption(answered: "Editorial"), "no preview, no tile")
+    }
+
+    func testAnyOptionWithoutAPreviewKeepsTheWholeQuestionAsRows() {
+        XCTAssertTrue(styled(["Editorial", "Clean", "Bold"]).hasPreviews)
+        XCTAssertFalse(styled(["Editorial", "Clean", "Bold"], previewed: false).hasPreviews)
+    }
 }
