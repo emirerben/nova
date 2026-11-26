@@ -5,7 +5,7 @@ the offer-level ones, on synthetic phone jobs built with the real builders
 (`app/cli/intro_styles_fixtures.py`), real Skia, real `place_title_look`, the real phone Save:
 
 F1 capability only when on (flag, account, protocol)     F2/F3/F4 asks, saved prefs, excluded fonts
-F6 ink clear of face / captions / safe zone (+ wrong-content control)
+F6 ink clear of face / captions / safe zone (+ wrong-content controls), over fixed job ids
 F7 request-time face evidence equals the worker's        F8 distinct looks, never `pen`
 F9 her words, her unsaved edit                           F10 Turkish caps in the preview
 F11 a look the Save refuses is dropped                   F15 "No intro style"
@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import copy
 import inspect
+import uuid
 
 import pytest
 
@@ -33,12 +34,18 @@ from app.text_fold import fold_text
 
 ROUTES = fx.ROUTES
 TITLES = {"en": fx.EN_TITLE, "tr": fx.TR_TITLE}
+# The job id seeds which looks are offered (`offer_seed`), so a random id made a failure that did
+# not repeat (KRI-1638). Every job here has this id unless a test names another; the rules that
+# must hold for every look run over SWEEP_IDS.
+SEED_JOB = uuid.UUID("00000000-0000-4000-8000-000000001633")
+SWEEP_IDS = [uuid.UUID(int=n) for n in range(1, 25)]
 
 
 @pytest.fixture(autouse=True)
 def _flags(monkeypatch):
     for key, value in fx.flag_overrides().items():
         monkeypatch.setattr(settings, key, value)
+    monkeypatch.setattr(fx, "DEFAULT_JOB_ID", SEED_JOB)
 
 
 def offer_for(route: str, lang: str = "en", **kwargs):
@@ -169,17 +176,20 @@ def _tr_upper(text: str) -> str:
 
 
 def test_turkish_caps_draw_dotted_and_dotless_capitals_in_the_preview():
+    """Not every job is offered an upper-case look, so the rule is read on every upper-case row
+    of twelve fixed jobs, and at least one of them must have drawn "İYİ"."""
     title = "iyi bir tasarım trendi"
-    job, vid, rows = fx.talking_job(title)
-    offer = st.build_offer(st.detach(job), vid, rows, "first")
-    assert offer["available"]
     drawn_caps = []
-    for option in offer["options"][:-1]:
-        for row, layer in zip(option["rows"], option["preview"]["text_layers"], strict=True):
-            drawn = " ".join(run["text"] for run in layer["runs"])
-            if row.get("text_case") == "upper":
-                assert drawn == _tr_upper(row["text"]), (option["key"], drawn)
-                drawn_caps.append(drawn)
+    for job_id in SWEEP_IDS[:12]:
+        job, vid, rows = fx.talking_job(title, job_id=job_id)
+        offer = st.build_offer(st.detach(job), vid, rows, "first")
+        assert offer["available"], job_id
+        for option in offer["options"][:-1]:
+            for row, layer in zip(option["rows"], option["preview"]["text_layers"], strict=True):
+                drawn = " ".join(run["text"] for run in layer["runs"])
+                if row.get("text_case") == "upper":
+                    assert drawn == _tr_upper(row["text"]), (job_id, option["key"], drawn)
+                    drawn_caps.append(drawn)
     assert any("İ" in drawn for drawn in drawn_caps)  # "iyi" -> "İYİ"
     assert not any("IYI" in drawn for drawn in drawn_caps)
 
@@ -187,30 +197,119 @@ def test_turkish_caps_draw_dotted_and_dotless_capitals_in_the_preview():
 # --- F6 / F7: fitted to the evidence --------------------------------------------------------------
 
 
-def _ink_problems(rows, face, captions):
+def _ink_boxes(rows):
+    """Each row's drawn ink box, measured on the real Skia frame (no shadow), canvas-normalized."""
     from app.pipeline import overlay_verify as ov
     from app.pipeline.render_geometry import NormalizedBox
 
-    problems = []
+    boxes = []
     for row in rows:
         bare = ov.render_overlay_frame({**scene_mod.overlay_for_row(row), "shadow_enabled": False})
         bbox = ov.text_bbox(bare)
-        box = NormalizedBox(
-            bbox[0] / bare.width, bbox[1] / bare.height, bbox[2] / bare.width, bbox[3] / bare.height
+        assert bbox is not None, f"nothing drawn for {row['text']!r}"
+        boxes.append(
+            NormalizedBox(
+                bbox[0] / bare.width,
+                bbox[1] / bare.height,
+                bbox[2] / bare.width,
+                bbox[3] / bare.height,
+            )
         )
+    return boxes
+
+
+def _ink_problems(rows, face, captions):
+    problems = []
+    for box in _ink_boxes(rows):
         problems += scene_mod.ink_box_problems(box, face=face, captions=captions)
     return problems
 
 
-def test_every_look_is_clear_of_her_saved_face_and_the_captions():
+def _shown(box):
+    return tuple(round(v, 3) for v in (box.left, box.top, box.right, box.bottom))
+
+
+def _caption_touches(boxes, captions):
+    """Every (title ink box, caption box) pair that shares any area at all. Stricter than
+    `ink_box_problems`, whose 5% is a share of the TITLE's box: a wide title line could cover a
+    good part of a short caption and still pass it."""
+    return [
+        f"title ink {_shown(box)} touches the caption at {_shown(caption)}"
+        for box in boxes
+        for caption in captions
+        if box.intersection_area(caption) > 0
+    ]
+
+
+_TALL_CUES = [
+    {
+        "text": "Hello everyone and welcome back to my channel where we talk about design",
+        "start_s": 0.0,
+        "end_s": 1.5,
+    },
+    {
+        "text": "today I want to show you the biggest design trend of this whole year",
+        "start_s": 1.5,
+        "end_s": 3.0,
+    },
+]
+
+
+def _caption_shapes():
+    from app.cli.verify_intro_styles import _chunks
+
+    return {
+        "one_line": list(fx.CUES),
+        "says_her_title": _chunks(fx.EN_TITLE),
+        "tall": _TALL_CUES,
+    }
+
+
+@pytest.mark.parametrize("shape", ["one_line", "says_her_title", "tall"])
+def test_every_look_is_clear_of_her_saved_face_and_the_captions_on_screen(monkeypatch, shape):
+    """F6 over fixed jobs (KRI-1638). The rule, the product owner's call on 2026-11-26: a title
+    in the lower third is fine; a title that touches a caption on screen is not. So the ink is
+    measured against the pinned recipe's own caption boxes in the title's window, any shared area
+    fails, and the face and safe-zone limits are unchanged. Before, one random job was measured
+    against a fixed band (62% to 90% of the height) the offer never sees."""
+    from app.cli.verify_intro_styles import caption_boxes
     from app.pipeline.render_geometry import NormalizedBox
 
+    monkeypatch.setattr(fx, "CUES", _caption_shapes()[shape])
+    nowhere = NormalizedBox(0.0, 0.0, 0.0, 0.0)
+    problems, lowest = [], 0.0
+    for job_id in SWEEP_IDS:
+        job, vid, rows = fx.talking_job(fx.EN_TITLE, job_id=job_id)
+        captions = caption_boxes(job.assembly_plan, vid, st.read_title_rows(rows, "talking"))
+        assert captions, "the recipe has caption layers in the title window"
+        face = st.saved_face_band(job.assembly_plan["variants"][0])
+        assert face is not None
+        offer = st.build_offer(st.detach(job), vid, rows, "first")
+        assert offer["available"], job_id
+        for option in offer["options"][:-1]:
+            boxes = _ink_boxes(option["rows"])
+            found = _caption_touches(boxes, captions)
+            for box in boxes:
+                found += scene_mod.ink_box_problems(box, face=face, captions=nowhere)
+            problems += [f"job {job_id.int} look {option['key']}: {p}" for p in found]
+            lowest = max([lowest, *(box.bottom for box in boxes)])
+    assert problems == []
+    if shape == "one_line":
+        # The sweep must include the case the rule is about: a title placed beside a caption.
+        assert lowest > 0.62, f"no look in the sweep reached the lower third (lowest {lowest:.3f})"
+
+
+def test_wrong_content_control_a_look_moved_onto_the_caption_is_caught():
+    from app.cli.verify_intro_styles import caption_boxes
+
     job, vid, rows, offer = offer_for("talking")
-    face = st.saved_face_band(job.assembly_plan["variants"][0])
-    assert face is not None
-    captions = NormalizedBox(0.05, 0.62, 0.95, 0.90)
-    for option in offer["options"][:-1]:
-        assert _ink_problems(option["rows"], face, captions) == [], option["key"]
+    captions = caption_boxes(job.assembly_plan, vid, st.read_title_rows(rows, "talking"))
+    clean = offer["options"][0]["rows"]
+    assert _caption_touches(_ink_boxes(clean), captions) == []
+    cy = (captions[0].top + captions[0].bottom) / 2
+    moved = [{**r, "y_frac": cy, "x_frac": 0.5, "alignment": "center"} for r in clean]
+    touches = _caption_touches(_ink_boxes(moved), captions)
+    assert touches and all("touches the caption" in t for t in touches)
 
 
 @pytest.mark.parametrize("lang", ["en", "tr"])
