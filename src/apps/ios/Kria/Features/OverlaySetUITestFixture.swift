@@ -116,7 +116,7 @@ enum OverlaySetUITestFixture {
             }
             if (row["charges"] as? Int ?? 0) < (row["attempt"] as? Int ?? 0) + 1 { row["charges"] = (row["attempt"] as? Int ?? 0) + 1 }
             let isThird = index == 2
-            if isThird, environment["KRIA_CHAT_OVERLAY_HOLD"] == "1" { commit(); return (200, payload(setID, rec)) }
+            if isThird, environment["KRIA_CHAT_OVERLAY_HOLD"] == "1" { commit(); return (200, publish(setID)) }
             if isThird, environment["KRIA_CHAT_OVERLAY_FAIL"] == "third", row["attempt"] as? Int == 0 {
                 row["state"] = "failed"; row["error_code"] = "provider_rejected"; row["retryable"] = true
                 row["operation_id"] = nil

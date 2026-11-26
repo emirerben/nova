@@ -14,7 +14,8 @@ import XCTest
 final class OverlayChatUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
-    private func launch(overlaySets: Bool = true, fail: Bool = false, hold: Bool = false, persist: String? = nil, relaunching app: XCUIApplication? = nil) -> XCUIApplication {
+    private func launch(overlaySets: Bool = true, fail: Bool = false, hold: Bool = false, persist: String? = nil, relaunching app: XCUIApplication? = nil,
+                        language: String? = nil, reduceTransparency: Bool = false) -> XCUIApplication {
         let app = app ?? XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_FIXTURE_MEDIA": "1", "KRIA_CHAT_VOICEOVER_SCRIPT": "1",
@@ -23,20 +24,33 @@ final class OverlayChatUITests: XCTestCase {
         if fail { app.launchEnvironment["KRIA_CHAT_OVERLAY_FAIL"] = "third" }
         if hold { app.launchEnvironment["KRIA_CHAT_OVERLAY_HOLD"] = "1" }
         if let persist { app.launchEnvironment["KRIA_GENERATED_MEDIA_PERSIST"] = persist }
+        if reduceTransparency { app.launchEnvironment["UI_TEST_REDUCE_TRANSPARENCY"] = "1" }
+        if let language { app.launchArguments += ["-AppleLanguages", "(\(language))", "-AppleLocale", "\(language)_\(language.uppercased())"] }
         app.launch()
         return app
     }
 
-    private func startChat(_ app: XCUIApplication) {
-        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
-        app.buttons["Open projects"].tap()
+    private func localized(_ key: String, _ language: String?) -> String {
+        guard let language else { return key }
+        let catalog = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Kria/Resources/Localizable.xcstrings")
+        let strings = (try? JSONSerialization.jsonObject(with: Data(contentsOf: catalog)) as? [String: Any])?["strings"] as? [String: Any]
+        let unit = ((strings?[key] as? [String: Any])?["localizations"] as? [String: Any])?[language] as? [String: Any]
+        return (unit?["stringUnit"] as? [String: Any])?["value"] as? String ?? key
+    }
+
+    private func startChat(_ app: XCUIApplication, language: String? = nil) {
+        let openProjects = app.buttons[localized("Open projects", language)]
+        XCTAssertTrue(openProjects.waitForExistence(timeout: 20))
+        openProjects.tap()
         let newChat = app.buttons["drawer-new-chat"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 5))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)], timeout: 20), .completed)
         newChat.tap()
         app.chooseFormat("montage")
-        XCTAssertTrue(app.buttons["Send clips"].waitForExistence(timeout: 10))
-        app.buttons["Send clips"].tap()
+        let send = app.buttons[localized("Send clips", language)]
+        XCTAssertTrue(send.waitForExistence(timeout: 10))
+        send.tap()
         XCTAssertTrue(app.buttons["voiceover-script-record"].waitForExistence(timeout: 20))
     }
 
@@ -67,6 +81,59 @@ final class OverlayChatUITests: XCTestCase {
         tapGenerateInTray(app)
         XCTAssertTrue(element(app, "overlay-ask-card").waitForExistence(timeout: 20), "the Generate tile asks in the chat")
         XCTAssertFalse(app.buttons["overlay-choice-decide"].exists, "the six-screen sheet is not opened")
+    }
+
+    private func field(_ app: XCUIApplication, _ index: Int) -> XCUIElement {
+        let id = "overlay-compose-row-\(index)"
+        return app.textFields[id].exists ? app.textFields[id] : app.textViews[id]
+    }
+
+    func testTheWholeFlowFromAskThroughAFailedOverlayToReview() {
+        let app = launch(fail: true)
+        openAsk(app)
+        app.buttons["overlay-ask-describe"].tap()
+        for (index, text) in ["A sticker of a mountain peak", "A hand-drawn compass", "A rolled-up map"].enumerated() {
+            if index > 0 { app.buttons["overlay-compose-add"].tap() }
+            XCTAssertTrue(field(app, index).waitForExistence(timeout: 5))
+            field(app, index).tap()
+            field(app, index).typeText(text)
+        }
+        XCTAssertTrue(app.buttons["overlay-compose-make"].label.hasPrefix("Make 3 overlays"))
+        XCTAssertTrue(app.buttons["overlay-compose-make"].label.contains("$0.12"), "three rows at the event's unit price")
+        app.buttons["overlay-compose-make"].tap()
+        XCTAssertTrue(app.staticTexts["Couldn’t make this one"].waitForExistence(timeout: 30))
+        shot("ca8-partial-described")
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "overlay-retry-")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Overlays ready"].waitForExistence(timeout: 30))
+        app.buttons["overlay-review"].tap()
+        XCTAssertTrue(app.staticTexts["Your 3 overlays"].waitForExistence(timeout: 20))
+        shot("ca8-review-results")
+    }
+
+    func testTurkishCardsFitAndSayTheSameThings() {
+        let app = launch(language: "tr")
+        startChat(app, language: "tr")
+        app.buttons["voiceover-script-record"].tap()
+        XCTAssertTrue(app.buttons["voiceover-skip"].waitForExistence(timeout: 10))
+        app.buttons["voiceover-skip"].tap()
+        app.buttons["generate-image"].tap()
+        XCTAssertTrue(app.buttons["overlay-ask-decide"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.buttons["overlay-ask-decide"].label, "Kria karar versin")
+        shot("ca8-turkish-ask")
+        app.buttons["overlay-ask-describe"].tap()
+        XCTAssertTrue(app.buttons["overlay-compose-make"].waitForExistence(timeout: 5))
+        shot("ca8-turkish-compose")
+    }
+
+    func testReduceTransparencyDrawsSolidCardsAndSheet() {
+        let app = launch(fail: true, reduceTransparency: true)
+        openAsk(app)
+        app.buttons["overlay-ask-decide"].tap()
+        XCTAssertTrue(app.staticTexts["Couldn’t make this one"].waitForExistence(timeout: 30))
+        shot("ca8-reduce-transparency-card")
+        app.buttons["overlay-review"].tap()
+        XCTAssertTrue(app.buttons["generated-media-use"].waitForExistence(timeout: 20))
+        shot("ca8-reduce-transparency-sheet")
     }
 
     func testTheGenerateTileAsksInTheChatAndTheCreatorCanDescribeTwoOverlays() {
@@ -139,7 +206,8 @@ final class OverlayChatUITests: XCTestCase {
         let app = launch(hold: true, persist: persist)
         openAsk(app)
         app.buttons["overlay-ask-decide"].tap()
-        XCTAssertTrue(app.staticTexts["Rolled-up map [charged 1 of 1]"].waitForExistence(timeout: 30), "the third overlay is still being made")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Rolled-up map [charged 1 of")).firstMatch.waitForExistence(timeout: 30),
+                      "the third overlay is still being made, and its request is repeated without a second charge")
         XCTAssertEqual(app.buttons["overlay-review"].label, "Review 2 images")
         shot("ca8-progress")
         app.terminate()
