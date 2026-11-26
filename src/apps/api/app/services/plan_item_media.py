@@ -80,6 +80,9 @@ def current_detector_policy() -> str:
             # Trimming stretched heads and straddling runs changes them too (KRI-1512).
             "stretched-words="
             f"{'enabled' if settings.speech_cleanup_stretched_words_enabled else 'off'}",
+            # Trimming a stretched pair's tail and head changes them too (KRI-1627).
+            "stretched-pairs="
+            f"{'enabled' if settings.speech_cleanup_stretched_pairs_enabled else 'off'}",
         )
     )
 
