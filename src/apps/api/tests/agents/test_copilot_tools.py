@@ -5,7 +5,8 @@ parser does not know, when a tool's fields or required fields differ from the pa
 no edit could ever offer an operation as a tool, or when the rules prompt stops matching what
 the tool transport rewrites. Also when a patch value the JSON answer accepts (a null that removes
 a dim, a tilt or a text pill) is refused by its tool, or when a clip field the edit keeps closed
-(dim, tilt, source audio) is offered as a tool argument the parser will then refuse.
+(dim, tilt, source audio, or a crop or look the edit sets false) is offered as a tool argument the
+parser will then refuse.
 """
 
 from __future__ import annotations
@@ -133,17 +134,26 @@ def _kept_ops(snapshot: dict, op: dict) -> list:
 
 
 @pytest.mark.parametrize(
-    ("key", "gate", "value"),
+    ("key", "closed", "opened", "value"),
     [
-        ("dim", "dim", 0.4),
-        ("tilt", "tilt", {"rotation_deg": 10}),
-        ("muted", "muted", True),
-        ("source_audio_volume", "muted", 0.5),
+        ("dim", {}, {"dim": True}, 0.4),
+        ("tilt", {}, {"tilt": True}, {"rotation_deg": 10}),
+        ("muted", {}, {"muted": True}, True),
+        ("source_audio_volume", {}, {"muted": True}, 0.5),
+        (
+            "source_crop",
+            {"source_crop": False},
+            {"source_crop": True},
+            {"x": 0, "y": 0, "width": 0.5, "height": 0.5},
+        ),
+        ("look_preset", {"look_preset": False}, {"look_preset": True}, "golden_hour"),
     ],
 )
-def test_a_clip_field_the_edit_keeps_closed_is_never_offered_as_a_tool_argument(key, gate, value):
+def test_a_clip_field_the_edit_keeps_closed_is_never_offered_as_a_tool_argument(
+    key, closed, opened, value
+):
     op = {"op": "patch_slots", "selector": {"all": True}, "patch": {key: value}}
-    closed, opened = _clip_edit(duration_s=True), _clip_edit(duration_s=True, **{gate: True})
+    closed, opened = _clip_edit(duration_s=True, **closed), _clip_edit(duration_s=True, **opened)
     assert _kept_ops(closed, op) == []
     assert key not in _offered_slot_keys(closed)
     assert _kept_ops(opened, op) != []
