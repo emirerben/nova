@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.24.0] - 2026-11-26
+
+### Changed
+- fix(ios): UI tests no longer wait 60 s for idle after a doubled animation start on a freed layer (KRI-1604) (#2529) <!-- release-pr: 2529 -->
+
 ## [0.90.23.0] - 2026-11-26
 
 ### Changed
