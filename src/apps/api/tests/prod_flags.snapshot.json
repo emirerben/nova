@@ -693,6 +693,10 @@
       "source": "default",
       "value": []
     },
+    "kria_story_sequencer_enabled": {
+      "source": "default",
+      "value": false
+    },
     "kria_suggester_model": {
       "source": "default",
       "value": "gpt-6.1-sol"
@@ -1526,6 +1530,14 @@
     "speaker_full_opening_min_client_protocol": {
       "source": "default",
       "value": 41
+    },
+    "speaker_sections_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "speaker_sections_min_client_protocol": {
+      "source": "default",
+      "value": 59
     },
     "speech_cleanup_budget_clamp_enabled": {
       "source": "default",

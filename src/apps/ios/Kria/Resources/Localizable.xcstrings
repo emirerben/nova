@@ -9361,6 +9361,22 @@
         }
       }
     },
+    "Changing where you are part by part isn’t available right now. Put yourself in one place for the whole video and save again. Your edits are still here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deinen Platz Teil für Teil zu ändern ist gerade nicht verfügbar. Setz dich für das ganze Video an einen Platz und speichere erneut. Deine Änderungen sind noch da."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yerini bölüm bölüm değiştirmek şu anda kullanılamıyor. Bütün video için tek bir yer seç ve tekrar kaydet. Düzenlemelerin hâlâ burada."
+          }
+        }
+      }
+    },
     "Chat" : {
       "comment" : "Workspace mode switch: the conversation",
       "localizations" : {
@@ -14485,6 +14501,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Taşımak için kendini sürükle. Boyutu değiştirmek için iki parmakla sıkıştır ya da bir köşeden sürükle. Değişiklikler sadece bu klibi etkiler."
+          }
+        }
+      }
+    },
+    "Drag yourself to move. Pinch, or drag a corner, to resize. Changes affect only this part of the video." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zieh dich, um dich zu verschieben. Zieh mit zwei Fingern oder an einer Ecke, um die Größe zu ändern. Änderungen gelten nur für diesen Teil des Videos."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Taşımak için kendini sürükle. Boyutu değiştirmek için iki parmakla sıkıştır ya da bir köşeden sürükle. Değişiklikler sadece videonun bu bölümünü etkiler."
           }
         }
       }
@@ -40080,6 +40112,22 @@
         }
       }
     },
+    "The parts where you change place overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Teile, in denen sich dein Platz ändert, überschneiden sich oder einer ist zu kurz. Gib jedem mindestens eine halbe Sekunde ohne Überschneidung und speichere dann erneut. Deine Änderungen sind noch da."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Yerinin değiştiği bölümler üst üste biniyor ya da biri çok kısa. Her birine üst üste binmeden en az yarım saniye ver, sonra tekrar kaydet. Düzenlemelerin hâlâ burada."
+          }
+        }
+      }
+    },
     "The preview shows the previous version. Check the preview update before exporting." : {
       "localizations" : {
         "de" : {
@@ -42046,6 +42094,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu bölme dolu. Yer açmak için içindeki bir klibi kısalt."
+          }
+        }
+      }
+    },
+    "This part" : {
+      "comment" : "Speaker size and position: only the part of the video under the playhead",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Teil"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu bölüm"
           }
         }
       }

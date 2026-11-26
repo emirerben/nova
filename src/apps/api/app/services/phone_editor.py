@@ -64,6 +64,7 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledBackgroundFocus,
     SubtitledBackgroundWindow,
     SubtitledFullScreenWindow,
+    SubtitledLayoutWindow,
     SubtitledSpeakerFrame,
     lane_names,
 )
@@ -128,6 +129,7 @@ from app.services.phone_rollout import (
     speaker_background_color_client_supported,
     speaker_background_windows_client_supported,
     speaker_full_opening_client_supported,
+    speaker_sections_client_supported,
     speech_duck_client_supported,
     talking_music_supported,
     text_bend_client_supported,
@@ -153,6 +155,7 @@ from app.services.phone_subtitled_editor import (
     variant_carries_speaker_background_color,
     variant_carries_speaker_background_windows,
     variant_carries_speaker_full_opening,
+    variant_carries_speaker_sections,
 )
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
@@ -1056,6 +1059,22 @@ def prepare_phone_editor_commit(
         )
     if (
         stored_variant is not None
+        and not speaker_sections_client_supported()
+        and variant_carries_speaker_sections(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1558: a recompile would pin `layout_windows`, which this app build cannot decode,
+        # or (compile strips them for such a build) silently put the speaker back in one layout.
+        # Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_sections",
+                "minimum_client_protocol": settings.speaker_sections_min_client_protocol,
+            },
+        )
+    if (
+        stored_variant is not None
         and not background_focus_client_supported()
         and variant_carries_background_focus(job.assembly_plan or {}, stored_variant)
     ):
@@ -1218,6 +1237,20 @@ def prepare_phone_editor_commit(
                 "code": "client_update_required",
                 "feature": "speaker_full_opening",
                 "minimum_client_protocol": settings.speaker_full_opening_min_client_protocol,
+            },
+        )
+    if (
+        staged_background is not None
+        and staged_background.uses_layouts
+        and not speaker_sections_client_supported()
+    ):
+        # KRI-1558: the belt for a recompile that pinned layouts this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_sections",
+                "minimum_client_protocol": settings.speaker_sections_min_client_protocol,
             },
         )
     if (
@@ -1513,6 +1546,20 @@ def _background_lane(
         SubtitledFullScreenWindow(start_s=entry["start_s"], end_s=entry["end_s"])
         for entry in document.get("full_screen_windows") or ()
     )
+    # KRI-1558: the route validated the layout spans (sorted, disjoint, inside the edit).
+    layouts = tuple(
+        SubtitledLayoutWindow(
+            start_s=entry["start_s"],
+            end_s=entry["end_s"],
+            layout=entry["layout"],
+            speaker_frame=(
+                SubtitledSpeakerFrame(**entry["speaker_frame"])
+                if entry.get("speaker_frame")
+                else None
+            ),
+        )
+        for entry in document.get("layout_windows") or ()
+    )
     if is_color:
         # KRI-1173: a colour fill pins nothing; the document carries the (already uppercase) hex.
         return SubtitledBackground(
@@ -1521,6 +1568,7 @@ def _background_lane(
             windows=tuple(windows),
             speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
             full_screen_windows=full_screen,
+            layout_windows=layouts,
         )
     return SubtitledBackground(
         media_id=binding.media_id,
@@ -1532,6 +1580,7 @@ def _background_lane(
         windows=tuple(windows),
         speaker_frame=SubtitledSpeakerFrame(**frame) if frame else None,
         full_screen_windows=full_screen,
+        layout_windows=layouts,
     )
 
 

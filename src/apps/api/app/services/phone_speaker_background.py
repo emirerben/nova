@@ -71,6 +71,15 @@ BACKGROUND_REFUSALS: dict[str, tuple[str, str]] = {
         "Couldn't use those full-screen times: they overlap, are too short or run past the end",
         "Bu tam ekran sürelerini kullanamadım: üst üste biniyor, çok kısa ya da videonun dışında",
     ),
+    # KRI-1558: the speaker's place and size per part of the talk.
+    "speaker_sections_disabled": (
+        "Couldn't change where you are part by part: it isn't available right now",
+        "Yerini bölüm bölüm değiştiremedim: şu anda kullanılamıyor",
+    ),
+    "speaker_sections_invalid": (
+        "Couldn't use those parts: they overlap, are too short or run past the end",
+        "Bu bölümleri kullanamadım: üst üste biniyor, çok kısa ya da videonun dışında",
+    ),
     # Qendresa item 18: aim a background at its text.
     "background_focus_disabled": (
         "Couldn't aim or zoom the recordings: it isn't available right now",

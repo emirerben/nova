@@ -1,0 +1,92 @@
+{
+  "agent": "nova.kria.story_sequencer",
+  "prompt_version": "2026-11-24-kri1593-v1",
+  "input": {
+    "request": "a video of our kayak morning, end with the campfire",
+    "asks": [
+      "End with the campfire clip"
+    ],
+    "clips": [
+      {
+        "id": "c1",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "subject": "kayaks on water",
+        "summary": "Two kayaks glide across a calm lake in morning mist",
+        "activity": "paddling"
+      },
+      {
+        "id": "c2",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "roof rack",
+        "summary": "Lifting kayaks off a car roof rack at a gravel car park",
+        "activity": "unloading"
+      },
+      {
+        "id": "c3",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "subject": "island picnic",
+        "summary": "Sandwiches on a rock on a small island, kayaks pulled up on shore",
+        "activity": "picnic"
+      },
+      {
+        "id": "c4",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 4.0,
+        "subject": "life jackets",
+        "summary": "Zipping up life jackets at the water's edge",
+        "activity": "getting ready"
+      },
+      {
+        "id": "c5",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "pulling kayaks out",
+        "summary": "Dragging the wet kayaks back up the slipway, tired laughter",
+        "activity": "landing"
+      },
+      {
+        "id": "c6",
+        "span": null,
+        "kind": "video",
+        "duration_s": 7.0,
+        "note": "campfire",
+        "subject": "campfire",
+        "summary": "A campfire at dusk with people sitting around it",
+        "activity": "campfire"
+      }
+    ]
+  },
+  "raw_text": "{\"decided\": true, \"order\": [\"c2\", \"c4\", \"c1\", \"c3\", \"c5\"], \"reason\": \"unload, get ready, paddle out, picnic, land\"}",
+  "output": {
+    "decided": true,
+    "order": [
+      "c2",
+      "c4",
+      "c1",
+      "c3",
+      "c5"
+    ],
+    "reason": "unload, get ready, paddle out, picnic, land"
+  },
+  "meta": {
+    "source": "HAND-AUTHORED replay golden (not a live capture), KRI-1593: the clips and the answer were written by hand",
+    "scenario": "Five open clips added out of order and one clip the creator placed last (span null). A story order unloads, gets ready, paddles, picnics and lands; the campfire is not in the answer because it is not the model's to move.",
+    "expected_order": [
+      "c2",
+      "c4",
+      "c1",
+      "c3",
+      "c5"
+    ],
+    "evidence": "Replay proves the parse + structural contract on this answer only; it does NOT prove the live model gives it. The held-out comparison against upload order (tests/evals/story_sequencer/heldout.json) needs an approved paid run."
+  },
+  "prompt_sha": "5563658c71ba3428"
+}

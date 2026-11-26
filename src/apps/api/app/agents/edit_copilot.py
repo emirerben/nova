@@ -163,7 +163,11 @@ log = structlog.get_logger()
 # v133: CLIP DIM: patch_slots "dim" (a strength 0..1, null removes it) on one clip or every clip,
 # taught only where the snapshot's timeline_patch_capabilities opens `dim`
 # (prompts/edit_copilot_ops/clip_dim.txt); every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-24-v133"
+# v134 (KRI-1558): arrange_sections / set_section_layout / remove_background_window /
+# retime_background_window and the SECTIONS + LAYOUT WINDOWS lines (prompts/edit_copilot_ops/
+# speaker_sections.txt), printed only where the sections gate is open (a protocol 59 build with
+# speakerSections verified), so every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-26-v134"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2372,6 +2376,35 @@ def _format_snapshot(snapshot: dict) -> str:
                         )
                 else:
                     lines.append("(none)")
+            if background.get("sections_available") is True:
+                # KRI-1558: only while the sections gate is open.
+                lines.append("SECTIONS (the parts of the talk, n = section number):")
+                sections = background.get("sections") or []
+                for part in sections[:12]:
+                    if not isinstance(part, dict):
+                        continue
+                    lines.append(
+                        f"- n={part.get('n')} "
+                        f"{_fmt_round3(_first_number(part, ('start_s',)))}-"
+                        f"{_fmt_round3(_first_number(part, ('end_s',)))}s "
+                        f"words={_field(part.get('words'), max_chars=90)!r}"
+                    )
+                if not sections:
+                    lines.append("(none)")
+                lines.append("LAYOUT WINDOWS (where the speaker is drawn when):")
+                layouts = background.get("layout_windows") or []
+                for window in layouts[:40]:
+                    if not isinstance(window, dict):
+                        continue
+                    preset = window.get("preset")
+                    lines.append(
+                        f"- {_fmt_round3(_first_number(window, ('start_s',)))}-"
+                        f"{_fmt_round3(_first_number(window, ('end_s',)))}s "
+                        f"{_field(window.get('layout'), max_chars=12)}"
+                        + (f" {_field(preset, max_chars=24)}" if preset else "")
+                    )
+                if not layouts:
+                    lines.append("(none: one layout for the whole video, see speaker_frame)")
 
     if isinstance(snapshot.get("tilt_backdrop_pool"), list):
         lines.append(

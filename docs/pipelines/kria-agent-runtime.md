@@ -1355,7 +1355,8 @@ else "Clip N" by play position). The v1 creator route's re-plan base
 (`_previous_creator_clip_order`) comes from the ledger instead of the "keep the order" phrase check.
 
 **Guards and limits worth knowing.** The snapshot carrier is stamped only when a CREATOR actor changed
-the order; an order only the AI laid out (`ai_story`) is the plan's, never pinned. The contract pins the
+the order (or the story sequencer chose one: its own section below); an `ai_story` order the plan
+was only seen to have laid out is the plan's, never pinned. The contract pins the
 creator's order (`order_basis` stays `attachment_order`) for the unified phone montage shape only, and not
 under an `editorial_plan` (its beat order is the story's own: the old behaviour, no raise). A strip never
 touches a tapped suggestion card or a degraded turn (`brief_coverage.degraded_from`). The router keeps its
@@ -1443,7 +1444,9 @@ render carries none; the newest card in the thread is what the creator last saw)
   never an id, UUID or file name. `group` is the creator's words for the group or null.
 - `source`: `server_default` (upload order, "Yükleme sırası"), `creator_text` (stated in chat) or
   `creator_drag` / `creator_editor` (moved by hand), all three "Senin sıran"; `ai_story` is the AI's own
-  story order after a render. `spoken_roles` is not produced (no such ledger actor).
+  story order: after a render the order the plan laid out, before one the story sequencer's
+  (`KRIA_STORY_SEQUENCER_ENABLED`; the card then also has `story: true`). `spoken_roles` is not
+  produced (no such ledger actor).
 - `moved`: moved since the previous card in the thread (the minimal set: moving one clip past three marks
   that clip). The first card has none.
 - `shown`: the strip is in the chat. True only with 2+ clips and at least one position whose source is not a
@@ -1518,3 +1521,123 @@ excludes `clip_order_ops` when absent (every existing digest holds), duplicate-s
 answer keys list it. Guards: `tests/kria/test_clip_order_card.py` (the failure-mode list is its docstring),
 `tests/kria/test_clip_order_card_turns_postgres.py` (real submit, worker and approval; needs a scratch DB,
 `bash scripts/dev/test-db.sh`).
+
+## The AI picks the order nobody stated (`KRIA_STORY_SEQUENCER_ENABLED`, KRI-1593)
+
+Owner rule (KRI-1586): "the AI decides what fits the story; if it can't, upload order". Where the
+creator said nothing about a clip's place, a small separate model ranks those clips into the order
+that tells the story; the entry's actor is `ai_story`, the card and the receipts say the order is
+the AI's, and a clip the creator placed never moves. Default `false`; needs the ledger flag. Apply:
+fly secret + restart api and worker. Off = no model call and no new story entry; a story order an
+earlier turn wrote is still the thread's order (the creator saw it on the card) and is still taken
+back when a draft can no longer carry it, so the flag is a stop for new orders, not an undo.
+
+**Two halves.** `app/agents/story_sequencer.py` (`nova.kria.story_sequencer`, prompt
+`prompts/story_sequencer.txt`, Gemini Flash, one bounded call) only RANKS: it returns the open
+clips in play order, or `decided: false`. It is a separate agent on purpose, so the Main Creator's
+prompt and fingerprint do not change. `app/services/story_order.py` (pure) decides everything
+else:
+
+- **May this draft carry a story order** (`carries_story`, asked on EVERY pre-render strategy
+  draft, not only the one that calls the model): the draft's order is the upload order the creator
+  can re-arrange (`card_applies`), it has no `editorial_plan` (its beats are already the model's
+  order), the creator stated nothing a re-order would overrule (`states_order`: an answer to the
+  order-basis question such as "use the order I added the clips", a live order ask that names a
+  basis, or text given by position: `shot_labels`, the creator's own sentences laid over the clips
+  in turn, a route's start / end labels), and `one_order` holds: the render contract pins exactly
+  that order AND the phone montage planner the worker runs (`preflight_montage_plan`, this
+  creator's route) plays exactly that order. The phone verifier refuses any other order than the
+  pinned ids, so a story order exists only where the card, the pin and the render are one order
+  (KRI-503). That is the unified phone montage with no Visuals, voiceover, song or native program.
+- **What is open** (`open_spans`). A clip is fixed when a creator actor moved it in the ledger (a
+  message, a drag, a hand edit), an order row of the draft names it alone ("the map video first", a
+  listed order: `clip_order_card.stated_ids`), or it is on the newest card and the creator tapped
+  "use this order" (`TurnClipOrder.confirmed_ids`). The rest are grouped into spans: two clips
+  share a span only when the creator's rows treat them alike (the same described group, or no
+  group at all), by the rows that seat now and by the rows an earlier turn seated. A span needs
+  two clips. A row the server could not resolve means nothing is open (guessing which clip the
+  creator meant is how a placed clip would move).
+- **How a ranking is applied** (`apply_ranking`): span by span, into the slots that span holds.
+  A fixed clip keeps its exact position and a clip never leaves its group, by construction. Clips
+  an earlier run already looked at (`StoryPlan.placed`) keep their order among themselves: a later
+  run only seats the clips nobody looked at between them, so an order the creator has seen (or
+  confirmed) is never reshuffled when a clip is added.
+- **What a draft does** (`review_story`): asks (a `StoryPlan`) when the draft can carry a story
+  order, at most 40 clips are open and at least one was never looked at (`story_decided_ids`);
+  takes the order back (`withdraw_story`) when the thread has a story order and the draft can no
+  longer carry it; otherwise nothing.
+- **Whether the answer is used** (`settle_story`). The result must keep every fixed clip's
+  position, be unchanged by seating the creator's rows on it again (`apply_sequence`, the way
+  every reader of the snapshot reads it) and pass `one_order`. Otherwise the order stays as it was.
+
+**Taking it back** (`withdraw_story`). When the creator picks the upload order, changes to a
+format that cannot carry a story order, or the contract and the worker no longer agree, the AI's
+clips go back to the order they were added, in the slots they hold; a clip the creator placed keeps
+its exact position. The entry's actor is `server_default`, which also clears the story mark from
+every clip (`_replay`), so the snapshot carries only the creator's own order, or none. This path
+needs no model and runs with the story flag off too.
+
+**Fallback is upload order, never a hold.** A provider failure, a slow call, an answer that is not
+a full ranking (the agent refuses a missing, unknown or repeated id, and ignores a stray key or a
+long note), `decided: false`, or an order no reader would hold all leave the clips as they were,
+and the turn goes on. `decided: false` and an unchanged order are still written as an `ai_story`
+entry whose order did not change, so the next turn does not ask again; a failed call writes
+nothing, so the next draft does.
+
+**Where it runs** (`planner._with_story_order`, in `plan_live_turn` AFTER the choice gate, on the
+draft approval will bind: the gate's answers are on the strategy and its enriched snapshot holds
+the length plan the worker check needs; a turn that ends in a question writes nothing). The brief
+is previewed as the gate previews it. The call goes through `checkpointed` (a continued run of the
+same turn reads the first answer) and its paid-call key carries the turn id, so the same clips and
+words on a later turn are a new call. It is skipped when under 35 s of the turn's deadline is left.
+
+**What it writes.** One ledger entry on the turn's event, after the turn's `creator_text` entry:
+`{actor: ai_story, before_ids, after_ids, story_ids}`. `story_ids` are the open clips it was asked
+about and only its own entries carry them (`LedgerEntry.from_payload` drops the key for any other
+actor), which is what tells its order from an `ai_story` order the plan was only SEEN to have laid
+out after a render (`observed_entry`: still never pinned). In `replay` every `story_ids` clip of an
+entry that changed the order reads as `ai_story`; `ClipOrderState.story_ids` are the ones nobody
+has moved since. The snapshot carries the full order in `clip_order_ids` (as for a creator's own
+order) plus `clip_order_story: true` (`with_order`, `snapshot_story`); `media_identity` reads
+neither. On later turns `with_clip_order_ids` keeps stamping it and the hook re-checks
+`carries_story`, so a later draft plays the same order with no second call, or takes it back.
+
+**What the creator is told.** Card: the open clips read `source: ai_story` (the app's "AI order"
+badge, already shipped with the card) and the card has `story: true`. A build with no card gets the
+list under "Where you didn't set the order, I picked the one that tells the story best. Your clips
+play in this order:" (EN/TR/DE). An order ask's receipt reads "where you didn't say, I put the clips
+in the order that tells the story best" (`brief_checks._UNSTATED_ORDER_STORY`, from
+`PlanFacts.order_story`) instead of "the order you have them now". The Main Creator's order line
+already says "(my story order)". The model's own `reason` is trace-only and reaches no creator
+string. The model sees clips by alias (`c1`…) with the creator's group words and notes, never a
+media id, a file name, or a note that is exactly some clip's file name.
+
+**The creator's later word wins.** A drag after a story order is a `creator_drag` entry as before:
+the dragged clip reads as theirs, leaves `story_ids` and is fixed for every later run. "Start with
+X" on a later turn seats on the story order. Choosing the upload order takes the story order back
+(above). A removed or undone turn takes its story entry with it (the ledger's own retraction rules).
+
+**Not covered.** An explicit "put them in the order that tells the story" ask has no typed key in
+the brief, so it is not a trigger (no wording is parsed); after a render the sequencer never runs
+(the timeline is the order; a chat reorder is an editor op); the tappable "suggest a better order"
+card is not built; drafts with an `editorial_plan`, Visuals, a voiceover, a creator song or the
+native program are untouched. The Main Creator writes its own summary before the order is chosen.
+A restated-strategy suggestion tap (`plan_pinned_suggestion_turn`) re-plans without the order keys
+(`restate_judgment.plan_media` copies only the length-plan keys; the same gap a creator's own order
+has), so after a story-ordered render it would re-render from upload order: close it before the
+flag is turned on.
+
+**Measured (2026-11-24, one live run, 15 Gemini Flash calls, $0.025).** On the held-out set
+(`tests/evals/story_sequencer/heldout.json`: 14 hand-written cases, clips listed in the order they
+were added, with the precedence pairs a story order must satisfy) the played order satisfied every
+pair: mean 1.00 against 0.47 for upload order, no creator-placed clip moved, no answer refused. The
+run is recorded in `tests/evals/baselines/story_sequencer/heldout_run.json` and
+`test_recorded_run_beats_upload_order` re-scores it on every CI run (it fails if the prompt version
+moves without a new run). What this does not show: the cases are short, clean, hand-written clip
+records with an obvious chronology, so it says the model follows a clear story (also in German and
+Turkish, and inside a creator's groups), not how it does on real, thin or noisy clip records. On
+the one "nothing to decide" case it did not hold back: it moved the clip described as "a little
+closer" to the end. No device render of a story-ordered draft has been inspected. Guards:
+`tests/kria/test_story_order.py` (the
+failure-mode list is its docstring; it runs the real contract, readiness and
+`preflight_montage_plan`, with hand-written rankings).

@@ -1776,6 +1776,7 @@ def _dispatch_item_render(
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
     creator_client_protocol: int | None = None,
+    creator_client_features: list[str] | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
     speech_cleanup_choice: str | None = None,
@@ -2682,6 +2683,13 @@ def _dispatch_item_render(
                 **(job.all_candidates or {}),
                 "creator_client_protocol": int(creator_client_protocol),
             }
+        if creator_client_features:
+            # KRI-1558: what that build advertised (`X-Kria-Client-Features`); the speaker's
+            # layout per section is planned only for a build that names `speakerSections`.
+            job.all_candidates = {
+                **(job.all_candidates or {}),
+                "creator_client_features": sorted({str(f) for f in creator_client_features}),
+            }
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no
         # generation token until a later editor rerender, which made a ready
@@ -3193,6 +3201,7 @@ def dispatch_item_render_for(
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
     creator_client_protocol: int | None = None,
+    creator_client_features: list[str] | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
@@ -3545,6 +3554,11 @@ def dispatch_item_render_for(
             **(
                 {"creator_client_protocol": creator_client_protocol}
                 if creator_client_protocol is not None
+                else {}
+            ),
+            **(
+                {"creator_client_features": creator_client_features}
+                if creator_client_features
                 else {}
             ),
             speech_cleanup_contract=speech_cleanup_contract,

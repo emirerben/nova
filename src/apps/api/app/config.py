@@ -1209,6 +1209,19 @@ class Settings(BaseSettings):
     # need a build >= the minimum). Design: docs/reviews/background-focus-failure-modes.md.
     background_focus_enabled: bool = False
     background_focus_min_client_protocol: int = 42
+    # KRI-1558: the speaker's place and size follow the talk on a phone Talking edit with pictures
+    # behind her: the take is cut into a few sections (`pipeline/talking_sections.py`) and each
+    # gets a layout (her own take, the cut-out small in a corner over a picture, or the picture
+    # alone). Recipe field `speaker_background.layout_windows` (capability `speakerSections`, app
+    # builds >= `speaker_sections_min_client_protocol` that ALSO advertise `speakerSections` in
+    # `X-Kria-Client-Features`; the number alone can belong to another branch's build). Default
+    # FALSE: off, every recipe, lane, editor document and receipt is byte-identical (one layout
+    # for the whole video). Apply: verify
+    # `speakerSections` on a device, add it to PHONE_RENDER_VERIFIED_FEATURES, then `fly secrets
+    # set SPEAKER_SECTIONS_ENABLED=true --app nova-video` + restart (api + worker); rollback =
+    # `...=false` + restart. Design: docs/reviews/kri-1558-section-layout-failure-modes.md.
+    speaker_sections_enabled: bool = False
+    speaker_sections_min_client_protocol: int = 59
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on
@@ -3404,6 +3417,14 @@ class Settings(BaseSettings):
     # behaviour, prompts, ops and receipts byte-identical. Apply: fly secret + restart api and
     # worker.
     kria_clip_order_ledger_enabled: bool = False
+    # KRI-1593 story sequencer (needs the ledger flag): on a first draft, where the creator did
+    # not say where a clip goes, a small separate model ranks those clips into the order that
+    # tells the story; the server keeps every clip the creator placed where it is, writes the
+    # order as an `ai_story` ledger entry and pins it like the creator's own. No answer, "cannot
+    # decide" or an order the render contract would not pin = the order the clips were added.
+    # false = no model call and no new entry (a story order already written stays the thread's
+    # order). Apply: fly secret + restart api and worker.
+    kria_story_sequencer_enabled: bool = False
     # KRI-1358 (de1): approval readiness reads the same "the phone Voiceover compiler renders
     # this" fact the draft turn reads, so one clip's own sound under the voice is judged on the
     # phone draft instead of refused as "only works in a voiceover edit made on your iPhone".

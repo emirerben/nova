@@ -49,6 +49,7 @@
     "SongRangeUITests": "creation",
     "SpeakerBackgroundUITests": "editor",
     "SpeakerFrameDirectManipulationUITests": "editor",
+    "SpeakerSectionsUITests": "editor",
     "SplitBlankUITests": "editor",
     "SplitFlowGapsUITests": "editor",
     "SplitScreenAcceptanceUITests": "editor",

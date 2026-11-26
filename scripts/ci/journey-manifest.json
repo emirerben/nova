@@ -713,6 +713,15 @@
       ]
     },
     {
+      "id": "kri-1517-voiceover-whole-set-review",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri1517_voiceover_fill_rest_review.py tests/kria/test_kri1515_montage_sentence_once.py tests/tasks/test_narrated_alignment_receipts.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/narrated_alignment/kri1517_cusco_t4_moments.json",
+        "src/apps/api/tests/tasks/test_kri1517_voiceover_fill_rest_review.py"
+      ]
+    },
+    {
       "id": "kri-598-voiceover-planner",
       "needs_native": false,
       "api_tests": "tests/agents/test_n2_fullscreen_contract.py tests/kria/test_brief_marathon_receipts.py tests/pipeline/test_phone_narrated_fullscreen.py tests/routes/test_phone_narrated_editor_commit.py tests/services/test_n2_fullscreen_grounding.py tests/tasks/test_n2_fullscreen_dispatch.py",
@@ -740,6 +749,21 @@
       "paths": [
         "src/apps/api/tests/fixtures/kri691_boat_n1_voiceover_turns.json",
         "src/apps/api/tests/kria/test_kri691_native_voiceover_transcript_labels.py"
+      ]
+    },
+    {
+      "id": "kri-1593-story-sequencer",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_story_order.py tests/evals/test_story_sequencer_evals.py tests/kria/test_clip_order_ledger.py tests/kria/test_clip_order_card.py",
+      "paths": [
+        "src/apps/api/app/agents/story_sequencer.py",
+        "src/apps/api/app/services/story_order.py",
+        "src/apps/api/prompts/story_sequencer.txt",
+        "src/apps/api/tests/fixtures/agent_evals/story_sequencer/",
+        "src/apps/api/tests/evals/story_sequencer/",
+        "src/apps/api/tests/evals/baselines/story_sequencer/",
+        "src/apps/api/tests/evals/test_story_sequencer_evals.py",
+        "src/apps/api/tests/kria/test_story_order.py"
       ]
     },
     {
@@ -3312,6 +3336,35 @@
         "src/apps/api/tests/kria/test_draft_projects_speaker_background.py",
         "tests/fixtures/speaker-background-parity/v3.json",
         "docs/reviews/speaker-background-color-failure-modes.md"
+      ]
+    },
+    {
+      "id": "kri-1558-speaker-sections",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_kri1558_section_layouts.py tests/kria/test_kri1558_saved_split_unchanged.py tests/kria/test_kri1558_client_features_stamp_postgres.py tests/kria/test_speaker_sections_contract.py tests/routes/test_speaker_sections_editor.py tests/tasks/test_speaker_sections_worker.py tests/pipeline/test_speaker_sections_text_placement.py tests/kria/test_editor_capability_parity.py tests/kria/test_brief_checks_speaker_background.py",
+      "xctests": [
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testLayoutWindowsRoundTripAndCompileToTheLayerTheExportDraws",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testAnOldShapeLaneEncodesAndCompilesWithoutAnyTraceOfSections",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testEveryOtherBackgroundEditKeepsTheLayoutWindows",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testAPresetInsideASectionChangesOnlyThatSection",
+        "KriaTests/SpeakerLayoutWindowsEditorTests/testRemovingTimeMovesTheSectionsAndKeepsThemValid",
+        "KriaUITests/SpeakerSectionsUITests/testACornerPickedInsideASectionChangesThatSectionAndSurvivesSave"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/talking_sections.py",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_sections.txt",
+        "src/apps/api/tests/kria/test_kri1558_section_layouts.py",
+        "src/apps/api/tests/kria/test_kri1558_saved_split_unchanged.py",
+        "src/apps/api/tests/kria/test_kri1558_client_features_stamp_postgres.py",
+        "src/apps/api/tests/fixtures/kri1558_saved_split_request_main.json",
+        "src/apps/api/tests/kria/test_speaker_sections_contract.py",
+        "src/apps/api/tests/routes/test_speaker_sections_editor.py",
+        "src/apps/api/tests/tasks/test_speaker_sections_worker.py",
+        "src/apps/api/tests/pipeline/test_speaker_sections_text_placement.py",
+        "tests/fixtures/speaker-background-parity/v6.json",
+        "docs/reviews/kri-1558-section-layout-failure-modes.md",
+        "src/apps/ios/Tests/KriaTests/SpeakerLayoutWindowsEditorTests.swift",
+        "src/apps/ios/Tests/KriaUITests/SpeakerSectionsUITests.swift"
       ]
     },
     {

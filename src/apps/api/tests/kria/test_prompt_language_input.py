@@ -66,6 +66,9 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/source_moment_location.py::SourceMomentLocationAgent": (
         "source timestamps and internal evidence; creator labels copy request words"
     ),
+    "agents/story_sequencer.py::StorySequencerAgent": (
+        "returns clip aliases in play order; its one-phrase reason is for the trace only"
+    ),
     "agents/style_observation.py::StyleObservationAgent": "semantic style vocabulary",
     "agents/template_recipe.py::TemplateRecipeAgent": "template analysis",
     "agents/template_text.py::TemplateTextAgent": "reads template text as written",

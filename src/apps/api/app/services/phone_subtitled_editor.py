@@ -184,6 +184,37 @@ def variant_carries_speaker_full_opening(assembly_plan: dict, variant: dict) -> 
     )
 
 
+def variant_carries_speaker_sections(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold ``layout_windows`` (KRI-1558)?
+
+    The same three places as `variant_carries_speaker_full_opening`. PURE. Decides whether a Save
+    or a poll from a build below the speaker-sections protocol must be refused: such a build would
+    drop the layouts silently (or cannot decode the recipe at all).
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def uses(value: object) -> bool:
+        return isinstance(value, dict) and bool(value.get("layout_windows"))
+
+    if uses(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and uses(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_layouts
+    )
+
+
 def variant_carries_background_focus(assembly_plan: dict, variant: dict) -> bool:
     """Does this variant already hold a background ``focus`` on the fill or any window
     (Qendresa item 18, F1)?
@@ -477,7 +508,9 @@ def speaker_background_document(background: SubtitledBackground) -> dict[str, An
     KRI-1162: ``windows`` (``[{media_id, kind, source_start_s, start_s, end_s}]``) and
     ``speaker_frame`` (``{width_fraction, x_fraction, y_fraction}``) are added ONLY while
     present, so every existing document is byte-identical. Qendresa item 16:
-    ``full_screen_windows`` (``[{start_s, end_s}]``, cut-timeline seconds) likewise.
+    ``full_screen_windows`` (``[{start_s, end_s}]``, cut-timeline seconds) likewise. KRI-1558:
+    ``layout_windows`` (``[{start_s, end_s, layout, speaker_frame?}]``, cut-timeline seconds)
+    likewise.
     """
     document: dict[str, Any]
     if background.uses_color:
@@ -515,7 +548,25 @@ def speaker_background_document(background: SubtitledBackground) -> dict[str, An
             {"start_s": span.start_s, "end_s": span.end_s}
             for span in background.full_screen_windows
         ]
+    if background.layout_windows:
+        # KRI-1558: how the speaker is drawn in each span of the cut timeline.
+        document["layout_windows"] = [
+            layout_window_document(span) for span in background.layout_windows
+        ]
     return document
+
+
+def layout_window_document(span: Any) -> dict[str, Any]:
+    """One lane layout window as the editor document's ``{start_s, end_s, layout,
+    speaker_frame?}`` (KRI-1558); ``speaker_frame`` only on a ``small`` window."""
+    row: dict[str, Any] = {"start_s": span.start_s, "end_s": span.end_s, "layout": span.layout}
+    if span.speaker_frame is not None:
+        row["speaker_frame"] = {
+            "width_fraction": span.speaker_frame.width_fraction,
+            "x_fraction": span.speaker_frame.x_fraction,
+            "y_fraction": span.speaker_frame.y_fraction,
+        }
+    return row
 
 
 def lanes_from_recipe(
@@ -695,6 +746,7 @@ def lanes_from_recipe(
                     else None
                 ),
                 full_screen_windows=_full_screen_from_layer(layer),
+                layout_windows=_layouts_from_layer(layer),
             )
         elif (visual := visual_for(layer.asset_id)) is not None:
             background = SubtitledBackground(
@@ -714,6 +766,7 @@ def lanes_from_recipe(
                     else None
                 ),
                 full_screen_windows=_full_screen_from_layer(layer),
+                layout_windows=_layouts_from_layer(layer),
             )
 
     return PhoneSubtitledLanes(
@@ -790,6 +843,26 @@ def _full_screen_from_layer(layer: Any) -> tuple[Any, ...]:
     return tuple(
         SubtitledFullScreenWindow(start_s=span.start, end_s=span.end)
         for span in layer.full_screen_windows or ()
+    )
+
+
+def _layouts_from_layer(layer: Any) -> tuple[Any, ...]:
+    """The recipe's layout spans as lane spans (already in compiled cut time, KRI-1558)."""
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        SubtitledLayoutWindow,
+        SubtitledSpeakerFrame,
+    )
+
+    return tuple(
+        SubtitledLayoutWindow(
+            start_s=span.start,
+            end_s=span.end,
+            layout=span.layout,
+            speaker_frame=(
+                SubtitledSpeakerFrame(**span.frame.model_dump()) if span.frame is not None else None
+            ),
+        )
+        for span in layer.layout_windows or ()
     )
 
 

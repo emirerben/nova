@@ -40,7 +40,8 @@ import XCTest
 
     /// A speaker clip of `seconds` over the blue fill. `windows` add timed pool photos behind the speaker and
     /// `speakerFrame` draws the speaker small; with neither it is the plain full-size, fill-only edit.
-    private func scene(seconds: Double = 3, windows: [TimedBackground] = [], speakerFrame: EditorSpeakerFrame? = nil) async throws -> Scene {
+    private func scene(seconds: Double = 3, windows: [TimedBackground] = [], speakerFrame: EditorSpeakerFrame? = nil,
+                       layoutWindows: [EditorLayoutWindow] = []) async throws -> Scene {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
@@ -71,7 +72,8 @@ import XCTest
                                                         kind: .image, startS: window.start, endS: window.end))
         }
         var document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: seconds)])
-        document.speakerBackground = EditorSpeakerBackground(mediaID: "1a2b", kind: .image, windows: blocks, speakerFrame: speakerFrame)
+        document.speakerBackground = EditorSpeakerBackground(mediaID: "1a2b", kind: .image, windows: blocks, speakerFrame: speakerFrame,
+                                                             layoutWindows: layoutWindows)
         let clipID = UUID()
         let clip = EditorClip(id: clipID, assetID: clipID, sourceClipIndex: 0, start: 0, end: seconds, trimIn: 0, trimOut: seconds,
                               sourceDuration: seconds, slotID: "slot")
@@ -168,6 +170,46 @@ import XCTest
         for frame in greenThreeFrames {
             let image = try await generator.image(at: CMTime(seconds: frame.time, preferredTimescale: 600)).image
             assertCornerSpeaker(image, at: frame.time, over: frame.background, in: "export")
+        }
+    }
+
+    /// KRI-1558: the planner's section arrangement as the editor holds it (own take 0-1 s, bottom-right corner 1-2 s, the
+    /// picture alone 2-3 s, no whole-video frame), compiled by the editor, drawn by its live preview and exported by its
+    /// Download route. Each section is checked by pixels, and the preview offers the speaker as a selectable object only
+    /// where the corner section draws one (failure modes 35 and 41).
+    func testTheEditorPreviewAndExportDrawEachSpeakerSectionAndOnlyACornerIsSelectable() async throws {
+        useSegmenter(CenterBoxSegmenter())
+        let sections = [EditorLayoutWindow(startS: 0, endS: 1, layout: .own),
+                        EditorLayoutWindow(startS: 1, endS: 2, layout: .small, speakerFrame: .preset("small_bottom_right")),
+                        EditorLayoutWindow(startS: 2, endS: 3, layout: .picture)]
+        let scene = try await scene(seconds: 3, layoutWindows: sections)
+        XCTAssertEqual(scene.recipe.speakerBackground?.layoutWindows?.map(\.layout), [.own, .small, .picture])
+        XCTAssertTrue(scene.recipe.effectiveCapabilities.contains(.speakerSections))
+
+        let live = try await LivePreviewComposition(recipe: scene.recipe, assetURLs: scene.urls)
+        XCTAssertNil(live.speakerSelectionBounds(time: 0.5), "own take: no cut-out to select")
+        let corner = try XCTUnwrap(live.speakerSelectionBounds(time: 1.5), "the corner section draws a framed speaker")
+        XCTAssertEqual(corner.centerX, 0.76, accuracy: 0.01)
+        XCTAssertEqual(corner.centerY, 0.80, accuracy: 0.01)
+        XCTAssertNil(live.speakerSelectionBounds(time: 2.5), "picture alone: the speaker is not drawn")
+
+        let movie = try await exportLikeDownload(live)
+        for name in ["preview", "export"] {
+            let generator: AVAssetImageGenerator
+            if name == "preview" {
+                generator = AVAssetImageGenerator(asset: live.preview.playerItem.asset)
+                generator.videoComposition = live.preview.playerItem.videoComposition
+            } else {
+                generator = AVAssetImageGenerator(asset: AVURLAsset(url: movie))
+            }
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            let own = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+            XCTAssertTrue(isNear(pixel(own, fx: 0.04, fy: 0.04), room), "\(name) 0.5 s: her own room, no background, got \(pixel(own, fx: 0.04, fy: 0.04))")
+            let small = try await generator.image(at: CMTime(seconds: 1.5, preferredTimescale: 600)).image
+            assertCornerSpeaker(small, at: 1.5, over: backdrop, in: name)
+            let picture = try await generator.image(at: CMTime(seconds: 2.5, preferredTimescale: 600)).image
+            XCTAssertTrue(isNear(pixel(picture, fx: 0.5, fy: 0.5), backdrop), "\(name) 2.5 s: the picture where she stood, got \(pixel(picture, fx: 0.5, fy: 0.5))")
+            XCTAssertTrue(isNear(pixel(picture, fx: 0.76, fy: 0.80), backdrop), "\(name) 2.5 s: no corner speaker either, got \(pixel(picture, fx: 0.76, fy: 0.80))")
         }
     }
 

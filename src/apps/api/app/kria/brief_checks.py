@@ -468,6 +468,9 @@ class SpeakerBackgroundFact:
     asked_media_count: int | None = None
     windows_open: bool = False
     frame: str | None = None
+    # KRI-1558: ``frame`` is the corner of the parts drawn small (a layout per section), not one
+    # corner for the whole video.
+    frame_in_parts: bool = False
     asked_frame: str | None = None
     # KRI-1173: the plain colour (``#RRGGBB``) the plan / finished video holds as its fill, and
     # why a colour is not available on this edit ("unavailable" | "app_too_old"; None = it is).
@@ -583,6 +586,10 @@ class PlanFacts:
     # KRIA_CLIP_ORDER_LEDGER_ENABLED: a creator actor changed the order (the approved snapshot
     # carries it), so the order a draft pins is theirs, not the order the clips were added in.
     order_confirmed: bool = False
+    # KRIA_STORY_SEQUENCER_ENABLED: the order that snapshot carries holds places the story
+    # sequencer chose (`clip_order_ledger.snapshot_story`), so what the creator did not say is
+    # the AI's story order, and the receipt says so instead of "the order you have them now".
+    order_story: bool = False
     # Leverkusen M2 run 3: (the creator's words, the clip's app number) of each named moment
     # inside one of several clips that no cut is shown to hold (codes in _CLIP_MOMENT_CODES).
     sequence_clip_moments: tuple[tuple[str, int | None], ...] = ()
@@ -830,6 +837,11 @@ class PlanFacts:
     # None = not known (no manifest, no approved media snapshot, or ids that match nothing).
     attached_media_count: int | None = None
     unused_media_ids: tuple[str, ...] | None = None
+    # KRI-1517: a finished phone Voiceover render whose accepted record says its narration is the
+    # creator's recorded voiceover file (that writer narrates nothing else), and the language the
+    # record heard in it (None = not known). False everywhere else: nothing is claimed.
+    voiceover_file_narration: bool = False
+    voiceover_file_language: str | None = None
     # KRI-1523: the creator's own videos in attach order (never a photo or a Visuals `asset-`)
     # and the ones the plan uses / the finished phone render was made from, for a typed "use
     # only the second clip" ask (`_check_chosen_videos`). None = not known: nothing is claimed.
@@ -1420,7 +1432,8 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
                 else None
             ),
             windows_open=True,
-            frame=_frame_preset_name(doc.get("speaker_frame")),
+            frame=_frame_preset_name(doc.get("speaker_frame")) or _small_part_preset(doc),
+            frame_in_parts=not doc.get("speaker_frame") and _small_part_preset(doc) is not None,
             color=str(doc["color"]) if doc.get("color") and not doc.get("media_id") else None,
             # The document is the creator's own edit: its windows decide, never the lane receipt.
             full_screen_opening_s=_opening_seconds(doc.get("full_screen_windows")),
@@ -1451,7 +1464,13 @@ def _rendered_speaker_background_fact(variant: Mapping[str, Any]) -> SpeakerBack
         # (8 windows over 5 photos); a receipt from before that keeps the window count.
         media_count=int(media) if isinstance(media, int) and not isinstance(media, bool) else None,
         windows_open=True,
-        frame=detail.get("speaker_frame") if isinstance(detail.get("speaker_frame"), str) else None,
+        frame=detail.get("speaker_frame")
+        if isinstance(detail.get("speaker_frame"), str)
+        else detail.get("speaker_frame_in_parts")
+        if isinstance(detail.get("speaker_frame_in_parts"), str)
+        else None,
+        frame_in_parts=not isinstance(detail.get("speaker_frame"), str)
+        and isinstance(detail.get("speaker_frame_in_parts"), str),
         color=detail.get("color") if isinstance(detail.get("color"), str) else None,
         full_screen_opening_s=opening_s,
         asked_full_opening=opening_s is not None or opening_code is not None,
@@ -1653,6 +1672,39 @@ def media_use_facts(attached: Sequence[str], used: Iterable[str]) -> dict[str, A
         "attached_media_count": len(own),
         "unused_media_ids": tuple(media_id for media_id in own if media_id not in taken),
     }
+
+
+def narrated_media_use_facts(
+    clip_paths: Iterable[object],
+    record: Mapping[str, Any],
+    *,
+    voiceover_path: object = None,
+    excluded: Collection[str] = (),
+    media_ids_by_clip: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """KRI-1517: `media_use_facts` for a finished phone Voiceover render.
+
+    ``clip_paths`` are the approved clips (the binding's media snapshot), ``record`` the render's
+    `narrated_alignment`: each step names the clip it plays by its file name (``clip``) and its
+    phone source id (``media_id``). The voiceover file is never one of the clips, and neither is a
+    clip the creator asked to leave out (``excluded``: file names, paths or phone source ids;
+    ``media_ids_by_clip`` maps a file name to its phone source id).
+    """
+    voice = str(voiceover_path or "").rsplit("/", 1)[-1]
+    ids = media_ids_by_clip or {}
+    skip = {str(key).rsplit("/", 1)[-1] for key in excluded if key}
+    attached = [
+        name
+        for name in (str(path).rsplit("/", 1)[-1] for path in clip_paths if path)
+        if name and name != voice and name not in skip and ids.get(name) not in skip
+    ]
+    used = [
+        str(row.get(key) or "")
+        for row in record.get("steps") or []
+        if isinstance(row, Mapping)
+        for key in ("clip", "media_id")
+    ]
+    return media_use_facts(attached, used)
 
 
 def _draft_media_use(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
@@ -4639,6 +4691,11 @@ _UNSTATED_ORDER_DEFAULTED = "where you didn't say, the clips play in the order y
 # ... and once the creator has moved the clips themselves (a drag, an edit, a message) what they
 # did not say stays in the order they have them now, not the order they were added in.
 _UNSTATED_ORDER_KEPT = "where you didn't say, the clips play in the order you have them now"
+# KRIA_STORY_SEQUENCER_ENABLED: ... and when the story sequencer chose those places, the receipt
+# says the choice was the AI's, never the creator's own or the upload order.
+_UNSTATED_ORDER_STORY = (
+    "where you didn't say, I put the clips in the order that tells the story best"
+)
 # KRIA_CLIP_ORDER_LEDGER_ENABLED: an order the creator described earlier was applied then, and a
 # later order of theirs (a drag, an edit, a message) replaced it; the newest statement stands.
 _ORDER_SET_SINCE = "you set the order yourself since, and the order you set is the one that plays"
@@ -4879,6 +4936,8 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         # default for what the creator left unsaid; the phone verifier refuses any other order).
         if facts.sequence_unlocated:
             return _receipt(req, "partial", _unlocated_moments_reason(facts))
+        if facts.order_story:
+            return _receipt(req, "met", _UNSTATED_ORDER_STORY)
         return _receipt(
             req, "met", _UNSTATED_ORDER_KEPT if facts.order_confirmed else _UNSTATED_ORDER_DEFAULTED
         )
@@ -5799,6 +5858,23 @@ _FRAME_WORDS = {
 }
 
 
+def _corner_words(fact: SpeakerBackgroundFact) -> tuple[str, str] | None:
+    """The corner the speaker sits in as (en, tr) words; "in some parts" when she is small only in
+    the parts a layout per section draws small (KRI-1558)."""
+    corner = _FRAME_WORDS.get(fact.frame or "")
+    if corner is None or not fact.frame_in_parts:
+        return corner
+    return (f"{corner[0]} in some parts", f"bazı bölümlerde {corner[1]}")
+
+
+def _small_part_preset(doc: Mapping[str, Any]) -> str | None:
+    """KRI-1558: the corner of the first part a layout per section draws small, else None."""
+    for window in doc.get("layout_windows") or ():
+        if isinstance(window, Mapping) and window.get("layout") == "small":
+            return _frame_preset_name(window.get("speaker_frame"))
+    return None
+
+
 def _sb(text: str, suffix: str = ".") -> str:
     """A static background reason in the chat's language (its Turkish twin is in `_REASON_TR`)."""
     return say(en=text, tr=_REASON_TR[text]) + suffix
@@ -5921,7 +5997,7 @@ def _check_background_color(
         # One photo repeated in every window does not take turns with anything.
         en += "; one photo or video sits over it"
         tr += "; üstünde tek bir fotoğraf ya da video duruyor"
-    corner = _FRAME_WORDS.get(fact.frame or "")
+    corner = _corner_words(fact)
     if corner:
         en += f"; you're {corner[0]}"
         tr += f"; sen {corner[1]}sın"
@@ -6136,7 +6212,7 @@ def _check_speaker_background_core(req: BriefRequirement, facts: PlanFacts) -> R
                 asked=asked,
             ),
         )
-    corner = _FRAME_WORDS.get(fact.frame or "")
+    corner = _corner_words(fact)
     if not _background_never_changes(fact):
         shown = _background_media_shown(fact)
         en = f"{shown} photos or videos take turns behind you"
@@ -12639,6 +12715,9 @@ _ANIMATION_UNAVAILABLE = (
 )
 _REASON_TR[_UNSTATED_ORDER_DEFAULTED] = "söylemediğin yerlerde klipler eklediğin sırayla oynar"
 _REASON_TR[_UNSTATED_ORDER_KEPT] = "söylemediğin yerlerde klipler şu an olduğu sırayla oynar"
+_REASON_TR[_UNSTATED_ORDER_STORY] = (
+    "söylemediğin yerlerde klipleri hikâyeyi en iyi anlatan sıraya ben koydum"
+)
 _REASON_TR[_ORDER_SET_SINCE] = "sırayı sonradan kendin belirledin, oynayan senin belirlediğin sıra"
 _REASON_TR[_ANIMATION_PLANNED] = (
     "yazı belirirken animasyonlu girecek; bitmiş videoda kontrol edeceğim"
@@ -17907,11 +17986,46 @@ def _check_all_clips_used(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     )
 
 
+def _check_own_voiceover(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1517: "Use my recorded Turkish voiceover." on a finished phone Voiceover render.
+
+    Met when the render's own record says its narration is the recorded file, the row types
+    nothing but the file's language, and the language the record heard in the file is that one.
+    A row that also asks about the bed, the clip sound or the pauses keeps its readers; a file
+    heard in another language, a record with no heard language (the worker clears it when caption
+    compilation fails) and a row whose language cannot be read keep today's answer (None).
+    """
+    typed = req.facts if isinstance(req.facts, Mapping) else {}
+    if (
+        not facts.voiceover_file_narration
+        or req.kind != "audio"
+        or not typed
+        or not set(typed) <= set(_VOICE_LANGUAGE_FACT_KEYS)
+        or _wants_bed_under_voice(req)
+        or _wants_bed_muted(req)
+        or _wants_cleanup(req)
+    ):
+        return None
+    asked = next(
+        (code for key in _VOICE_LANGUAGE_FACT_KEYS if (code := _language_code(typed.get(key)))),
+        None,
+    )
+    heard = _language_code(facts.voiceover_file_language)
+    if asked is None or heard is None or asked != heard:
+        return None
+    return _receipt(req, "met", None, verification="checked", stage="checked")
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if req.kind == "text_sequence" and compose_unmet_with_ops():
         return _check_text_sequence(req, facts)
-    # KRI-1515: the typed format and whole-set asks own their rows.
-    typed = _check_format_ask(req, facts) or _check_all_clips_used(req, facts)
+    # KRI-1515: the typed format and whole-set asks own their rows (KRI-1517: and a finished
+    # Voiceover's "use my recorded voiceover").
+    typed = (
+        _check_format_ask(req, facts)
+        or _check_all_clips_used(req, facts)
+        or _check_own_voiceover(req, facts)
+    )
     if typed is not None:
         return typed
     if _insert_clip_fact(req) and facts.edit_format in _TALKING_FORMATS:
@@ -19594,6 +19708,7 @@ __all__ = [
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",
+    "narrated_media_use_facts",
     "plan_facts_from_narrated_alignment",
     "plan_facts_from_phone_variant",
     "plan_facts_from_rendered_montage",

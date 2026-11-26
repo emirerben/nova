@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.0.0] - 2026-11-26
+
+### Added
+- feat: the Talking speaker's place and size change per section; chat edits one section (KRI-1558) (#2456) <!-- release-pr: 2456 -->
+
+## [0.90.33.0] - 2026-11-26
+
+### Changed
+- feat(kria): the AI picks a story order for clips nobody placed (KRI-1593) (#2502) <!-- release-pr: 2502 -->
+
+## [0.90.32.0] - 2026-11-26
+
+### Changed
+- fix(kria): judge 'use my voiceover' and 'fill the rest' on a finished phone Voiceover (KRI-1517) (#2515) <!-- release-pr: 2515 -->
+
 ## [0.90.31.0] - 2026-11-26
 
 ### Changed

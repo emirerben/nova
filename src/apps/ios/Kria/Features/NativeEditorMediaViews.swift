@@ -163,8 +163,10 @@ struct NativeVideoPreview: View {
     /// The framed Talk-to-camera speaker: the LOWEST object, so every caption, title and card over it wins a tap
     /// (SF1). Whole-edit; where no speaker clip is drawn its box is empty (`frame(for:)`, SF2).
     private func speakerObjects() -> [NativeEditorPreviewObject] {
-        return session.previewSpeakerItems.compactMap { item in
-            guard let frame = session.speakerFrame(for: item.selection) else { return nil }
+        return session.previewSpeakerItems.map { item in
+            // KRI-1558: the list is cached and the frame may differ per section, so an item whose speaker is not drawn small
+            // under the playhead right now still gets an object (its box is `speakerBox`, empty where nothing is drawn).
+            let frame = session.speakerFrame(for: item.selection) ?? EditorSpeakerFrame(widthFraction: 1, xFraction: 0.5, yFraction: 0.5)
             return NativeEditorPreviewObject(item: item, text: nil,
                 position: CGPoint(x: frame.xFraction, y: frame.yFraction), style: nil, title: String(localized: "You", comment: "Label for the speaker (the creator) in the editor preview"),
                 render: .speaker, scale: CGFloat(frame.widthFraction))
@@ -454,7 +456,7 @@ struct NativeVideoPreview: View {
         guard session.selection == .speaker, session.document.splitScreenSections.isEmpty,
               let prepared = session.mediaInteractionFrame, prepared.selection == .speaker,
               abs(prepared.time - clock.currentTime) < 0.01,
-              let rect = session.speakerFrame?.layerFrame.canvasRect,
+              let rect = session.speakerFrame(for: .speaker, at: clock.currentTime)?.layerFrame.canvasRect,
               abs(prepared.rect.minX - rect.minX) < 0.0005, abs(prepared.rect.minY - rect.minY) < 0.0005,
               abs(prepared.rect.width - rect.width) < 0.0005 else { return nil }
         return prepared
@@ -786,6 +788,10 @@ struct NativeVideoPreview: View {
             beginDangerGuide(for: object, in: size)
             directMoveObjectID = object.id
             directMoveBaseline = position
+            // KRI-1558: the speaker moves from where it is drawn now (its section's frame), not the cached object's.
+            if object.item.kind == .speaker, let frame = session.speakerFrame(for: object.item.selection, at: clock.currentTime) {
+                directMoveBaseline = CGPoint(x: frame.xFraction, y: frame.yFraction)
+            }
             session.select(object.item, seekToStart: false)
             if object.item.kind == .speaker { beginSpeakerGesture(object.item.selection) }
             else if object.item.kind == .mediaOverlay || object.item.kind == .visualBlock { beginMediaStill(object) }
@@ -898,6 +904,10 @@ struct NativeVideoPreview: View {
                     beginDangerGuide(for: object, in: size)
                     directResizeObjectID = object.id
                     directResizeBaseline = object.scale
+                    // KRI-1558: the speaker pinches from the size it is drawn at now (its section's frame).
+                    if object.item.kind == .speaker, let frame = session.speakerFrame(for: object.item.selection, at: clock.currentTime) {
+                        directResizeBaseline = CGFloat(frame.widthFraction)
+                    }
                     if object.item.kind == .text {
                         directResizeTextBaseline = session.document.textElements.first { $0.id == object.item.id }
                     }
@@ -1372,7 +1382,7 @@ struct NativeVideoPreview: View {
             // A card's held still lets go once the rebuilt preview has cut a fresh one (it draws the card's new place).
             if still != nil, speakerStillHeld, liveMediaBox != nil, !session.isDirectManipulating { releaseSpeakerStill() }
         }
-        .onChange(of: session.speakerFrame) { _, _ in if !session.isDirectManipulating { releaseSpeakerStill() } }
+        .onChange(of: session.document.speakerBackground) { _, _ in if !session.isDirectManipulating { releaseSpeakerStill() } }
         .onChange(of: session.isPlaying) { _, playing in if playing { releaseSpeakerStill() } }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
             if !session.isDirectManipulating {

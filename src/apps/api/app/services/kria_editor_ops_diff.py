@@ -675,7 +675,74 @@ def _background_entries(job: Any, variant: dict[str, Any], state: Any) -> list[D
         out.append(entry("focus", None, None))
     if (before or {}).get("full_screen_windows") != (after or {}).get("full_screen_windows"):
         out.append(entry("full_screen", None, None))
+    old_layouts = list((before or {}).get("layout_windows") or ())
+    new_layouts = list((after or {}).get("layout_windows") or ())
+    framed = any(e.field == "speaker_frame" for e in out)
+    if old_layouts != new_layouts and not (framed and not new_layouts):
+        # KRI-1558: where she is in each part (a corner, full size, the picture alone). A
+        # one-part change is named by its part; dropping every part layout for one corner is
+        # already said by the speaker_frame entry.
+        out.extend(_layout_entries(variant, before, after))
     return out
+
+
+def _drawn(document: Mapping[str, Any] | None, t: float) -> tuple[str, str | None]:
+    """(layout, corner) the background draws the speaker in at ``t``, ignoring full-screen
+    windows (their own entry). No background: her own take. No part layout there: the layer's
+    corner, else the cut-out at full size over the background."""
+    from app.pipeline.talking_sections import drawn_layout  # noqa: PLC0415
+    from app.services.kria_editor_ops import background_frame_preset  # noqa: PLC0415
+
+    if document is None:
+        return ("own", None)
+    layout, frame = drawn_layout(document.get("layout_windows") or (), t)
+    if not layout:
+        frame = document.get("speaker_frame")
+        layout = "small" if frame else "full"
+    return (layout, background_frame_preset(frame) if layout == "small" else None)
+
+
+def _layout_entries(
+    variant: dict[str, Any],
+    before: Mapping[str, Any] | None,
+    after: Mapping[str, Any] | None,
+) -> list[DiffEntry]:
+    """One entry per new layout, its targets the parts (or, with no section list, the stretches
+    of the video) that now draw her that way and did not before."""
+    from app.services.kria_editor_ops import (  # noqa: PLC0415
+        background_duration_s,
+        speaker_sections_for,
+    )
+
+    sections = speaker_sections_for(variant)
+    spans: list[tuple[str, float, float, int | None]] = []
+    if sections:
+        spans = [(f"part-{s.index}", s.start_s, s.end_s, s.index) for s in sections]
+    else:
+        edges = {0.0, background_duration_s(variant)}
+        for row in [
+            *((before or {}).get("layout_windows") or ()),
+            *(after or {})["layout_windows"],
+        ]:
+            edges |= {float(row["start_s"]), float(row["end_s"])}
+        cuts = sorted(edge for edge in edges if edge >= 0)
+        spans = [(f"t-{a:g}", a, b, None) for a, b in zip(cuts, cuts[1:], strict=False) if b > a]
+    groups: dict[tuple[str, str | None], list[DiffTarget]] = {}
+    for key, start, end, number in spans:
+        middle = (start + end) / 2
+        old, new = _drawn(before, middle), _drawn(after, middle)
+        if old == new:
+            continue
+        rows = groups.setdefault(new, [])
+        if number is None and rows and abs(rows[-1].extra[1] - start) < 1e-6:
+            last = rows[-1]
+            rows[-1] = last._replace(extra=(last.extra[0], end))
+            continue
+        extra = (number, len(sections)) if number is not None else (start, end)
+        rows.append(DiffTarget(key, "section", None, key, old, new, extra))
+    return [
+        DiffEntry("speaker_background", "layout", tuple(targets)) for targets in groups.values()
+    ]
 
 
 def _color_moment_entries(state: Any) -> list[DiffEntry]:
@@ -1315,7 +1382,83 @@ def _describe_background(entry: DiffEntry) -> str:
             en="Changed when you're shown full screen",
             tr="Tam ekran göründüğün anlar değişti",
         )
+    if name == "layout":
+        return _describe_layout(entry)
     return say(en="Changed the background behind you", tr="Arkandaki arka plan değişti")
+
+
+def _layout_where(targets: tuple[DiffTarget, ...]) -> str:
+    """The parts (or stretches) a part-layout entry covers, in creator words."""
+    first = targets[0]
+    if first.id.startswith("part-"):
+        numbers = [int(t.extra[0]) for t in targets]
+        if len(numbers) == int(first.extra[1]):
+            return say(en="for the whole video", tr="videonun tamamında")
+        if len(numbers) == 1:
+            return say(en="in part {number}", tr="{number}. bölümde", number=numbers[0])
+        return say(
+            en="in parts {numbers}",
+            tr="{numbers} numaralı bölümlerde",
+            numbers=", ".join(str(n) for n in numbers),
+        )
+    return "; ".join(
+        say(
+            en="from {start}s to {end}s",
+            tr="{start}. saniyeden {end}. saniyeye kadar",
+            start=f"{round(float(t.extra[0]), 1):g}",
+            end=f"{round(float(t.extra[1]), 1):g}",
+        )
+        for t in targets
+    )
+
+
+def _describe_layout(entry: DiffEntry) -> str:
+    """KRI-1558: "Made you small in the bottom-left corner in part 1"."""
+    layout, corner = entry.targets[0].after
+    where = _layout_where(entry.targets)
+    if layout == "own":
+        return say(en="Put you full screen {where}", tr="{where} tam ekrandasın", where=where)
+    if layout == "full":
+        return say(
+            en="Put you full size over the background {where}",
+            tr="{where} arka planın önünde tam boy gösteriliyorsun",
+            where=where,
+        )
+    if layout == "picture":
+        return say(
+            en="Showed the picture alone {where}",
+            tr="{where} sadece görsel gösteriliyor",
+            where=where,
+        )
+    if corner == "small_bottom_right":
+        return say(
+            en="Made you small in the bottom-right corner {where}",
+            tr="{where} sağ alt köşede küçük gösteriliyorsun",
+            where=where,
+        )
+    if corner == "small_bottom_left":
+        return say(
+            en="Made you small in the bottom-left corner {where}",
+            tr="{where} sol alt köşede küçük gösteriliyorsun",
+            where=where,
+        )
+    if corner == "small_top_right":
+        return say(
+            en="Made you small in the top-right corner {where}",
+            tr="{where} sağ üst köşede küçük gösteriliyorsun",
+            where=where,
+        )
+    if corner == "small_top_left":
+        return say(
+            en="Made you small in the top-left corner {where}",
+            tr="{where} sol üst köşede küçük gösteriliyorsun",
+            where=where,
+        )
+    return say(
+        en="Made you small on screen {where}",
+        tr="{where} ekranda küçük gösteriliyorsun",
+        where=where,
+    )
 
 
 def _describe_dim(entry: DiffEntry, who: str) -> str:
