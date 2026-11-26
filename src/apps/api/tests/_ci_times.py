@@ -2,8 +2,9 @@
 
 Each pytest process appends JSON lines to `<dir>/<worker>.jsonl`:
 
-- one `startup` row: seconds from plugin load to the end of collection, and how
-  many tests that process collected. More cores do not shrink this part;
+- one `startup` row: seconds from plugin load to the end of collection, how
+  many tests that process collected, and the name of the database it is on.
+  More cores do not shrink this part;
 - one `test` row per test: outcome, wall seconds of setup, call and teardown,
   CPU seconds of this process plus the children it waited for (ffmpeg), and
   the timeout that applies to it (its own marker, else the run's default).
@@ -19,13 +20,28 @@ from __future__ import annotations
 import json
 import os
 import resource
+import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
 ENV = "NOVA_CI_TIMES_DIR"
 _LOADED = time.perf_counter()
+
+
+def database_name(modules: Mapping[str, object], environ: Mapping[str, str]) -> str:
+    """The name of the database this process's app is on.
+
+    The app reads its URL once, when `app.config` is imported, so a loaded app
+    is asked rather than the environment: if something imported it before the
+    worker was moved to its own database, the environment says one thing and
+    every query goes somewhere else. Name only; the URL carries a password.
+    """
+    settings = getattr(modules.get("app.config"), "settings", None)
+    url = getattr(settings, "database_url", None) or environ.get("DATABASE_URL", "")
+    return str(url).rsplit("/", 1)[-1].split("?", 1)[0]
 
 
 def _cpu_seconds() -> float:
@@ -88,6 +104,9 @@ class Recorder:
             {
                 "kind": "startup",
                 "worker": self.worker,
+                # With one database per xdist worker, scripts/ci/api-tests.py fails the
+                # shard unless this is the worker's own.
+                "database": database_name(sys.modules, os.environ),
                 "seconds": round(time.perf_counter() - _LOADED, 3),
                 "items": len(session.items),
             }
