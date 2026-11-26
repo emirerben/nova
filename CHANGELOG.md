@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.28.0] - 2026-11-26
+
+### Fixed
+- fix(kria): "use only the good take" keeps only that clip on a Talking edit (KRI-1523) (#2508) <!-- release-pr: 2508 -->
+
 ## [0.90.27.0] - 2026-11-26
 
 ### Changed
