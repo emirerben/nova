@@ -2485,6 +2485,22 @@
         }
       }
     },
+    "%lld of %lld facts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld von %2$lld Fakten"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$lld bilgiden %1$lld tanesi"
+          }
+        }
+      }
+    },
     "%lld of %lld ready" : {
       "localizations" : {
         "de" : {
@@ -3685,6 +3701,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "0°"
+          }
+        }
+      }
+    },
+    "1 fact" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 Fakt"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "1 bilgi"
           }
         }
       }
@@ -11735,6 +11767,22 @@
         }
       }
     },
+    "Continue without facts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ohne Fakten fortfahren"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgiler olmadan devam et"
+          }
+        }
+      }
+    },
     "Conversation history" : {
       "localizations" : {
         "de" : {
@@ -12660,6 +12708,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Henüz kaydedilemedi"
+          }
+        }
+      }
+    },
+    "Couldn’t save your choice. Check your connection." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deine Auswahl konnte nicht gespeichert werden. Prüfe deine Verbindung."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seçimin kaydedilemedi. Bağlantını kontrol et."
           }
         }
       }
@@ -24990,6 +25054,22 @@
         }
       }
     },
+    "On screen %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Im Video %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ekranda %@"
+          }
+        }
+      }
+    },
     "On-device creation is not available yet. Your original stays on this device." : {
       "localizations" : {
         "de" : {
@@ -25560,6 +25640,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kayıtlı düzenlemeyi aç"
+          }
+        }
+      }
+    },
+    "Open source: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quelle öffnen: %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kaynağı aç: %@"
           }
         }
       }
@@ -27328,6 +27424,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "En az beş saniye seç."
+          }
+        }
+      }
+    },
+    "Pick facts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fakten auswählen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bilgileri seç"
           }
         }
       }
@@ -33384,6 +33496,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Değişikliklerin kaydediliyor…"
+          }
+        }
+      }
+    },
+    "Saving your choice" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auswahl wird gespeichert"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seçimin kaydediliyor"
           }
         }
       }
@@ -39524,6 +39652,22 @@
         }
       }
     },
+    "The draft changed while the sources were checked. These are the current facts. Pick again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Entwurf hat sich geändert, während die Quellen geprüft wurden. Das sind die aktuellen Fakten. Wähle erneut."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kaynaklar kontrol edilirken taslak değişti. Güncel bilgiler bunlar. Yeniden seç."
+          }
+        }
+      }
+    },
     "The editable preview couldn’t play on this iPhone, so the finished video is shown. Retry to rebuild it." : {
       "localizations" : {
         "de" : {
@@ -45295,6 +45439,22 @@
         }
       }
     },
+    "Use %lld of %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld von %2$lld verwenden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%2$lld bilgiden %1$lld tanesini kullan"
+          }
+        }
+      }
+    },
     "Use %lld overlays" : {
       "localizations" : {
         "de" : {
@@ -45355,6 +45515,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Güvenli alana sığması için daha küçük bir altyazı boyutu veya yaygın bir hizalama seç."
+          }
+        }
+      }
+    },
+    "Use all %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle %lld verwenden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld bilginin hepsini kullan"
           }
         }
       }
@@ -45855,6 +46031,22 @@
         }
       }
     },
+    "Use these facts?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese Fakten verwenden?"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu bilgiler kullanılsın mı?"
+          }
+        }
+      }
+    },
     "Use this arrangement" : {
       "localizations" : {
         "de" : {
@@ -45899,6 +46091,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu klibi kullan"
+          }
+        }
+      }
+    },
+    "Use this fact" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diesen Fakt verwenden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu bilgiyi kullan"
           }
         }
       }
@@ -47508,6 +47716,22 @@
         }
       }
     },
+    "Without these facts, the text won’t include sourced details." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ohne diese Fakten enthält der Text keine belegten Angaben."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu bilgiler olmadan metinde kaynaklı ayrıntılar yer almaz."
+          }
+        }
+      }
+    },
     "Word" : {
       "comment" : "Caption style: one word at a time",
       "extractionState" : "manual",
@@ -48097,6 +48321,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ ile %@ arasında çektin · %lld saniye"
+          }
+        }
+      }
+    },
+    "You kept" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Du hast behalten"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tuttuğun"
           }
         }
       }
@@ -50474,6 +50714,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "yaklaşık %@ sn daha kısa"
+          }
+        }
+      }
+    },
+    "all %lld facts" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "alle %lld Fakten"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld bilginin hepsi"
           }
         }
       }

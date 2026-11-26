@@ -23,10 +23,16 @@ struct ResearchPreview: Equatable {
         let startS: Double?
         let endS: Double?
         let sources: [Source]
+        /// CA-5: names this fact when the server offers the pick (16 lowercase hex); nil from an older server.
+        let factID: String?
     }
 
     let explanations: [Explanation]
     let retrievedAt: String
+    /// CA-5: names the card showing these facts (64 lowercase hex); nil from an older server or for text-layer research.
+    let selectionID: String?
+    /// Rows the server sent that this card does not show (no text or no public source).
+    let droppedRows: Int
 
     static func parse(_ value: JSONValue?) -> ResearchPreview? {
         guard case .object(let payload) = value, let rows = payload["explanations"]?.arrayValue else { return nil }
@@ -37,10 +43,18 @@ struct ResearchPreview: Equatable {
             var seen = Set<String>()
             let sources = (item["sources"]?.arrayValue ?? []).compactMap(source).filter { seen.insert($0.id).inserted }
             guard !sources.isEmpty else { return nil }
-            return Explanation(id: index, text: text, startS: number(item["start_s"]), endS: number(item["end_s"]), sources: sources)
+            return Explanation(id: index, text: text, startS: number(item["start_s"]), endS: number(item["end_s"]), sources: sources,
+                               factID: hex(item["fact_id"], length: 16))
         }
         guard !explanations.isEmpty else { return nil }
-        return ResearchPreview(explanations: explanations, retrievedAt: payload["retrieved_at"]?.stringValue ?? "")
+        return ResearchPreview(explanations: explanations, retrievedAt: payload["retrieved_at"]?.stringValue ?? "",
+                               selectionID: hex(payload["selection_id"], length: 64), droppedRows: rows.count - explanations.count)
+    }
+
+    private static func hex(_ value: JSONValue?, length: Int) -> String? {
+        guard let text = value?.stringValue, text.utf8.count == length,
+              text.utf8.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66) }) else { return nil }
+        return text
     }
 
     private static func source(_ value: JSONValue) -> Source? {

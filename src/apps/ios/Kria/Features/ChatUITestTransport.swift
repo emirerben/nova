@@ -288,6 +288,7 @@ final class CreationChatFixture: @unchecked Sendable {
     private var clipOrderConfirmed = false
     private var clipOrderTurns = 0
     private var clipOrderSeen: [String: String] = [:]
+    private var researchSelection = ResearchSelectionUITestFixture()
     private var clipOrderLostOnce = false
     private var clipOrderLostKey: String?
     private var clipOrderLostDigest: String?
@@ -557,6 +558,8 @@ final class CreationChatFixture: @unchecked Sendable {
                 capabilities["choice_questions"] = true
                 capabilities["moment_order_questions"] = true
             }
+            // KRIA_CHAT_RESEARCH_SELECTION (CA-6): the first turn is answered with a research draft that carries ids.
+            if ResearchSelectionUITestFixture.mode != nil { capabilities["research_selections"] = true }
             // KRIA_CHAT_CLIP_ORDER (KRI-1591): the first turn is answered with a draft whose message carries the clip-order
             // card. "caps-off" = the server has the cards switched off (the strip is read-only).
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_ORDER"] { capabilities["clip_order_cards"] = mode != "caps-off" }
@@ -1106,6 +1109,36 @@ final class CreationChatFixture: @unchecked Sendable {
             }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
+            // CA-6: the pick of sourced facts, answered like `submit_research_selection`: stale cards are a 409, a repeat or
+            // an all-kept answer writes nothing, a narrowing writes the user event, the cancelled approval, the narrowed
+            // draft and its new approval in that order.
+            if parts.last == "turns", let selection = body["research_selection"] as? [String: Any], ResearchSelectionUITestFixture.mode != nil {
+                func problem(_ status: Int, _ code: String, _ message: String) -> (Int, Data) {
+                    response(["problem": ["code": code, "message": message, "phase": "accept", "retryable": false, "recovery": "refresh_replan"]], status: status)
+                }
+                switch researchSelection.accept(selection, clientEventID: turnID, body: body) {
+                case .lost:
+                    return nil
+                case .problem(let status, let code, let message):
+                    return problem(status, code, message)
+                case .replayed(let current):
+                    return response(["turn_id": current, "thread_revision": revision, "status": "awaiting_approval", "replayed": true])
+                case .narrowed(let written):
+                    if written.refused == nil {
+                        append("user_message", role: "user", payload: ["research_selection": written.receipt, "inert": true, "turn_id": written.turnID,
+                                                                        "turn_status": "awaiting_approval"], clientEventID: turnID)
+                    }
+                    append("approval_cancelled", role: "system", payload: ["approval_id": written.cancelledApprovalID, "turn_id": written.cancelledTurnID])
+                    var draft: [String: Any] = ["turn_id": written.turnID, "draft_id": id]
+                    if written.refused == nil { draft["research_selection"] = written.receipt }
+                    if let preview = written.preview { draft["research_preview"] = preview }
+                    append("draft_applied", text: written.reply, payload: draft)
+                    append("approval_requested", role: "system", payload: ["approval_id": written.approvalID, "turn_id": written.turnID, "draft_id": id, "draft_revision": 2])
+                    thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+                    if let refused = written.refused { return problem(409, refused.code, refused.message) }
+                    return response(["turn_id": written.turnID, "thread_revision": revision, "status": "awaiting_approval"])
+                }
+            }
             // KRI-1591: a clip-order drag, answered like the server: no model call, no chat message, never a 409/422 for
             // state (a stale or odd list is rebased), a reused client event id with another body is the only 409.
             if parts.last == "turns", let ops = body["clip_order_ops"] as? [String: Any],
@@ -1564,6 +1597,10 @@ final class CreationChatFixture: @unchecked Sendable {
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_RESEARCH_PREVIEW"] == "1" {
                     draftPayload["research_preview"] = Self.researchPreviewFixture
                 }
+                if ResearchSelectionUITestFixture.mode != nil {
+                    researchSelection.begin(turnID: turnID, approvalID: approvalID)
+                    draftPayload["research_preview"] = ResearchSelectionUITestFixture.preview(ResearchSelectionUITestFixture.facts.map(\.id))
+                }
                 if let language = ProcessInfo.processInfo.environment["KRIA_CHAT_REPLY_LANGUAGE"] { state["reply_language"] = language }
                 if Self.longApprovalFixture {
                     // The server's draft message is the card's text without its "Render this draft:" prefix.
@@ -1644,7 +1681,7 @@ final class CreationChatFixture: @unchecked Sendable {
             } else {
                 let approvalPayload = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 let turnID = approvalPayload?["turn_id"] as? String ?? id
-                return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": approvalPayload?["draft_revision"] as? Int ?? 1, "status": "pending", "consequence_summary": Self.longApprovalFixture ? Self.longApprovalCard : "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
+                return response(["approval_id": approvalPayload?["approval_id"] as? String ?? approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": approvalPayload?["draft_revision"] as? Int ?? 1, "status": "pending", "consequence_summary": Self.longApprovalFixture ? Self.longApprovalCard : "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
             }
         } else if parts.last == "delta", let count = approvalDispatches[id] {
             // Ticks on the delta poll: like the server, nothing here bumps the revision until `render_queued`, so
