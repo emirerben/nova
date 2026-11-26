@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.31.0] - 2026-11-26
+
+### Changed
+- fix(kria): no heads-up about Kria's own hook, story or archetype nobody asked for (KRI-1474) (#2512) <!-- release-pr: 2512 -->
+
 ## [0.90.30.0] - 2026-11-26
 
 ### Changed
