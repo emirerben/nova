@@ -937,7 +937,7 @@ saves the narrowed draft and asks for a new approval inside the request: no plan
 model call.
 
 - **Preview.** With `KRIA_RESEARCH_SELECTION_ENABLED` on and a drafting build at
-  `research_selection_min_client_protocol` (58), `research_preview` carries `selection_id` and a
+  `research_selection_min_client_protocol` (59), `research_preview` carries `selection_id` and a
   `fact_id` per explanation. A heading and its detail are one fact. The `fact_id` is a hash of
   the fact's own rows, so a kept fact keeps its id in the narrowed draft. The `selection_id`
   names the card: `research_preview.selection_id` hashes the pinned `basis_digest` with the shown
