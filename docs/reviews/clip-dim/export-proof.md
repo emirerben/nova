@@ -8,7 +8,9 @@ Native output on the iPhone simulator (iPhone 17 Pro, iOS 27.2). No physical iPh
 draft through the device compiler, exports it with `KriaMediaEngine`'s production exporter and measures the MP4 at
 0.75 s against an undimmed export of the same edit. A mid-grey clip sits under every layer a creator puts over it:
 a title, pinned corner text, an informative heading (`text_stack_v1`, heading level 2), a song lyric line
-(`source_params.origin = "song"`), a caption cue, a pasted sticker (a media overlay) and a drawn stroke.
+(`source_params.origin = "song"`), a caption cue, a pasted sticker (a media overlay) and a drawn stroke. It compiles
+the way a device-rendered edit does (`deviceCaptions: true`), so the sticker is drawn below the text, in the same
+pass that dims the clips.
 
 ```bash
 cd src/apps/ios && TEST_RUNNER_KRIA_CLIP_DIM_RENDER_DIR=/tmp/clip-dim-render xcodebuild -project Kria.xcodeproj \
@@ -22,20 +24,24 @@ them, so they are left out. The picture is a text-free patch right of the pinned
 | Layer | Pixels | Luma, no dim | Luma at 50% | Ratio at 50% | Luma at 100% | Ratio at 100% |
 |---|---|---|---|---|---|---|
 | Picture | 54,621 | 126.86 | 63.86 | 0.503 | 0.00 | 0.000 |
-| Title | 38,952 | 254.90 | 254.91 | 1.000 | 254.91 | 1.000 |
-| Pinned corner text | 5,413 | 218.63 | 218.61 | 1.000 | 218.62 | 1.000 |
-| Informative heading | 7,188 | 230.55 | 230.56 | 1.000 | 230.55 | 1.000 |
-| Song lyric line | 5,598 | 195.55 | 195.51 | 1.000 | 195.50 | 1.000 |
-| Caption | 4,622 | 254.73 | 254.71 | 1.000 | 254.71 | 1.000 |
+| Title | 38,959 | 254.91 | 254.91 | 1.000 | 254.91 | 1.000 |
+| Pinned corner text | 5,413 | 218.64 | 218.61 | 1.000 | 218.62 | 1.000 |
+| Informative heading | 7,188 | 230.58 | 230.56 | 1.000 | 230.55 | 1.000 |
+| Song lyric line | 5,596 | 195.57 | 195.54 | 1.000 | 195.55 | 1.000 |
+| Caption | 4,620 | 254.69 | 254.68 | 1.000 | 254.65 | 1.000 |
 | Sticker | 71,824 | 72.55 | 72.55 | 1.000 | 72.55 | 1.000 |
-| Drawing | 15,325 | 182.00 | 181.72 | 0.998 | 181.54 | 0.997 |
+| Drawing | 15,322 | 182.05 | 181.72 | 0.998 | 181.49 | 0.997 |
+
+One run on this layout. An earlier layout, with the sticker drawn above the text, gave the same ratios to three
+decimals in two identical runs.
 
 The test requires at least 0.98 for every layer. The drawing's small drop is most likely its edge (inferred, not
 isolated): video chroma subsampling carries a little of the darker picture into the stroke pixels next to its edge.
 
 **Negative control.** With a temporary line in `RecipeVideoCompositor.render` that dims the whole final frame (text,
 stickers and drawings included) whenever a clip carries a dim, every layer assertion fails: each layer reads 0.50 at
-50% and 0.00 at 100%, and the picture reads 0.244. So the test does see a dimmed layer. Restored, it passes.
+50% and 0.00 at 100%, and the picture reads 0.244. So the test does see a dimmed layer. Restored, it passes. (Run on
+the earlier layout; the control dims the finished frame, so the layout does not change what it shows.)
 
 ## Text behind a dimmed person
 
@@ -49,7 +55,7 @@ fix the matte read the dimmed frame and the title's left half (2,795 ink pixels)
 
 `NativeDimUITests.testDimHalfApplyToAllRemoveOneSaveAndReopen` reads the live preview from a screenshot: the mean luma
 of a text-free patch (the middle half across, 60% to 85% down) went from 114.63 to 59.15 after dimming clip 1 to 50%,
-a ratio of 0.516. The test requires 0.45 to 0.58. It then applies 50% to all clips, removes the dim from clip 2, saves,
+a ratio of 0.516 (two runs, identical). The test requires 0.45 to 0.58. It then applies 50% to all clips, removes the dim from clip 2, saves,
 relaunches and finds clip 1 at 50% and clip 2 at 0%.
 
 **Negative control.** With the two tone-curve conversions removed from `RecipeVideoCompositor.dimmed` (a multiply in
@@ -59,7 +65,7 @@ the compositor's linear light), the same patch reads 0.731 and the test fails.
 here" is an editor text layer and stays white; "Alberobello" is burned into the fixture video (`montage.mp4`), so it is
 part of the picture and dims with it.
 
-## Engine negative control
+## Engine negative control (first round)
 
 The dim must multiply ENCODED values. With the two tone-curve conversions removed from
 `RecipeVideoCompositor.dimmed`, `swift test --filter ClipDimCompositionTests` fails: at 50% the clip pixel
