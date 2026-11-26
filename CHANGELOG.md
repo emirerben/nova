@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.22.0] - 2026-11-26
+
+### Changed
+- test(intro-styles): fail on a title that touches a caption, over fixed job ids (KRI-1638) (#2530) <!-- release-pr: 2530 -->
+
 ## [0.90.21.0] - 2026-11-25
 
 ### Changed
