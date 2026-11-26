@@ -25,19 +25,36 @@ S11 A build below the minimum protocol sends the key and it is applied, instead 
 S12 Approval after a selection is refused: the readiness gate (ON in prod) or the fingerprint
     rejects the new binding.
 S13 Approve and select race: both win, or the loser writes a draft.
+S14 A selection from an older card (same research, a draft since narrowed past it) narrows the
+    newer draft silently instead of 409 stale: the card shows [K, D, T], the creator keeps
+    [K, D], and a late [K, T] from the first card leaves only K.
+S15 Per-card ids break idempotency: the identical selection (same card, same kept ids) posted
+    again, with a new event id or with the same one after the new approval was decided,
+    writes a revision or is refused instead of replaying.
+S16 The narrowed draft's card carries the old card's id, so the client's next selection on it
+    cannot be told from a late one.
+S17 Two posts with one client_event_id in flight: the second waits for the first's locks, then
+    is refused as stale instead of replaying the first.
+S18 The draft row changes between the unlocked read and the lock, and the selection saves a
+    revision built from the document it read before.
+S19 A follow-up is queued behind the approval, and the selection mints a new approval anyway.
+S20 A drafting build below the minimum protocol is shown fact ids it cannot send back.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
+from app.agents._runtime import ModelInvocation
 from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
+from app.kria import research_selection
 from app.kria.api_schemas import ApprovalDecisionBody, ResearchSelectionIn, SubmitTurnBody
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import KriaDraftDocument, undo_draft
@@ -49,6 +66,8 @@ from app.models import (
     CreatorAgentTurn,
     CreatorEditDraft,
 )
+from app.services import creation_text_composition as text_lane
+from app.services import researched_text
 from app.services.client_protocol import RESEARCH_SELECTION_PROTOCOL, set_client_protocol
 from app.tasks.kria_runtime import execute_kria_approval
 from tests.evals.request_following.test_kri881_research_before_approval import (
@@ -56,6 +75,7 @@ from tests.evals.request_following.test_kri881_research_before_approval import (
     _dispose_async_engine,  # noqa: F401 - autouse: the async engine per test
     _flags,  # noqa: F401 - autouse: prod flags + an in-memory research cache
     _record,
+    _Recorded,
     _render_worker,
     _rendered_texts,
     _turn,
@@ -66,6 +86,47 @@ from tests.kria.test_clip_order_card_turns_postgres import _capture_dispatch
 
 KEPT_TEXT = "Troy: Settled from the Bronze Age to Roman times"
 DROPPED_TEXT = "Troy Museum: Finds from Troy and the Troad"
+THIRD_TEXT = "The Troad: The road crosses the plain of the Troad"
+STALE = "research_selection_stale"
+THREE_SOURCES = [
+    *INSTITUTIONAL,
+    (
+        "The Troad is the historical region around Troy, crossed by the road to the site.",
+        "https://whc.unesco.org/en/list/849/gallery/",
+        "Archaeological Site of Troy gallery",
+    ),
+]
+
+
+class _ThreeFacts(_Recorded):
+    """The KRI-881 recording with a third sourced fact on the countryside clip."""
+
+    def invoke(self, *, model: str, prompt: str, **kw: object) -> ModelInvocation:
+        result = super().invoke(model=model, prompt=prompt, **kw)
+        if not prompt.startswith("Write SHORT researched"):
+            return result
+        windows = json.loads(prompt.split("Data:\n", 1)[1])["snapshot"]["research_windows"]
+        window = next(
+            row
+            for row in windows
+            if len(row["media_ids"]) == 1 and "countryside" in json.dumps(row["seen"])
+        )
+        payload = json.loads(result.raw_text)
+        payload["captions"].insert(
+            0,
+            {
+                "text": "The road crosses the plain of the Troad",
+                "window_id": window["id"],
+                "media_ids": [],
+                "evidence_ids": ["fact-2"],
+                "visual_quote": "countryside",
+                "scope": "context",
+                "context_label": "The Troad",
+                "subject_name": "",
+                "identity_quote": "",
+            },
+        )
+        return ModelInvocation(raw_text=json.dumps(payload))
 
 
 @pytest.fixture(autouse=True)
@@ -73,9 +134,24 @@ def _selection_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "kria_research_selection_enabled", True)
 
 
-async def _research_draft(monkeypatch, *, readiness: bool = False) -> SimpleNamespace:  # noqa: ANN001
-    set_client_protocol(RESEARCH_SELECTION_PROTOCOL)
-    calls = _record(monkeypatch, INSTITUTIONAL)
+def _record_three(monkeypatch) -> dict[str, int]:  # noqa: ANN001
+    calls = {"search": 0, "copy": 0, "review": 0, "composer": 0}
+    client = _ThreeFacts(calls, THREE_SOURCES)
+    monkeypatch.setattr(researched_text, "GroundedGeminiClient", lambda: client)
+    monkeypatch.setattr(researched_text, "default_client", lambda: client)
+    monkeypatch.setattr(text_lane, "default_client", lambda: client)
+    return calls
+
+
+async def _research_draft(
+    monkeypatch,  # noqa: ANN001
+    *,
+    readiness: bool = False,
+    three_facts: bool = False,
+    protocol: int = RESEARCH_SELECTION_PROTOCOL,
+) -> SimpleNamespace:
+    set_client_protocol(protocol)
+    calls = _record_three(monkeypatch) if three_facts else _record(monkeypatch, INSTITUTIONAL)
     result, accepted, thread_id = await _turn(monkeypatch, through_readiness=readiness)
     assert result["status"] == "awaiting_approval", result
     with sync_session() as db:
@@ -213,10 +289,8 @@ async def _approve(draft: SimpleNamespace):  # noqa: ANN202
 @pytest.mark.asyncio
 async def test_the_preview_names_each_fact_and_the_research_it_belongs_to(monkeypatch) -> None:
     draft = await _research_draft(monkeypatch)
-    document = _document(_pending(draft.thread_id).draft_id)
-    pinned = document.brief_binding.prepared_research
 
-    assert draft.preview["selection_id"] == pinned["basis_digest"]
+    assert len(draft.preview["selection_id"]) == 64
     ids = [row["fact_id"] for row in draft.preview["explanations"]]
     assert [row["text"] for row in draft.preview["explanations"]] == [KEPT_TEXT, DROPPED_TEXT]
     assert len(set(ids)) == 2 and all(ids)
@@ -255,12 +329,14 @@ async def test_keeping_some_facts_saves_a_new_draft_that_approves_and_renders_on
     binding = _document(new.draft_id).brief_binding
     assert BriefBinding.model_validate(binding.model_dump(mode="json")).digest == binding.digest
     assert [row["text"] for row in binding.prepared_research["texts"]] == [KEPT_TEXT]
-    assert binding.prepared_research["basis_digest"] == draft.preview["selection_id"]
+    old_research = _document(old.draft_id).brief_binding.prepared_research
+    assert binding.prepared_research["basis_digest"] == old_research["basis_digest"]
     reply = _draft_events(draft.thread_id)[-1]
     assert reply.payload["draft_id"] == str(new.draft_id)
     assert [
         (row["text"], row["fact_id"]) for row in reply.payload["research_preview"]["explanations"]
     ] == [(KEPT_TEXT, _fact_id(draft, KEPT_TEXT))]
+    assert reply.payload["research_preview"]["selection_id"] != draft.preview["selection_id"]
     assert reply.payload["research_selection"]["kept_fact_ids"] == [_fact_id(draft, KEPT_TEXT)]
     assert KEPT_TEXT in reply.content and DROPPED_TEXT not in reply.content
     assert DROPPED_TEXT not in new.consequence_summary
@@ -370,7 +446,7 @@ async def test_ids_that_match_no_shown_fact_are_stale_never_a_waiver(monkeypatch
     for kept in (["not-a-shown-fact"], [_fact_id(draft, DROPPED_TEXT)]):
         with pytest.raises(RuntimeFailure) as refused:
             await _select(draft, kept)
-        assert (refused.value.status_code, refused.value.code) == (409, "research_selection_stale")
+        assert (refused.value.status_code, refused.value.code) == (409, STALE)
 
     assert (_revisions(draft.thread_id), _pending(draft.thread_id).id) == after
     assert _head_texts(draft.thread_id) == [KEPT_TEXT]
@@ -410,7 +486,7 @@ async def test_undo_after_a_selection_restores_every_fact(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_the_same_selection_twice_saves_one_revision(monkeypatch) -> None:
-    """S9."""
+    """S9, S15."""
     draft = await _research_draft(monkeypatch)
     kept = [_fact_id(draft, KEPT_TEXT)]
 
@@ -419,11 +495,123 @@ async def test_the_same_selection_twice_saves_one_revision(monkeypatch) -> None:
     after_first = (_revisions(draft.thread_id), _pending(draft.thread_id).id)
     replay = await _select(draft, kept, event_id="selection-once", revision=sent_at)
     again = await _select(draft, kept)
-    everything = await _select(draft, [row["fact_id"] for row in draft.preview["explanations"]])
+    unseen = await _select(draft, [*kept, "not-a-shown-fact"])
 
-    assert replay.replayed and replay.turn_id == first.turn_id
-    assert again.turn_id == first.turn_id and everything.turn_id == first.turn_id
+    for repeat in (replay, again, unseen):
+        assert repeat.replayed and repeat.turn_id == first.turn_id
     assert (_revisions(draft.thread_id), _pending(draft.thread_id).id) == after_first
+
+    assert (await _approve(draft)).status == "approved"
+    decided = await _select(draft, kept, event_id="selection-once", revision=sent_at)
+    assert decided.replayed and decided.turn_id == first.turn_id
+    assert _revisions(draft.thread_id) == after_first[0]
+
+
+@pytest.mark.asyncio
+async def test_an_older_cards_selection_never_narrows_the_newer_draft(monkeypatch) -> None:
+    """S14, S16: the first card shows three facts and the creator keeps two."""
+    draft = await _research_draft(monkeypatch, three_facts=True)
+    ids = {row["text"]: row["fact_id"] for row in draft.preview["explanations"]}
+    assert set(ids) == {KEPT_TEXT, DROPPED_TEXT, THIRD_TEXT}
+    sent_at = _revision(draft.thread_id)
+    await _select(draft, [ids[KEPT_TEXT], ids[DROPPED_TEXT]], revision=sent_at)
+    card = _draft_events(draft.thread_id)[-1].payload["research_preview"]
+    after = (_revisions(draft.thread_id), _pending(draft.thread_id).id)
+
+    assert card["selection_id"] != draft.preview["selection_id"]
+    for late, revision in (
+        ([ids[KEPT_TEXT], ids[THIRD_TEXT]], sent_at),
+        ([ids[KEPT_TEXT]], None),
+        ([ids[KEPT_TEXT], ids[DROPPED_TEXT], ids[THIRD_TEXT]], None),
+    ):
+        with pytest.raises(RuntimeFailure) as refused:
+            await _select(draft, late, revision=revision)
+        assert (refused.value.status_code, refused.value.code) == (409, STALE)
+    assert (_revisions(draft.thread_id), _pending(draft.thread_id).id) == after
+    assert _head_texts(draft.thread_id) == [KEPT_TEXT, DROPPED_TEXT]
+
+    await _select(draft, [ids[KEPT_TEXT]], selection_id=card["selection_id"])
+    assert _head_texts(draft.thread_id) == [KEPT_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_in_flight_with_the_same_event_id_replays(monkeypatch) -> None:
+    """S17: the first post reads before the second commits and locks after it."""
+    draft = await _research_draft(monkeypatch)
+    kept = [_fact_id(draft, KEPT_TEXT)]
+    sent_at = _revision(draft.thread_id)
+    revisions = _revisions(draft.thread_id)
+    reached, release = asyncio.Event(), asyncio.Event()
+    lock = research_selection._lock_strategy_plan_item
+
+    async def first_waits(db, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if not reached.is_set():
+            reached.set()
+            await release.wait()
+        return await lock(db, **kwargs)
+
+    monkeypatch.setattr(research_selection, "_lock_strategy_plan_item", first_waits)
+    late = asyncio.create_task(_select(draft, kept, event_id="selection-dup", revision=sent_at))
+    await reached.wait()
+    saved = await _select(draft, kept, event_id="selection-dup", revision=sent_at)
+    release.set()
+    replayed = await late
+
+    assert not saved.replayed
+    assert replayed.replayed and replayed.turn_id == saved.turn_id
+    assert _revisions(draft.thread_id) == revisions + 1
+
+
+@pytest.mark.asyncio
+async def test_a_draft_rewritten_before_the_lock_is_stale(monkeypatch) -> None:
+    """S18."""
+    draft = await _research_draft(monkeypatch)
+    old = _pending(draft.thread_id)
+    revisions = _revisions(draft.thread_id)
+    lock = research_selection._lock_strategy_plan_item
+
+    async def rewritten_first(db, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        with sync_session() as other:
+            other.execute(
+                update(CreatorEditDraft)
+                .where(CreatorEditDraft.id == old.draft_id)
+                .values(snapshot_hash="f" * 64)
+            )
+            other.commit()
+        return await lock(db, **kwargs)
+
+    monkeypatch.setattr(research_selection, "_lock_strategy_plan_item", rewritten_first)
+    with pytest.raises(RuntimeFailure) as refused:
+        await _select(draft, [_fact_id(draft, KEPT_TEXT)])
+
+    assert (refused.value.status_code, refused.value.code) == (409, STALE)
+    assert _revisions(draft.thread_id) == revisions and _pending(draft.thread_id).id == old.id
+
+
+@pytest.mark.asyncio
+async def test_a_queued_follow_up_refuses_the_selection(monkeypatch) -> None:
+    """S19."""
+    draft = await _research_draft(monkeypatch)
+    old = _pending(draft.thread_id)
+    async with AsyncSessionLocal() as db:
+        queued, _publish = await submit_turn(
+            db,
+            thread_id=draft.thread_id,
+            creator_id=draft.user_id,
+            body=SubmitTurnBody(
+                message="Make the ending slower",
+                client_event_id=f"follow-up-{uuid.uuid4().hex}",
+                expected_thread_revision=_revision(draft.thread_id),
+            ),
+        )
+    assert queued.status == "queued"
+    revisions = _revisions(draft.thread_id)
+
+    with pytest.raises(RuntimeFailure) as refused:
+        await _select(draft, [_fact_id(draft, KEPT_TEXT)])
+
+    assert (refused.value.status_code, refused.value.code) == (409, "queued_successor_exists")
+    assert _revisions(draft.thread_id) == revisions and _pending(draft.thread_id).id == old.id
 
 
 @pytest.mark.asyncio
@@ -450,7 +638,7 @@ async def test_a_selection_for_other_research_is_refused_as_stale(monkeypatch) -
     with pytest.raises(RuntimeFailure) as refused:
         await _select(draft, [_fact_id(draft, KEPT_TEXT)], selection_id="0" * 64)
 
-    assert (refused.value.status_code, refused.value.code) == (409, "research_selection_stale")
+    assert (refused.value.status_code, refused.value.code) == (409, STALE)
     assert _pending(draft.thread_id).id == old.id and _revisions(draft.thread_id) == revisions
 
 
@@ -466,7 +654,7 @@ async def test_research_the_moved_footage_no_longer_fits_is_refused_as_stale(mon
     with pytest.raises(RuntimeFailure) as refused:
         await _select(draft, [_fact_id(draft, KEPT_TEXT)])
 
-    assert (refused.value.status_code, refused.value.code) == (409, "research_selection_stale")
+    assert (refused.value.status_code, refused.value.code) == (409, STALE)
     assert _pending(draft.thread_id).id == old.id
 
 
@@ -480,7 +668,7 @@ async def test_a_selection_after_the_draft_was_approved_writes_nothing(monkeypat
     with pytest.raises(RuntimeFailure) as refused:
         await _select(draft, [_fact_id(draft, KEPT_TEXT)])
 
-    assert (refused.value.status_code, refused.value.code) == (409, "research_selection_stale")
+    assert (refused.value.status_code, refused.value.code) == (409, STALE)
     assert _revisions(draft.thread_id) == revisions
 
 
@@ -519,6 +707,17 @@ async def test_a_build_below_the_minimum_protocol_is_told_to_update(monkeypatch)
 
     assert (refused.value.status_code, refused.value.code) == (426, "client_update_required")
     assert _revisions(draft.thread_id) == revisions
+
+
+@pytest.mark.asyncio
+async def test_a_build_below_the_minimum_protocol_is_shown_no_ids(monkeypatch) -> None:
+    """S20."""
+    draft = await _research_draft(monkeypatch, protocol=RESEARCH_SELECTION_PROTOCOL - 1)
+
+    assert "selection_id" not in draft.preview
+    assert all(
+        set(row) == {"text", "start_s", "end_s", "sources"} for row in draft.preview["explanations"]
+    )
 
 
 @pytest.mark.asyncio
