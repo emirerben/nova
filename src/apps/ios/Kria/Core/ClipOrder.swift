@@ -138,24 +138,51 @@ extension ThreadEvent {
 /// saw (a drag's own event carries one with no message of its own), so the fold runs over events, not messages.
 struct ClipOrderThread: Equatable {
     let newest: ClipOrderCard?
+    /// The card before the newest: the order the server marked `moved` against.
+    let previous: ClipOrderCard?
     /// The latest message that carries a card: the strip is drawn under it.
     let anchorMessageID: String?
 
-    static let empty = ClipOrderThread(newest: nil, anchorMessageID: nil)
+    static let empty = ClipOrderThread(newest: nil, previous: nil, anchorMessageID: nil)
 
     static func fold(_ events: [ThreadEvent], isMessage: (ThreadEvent) -> Bool = { ChatTranscriptMessage.from(event: $0) != nil }) -> ClipOrderThread {
         var newest: ClipOrderCard?
+        var previous: ClipOrderCard?
         var carriers: [String] = []
         for event in events.sorted(by: { ($0.sequence, $0.id) < ($1.sequence, $1.id) }) {
             guard let card = event.clipOrderCard() else { continue }
+            previous = newest
             newest = card
             if isMessage(event) { carriers.append(event.id) }
         }
         // Nothing is drawn unless the newest card says the strip is shown (a thread with no card, or one the server
         // never showed, looks exactly as it did before this feature).
         guard let newest, newest.shown, let anchor = carriers.last else { return .empty }
-        return ClipOrderThread(newest: newest, anchorMessageID: anchor)
+        return ClipOrderThread(newest: newest, previous: previous, anchorMessageID: anchor)
     }
+}
+
+/// "was 3rd": where a moved clip stood before. The phone derives it from two orders it already holds and never
+/// asks the server, so a clip that did not change place says nothing.
+enum ClipOrderWas {
+    static func positions(base: [String]?, order: [String], moved: Set<String>) -> [String: Int] {
+        guard let base else { return [:] }
+        var out: [String: Int] = [:]
+        for id in moved {
+            guard let before = base.firstIndex(of: id), let now = order.firstIndex(of: id), before != now else { continue }
+            out[id] = before + 1
+        }
+        return out
+    }
+
+    static func ordinal(_ position: Int, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .ordinal
+        formatter.locale = locale
+        return formatter.string(from: NSNumber(value: position)) ?? "\(position)"
+    }
+
+    static func text(_ position: Int) -> String { String(localized: "was \(ordinal(position))") }
 }
 
 /// `clip_order_ops` on the submit-turn body, exactly as the server's `ClipOrderOpsIn` names it.
@@ -180,7 +207,7 @@ struct ClipOrderDraft: Equatable {
     private(set) var order: [String]
     /// What the sheet opened with, so "changed" means changed from what the creator saw.
     let opening: [String]
-    /// Clips the creator dragged or nudged themselves (drives the "Moved" tag before the server answers).
+    /// Clips the creator dragged or nudged themselves (drives the "was N" caption before the server answers).
     private(set) var moved: Set<String> = []
 
     init(order: [String]) { self.order = order; opening = order }
@@ -188,6 +215,11 @@ struct ClipOrderDraft: Equatable {
     var isChanged: Bool { order != opening }
     func position(of mediaID: String) -> Int? { order.firstIndex(of: mediaID).map { $0 + 1 } }
     func canMoveUp(_ mediaID: String) -> Bool { (order.firstIndex(of: mediaID) ?? 0) > 0 }
+    /// Where the creator's own move took `mediaID` from, when it is not back where it stood.
+    func was(_ mediaID: String) -> Int? {
+        guard moved.contains(mediaID), let before = opening.firstIndex(of: mediaID), let now = order.firstIndex(of: mediaID), before != now else { return nil }
+        return before + 1
+    }
     func canMoveDown(_ mediaID: String) -> Bool { order.firstIndex(of: mediaID).map { $0 < order.count - 1 } ?? false }
 
     /// `List.onMove` semantics: `destination` is an index into the pre-move array.
@@ -287,6 +319,16 @@ struct ClipOrderSheetSeed: Identifiable, Equatable {
     let order: [String]
 }
 
+/// A clip the creator tapped in the strip, to see it large.
+struct ClipOrderPreviewSeed: Identifiable {
+    let id = UUID()
+    let item: ClipOrderCard.Item
+    let media: CreationAttachedMedia
+    let number: Int
+    let total: Int
+    let was: Int?
+}
+
 /// Owns the optimistic order and the one-turn-at-a-time send for the strip and its sheet. Lives on the workspace
 /// (not in a lazily-built row), so a poll, a redraw or a recycled row never closes the sheet or loses the order.
 @MainActor final class ClipOrderCoordinator: ObservableObject {
@@ -301,6 +343,7 @@ struct ClipOrderSheetSeed: Identifiable, Equatable {
 
     @Published private(set) var status: Status = .idle
     @Published var sheet: ClipOrderSheetSeed?
+    @Published var preview: ClipOrderPreviewSeed?
     /// The order the creator confirmed, shown until the server's card for it arrives.
     @Published private(set) var pendingOrder: [String]?
     @Published private(set) var pendingMoved: Set<String> = []
@@ -309,22 +352,29 @@ struct ClipOrderSheetSeed: Identifiable, Equatable {
     private var task: Task<Void, Never>?
 
     /// The strip's phase: a send in flight or failed outranks the card's own `confirmed`.
-    nonisolated static func phase(status: Status, confirmed: Bool, order: [String], failure: String) -> AskPhase<[String]> {
+    /// A rebased card (the server put the move on top of a newer order) is a notice, never a receipt.
+    nonisolated static func phase(status: Status, confirmed: Bool, rebased: Bool = false, order: [String], failure: String) -> AskPhase<[String]> {
         switch status {
         case .sending: .submitting(order)
         case .failed: .failed(failure)
-        case .idle: confirmed ? .answered(order) : .open
+        case .idle: rebased ? .stale : confirmed ? .answered(order) : .open
         }
     }
 
     /// The order and moved marks the strip draws for `card`: the creator's own order while their confirm is still
     /// outstanding (or the server has not answered it yet), otherwise exactly the server's card.
     func display(for card: ClipOrderCard) -> (order: [String], moved: Set<String>) {
-        guard let pendingOrder, status != .idle || pendingBaseCardID == card.eventID else {
+        guard let pendingOrder, showsPending(for: card) else {
             return (card.orderedMediaIDs, Set(card.items.filter(\.moved).map(\.mediaID)))
         }
         let known = Set(card.orderedMediaIDs)
         return (pendingOrder.filter(known.contains) + card.orderedMediaIDs.filter { !pendingOrder.contains($0) }, pendingMoved)
+    }
+
+    /// True while the strip draws the creator's own order instead of `card`'s: their confirm is outstanding, or the
+    /// server has not answered it yet. The moved clips are then marked against `card`'s own order.
+    func showsPending(for card: ClipOrderCard) -> Bool {
+        pendingOrder != nil && (status != .idle || pendingBaseCardID == card.eventID)
     }
 
     /// The creator confirmed `order` for `card`: send the whole order once. A second confirm while one runs

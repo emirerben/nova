@@ -19,6 +19,15 @@ import XCTest
 /// 12. EN/TR/DE strings: `scripts/ios/localization.py check`, `scan` and `built`.
 /// 13. Older cards collapse to one line, the newest card sits under the newest carrier.           testOnlyTheNewestCarrierShowsTheStrip (+ UI)
 /// 14. Unknown `source`, missing optional keys and extra keys never break the card.               testDecodingIsTolerant
+/// 15. "was N" names where a moved clip stood on the card before: the thread's previous card, never a
+///     guess, and nothing when it did not change place.                                            testWasNamesThePlaceOnThePreviousCard, testTheSheetNamesWhereAMovedClipStood
+/// 16. A rebased card is a slate notice: it outranks a stale "confirmed", yields to sending and to a
+///     failure, and never turns red.                                                               testARebasedCardIsASlateNoticeNotAReceiptOrAnError
+/// 17. A move that is rebased under a newer order keeps the creator's order on top and sends once.  testAMoveIsKeptOnTopOfANewerServerOrder
+/// 18. Try again sent twice in a row resends the failed order once, under its first id.             testTryAgainTappedTwiceResendsTheSameOrderOnce
+/// 19. Twelve clips and the largest text scroll, a tap opens the right clip and close puts the strip
+///     back where it was; each clip reads "Clip N, open preview".                                   ClipOrderUITests
+/// 20. "was 3rd" reads in the creator's language and never as an identifier.                         testWasReadsAsAnOrdinal
 final class ClipOrderTests: XCTestCase {
     // MARK: fixtures
 
@@ -330,6 +339,86 @@ final class ClipOrderTests: XCTestCase {
         coordinator.serverCardChanged(to: "even-newer")
         XCTAssertEqual(coordinator.status, .idle)
         XCTAssertNil(coordinator.pendingOrder)
+    }
+
+    func testWasNamesThePlaceOnThePreviousCard() throws {
+        let events = [event("d1", 1, payload: card(["a", "b", "c", "d"])),
+                      event("x", 2, type: "clip_order_card", content: nil, payload: card(["c", "a", "b", "d"], proposal: "p2", moved: ["c"]))]
+        let thread = ClipOrderThread.fold(events)
+        XCTAssertEqual(thread.previous?.orderedMediaIDs, ["a", "b", "c", "d"], "the card before the newest is the base the server marked against")
+        let newest = try XCTUnwrap(thread.newest)
+        let was = ClipOrderWas.positions(base: thread.previous?.orderedMediaIDs, order: newest.orderedMediaIDs, moved: ["c"])
+        XCTAssertEqual(was, ["c": 3])
+        XCTAssertTrue(ClipOrderWas.positions(base: nil, order: ["c", "a"], moved: ["c"]).isEmpty, "no earlier card, no claim")
+        XCTAssertTrue(ClipOrderWas.positions(base: ["a", "b"], order: ["a", "b"], moved: ["a"]).isEmpty, "a clip back where it stood says nothing")
+        XCTAssertTrue(ClipOrderWas.positions(base: ["a", "b"], order: ["b", "z"], moved: ["z"]).isEmpty, "a clip the base never had says nothing")
+        XCTAssertEqual(ClipOrderWas.positions(base: ["a", "b", "c"], order: ["b", "c", "a"], moved: ["a"]), ["a": 1])
+        XCTAssertNil(ClipOrderThread.fold([events[0]]).previous, "one card has no earlier one")
+    }
+
+    func testTheSheetNamesWhereAMovedClipStood() {
+        var draft = ClipOrderDraft(order: ["a", "b", "c"])
+        XCTAssertNil(draft.was("a"))
+        draft.moveUp("c")
+        draft.moveUp("c")
+        XCTAssertEqual(draft.was("c"), 3)
+        XCTAssertNil(draft.was("a"), "a clip pushed down by a move was not moved by the creator")
+        draft.moveDown("c")
+        draft.moveDown("c")
+        XCTAssertNil(draft.was("c"), "dragged back to where it stood")
+    }
+
+    func testARebasedCardIsASlateNoticeNotAReceiptOrAnError() {
+        let order = ["a", "b"]
+        func phase(_ status: ClipOrderCoordinator.Status, confirmed: Bool = false, rebased: Bool = false) -> AskPhase<[String]> {
+            ClipOrderCoordinator.phase(status: status, confirmed: confirmed, rebased: rebased, order: order, failure: "no")
+        }
+        XCTAssertEqual(phase(.idle, confirmed: true, rebased: true), .stale, "a rebased card says so even when it is marked confirmed")
+        XCTAssertEqual(phase(.idle, rebased: true), .stale)
+        XCTAssertEqual(phase(.sending, rebased: true), .submitting(order), "a send in flight outranks the notice")
+        XCTAssertEqual(phase(.failed, rebased: true), .failed("no"), "so does a failure")
+        XCTAssertEqual(phase(.idle, confirmed: true), .answered(order))
+        XCTAssertEqual(phase(.idle), .open)
+    }
+
+    @MainActor func testAMoveIsKeptOnTopOfANewerServerOrder() async throws {
+        let wire = Wire(), coordinator = ClipOrderCoordinator()
+        wire.holdFirst = true
+        let old = try parsed(["a", "b", "c"])
+        coordinator.confirm(order: ["c", "a", "b"], moved: ["c"], card: old, transport: wire.transport)
+        for _ in 0..<50 where wire.gates.isEmpty { await Task.yield() }
+        let newer = try XCTUnwrap(ClipOrderCard.parse(payload: json(card(["a", "b", "c", "d"], proposal: "p2")), eventID: "newer", sequence: 9))
+        let shown = coordinator.display(for: newer)
+        XCTAssertEqual(shown.order, ["c", "a", "b", "d"], "the creator's order stays on top; the clip that arrived keeps its place")
+        XCTAssertEqual(shown.moved, ["c"])
+        XCTAssertEqual(coordinator.status, .sending)
+        wire.gates.forEach { $0.resume() }
+        await settle(coordinator)
+        XCTAssertEqual(wire.requests.count, 1, "the move is sent once")
+        XCTAssertEqual(coordinator.display(for: newer).order, ["a", "b", "c", "d"], "once answered the server's card is the truth")
+    }
+
+    @MainActor func testTryAgainTappedTwiceResendsTheSameOrderOnce() async throws {
+        let wire = Wire(), coordinator = ClipOrderCoordinator()
+        wire.failures = [true]
+        let card = try parsed()
+        coordinator.confirm(order: ["b", "a", "c"], moved: ["b"], card: card, transport: wire.transport)
+        await settle(coordinator, until: .failed)
+        coordinator.confirm(order: ["b", "a", "c"], moved: ["b"], card: card, transport: wire.transport)
+        coordinator.confirm(order: ["b", "a", "c"], moved: ["b"], card: card, transport: wire.transport)
+        await settle(coordinator)
+        XCTAssertEqual(wire.requests.count, 2, "one failed send and exactly one retry")
+        XCTAssertEqual(try wire.body(0)["client_event_id"] as? String, try wire.body(1)["client_event_id"] as? String)
+        XCTAssertEqual(coordinator.status, .idle)
+    }
+
+    func testWasReadsAsAnOrdinal() {
+        let en = Locale(identifier: "en_US")
+        XCTAssertEqual(ClipOrderWas.ordinal(1, locale: en), "1st")
+        XCTAssertEqual(ClipOrderWas.ordinal(2, locale: en), "2nd")
+        XCTAssertEqual(ClipOrderWas.ordinal(3, locale: en), "3rd")
+        XCTAssertEqual(ClipOrderWas.ordinal(11, locale: en), "11th")
+        XCTAssertEqual(ClipOrderWas.ordinal(22, locale: en), "22nd")
     }
 
     func testTheOutboxNeverResendsAnAcceptedOrder() {

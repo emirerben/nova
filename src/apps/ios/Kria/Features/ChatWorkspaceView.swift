@@ -984,7 +984,7 @@ private struct CreationWorkspaceView: View {
 
     private func currentClipOrderStrip(_ card: ClipOrderCard) -> ClipOrderStripInput {
         let interactive = transcriptIsFresh && capabilities?.clipOrderCards != false && card.editable
-        return ClipOrderStripInput(card: card, coordinator: clipOrder, interactive: interactive) { order, moved in
+        return ClipOrderStripInput(card: card, previous: clipOrderThread.previous, coordinator: clipOrder, interactive: interactive) { order, moved in
             confirmClipOrder(order: order, moved: moved, card: card)
         }
     }
@@ -2335,6 +2335,15 @@ private struct CreationWorkspaceView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .presentationBackground(KriaColor.paper)
+        }
+        .fullScreenCover(item: $clipOrder.preview) { seed in
+            ClipOrderLargePreview(
+                media: seed.media, item: seed.item, number: seed.number, total: seed.total, was: seed.was, projectID: project.id,
+                close: {
+                    var instant = Transaction(); instant.disablesAnimations = true
+                    withTransaction(instant) { clipOrder.preview = nil }
+                })
+            .presentationBackground(.clear)
         }
         .onChange(of: clipOrderThread.newest?.eventID) { _, id in
             if let id { clipOrder.serverCardChanged(to: id) }

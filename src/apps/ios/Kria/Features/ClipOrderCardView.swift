@@ -1,17 +1,28 @@
 import SwiftUI
 
 /// What the chat hands the strip for the newest clip-order card in the thread. `interactive` is false once a video
-/// exists (the timeline owns the order). `confirm` sends the whole order the creator sees.
+/// exists (the timeline owns the order). `confirm` sends the whole order the creator sees. `previous` is the card
+/// before this one, the base for each moved clip's "was N".
 struct ClipOrderStripInput {
     let card: ClipOrderCard
+    let previous: ClipOrderCard?
     let coordinator: ClipOrderCoordinator
     let interactive: Bool
     let confirm: (_ order: [String], _ moved: Set<String>) -> Void
 }
 
-/// KRI-1591: the decided clip order under the draft message: numbered thumbnails, then "Change order" and "Use this order".
+extension ClipOrderCard {
+    func attached(_ id: String, in media: [CreationAttachedMedia]) -> CreationAttachedMedia {
+        media.first { $0.id == id }
+            ?? CreationAttachedMedia(id: id, filename: "", kind: item(id)?.isPhoto == true ? "image" : "video", previewURL: nil)
+    }
+}
+
+/// KRI-1591: the decided clip order under the draft message: a scroller of numbered clips (tap one to see it large),
+/// then "Use this order" and "Edit order".
 struct ClipOrderStripCard: View {
     let card: ClipOrderCard
+    let previous: ClipOrderCard?
     @ObservedObject var coordinator: ClipOrderCoordinator
     let interactive: Bool
     let media: [CreationAttachedMedia]
@@ -20,6 +31,7 @@ struct ClipOrderStripCard: View {
 
     init(_ input: ClipOrderStripInput, media: [CreationAttachedMedia], projectID: UUID?) {
         card = input.card
+        previous = input.previous
         coordinator = input.coordinator
         interactive = input.interactive
         self.media = media
@@ -27,32 +39,30 @@ struct ClipOrderStripCard: View {
         confirm = input.confirm
     }
 
-    @ScaledMetric(relativeTo: .caption) private var tileWidth: CGFloat = 64
-
-    /// More than this many and the rest are summarised as "+N" (the sheet lists them all).
-    private static let visibleCount = 6
+    @ScaledMetric(relativeTo: .caption) private var tileWidth: CGFloat = 72
+    @ScaledMetric(relativeTo: .caption) private var captionSlot: CGFloat = 20
 
     var body: some View {
         let shown = coordinator.display(for: card)
         let canEdit = interactive && card.allowsEditing
         let phase = ClipOrderCoordinator.phase(
-            status: coordinator.status, confirmed: card.confirmed && shown.order == card.orderedMediaIDs, order: shown.order,
-            failure: String(localized: "Kria couldn’t save this order. Try again."))
+            status: coordinator.status, confirmed: card.confirmed && shown.order == card.orderedMediaIDs, rebased: card.rebased,
+            order: shown.order, failure: String(localized: "Kria couldn’t save this order. Try again."))
+        let base = coordinator.showsPending(for: card) ? card.orderedMediaIDs : previous?.orderedMediaIDs
+        let was = ClipOrderWas.positions(base: base, order: shown.order, moved: shown.moved)
         KriaQuestionCard {
-            Text("Order · \(shown.order.count) clips")
-                .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("clip-order-header")
+            header(count: shown.order.count, moved: shown.moved.count)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(Array(shown.order.prefix(Self.visibleCount).enumerated()), id: \.element) { index, id in
-                        tile(id, number: index + 1, total: shown.order.count, moved: shown.moved.contains(id))
-                    }
-                    if shown.order.count > Self.visibleCount {
-                        overflow(shown.order.count - Self.visibleCount)
+                LazyHStack(alignment: .top, spacing: 6) {
+                    ForEach(Array(shown.order.enumerated()), id: \.element) { index, id in
+                        tile(id, number: index + 1, total: shown.order.count, moved: shown.moved.contains(id), was: was[id])
                     }
                 }
+                .frame(height: tileWidth * 1.5 + (was.isEmpty ? 0 : captionSlot))
             }
+            .contentMargins(.horizontal, 16, for: .scrollContent)
+            .padding(.horizontal, -16)
+            .excludesDrawerGesture()
             .accessibilityIdentifier("clip-order-tiles")
             if canEdit {
                 actions(shown: shown, phase: phase)
@@ -67,85 +77,105 @@ struct ClipOrderStripCard: View {
         .accessibilityIdentifier("clip-order-strip")
     }
 
-    private func attached(_ id: String) -> CreationAttachedMedia {
-        media.first { $0.id == id }
-            ?? CreationAttachedMedia(id: id, filename: "", kind: card.item(id)?.isPhoto == true ? "image" : "video", previewURL: nil)
+    private func header(count: Int, moved: Int) -> some View {
+        let clips = String(localized: "\(count) clips")
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("Clip order")
+                .kriaType(.heading).foregroundStyle(KriaColor.ink)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("clip-order-header")
+            Text(moved > 0 ? clips + " · " + String(localized: "\(moved) moved") : clips)
+                .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                .accessibilityIdentifier("clip-order-count")
+        }
     }
 
-    private func tile(_ id: String, number: Int, total: Int, moved: Bool) -> some View {
+    private func tile(_ id: String, number: Int, total: Int, moved: Bool, was: Int?) -> some View {
         let item = card.item(id)
         let label = item.map { ClipOrderLabel.text($0, number: number) } ?? String(localized: "Clip \(number)")
-        return VStack(alignment: .leading, spacing: 4) {
-            ClipThumbnailView(media: attached(id), position: number, projectID: projectID, name: label)
-                .frame(width: tileWidth, height: tileWidth * 84 / 64)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(alignment: .topLeading) { NumberBadge(number: number).padding(5) }
-            Text(label)
-                .kriaType(.caption).foregroundStyle(KriaColor.ink)
-                .lineLimit(2).multilineTextAlignment(.leading)
-                .frame(width: tileWidth, alignment: .leading)
-                .accessibilityLabel(String(localized: "\(label), position \(number) of \(total)"))
-                .accessibilityIdentifier("clip-order-label-\(id)")
-            if moved {
-                MovedTag().accessibilityIdentifier("clip-order-moved-\(id)")
+        let words = label == String(localized: "Clip \(number)") ? nil : label
+        return VStack(spacing: 4) {
+            Button {
+                guard let item else { return }
+                var instant = Transaction(); instant.disablesAnimations = true
+                withTransaction(instant) {
+                    coordinator.preview = ClipOrderPreviewSeed(item: item, media: card.attached(id, in: media), number: number, total: total, was: was)
+                }
+            } label: {
+                ClipThumbnailView(media: card.attached(id, in: media), position: number, projectID: projectID, name: label)
+                    .frame(width: tileWidth, height: tileWidth * 1.5)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(alignment: .topLeading) { NumberBadge(number: number, moved: moved).padding(6) }
+                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Clip \(number), open preview"))
+            .accessibilityValue(words ?? "")
+            .accessibilityIdentifier("clip-order-tile-\(id)")
+            if let was {
+                Text(ClipOrderWas.text(was))
+                    .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .accessibilityIdentifier("clip-order-moved-\(id)")
             }
         }
+        .frame(width: tileWidth)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("clip-order-card-\(id)")
     }
 
-    private func overflow(_ count: Int) -> some View {
-        Text(verbatim: "+\(count)")
-            .kriaType(.button).foregroundStyle(KriaColor.mutedInk)
-            .frame(width: tileWidth, height: tileWidth * 84 / 64)
-            .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .accessibilityLabel(String(localized: "\(count) more clips"))
-            .accessibilityIdentifier("clip-order-overflow")
+    @ViewBuilder private func actions(shown: (order: [String], moved: Set<String>), phase: AskPhase<[String]>) -> some View {
+        VStack(spacing: 8) {
+            switch phase {
+            case .failed(let text):
+                KriaInlineFailure(text: text).accessibilityIdentifier("clip-order-failed")
+            case .stale:
+                KriaInlineNotice(text: String(localized: "The order changed while you were editing. Your move was applied on top."))
+                    .accessibilityIdentifier("clip-order-notice")
+            default:
+                EmptyView()
+            }
+            primary(shown: shown, phase: phase)
+            Button("Edit order") {
+                coordinator.sheet = ClipOrderSheetSeed(card: card, order: shown.order)
+            }
+            .buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium, fullWidth: true))
+            .accessibilityIdentifier("clip-order-change")
+        }
     }
 
-    @ViewBuilder private func actions(shown: (order: [String], moved: Set<String>), phase: AskPhase<[String]>) -> some View {
-        let failure: String? = if case .failed(let text) = phase { text } else { nil }
-        let confirmed: Bool = if case .answered = phase { true } else { false }
-        VStack(alignment: .leading, spacing: 8) {
-            if let failure {
-                KriaInlineFailure(text: failure).accessibilityIdentifier("clip-order-failed")
-            }
-            HStack(spacing: 8) {
-                Button("Change order") {
-                    coordinator.sheet = ClipOrderSheetSeed(card: card, order: shown.order)
-                }
-                .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, onFill: true))
-                .accessibilityIdentifier("clip-order-change")
-                Button(failure != nil ? String(localized: "Try again") : confirmed ? String(localized: "Order confirmed") : String(localized: "Use this order")) {
-                    confirm(shown.order, shown.moved)
-                }
-                .buttonStyle(KriaButtonStyle(role: .primary, size: .medium))
-                .disabled(confirmed)
+    @ViewBuilder private func primary(shown: (order: [String], moved: Set<String>), phase: AskPhase<[String]>) -> some View {
+        switch phase {
+        case .answered:
+            KriaAnsweredReceipt(text: String(localized: "Order confirmed"))
+                .accessibilityIdentifier("clip-order-receipt")
+        case .submitting:
+            Button("Sending order") {}
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true, isLoading: true))
                 .accessibilityIdentifier("clip-order-use")
-            }
+        case .failed:
+            Button("Try again") { confirm(shown.order, shown.moved) }
+                .buttonStyle(KriaButtonStyle(role: .ink, fullWidth: true))
+                .accessibilityIdentifier("clip-order-use")
+        case .open, .stale:
+            Button("Use this order") { confirm(shown.order, shown.moved) }
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
+                .accessibilityIdentifier("clip-order-use")
         }
     }
 }
 
-/// The dark numbered badge on a thumbnail's top-left corner.
+/// The position badge on a clip's top-left corner: ink when the creator moved the clip, white otherwise.
 private struct NumberBadge: View {
     let number: Int
+    let moved: Bool
     var body: some View {
         Text(verbatim: "\(number)")
-            .kriaType(.caption).fontWeight(.bold).foregroundStyle(Color.white)
-            .frame(minWidth: 20, minHeight: 20).padding(.horizontal, 3)
-            .background(KriaColor.ink.opacity(0.78), in: Capsule())
+            .kriaType(.caption).fontWeight(.semibold).foregroundStyle(moved ? Color.white : KriaColor.ink)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .frame(minWidth: 22, minHeight: 22).padding(.horizontal, 2)
+            .background(moved ? KriaColor.ink : Color.white, in: Capsule())
             .accessibilityHidden(true)
-    }
-}
-
-/// The small sky-blue "Moved" tag under a clip that changed place.
-private struct MovedTag: View {
-    var body: some View {
-        Text("Moved")
-            .kriaType(.caption).foregroundStyle(KriaColor.ink)
-            .padding(.horizontal, 7).padding(.vertical, 2)
-            .background(KriaColor.sky, in: Capsule())
     }
 }
 
@@ -169,7 +199,7 @@ private struct OriginBadge: View {
     }
 }
 
-/// "Change order": every clip in play order. Drag to reorder (or use the Move up / Move down actions), tap a
+/// "Reorder clips": every clip in play order. Drag to reorder (or use the Move up / Move down actions), tap a
 /// thumbnail to see that clip larger, "Use this order" sends the whole order once. Closing sends nothing.
 struct ClipOrderSheet: View {
     let seed: ClipOrderSheetSeed
@@ -210,7 +240,7 @@ struct ClipOrderSheet: View {
             if let previewID, let item = seed.card.item(previewID) {
                 ClipOrderLargePreview(
                     media: attached(previewID), item: item, number: draft.position(of: previewID) ?? item.position,
-                    projectID: projectID, close: { self.previewID = nil })
+                    total: draft.order.count, was: draft.was(previewID), projectID: projectID, close: { self.previewID = nil })
                     .transition(.opacity)
             }
         }
@@ -222,7 +252,7 @@ struct ClipOrderSheet: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Change order").kriaType(.title).foregroundStyle(KriaColor.ink)
+                Text("Reorder clips").kriaType(.title).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                 Text("\(draft.order.count) clips").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
                     .accessibilityIdentifier("clip-order-sheet-count")
@@ -257,10 +287,7 @@ struct ClipOrderSheet: View {
         .accessibilityIdentifier("clip-order-sheet-list")
     }
 
-    private func attached(_ id: String) -> CreationAttachedMedia {
-        media.first { $0.id == id }
-            ?? CreationAttachedMedia(id: id, filename: "", kind: seed.card.item(id)?.isPhoto == true ? "image" : "video", previewURL: nil)
-    }
+    private func attached(_ id: String) -> CreationAttachedMedia { seed.card.attached(id, in: media) }
 
     /// Applies a reorder and tells VoiceOver where the clip ended up (the row moves, so focus alone says little).
     private func reorder(_ id: String, _ change: (inout ClipOrderDraft) -> Void) {
@@ -275,7 +302,8 @@ struct ClipOrderSheet: View {
         let item = seed.card.item(id)
         let position = draft.position(of: id) ?? 0
         let label = item.map { ClipOrderLabel.text($0, number: position) } ?? String(localized: "Clip \(position)")
-        let origin = draft.moved.contains(id) ? ClipOrderCard.Origin.yours : item?.source.origin
+        let was = draft.was(id)
+        let origin = was == nil ? item?.source.origin : nil
         return HStack(spacing: 12) {
             Button { previewID = id } label: {
                 ClipThumbnailView(media: attached(id), position: position, projectID: projectID, name: label)
@@ -292,11 +320,16 @@ struct ClipOrderSheet: View {
                 Text(verbatim: "\(position)  \(label)")
                     .kriaType(.button).foregroundStyle(KriaColor.ink)
                     .lineLimit(2).multilineTextAlignment(.leading)
-                if let origin { OriginBadge(origin: origin) }
+                if let was {
+                    Text(ClipOrderWas.text(was)).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                        .accessibilityIdentifier("clip-order-sheet-was-\(id)")
+                } else if let origin {
+                    OriginBadge(origin: origin)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(rowLabel(label: label, position: position, origin: origin))
+            .accessibilityLabel(rowLabel(label: label, position: position, origin: origin, was: was))
             // The actions sit on this element, which is a real accessibility element (a container's are never exposed).
             .accessibilityAction(named: "Move up") { if draft.canMoveUp(id) { reorder(id) { $0.moveUp(id) } } }
             .accessibilityAction(named: "Move down") { if draft.canMoveDown(id) { reorder(id) { $0.moveDown(id) } } }
@@ -304,8 +337,9 @@ struct ClipOrderSheet: View {
         }
     }
 
-    private func rowLabel(label: String, position: Int, origin: ClipOrderCard.Origin?) -> String {
+    private func rowLabel(label: String, position: Int, origin: ClipOrderCard.Origin?, was: Int?) -> String {
         let base = String(localized: "\(label), position \(position) of \(draft.order.count)")
+        if let was { return base + ", " + ClipOrderWas.text(was) }
         switch origin {
         case .yours: return base + ", " + String(localized: "Your order")
         case .upload: return base + ", " + String(localized: "Upload order")
@@ -317,24 +351,39 @@ struct ClipOrderSheet: View {
 
 /// The tapped clip, larger: the editor's fullscreen presentation (a scrim, a box 90% of the screen, tap or swipe to
 /// leave) around the clip preview the clip picker already uses, which plays the local original muted and falls
-/// back to the poster with a note when the original is not on this iPhone.
+/// back to the poster with a note when the original is not on this iPhone. Under it: "Clip 3 of 7 · was 1st".
 struct ClipOrderLargePreview: View {
     let media: CreationAttachedMedia
     let item: ClipOrderCard.Item
     let number: Int
+    let total: Int
+    let was: Int?
     let projectID: UUID?
     let close: () -> Void
 
+    private var caption: String {
+        let place = String(localized: "Clip \(number) of \(total)")
+        return was.map { place + " · " + ClipOrderWas.text($0) } ?? place
+    }
+
     var body: some View {
         GeometryReader { proxy in
-            let size = NativeEditorLayoutMetrics.fullscreenSize(screen: proxy.size, aspect: 9.0 / 16.0)
+            let size = NativeEditorLayoutMetrics.fullscreenSize(
+                screen: CGSize(width: proxy.size.width, height: proxy.size.height - 48), aspect: 9.0 / 16.0)
             ZStack(alignment: .topTrailing) {
-                Color.black.opacity(0.8).ignoresSafeArea()
-                ClipPreviewPage(media: media, position: number, projectID: projectID, isCurrent: true,
-                                name: ClipOrderLabel.text(item, number: number),
-                                missingNote: String(localized: "This clip isn’t on this iPhone"))
-                    .frame(width: size.width, height: size.height)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                KriaColor.ink.opacity(0.72).ignoresSafeArea()
+                VStack(spacing: 14) {
+                    ClipPreviewPage(media: media, position: number, projectID: projectID, isCurrent: true,
+                                    name: ClipOrderLabel.text(item, number: number),
+                                    missingNote: String(localized: "This clip isn’t on this iPhone"))
+                        .frame(width: size.width, height: size.height)
+                        .background(KriaColor.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    Text(caption)
+                        .kriaType(.button).foregroundStyle(Color.white)
+                        .accessibilityIdentifier("clip-order-preview-caption")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Button(action: close) {
                     Image(systemName: "xmark").font(.system(size: 15, weight: .semibold))
                 }

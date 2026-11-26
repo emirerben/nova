@@ -565,6 +565,15 @@ switch, not a page rising from the bottom: both share the same floating header
 editor cross-dissolves in (`WorkspaceCrossfade`) instead of sliding up. See the
 KRI-197 section of the iOS development runbook.
 
+The native clip-order card is a heading with "N clips · M moved", a horizontal
+scroller of 72x108 clips, "Use this order" and "Edit order". The scroller bleeds to the
+card edge and shows the start of the next clip. Each clip is a button that opens
+it large with "Clip 3 of 7 · was 1st". A clip the creator moved wears an ink position
+badge and a "was 1st" caption. The notice that a newer order was applied under the creator's
+move is slate (`KriaInlineNotice`), a failed send is the red line with "Try again" in the ink
+button, a send in flight is a spinner on the primary, and an answered order is one receipt
+line above "Edit order".
+
 ### iOS wordmark asset
 
 The native app uses the approved Main Brand Assets icon artwork (Paper ETC-0): DynaPuff letterforms in `#9BCAFF` on white `#FFFFFF` for the app icon. `KriaWordmark.imageset` preserves the same lettering as a transparent vector PDF, cropped to the artwork bounds and centered within the existing header frame. Do not reconstruct this mark with independent SwiftUI text offsets. This artwork color does not change the semantic Sky selection token.
