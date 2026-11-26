@@ -11,12 +11,10 @@ struct ClipDim: Equatable, Sendable {
 
     let strength: Double
 
-    /// A strength rounded to hundredths and limited to 1. Nil when it rounds to 0 (no dim) or is not a number.
+    /// A strength rounded half up to hundredths and limited to 1. Nil below 0.01 (no dim) or when not a number.
     init?(strength: Double) {
-        guard strength.isFinite else { return nil }
-        let rounded = Self.hundredths(min(strength, 1))
-        guard rounded > 0 else { return nil }
-        self.strength = rounded
+        guard strength.isFinite, strength >= 0.01 else { return nil }
+        self.strength = Self.hundredths(min(strength, 1))
     }
 
     init?(percent: Int) { self.init(strength: Double(percent) / 100) }
@@ -25,15 +23,18 @@ struct ClipDim: Equatable, Sendable {
 
     var rowValue: JSONValue { .number(strength) }
 
-    /// Parses a row value. `nil` and `.null` mean no dim, and so does a strength that rounds to 0; anything else
-    /// that is not a number in `0...1` throws.
+    /// Parses a row value. `nil`, `.null` and a strength below 0.01 mean no dim; a negative value, anything that is
+    /// not a number and a strength that rounds above 1 throw.
     init?(row: JSONValue?) throws {
         guard let row, row != .null else { return nil }
         guard case .number(let value) = row, value.isFinite else { throw Invalid.notANumber }
+        guard value >= 0 else { throw Invalid.outOfRange }
+        guard value >= 0.01 else { return nil }
         let rounded = Self.hundredths(value)
-        guard (0...1).contains(rounded) else { throw Invalid.outOfRange }
-        self.init(strength: rounded)
+        guard rounded <= 1 else { throw Invalid.outOfRange }
+        strength = rounded
     }
 
-    private static func hundredths(_ value: Double) -> Double { (value * 100).rounded(.toNearestOrEven) / 100 + 0 }
+    /// The same IEEE steps as `app.kria.clip_dim`, so both sides land on the same hundredth.
+    private static func hundredths(_ value: Double) -> Double { (value * 100 + 0.5).rounded(.down) / 100 }
 }
