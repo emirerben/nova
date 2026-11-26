@@ -706,6 +706,15 @@ def fact_ids(prepared: PreparedResearch) -> list[str]:
     return [_fact_id(prepared, fact) for fact in _shown_texts(prepared)]
 
 
+def selection_id(prepared: PreparedResearch) -> str:
+    """The card a selection is made on: the research and the facts it shows. A narrowed draft
+    shows fewer facts, so its card has a new id and a late selection from an older card is
+    told apart from one made on the card the creator now sees."""
+    return hashlib.sha256(
+        json.dumps([prepared.basis_digest, fact_ids(prepared)]).encode()
+    ).hexdigest()
+
+
 def keep(prepared: PreparedResearch, kept_ids: Sequence[str]) -> PreparedResearch:
     """``prepared`` with only the shown facts named in ``kept_ids``; an id it does not show is
     ignored. None kept is the creator's waiver (``waived``)."""
@@ -750,11 +759,11 @@ def preview_lines(prepared: PreparedResearch) -> str:
 
 def preview_payload(prepared: PreparedResearch, *, with_ids: bool = False) -> dict[str, Any]:
     """Structured preview for clients that draw a sources card. ``with_ids`` (CA-5) names each
-    fact and the research it belongs to, for a client that sends ``research_selection``."""
+    fact and the card showing them, for a client that sends ``research_selection``."""
     return {
         "version": 1,
         "retrieved_at": prepared.retrieved_at,
-        **({"selection_id": prepared.basis_digest} if with_ids else {}),
+        **({"selection_id": selection_id(prepared)} if with_ids else {}),
         "explanations": [
             *(
                 {

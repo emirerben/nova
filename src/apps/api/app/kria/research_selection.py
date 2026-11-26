@@ -1,14 +1,17 @@
 """Keep or drop the sourced facts of a research draft before approving it (CA-5, KRI-1644).
 
-A research draft's preview names each shown fact (``fact_id``) and the research it belongs to
-(``selection_id``, the research ``basis_digest``). A turn carrying ``research_selection`` saves
-the same draft again with only the kept facts pinned in its approval binding, cancels the
-pending approval and asks for a new one, inside this request: no planner, no search, no model.
+A research draft's preview names each shown fact (``fact_id``) and the card showing them
+(``selection_id``, `research_preview.selection_id`: the research and its shown facts). A turn
+carrying ``research_selection`` saves the same draft again with only the kept facts pinned in
+its approval binding, cancels the pending approval and asks for a new one, inside this request:
+no planner, no search, no model.
 
 The binding digest covers the pinned research, so a narrowed draft is a new revision and a new
-approval, never a rewrite of the one the creator was shown. Selections only narrow: a fact the
-current draft does not show is ignored, so the same selection posted again writes nothing.
-Keeping none pins a waived result, so the render shows no sourced text and never researches.
+approval, never a rewrite of the one the creator was shown. A selection applies only to the card
+the pending draft shows, and each narrowed draft shows a new card. Posted again, the selection
+that saved the current draft writes nothing; a selection from any other card is stale. On the
+current card an id it does not show is ignored. Keeping none pins a waived result, so the render
+shows no sourced text and never researches.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db_locks import acquire_key_share_rows
 from app.kria import research_preview
-from app.kria.api_schemas import SubmitTurnBody, TurnAccepted
+from app.kria.api_schemas import ResearchSelectionIn, SubmitTurnBody, TurnAccepted
 from app.kria.brief import load_latest_brief
 from app.kria.brief_binding import BriefBinding
 from app.kria.drafts import canonical_snapshot, staged_tap_footprint
@@ -56,6 +59,58 @@ SOURCE_KEY = "research_source_event_id"
 
 def _stale(message: str) -> RuntimeFailure:
     return RuntimeFailure(409, STALE, message, recovery="refresh_replan")
+
+
+def _pinned(draft: CreatorEditDraft | None) -> tuple[Any, Any, PreparedResearch | None]:
+    """``draft``'s document, its brief binding and the research the binding pins."""
+    document = _parse_draft_document(getattr(draft, "snapshot_json", None))
+    binding = getattr(document, "brief_binding", None)
+    pinned = (
+        PreparedResearch.model_validate(binding.prepared_research)
+        if binding is not None and binding.prepared_research is not None
+        else None
+    )
+    return document, binding, pinned
+
+
+async def _saved_turn(
+    db: AsyncSession, *, thread_id: uuid.UUID, body: SubmitTurnBody, digest: str
+) -> CreatorAgentTurn | None:
+    """The turn this ``client_event_id`` already saved, or None."""
+    saved = (
+        await db.execute(
+            select(CreatorAgentTurn).where(
+                CreatorAgentTurn.thread_id == thread_id,
+                CreatorAgentTurn.client_event_id == body.client_event_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if saved is not None and saved.request_digest != digest:
+        raise RuntimeFailure(
+            409,
+            "idempotency_key_reused",
+            "That message identity was already used for different content.",
+            recovery="refresh_replan",
+        )
+    return saved
+
+
+async def _saved_head(
+    db: AsyncSession,
+    head: CreatorEditDraft,
+    pinned: PreparedResearch,
+    selection: ResearchSelectionIn,
+) -> bool:
+    """Whether ``selection``, made on the card of ``head``'s parent, is the one that saved
+    ``head`` (``pinned``)."""
+    parent = await db.get(CreatorEditDraft, head.parent_draft_id) if head.parent_draft_id else None
+    _document, _binding, shown = _pinned(parent)
+    if shown is None or research_preview.selection_id(shown) != selection.selection_id:
+        return False
+    kept = research_preview.keep(shown, selection.kept_fact_ids)
+    if selection.kept_fact_ids and kept.waived:
+        return False  # stale on that card, never a waiver
+    return kept.texts == pinned.texts and kept.waived == pinned.waived
 
 
 async def _research_source(db: AsyncSession, turn: CreatorAgentTurn) -> CreationThreadEvent | None:
@@ -106,23 +161,9 @@ async def submit_research_selection(
         raise RuntimeFailure(
             426, "client_update_required", "Update Kria to choose which facts to keep."
         )
-    replay = (
-        await db.execute(
-            select(CreatorAgentTurn).where(
-                CreatorAgentTurn.thread_id == thread_id,
-                CreatorAgentTurn.client_event_id == body.client_event_id,
-            )
-        )
-    ).scalar_one_or_none()
+    replay = await _saved_turn(db, thread_id=thread_id, body=body, digest=digest)
     thread_peek = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=False)
     if replay is not None:
-        if replay.request_digest != digest:
-            raise RuntimeFailure(
-                409,
-                "idempotency_key_reused",
-                "That message identity was already used for different content.",
-                recovery="refresh_replan",
-            )
         return _accepted(replay, thread_peek, replayed=True), False
 
     approval_ref = (
@@ -142,23 +183,16 @@ async def submit_research_selection(
         if approval_ref is not None and approval_ref.draft_id is not None
         else None
     )
-    document = _parse_draft_document(getattr(draft_ref, "snapshot_json", None))
-    binding = getattr(document, "brief_binding", None)
-    pinned = (
-        PreparedResearch.model_validate(binding.prepared_research)
-        if binding is not None and binding.prepared_research is not None
-        else None
-    )
-    if (
-        draft_ref is None
-        or not draft_ref.is_head
-        or pinned is None
-        or pinned.basis_digest != selection.selection_id
-    ):
+    document, binding, pinned = _pinned(draft_ref)
+    if draft_ref is None or not draft_ref.is_head or pinned is None:
         raise _stale("These facts belong to research this draft no longer uses.")
+    # The draft row as read here, unlocked: the revision below is built from this document.
+    seen_hash = draft_ref.snapshot_hash
     old_turn = await db.get(CreatorAgentTurn, approval_ref.turn_id)
-    if pinned.waived and not selection.kept_fact_ids:
-        return _accepted(old_turn, thread_peek, replayed=True), False
+    if selection.selection_id != research_preview.selection_id(pinned):
+        if await _saved_head(db, draft_ref, pinned, selection):
+            return _accepted(old_turn, thread_peek, replayed=True), False
+        raise _stale("These facts are from a card this draft no longer shows.")
     if not research_preview.selectable(pinned):
         raise _stale("These facts belong to research this draft no longer uses.")
     item_peek = await db.get(PlanItem, draft_ref.item_id)
@@ -174,7 +208,7 @@ async def submit_research_selection(
             language=language,
         )
     )
-    if current != selection.selection_id:
+    if current != pinned.basis_digest:
         raise _stale("The footage changed after these facts were checked.")
     kept = research_preview.keep(pinned, selection.kept_fact_ids)
     if selection.kept_fact_ids and kept.waived:
@@ -233,12 +267,18 @@ async def submit_research_selection(
         )
     ).scalar_one()
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
+    replay = await _saved_turn(db, thread_id=thread_id, body=body, digest=digest)
+    if replay is not None:
+        # The same post, saved by another request while this one waited for the locks.
+        accepted = _accepted(replay, thread, replayed=True)
+        await db.rollback()
+        return accepted, False
     now = datetime.now(UTC)
     if (
         approval.status != "pending"
         or approval.expires_at <= now
         or not draft.is_head
-        or draft.snapshot_hash != draft_ref.snapshot_hash
+        or draft.snapshot_hash != seen_hash
         or render.status != "awaiting_approval"
         or item is None
     ):
@@ -385,7 +425,7 @@ async def _mint(
     )
     kept_ids = research_preview.fact_ids(kept)
     receipt = {
-        "selection_id": pinned.basis_digest,
+        "selection_id": research_preview.selection_id(pinned),
         "kept_fact_ids": kept_ids,
         "waived": kept.waived,
     }
