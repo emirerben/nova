@@ -2898,6 +2898,36 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "Clip {n} still plays too",
+   "{n}. klip de hâlâ oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't tell which clip you mean: remove the clips you don't want from this chat and I'll make it from the rest",
+   "Hangi klibi kastettiğini anlayamadım: istemediğin klipleri bu sohbetten çıkar, kalanlardan yapayım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Only clip {n} of your {total} is used",
+   "{total} klibinden sadece {n}. klip kullanılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Only the {count} clips you picked of your {total} are used",
+   "{total} klibinden sadece seçtiğin {count} klip kullanılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The clip you picked isn't in this edit",
+   "Seçtiğin klip bu düzenlemede yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} other clips still play too",
+   "{count} klip daha hâlâ oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you after if any stay longer",
    "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır (gürültülü çekimler hariç), daha uzun kalan olursa sonra sana söylerim"
   ],

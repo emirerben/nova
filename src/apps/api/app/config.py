@@ -1670,6 +1670,16 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set SINGLE_TAKE_POINTER_ASK_ENABLED=false --app nova-video` + restart
     # (api + worker).
     single_take_pointer_ask_enabled: bool = True
+    # KRI-1523: a `select` row naming which of the creator's own videos to use (the typed
+    # `selected_media_ids` fact: "Use only the good take: the second clip", Cusco DJI T1
+    # 2026-11-17) keeps only those videos in a Talking plan (`clip_scope.apply_chosen_videos`)
+    # and is judged against the plan and the finished video (`brief_checks._check_chosen_videos`).
+    # A pick the server cannot tell apart (untyped, or ids naming no own video) on several videos
+    # says how to pick instead of "A Talking video can't do this". The Main Creator is taught the
+    # fact (`main_creator.CHOSEN_VIDEOS_BRIEF_SENTENCE`). Default TRUE. False: byte-identical
+    # (prompt included). Rollback: `fly secrets set CHOSEN_CLIPS_ASK_ENABLED=false --app
+    # nova-video` + restart (api + worker).
+    chosen_clips_ask_enabled: bool = True
     # KRI-1489: a pop-in ask that DESCRIBES its moments ("when I mention the launch and Vela's 2
     # posts") instead of quoting the spoken words is answered by the pop-ins the plan placed on
     # other words when there are at least as many spare pop-ins as unmatched names
