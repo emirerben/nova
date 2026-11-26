@@ -438,8 +438,14 @@ async def test_a_fact_id_the_client_never_saw_is_dropped(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_ids_that_match_no_shown_fact_are_stale_never_a_waiver(monkeypatch) -> None:
-    """S7, S8: only an empty list waives; a card older than the narrowed draft is stale."""
+    """S7, S8: only an empty list waives, on the current card and on an older one."""
     draft = await _research_draft(monkeypatch)
+    untouched = (_revisions(draft.thread_id), _pending(draft.thread_id).id)
+    with pytest.raises(RuntimeFailure) as refused:
+        await _select(draft, ["not-a-shown-fact"])
+    assert (refused.value.status_code, refused.value.code) == (409, STALE)
+    assert (_revisions(draft.thread_id), _pending(draft.thread_id).id) == untouched
+
     await _select(draft, [_fact_id(draft, KEPT_TEXT)])
     after = (_revisions(draft.thread_id), _pending(draft.thread_id).id)
 
@@ -460,8 +466,11 @@ async def test_a_repeated_waiver_writes_nothing(monkeypatch) -> None:
     after = (_revisions(draft.thread_id), _pending(draft.thread_id).id)
 
     again = await _select(draft, [])
+    with pytest.raises(RuntimeFailure) as refused:
+        await _select(draft, ["not-a-shown-fact"])
 
     assert again.replayed and again.turn_id == first.turn_id
+    assert (refused.value.status_code, refused.value.code) == (409, STALE)
     assert (_revisions(draft.thread_id), _pending(draft.thread_id).id) == after
 
 
