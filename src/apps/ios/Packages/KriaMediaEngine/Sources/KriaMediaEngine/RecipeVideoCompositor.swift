@@ -258,12 +258,13 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     }
     /// The person mask for `scene` (the composited frame below the text), or nil when no active text layer
     /// is flagged or the matte declines (nobody in frame, frame swallowed, unstable, segmenter error).
-    func subjectOcclusion(scene: CIImage, activeText: [RecipeTextLayer], time: Double) -> CIImage? {
+    /// `scene` is drawn only when a flagged layer is active.
+    func subjectOcclusion(activeText: [RecipeTextLayer], time: Double, scene: () throws -> CIImage) rethrows -> CIImage? {
         guard let subjectMatte, activeText.contains(where: { $0.portable?.behindSubject == true }) else { return nil }
         // Keyed by the primary clip(s) under this frame: a hard cut resets the temporal state (F6).
         let key = layers.filter { $0.isPrimary && $0.trackID != nil && time >= $0.start && time < $0.end }
             .map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
-        return subjectMatte.mask(for: scene, at: time, canvas: canvas, cutKey: key)
+        return subjectMatte.mask(for: try scene(), at: time, canvas: canvas, cutKey: key)
     }
 }
 
@@ -283,6 +284,20 @@ final class PreviewPlaybackFrameReceipt: @unchecked Sendable {
         self.pending = nil
         lock.unlock()
         pending.callback(time)
+    }
+}
+
+/// One frame's speaker matte answers. The below-text pass asks each matte once; a second pass over the same layers
+/// with their dims removed (`replaying`, the picture the text matte reads) gets the same answers and records no trace.
+final class SpeakerAnswers {
+    var replaying = false
+    private var answers: [ObjectIdentifier: SpeakerMatte.Answer] = [:]
+
+    func answer(of matte: SpeakerMatte, asking ask: () -> SpeakerMatte.Answer) -> SpeakerMatte.Answer {
+        if let answer = answers[ObjectIdentifier(matte)] { return answer }
+        let answer = ask()
+        answers[ObjectIdentifier(matte)] = answer
+        return answer
     }
 }
 
@@ -342,10 +357,12 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             }
             let time = request.compositionTime.seconds
             if let fault = Self.frameFault, let error = fault(time) { request.finish(with: error); return }
-            var frame = CIImage(color: instruction.transparentBackground ? .clear : .black).cropped(to: instruction.canvas)
+            let base = CIImage(color: instruction.transparentBackground ? .clear : .black).cropped(to: instruction.canvas)
             let belowText = instruction.layers.filter { time >= $0.start && time < $0.end && !$0.overlayAboveText }
+            let answers = SpeakerAnswers()
             let composeStart = DispatchTime.now().uptimeNanoseconds
-            do { frame = try composeBelowText(belowText, onto: frame, instruction: instruction, request: request, time: time, turn: turn) }
+            var frame = base
+            do { frame = try composeBelowText(belowText, onto: base, instruction: instruction, request: request, time: time, turn: turn, answers: answers) }
             catch { request.finish(with: error); return }
             EngineSignpost.stage("talk.stage.composeBelowText", since: composeStart)
             // Text, drawings and motion keep their frame-order state: from here on frames take turns.
@@ -364,15 +381,30 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 do { frame = try ColorMomentPainter.image(frame, sample: moment, canvas: instruction.canvas) }
                 catch { request.finish(with: error); return }
             }
+            var motionImage: CIImage?
             if let motion = instruction.motionScenes {
-                do { frame = try motion.image(at: time).composited(over: frame) }
+                do { motionImage = try motion.image(at: time) }
                 catch { request.finish(with: error); return }
             }
+            if let motionImage { frame = motionImage.composited(over: frame) }
             let activeText: [RecipeTextLayer]
             do {
                 activeText = try instruction.activeText(at: time)
             } catch { request.finish(with: error); return }
-            let occlusion = instruction.subjectOcclusion(scene: frame, activeText: activeText, time: time)
+            let occlusion: CIImage?
+            do {
+                occlusion = try instruction.subjectOcclusion(activeText: activeText, time: time) {
+                    guard belowText.contains(where: { $0.dim != nil }) else { return frame }
+                    // The person is found on the undimmed picture, as the speaker matte finds it, so a dark (or black)
+                    // clip keeps the text behind the same person. The matte answers this frame already got are replayed.
+                    answers.replaying = true
+                    var scene = try composeBelowText(belowText.map { var layer = $0; layer.dim = nil; return layer }, onto: base,
+                                                     instruction: instruction, request: request, time: time, answers: answers)
+                    if let moment { scene = try ColorMomentPainter.image(scene, sample: moment, canvas: instruction.canvas) }
+                    if let motionImage { scene = motionImage.composited(over: scene) }
+                    return scene
+                }
+            } catch { request.finish(with: error); return }
             do { frame = try Self.paintText(activeText, over: frame, canvas: instruction.canvas, time: time, occlusion: occlusion) }
             catch { request.finish(with: error); return }
             for layer in instruction.layers where time >= layer.start && time < layer.end && layer.overlayAboveText {
@@ -404,10 +436,10 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     /// clip on the same track is untouched.
     private func composeBelowText(_ candidates: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
                                   request: AVAsynchronousVideoCompositionRequest, time: Double,
-                                  turn: RecipeFramePipeline.Frame? = nil) throws -> CIImage {
+                                  turn: RecipeFramePipeline.Frame? = nil, answers: SpeakerAnswers) throws -> CIImage {
         let layers = candidates.filter { $0.backdropAssetID == nil }
         if layers.contains(where: { $0.speakerRole == .speaker && $0.panelViewport != nil }) {
-            return try composePanelSpeakers(layers, onto: canvas, instruction: instruction, request: request, time: time)
+            return try composePanelSpeakers(layers, onto: canvas, instruction: instruction, request: request, time: time, answers: answers)
         }
         var frame = canvas
         func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
@@ -420,7 +452,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         // "below" paints anything.
         if !instruction.fullScreenWindows.isEmpty, SpeakerBackgroundLayer.fullScreen(instruction.fullScreenWindows, at: time) {
             guard slice == .whole || slice == .belowSpeaker else { return frame }
-            recordInOrder(turn) { instruction.speakerMatte?.trace.record(.fullScreen, at: time) }
+            if !answers.replaying { recordInOrder(turn) { instruction.speakerMatte?.trace.record(.fullScreen, at: time) } }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
         }
@@ -432,14 +464,14 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             guard slice == .whole || slice == .belowSpeaker else { return frame }
             // A background is part of the edit but no clip can ever be cut out of it: say so instead of drawing the room
             // silently. A speaker-less stretch of an edit that does have speaker clips (the ending clip) is not this.
-            if slice == .whole, let matte = instruction.speakerMatte, !backgrounds.isEmpty, matte.trace.hasNoSpeakerClips {
+            if slice == .whole, !answers.replaying, let matte = instruction.speakerMatte, !backgrounds.isEmpty, matte.trace.hasNoSpeakerClips {
                 recordInOrder(turn) { matte.trace.record(.noSpeakerLayer, at: time) }
             }
             for layer in layers where layer.speakerRole != .background { try compose(layer) }
             return frame
         }
         if layers.contains(where: { $0.speakerRole == .speaker && $0.speakerFrameOverride != nil && $0.speakerFrameOverride?.mode != .inherit }) {
-            return try composeOccurrenceSpeakers(layers, onto: canvas, instruction: instruction, request: request, time: time)
+            return try composeOccurrenceSpeakers(layers, onto: canvas, instruction: instruction, request: request, time: time, answers: answers)
         }
         if slice == .aboveSpeaker {
             for layer in layers[first...] where layer.speakerRole == nil { try compose(layer) }
@@ -467,7 +499,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         }
         EngineSignpost.stage("talk.stage.speakerLayer", since: speakerStart)
         let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
-        switch matte.answer(for: maskSource, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil, frame: turn) {
+        switch answers.answer(of: matte, asking: { matte.answer(for: maskSource, at: time, canvas: instruction.canvas, clipKey: key, backgroundStaysDrawn: instruction.speakerFrame != nil, frame: turn) }) {
         case .cutout(let mask):
             if slice != .speakerOnly { try compose(background) }
             // The mask was computed on the full-size speaker layer; only then is the cut-out moved into its frame (S27).
@@ -491,7 +523,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
 
     private func composePanelSpeakers(_ layers: [RecipeVideoLayer], onto initial: CIImage,
                                       instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
-                                      time: Double) throws -> CIImage {
+                                      time: Double, answers: SpeakerAnswers) throws -> CIImage {
         var frame = initial
         var drawn = Set<String>()
         let backgrounds = layers.filter { $0.speakerRole == .background }
@@ -535,7 +567,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 speakerMatte: instruction.speakerMatte?.forPanel(key), speakerFrame: instruction.speakerFrame,
                 fullScreenWindows: instruction.fullScreenWindows, speakerSlice: localSlice, speakerSliceClipID: instruction.speakerSliceClipID)
             let picture = try composeBelowText(localBackgrounds + speakers,
-                onto: CIImage(color: .clear).cropped(to: localCanvas), instruction: localInstruction, request: request, time: time)
+                onto: CIImage(color: .clear).cropped(to: localCanvas), instruction: localInstruction, request: request, time: time, answers: answers)
             frame = picture.cropped(to: localCanvas)
                 .transformed(by: CGAffineTransform(translationX: viewport.minX, y: viewport.minY))
                 .cropped(to: viewport).composited(over: frame).cropped(to: instruction.canvas)
@@ -546,7 +578,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     /// Mask and frame each occurrence before its transition is blended, so two simultaneous
     /// subjects never inherit each other's placement or segmentation history.
     private func composeOccurrenceSpeakers(_ layers: [RecipeVideoLayer], onto canvas: CIImage,
-        instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
+        instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest, time: Double,
+        answers: SpeakerAnswers) throws -> CIImage {
         let bounds = instruction.canvas
         let backgrounds = layers.filter { $0.speakerRole == .background }
         let speakers = layers.filter { $0.speakerRole == .speaker }
@@ -576,7 +609,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     speakerFrame: layer.effectiveSpeakerFrame(instruction.speakerFrame),
                     speakerSlice: whole ? .whole : .speakerOnly)
                 let picture = try composeBelowText(backgrounds + [raw], onto: CIImage(color: .clear).cropped(to: bounds),
-                    instruction: solo, request: request, time: time)
+                    instruction: solo, request: request, time: time, answers: answers)
                 let alpha = layer.fadeAlpha(at: time)
                 if alpha < 1 && layer.transitionKind != .crossfade {
                     result = try NativeClipTransitionPainter.image(incoming: picture, outgoing: result,
