@@ -3,13 +3,19 @@
 Fails when an operation the parser accepts has no tool, when a tool names an operation the
 parser does not know, when a tool's fields or required fields differ from the parser's, when
 no edit could ever offer an operation as a tool, or when the rules prompt stops matching what
-the tool transport rewrites.
+the tool transport rewrites. Also when a patch value the JSON answer accepts (a null that removes
+a dim, a tilt or a text pill) is refused by its tool, or when a clip field the edit keeps closed
+(dim, tilt, source audio) is offered as a tool argument the parser will then refuse.
 """
 
 from __future__ import annotations
 
-import pytest
+import json
 
+import pytest
+from jsonschema import Draft202012Validator
+
+from app.agents._creator_wire import copilot_operation_schemas, copilot_schema
 from app.agents.copilot_tools import (
     REPLY_TOOL,
     copilot_tools,
@@ -93,3 +99,52 @@ def test_every_op_with_a_patch_offers_exactly_its_coercers_keys():
     assert set(patch_fields()) == with_patch
     for name, keys in patch_fields().items():
         assert set(operation_tool(name).parameters["properties"]["patch"]["properties"]) == keys
+
+
+def test_every_null_the_json_answer_accepts_in_a_patch_its_tool_accepts():
+    wire, defs = copilot_operation_schemas(), copilot_schema()["$defs"]
+    nullable = []
+    for name, keys in patch_fields().items():
+        patch = wire[name]["properties"]["patch"]["properties"]
+        tool = operation_tool(name).parameters["properties"]["patch"]["properties"]
+        for key in sorted(keys & set(patch)):
+            if Draft202012Validator({**patch[key], "$defs": defs}).is_valid(None):
+                nullable.append((name, key))
+                assert Draft202012Validator(tool[key]).is_valid(None), f"{name}.patch.{key}"
+    assert {
+        ("patch_slots", "dim"),
+        ("patch_slots", "tilt"),
+        ("patch_text", "background_color"),
+    } <= set(nullable)
+
+
+def _clip_edit(**capabilities: bool) -> dict:
+    return {**_OPEN_VIDEO, "timeline_patch_capabilities": capabilities}
+
+
+def _offered_slot_keys(snapshot: dict) -> set[str]:
+    tool = next(tool for tool in copilot_tools(snapshot, {}) if tool.name == "patch_slots")
+    return set(tool.parameters["properties"]["patch"]["properties"])
+
+
+def _kept_ops(snapshot: dict, op: dict) -> list:
+    raw = json.dumps({"intent": "edit", "ops": [op], "confidence": 0.95, "reply": "Done."})
+    return EditCopilotAgent(None).parse(raw, EditCopilotInput(variant_snapshot=snapshot)).ops
+
+
+@pytest.mark.parametrize(
+    ("key", "gate", "value"),
+    [
+        ("dim", "dim", 0.4),
+        ("tilt", "tilt", {"rotation_deg": 10}),
+        ("muted", "muted", True),
+        ("source_audio_volume", "muted", 0.5),
+    ],
+)
+def test_a_clip_field_the_edit_keeps_closed_is_never_offered_as_a_tool_argument(key, gate, value):
+    op = {"op": "patch_slots", "selector": {"all": True}, "patch": {key: value}}
+    closed, opened = _clip_edit(duration_s=True), _clip_edit(duration_s=True, **{gate: True})
+    assert _kept_ops(closed, op) == []
+    assert key not in _offered_slot_keys(closed)
+    assert _kept_ops(opened, op) != []
+    assert key in _offered_slot_keys(opened)

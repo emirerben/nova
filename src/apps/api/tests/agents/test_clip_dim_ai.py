@@ -9,7 +9,8 @@ Failure modes, one test each:
 - the receipt names the wrong clips or the wrong strength;
 - a percent, a negative or a word reaches the draft instead of a plain refusal;
 - an ask that changes nothing reports success;
-- a closed gate changes the snapshot or the prompt, or lets the model claim a dim it cannot make.
+- a closed gate changes the snapshot, the prompt or the tools-mode tool schema, or lets the model
+  claim a dim it cannot make.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import pytest
 
 from app.agents import editor_ops_v2 as v2
 from app.agents._runtime import ModelClient
+from app.agents.copilot_tools import copilot_tools
 from app.agents.edit_copilot import (
     EditCopilotAgent,
     EditCopilotInput,
@@ -174,6 +176,14 @@ def test_a_closed_gate_leaves_the_snapshot_and_the_prompt_as_they_were(monkeypat
     opened = _snapshot(monkeypatch, variant, OPEN)
     assert "CLIP DIM" in v2.family_fragments(opened)
     assert v2.family_fragments(opened).startswith(v2.family_fragments(snapshot))
+
+    closed_tools = [tool.model_dump() for tool in copilot_tools(snapshot, {})]
+    opened_tools = [tool.model_dump() for tool in copilot_tools(opened, {})]
+    assert '"dim"' not in json.dumps(closed_tools)
+    patch_slots = next(tool for tool in opened_tools if tool["name"] == "patch_slots")
+    offered = patch_slots["parameters"]["properties"]["patch"]["properties"].pop("dim")
+    assert offered == {"anyOf": [{"type": "number"}, {"type": "null"}]}
+    assert json.dumps(opened_tools, sort_keys=True) == json.dumps(closed_tools, sort_keys=True)
 
 
 def test_a_closed_gate_refuses_the_ask_instead_of_claiming_it(monkeypatch):
