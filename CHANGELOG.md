@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.33.0] - 2026-11-26
+
+### Changed
+- feat(kria): the AI picks a story order for clips nobody placed (KRI-1593) (#2502) <!-- release-pr: 2502 -->
+
 ## [0.90.32.0] - 2026-11-26
 
 ### Changed
