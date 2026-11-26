@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.0.0] - 2026-11-26
+
+### Added
+- feat: the Talking speaker's place and size change per section; chat edits one section (KRI-1558) (#2456) <!-- release-pr: 2456 -->
+
 ## [0.90.33.0] - 2026-11-26
 
 ### Changed
