@@ -58,6 +58,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     # KRI-1171: frame review of a finished generation against the creator's request. Sent
     # through the bounded image transport, never the dispatcher; see app/agents/intent_review.py.
     ("nova.kria.intent_review", "app.agents.intent_review", "IntentReviewAgent"),
+    # KRI-1593: ranks the clips nobody placed into a story order; `services/story_order.py`
+    # decides what may move and whether the ranking is used.
+    ("nova.kria.story_sequencer", "app.agents.story_sequencer", "StorySequencerAgent"),
     (
         "nova.compose.visual_treatment_planner",
         "app.agents.visual_treatment_planner",

@@ -693,6 +693,10 @@
       "source": "default",
       "value": []
     },
+    "kria_story_sequencer_enabled": {
+      "source": "default",
+      "value": false
+    },
     "kria_suggester_model": {
       "source": "default",
       "value": "gpt-6.1-sol"

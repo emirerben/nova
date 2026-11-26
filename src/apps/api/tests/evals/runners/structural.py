@@ -2779,6 +2779,29 @@ def check_spoken_cue_resolver(output: Any, input: Any) -> list[str]:  # noqa: A0
     return failures
 
 
+def check_story_sequencer(output: Any, input: Any) -> list[str]:  # noqa: A002
+    """KRI-1593: the ranking contract, independently of parse(): a decided answer ranks every
+    open clip exactly once and never a clip the creator placed; "cannot decide" ranks nothing;
+    and the note it leaves holds no clip id (it is for the trace, and must stay that way)."""
+    failures: list[str] = []
+    open_ids = [str(clip["id"]) for clip in input.clips if clip.get("span")]
+    placed = {str(clip["id"]) for clip in input.clips if not clip.get("span")}
+    order = list(output.order)
+    if not output.decided:
+        if order:
+            failures.append("an undecided answer must rank nothing")
+        return failures
+    if len(set(order)) != len(order):
+        failures.append("order repeats a clip")
+    if placed.intersection(order):
+        failures.append("order ranks a clip the creator placed")
+    if set(order) != set(open_ids):
+        failures.append("order must rank every open clip exactly once")
+    if len(output.reason) > 240:
+        failures.append("reason is longer than the trace allows")
+    return failures
+
+
 def check_narrated_clip_alignment(
     output: NarratedClipAlignmentOutput,
     input: NarratedClipAlignmentInput,  # noqa: A002
@@ -3181,6 +3204,8 @@ def run_structural(
         return check_narrated_clip_alignment(output, input)
     if agent_name == "nova.compose.spoken_cue_resolver":
         return check_spoken_cue_resolver(output, input)
+    if agent_name == "nova.kria.story_sequencer":
+        return check_story_sequencer(output, input)
     if agent_name == "nova.compose.intro_scene":
         return check_intro_scene(output, input)
     if agent_name == "nova.compose.phone_typography":

@@ -332,6 +332,9 @@ def build_card(
         "cards": cards,
         "total": len(cards),
         **({"rebased": True} if rebased else {}),
+        # KRIA_STORY_SEQUENCER_ENABLED: the story sequencer chose some of these places (their
+        # cards read `ai_story`). Absent otherwise, so every other card is byte-identical.
+        **({"story": True} if state.story_ids.intersection(order) else {}),
     }
 
 
@@ -339,7 +342,10 @@ def listing_text(card: Mapping[str, Any]) -> str:
     """The order as plain numbered text, for a build that cannot show the strip."""
     cards = list(card.get("cards", ()))
     return ledger.order_listing(
-        [str(c["media_id"]) for c in cards], {str(c["media_id"]): str(c["label"]) for c in cards}
+        [str(c["media_id"]) for c in cards],
+        {str(c["media_id"]): str(c["label"]) for c in cards},
+        # The strip's "AI order" badge, in words: this build cannot draw it.
+        story=card.get("story") is True,
     )
 
 

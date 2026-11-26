@@ -1,0 +1,47 @@
+{
+  "agent": "nova.kria.story_sequencer",
+  "prompt_version": "2026-11-24-kri1593-v1",
+  "input": {
+    "request": "city lights reel",
+    "asks": [],
+    "clips": [
+      {
+        "id": "c1",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "traffic at night",
+        "summary": "Car lights streak along a wide avenue at night"
+      },
+      {
+        "id": "c2",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "traffic at night",
+        "summary": "Car lights streak along a wide avenue at night"
+      },
+      {
+        "id": "c3",
+        "span": "s1",
+        "kind": "video",
+        "duration_s": 5.0,
+        "subject": "neon signs",
+        "summary": "Neon shop signs reflected on a wet street"
+      }
+    ]
+  },
+  "raw_text": "{\"decided\": false, \"order\": [\"c1\", \"c2\", \"c3\"], \"reason\": \"interchangeable night views\"}",
+  "output": {
+    "decided": false,
+    "order": [],
+    "reason": "interchangeable night views"
+  },
+  "meta": {
+    "source": "HAND-AUTHORED replay golden (not a live capture), KRI-1593: the clips and the answer were written by hand",
+    "scenario": "Three interchangeable night views with nothing that makes one order tell more than another: the answer is 'cannot decide', which the server reads as the order the clips were added.",
+    "expected_order": [],
+    "evidence": "Replay proves the parse + structural contract on this answer only; it does NOT prove the live model gives it. The held-out comparison against upload order (tests/evals/story_sequencer/heldout.json) needs an approved paid run."
+  },
+  "prompt_sha": "f5c2c8579e8a650b"
+}

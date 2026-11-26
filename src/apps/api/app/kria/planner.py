@@ -65,6 +65,11 @@ from app.agents.main_creator import (
     MainCreatorInput,
     MainCreatorOutput,
 )
+from app.agents.story_sequencer import (
+    StorySequencerAgent,
+    StorySequencerInput,
+    StorySequencerOutput,
+)
 from app.config import settings
 from app.kria import ask_refusals, pending_visuals, voiceover_script
 from app.kria.ask_ledger import ask_ledger_enabled, no_op_ledger, no_op_reply
@@ -7097,6 +7102,8 @@ async def _turn_clip_order(
             log.warning("kria_clip_order_groups_failed", thread_id=str(thread_id), exc_info=True)
             intents = None
         groups = clip_order_card.known_group_words(events, intents)
+        # "Use this order" on the newest card: every clip on it is where the creator wants it.
+        card = clip_order_card.last_card(events)
         return clip_order_ledger.TurnClipOrder(
             state=state,
             attachment_ids=attachment,
@@ -7104,6 +7111,9 @@ async def _turn_clip_order(
             labels=clip_order_ledger.labels_for(state.order, assignments, group_words=groups),
             observed=observed,
             groups=groups,
+            confirmed_ids=(
+                tuple(clip_order_card.card_order(card)) if card and card.get("confirmed") else ()
+            ),
         )
     except Exception:  # noqa: BLE001 - the ledger must never break a turn
         log.warning("kria_clip_order_state_failed", thread_id=str(thread_id), exc_info=True)
@@ -7300,6 +7310,191 @@ def _with_clip_order_entries(
     return replace(planned, clip_order_entries=tuple(payloads))
 
 
+# What the story sequencer leaves a turn after it answers: the draft commit.
+_STORY_ORDER_RESERVE_S = 30.0
+
+
+async def _with_story_order(
+    db: AsyncSession,
+    planned: PlannedKriaTurn,
+    turn: clip_order_ledger.TurnClipOrder,
+    *,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    item_id: uuid.UUID | None,
+    creator_text: str | None,
+) -> PlannedKriaTurn:
+    """KRIA_STORY_SEQUENCER_ENABLED (KRI-1593): where the creator did not say, the AI picks the
+    order that fits the story, and says so.
+
+    Runs on the FINAL draft of a turn (after the choice gate: its answers and its snapshot are
+    what approval binds; a turn that ends in a question writes nothing), before any render.
+    `story_order.review_story` decides what the draft does: ask the sequencer about clips nobody
+    placed, or, when the thread has a story order this draft can no longer carry (the creator
+    chose the upload order, another format, ...), put the AI's clips back in upload order. The
+    model only ranks; `story_order.settle_story` decides whether the ranking is used. The result
+    is one ledger entry on this turn and the order on the approval-bound snapshot, so the card,
+    the contract, readiness and the worker read one order. Any failure (no answer, a slow
+    provider, an order no reader would hold) leaves the clips as they were: this never fails or
+    holds a turn. With the flag off it only ever withdraws an order an earlier turn wrote.
+    """
+    from app.services import story_order  # noqa: PLC0415
+
+    plan = planned.plan
+    if (
+        not clip_order_ledger.clip_order_ledger_on()
+        or turn.rendered
+        or plan.mode != "act"
+        or not plan.intents
+        or plan.intents[0].tool_name != "draft.apply_strategy"
+        or not isinstance(planned.media_snapshot, dict)
+    ):
+        return planned
+    strategy = plan.intents[0].arguments.get("strategy")
+    state = clip_order_ledger.planning_state(turn)
+    asks = story_order.story_sequencer_on()
+    if not isinstance(strategy, dict) or not (asks or state.story_ids):
+        return planned
+    try:
+        brief: CreativeBrief | None = None
+        if settings.creative_brief_for(creator_id) and settings.brief_binding_for(creator_id):
+            # The brief this draft is approved against, previewed as the choice gate previews it.
+            brief = await load_latest_brief(db, thread_id)
+            if planned.brief_updates:
+                with suppress(BriefUpdateBatchError):
+                    brief = apply_updates(
+                        brief, planned.brief_updates, source_turn_id=None, creator_text=creator_text
+                    )
+        story = story_order.review_story(
+            strategy,
+            planned.media_snapshot,
+            state,
+            brief=brief,
+            creator_id=creator_id,
+            attachment_ids=turn.attachment_ids,
+            confirmed=turn.confirmed_ids,
+            rendered=turn.rendered,
+            client_protocol=planned.client_protocol,
+        )
+        if isinstance(story, story_order.StoryResult):
+            result = story  # this draft cannot carry the story order: upload order again
+        elif story is None or not asks:
+            return planned
+        else:
+            deadline = turn_deadline.get()
+            if deadline is not None and deadline - _STORY_ORDER_RESERVE_S - time.monotonic() < 5.0:
+                log.info("kria_story_order_skipped", thread_id=str(thread_id), reason="deadline")
+                return planned
+            clips, alias_to_id = story_order.sequencer_clips(
+                story,
+                planned.media_snapshot,
+                groups={
+                    **turn.groups,
+                    **clip_order_ledger.group_words_by_clip(strategy.get("resolved_clip_intents")),
+                },
+            )
+            ranking = await _story_ranking(
+                StorySequencerInput(
+                    request=" ".join((creator_text or "").split())[: story_order.REQUEST_CHARS],
+                    asks=story_order.creator_asks(brief),
+                    clips=clips,
+                ),
+                alias_to_id,
+                db=db,
+                thread_id=thread_id,
+                creator_id=creator_id,
+                item_id=item_id,
+                deadline=deadline,
+            )
+            if ranking is _STORY_UNANSWERED:
+                return planned
+            result = story_order.settle_story(
+                story,
+                ranking,
+                strategy,
+                planned.media_snapshot,
+                brief=brief,
+                creator_id=creator_id,
+                client_protocol=planned.client_protocol,
+            )
+    except Exception:  # noqa: BLE001 - the story order must never break a turn
+        log.warning("kria_story_order_failed", thread_id=str(thread_id), exc_info=True)
+        return planned
+    log.info(
+        "kria_story_order",
+        thread_id=str(thread_id),
+        actor=result.entry.actor,
+        clips=len(result.entry.story_ids),
+        changed=result.changed,
+    )
+    return replace(
+        planned,
+        clip_order_entries=(*planned.clip_order_entries, result.entry.to_payload()),
+        media_snapshot=result.snapshot,
+    )
+
+
+# The sequencer gave no usable answer (a provider failure): nothing is recorded, so the next
+# draft asks again. Distinct from None, its own "I cannot decide", which is recorded.
+_STORY_UNANSWERED: Any = object()
+
+
+async def _story_ranking(
+    agent_input: StorySequencerInput,
+    alias_to_id: Mapping[str, str],
+    *,
+    db: AsyncSession,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    item_id: uuid.UUID | None,
+    deadline: float | None,
+) -> list[str] | None | Any:
+    """The sequencer's ranking as media ids, None when it could not decide, or
+    ``_STORY_UNANSWERED`` when the call failed. One model call, checkpointed like the Main
+    Creator's so a continued run of the same turn reads the first answer instead of paying (and
+    possibly ordering differently) again."""
+    from app.services import story_order  # noqa: PLC0415
+    from app.services.turn_checkpoint import turn_run_id  # noqa: PLC0415
+
+    # Keyed by the TURN, not only the thread: the same clips and words on a later turn (a held
+    # draft sent again) are a new call, never one the paid-call ledger answers "already settled".
+    request_id = paid_call_request_id(
+        thread_id, "story-order", *([str(run)] if (run := turn_run_id.get()) else [])
+    )
+
+    def _run_agent() -> StorySequencerOutput:
+        return StorySequencerAgent(default_client()).run(
+            agent_input,
+            ctx=RunContext(
+                request_id=request_id,
+                creator_id=str(creator_id),
+                plan_item_id=str(item_id) if item_id else None,
+                deadline_monotonic=(
+                    deadline - _STORY_ORDER_RESERVE_S if deadline is not None else None
+                ),
+            ),
+        )
+
+    # No connection pinned while the synchronous model client is in flight.
+    await db.rollback()
+    try:
+        output = await checkpointed(
+            "story_sequencer",
+            agent_cls=StorySequencerAgent,
+            agent_input=agent_input,
+            output_cls=StorySequencerOutput,
+            call=lambda: asyncio.to_thread(_run_agent),
+        )
+    except Exception as exc:  # noqa: BLE001 - no answer is upload order, never a failed turn
+        log.warning(
+            "kria_story_sequencer_failed", thread_id=str(thread_id), error_class=type(exc).__name__
+        )
+        return _STORY_UNANSWERED
+    if not output.decided:
+        return None
+    return story_order.ranking_ids(output.order, alias_to_id)
+
+
 async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     """Fence planning against source replacement while providers are running."""
     from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
@@ -7365,7 +7560,7 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
             after, clip_order_ledger.planning_state(turn_order)
         )
     planned = replace(planned, media_snapshot=after, client_protocol=client_protocol)
-    return await _gate_unresolved_choices(
+    planned = await _gate_unresolved_choices(
         db,
         planned,
         thread_id=kwargs["thread_id"],
@@ -7374,6 +7569,19 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
         creator_text=kwargs.get("user_message"),
         answers_moment_questions=answers_moment_questions,
     )
+    if turn_order is not None:
+        # After the gate: the story order is decided on the draft approval will bind (the gate's
+        # answers and its final snapshot), and a turn that ends in a question writes nothing.
+        planned = await _with_story_order(
+            db,
+            planned,
+            turn_order,
+            thread_id=kwargs["thread_id"],
+            creator_id=kwargs["creator_id"],
+            item_id=kwargs["item_id"],
+            creator_text=kwargs.get("user_message"),
+        )
+    return planned
 
 
 def _creator_messages(events: Sequence[tuple[str, Any]]) -> str:

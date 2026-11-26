@@ -1,0 +1,62 @@
+{
+ "created_at": "2026-11-24T13:39:03+00:00",
+ "git_sha": "f1bbb7f52",
+ "agent": "nova.kria.story_sequencer",
+ "prompt_version": "2026-11-24-kri1593-v1",
+ "model": "gemini-2.5-flash",
+ "answers": {
+  "pasta_recipe": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c3\",\n    \"c2\",\n    \"c5\",\n    \"c1\",\n    \"c4\"\n  ],\n  \"reason\": \"Shows ingredients, then cooking steps, finished dish, and finally tasting.\"\n}"
+  },
+  "train_day_trip": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c2\",\n    \"c5\",\n    \"c4\",\n    \"c6\",\n    \"c1\",\n    \"c3\"\n  ],\n  \"reason\": \"Orders the day trip chronologically: departure, train journey, arrival, exploring the town, and finally sunset.\"\n}"
+  },
+  "gym_session": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c3\",\n    \"c5\",\n    \"c1\",\n    \"c4\",\n    \"c2\"\n  ],\n  \"reason\": \"Follows the chronological progression of a gym session from arrival to departure.\"\n}"
+  },
+  "room_makeover": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c3\",\n    \"c2\",\n    \"c4\",\n    \"c1\"\n  ],\n  \"reason\": \"Shows the room before, then the work, then the finished result.\"\n}"
+  },
+  "morning_vlog_hello_goodbye": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c4\",\n    \"c3\",\n    \"c1\",\n    \"c2\"\n  ],\n  \"reason\": \"Opening greeting, followed by morning routine activities, and then a closing farewell.\"\n}"
+  },
+  "mountain_hike": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c4\",\n    \"c5\",\n    \"c3\",\n    \"c1\",\n    \"c2\"\n  ],\n  \"reason\": \"Orders the clips chronologically from the trailhead, through the ascent, to the summit, and finally the return to the car, telling a clear hike recap.\"\n}"
+  },
+  "market_to_table": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c2\",\n    \"c4\",\n    \"c1\",\n    \"c5\",\n    \"c3\"\n  ],\n  \"reason\": \"This order follows the journey from shopping at the market, to bringing ingredients home, preparing them, cooking, and finally eating at the table.\"\n}"
+  },
+  "wedding_day": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\"c2\", \"c5\", \"c4\", \"c1\", \"c3\"],\n  \"reason\": \"Follows the chronological progression of a wedding day: setup, arrival, ceremony, reception, and grand finale.\"\n}"
+  },
+  "shelf_build": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c3\",\n    \"c4\",\n    \"c2\",\n    \"c1\"\n  ],\n  \"reason\": \"shows the process from unboxing to the finished shelf\"\n}"
+  },
+  "placed_opening_two_groups": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c3\",\n    \"c4\",\n    \"c2\",\n    \"c6\",\n    \"c7\",\n    \"c5\"\n  ],\n  \"reason\": \"Orders beach clips chronologically through the day, then city clips by arrival to night views.\"\n}"
+  },
+  "german_matchday": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c4\",\n    \"c3\",\n    \"c5\",\n    \"c1\",\n    \"c2\"\n  ],\n  \"reason\": \"The clips are ordered chronologically, from introducing the stadium day to the journey, arrival, game highlight, and a final farewell.\"\n}"
+  },
+  "turkish_tea": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c2\",\n    \"c4\",\n    \"c3\",\n    \"c1\",\n    \"c5\"\n  ],\n  \"reason\": \"Introduction, followed by the chronological steps of making tea, then the serving and a final sign-off.\"\n}"
+  },
+  "thin_records_filmed_at": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\"c2\", \"c3\", \"c1\", \"c4\"],\n  \"reason\": \"clips ordered chronologically to show a day's progression during the trip\"\n}"
+  },
+  "bakery_morning": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c3\",\n    \"c4\",\n    \"c2\",\n    \"c5\",\n    \"c1\",\n    \"c6\"\n  ],\n  \"reason\": \"Shows the chronological flow of a bakery's day from opening to closing.\"\n}"
+  },
+  "four_wave_views": {
+   "raw_text": "{\n  \"decided\": true,\n  \"order\": [\n    \"c1\",\n    \"c2\",\n    \"c4\",\n    \"c3\"\n  ],\n  \"reason\": \"General views come before a slightly closer detail shot.\"\n}"
+  }
+ },
+ "scores": {
+  "model": 1.0,
+  "upload_order": 0.468
+ },
+ "problems": [],
+ "restraint": {
+  "four_wave_views": false
+ }
+}

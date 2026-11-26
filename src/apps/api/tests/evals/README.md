@@ -53,6 +53,7 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
 | `nova.compose.narrated_clip_alignment` | ✓ | `rubrics/narrated_clip_alignment.md` | live-captured goldens (cacio e pepe, locked + free order; Cappadocia pinned-last, re-sorted from prod 38caaebd) | — |
+| `nova.kria.story_sequencer` | ✓ | — | hand-authored replay goldens (a placed ending the answer must not rank; "cannot decide"); held-out set `story_sequencer/heldout.json` (14 cases) re-scored from the recorded live run of 2026-11-24 (model 1.00 vs upload order 0.47, $0.025) (KRI-1593) | — |
 | `nova.compose.spoken_cue_resolver` | ✓ | — | hand-authored replay golden (de1 "Null zu null" → "0 zu 0", "1. FC Nürnberg" → "FC Nürnberg", a cue never said → null); no live capture yet (KRI-1356) | — |
 
 ## Layer-2 text-overlay pipeline eval
@@ -446,6 +447,35 @@ flag-on cohort, not a tap rate.
    "Live run of the suggestion agent" above.
 6. **`opener_clip` cassette** proving filename-to-hero resolution through the planner; only then
    may `CLIP_ORDINAL_PROVEN` flip.
+
+## Story sequencer held-out eval (`test_story_sequencer_evals.py`, KRI-1593)
+
+"Does the AI's order beat the order the clips were added in?" is answered on a held-out set, not
+by the replay goldens (those are hand-authored and only prove the parse and structural contract).
+
+- **The set:** `story_sequencer/heldout.json`, 14 cases. Each lists clips in the order they were
+  ADDED (deliberately not the story order) and the precedence pairs a story order must satisfy
+  ("the ingredients play before the plated dish"), written by hand from what the clips show. One
+  extra `restraint` case has interchangeable clips, where the right answer is "cannot decide".
+- **The score** (`story_sequencer/scoring.py`): the share of pairs the PLAYED order satisfies,
+  where the played order is what the server makes of the answer (`story_order.apply_ranking`), so
+  a refused answer scores as upload order, exactly as in production. Upload-order baseline: 0.47.
+- **Free, every CI run:** each case is consistent, the upload order fails it, the story order
+  played backwards scores 0 (the wrong-content control), and the baseline leaves room to be beaten.
+- **The comparison:** `test_recorded_run_beats_upload_order` re-scores
+  `baselines/story_sequencer/heldout_run.json` and requires the model's mean to clear the baseline
+  by 0.25 with no creator-placed clip moved. It fails when the recorded run is for another
+  `prompt_version` (and is skipped only if the run file is removed).
+- **Recorded run (2026-11-24, approved by the owner):** 15 Gemini Flash calls, $0.025 settled.
+  Model 1.00, upload order 0.47, no refused answer, no placed clip moved. On the `restraint` case
+  it did NOT leave the clips alone (it moved the one described as "a little closer" to the end),
+  so restraint is not shown. The cases are clean and hand-written; this is not a measure of real,
+  thin clip records.
+- **Recording a new run is paid and needs approval** (about 15 Gemini Flash calls, a few cents,
+  well under the $2 cap): the live command above with `-k test_live_heldout_run`, a migrated
+  `DATABASE_URL` for the cost ledger and `--max-cost-usd`. It rewrites the run file; commit it
+  with the prompt change. Do not tune `prompts/story_sequencer.txt` against the held-out cases: a
+  prompt change is judged on them, then a new run is recorded.
 
 ## CI
 

@@ -1,0 +1,1102 @@
+{
+ "about": "Held-out set for the story sequencer (KRI-1593). Each case lists clips in the order they were ADDED (c1 first), deliberately not the story order, and the precedence pairs a story order must satisfy, written by hand from what the clips show, never from a model's answer. Written with the prompt (same author) before any model run; the prompt has not been tuned against these cases, and must not be: a prompt change is judged on them, not fitted to them.",
+ "cases": [
+  {
+   "id": "pasta_recipe",
+   "note": "",
+   "input": {
+    "request": "make a quick recipe video from these",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "plate of pasta",
+      "summary": "A finished plate of tomato pasta with basil on a table",
+      "activity": "showing the finished dish"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 9.0,
+      "subject": "pan of sauce",
+      "summary": "Tomato sauce simmering in a pan while a hand stirs it",
+      "activity": "cooking sauce"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "ingredients",
+      "summary": "Raw tomatoes, garlic, basil and dry pasta laid out on a counter",
+      "activity": "showing ingredients"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "person eating",
+      "summary": "A person twirls pasta on a fork and takes the first bite",
+      "activity": "tasting"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 8.0,
+      "subject": "pot of water",
+      "summary": "Dry pasta is dropped into a pot of boiling water",
+      "activity": "boiling pasta"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c3",
+     "c5"
+    ],
+    [
+     "c3",
+     "c2"
+    ],
+    [
+     "c5",
+     "c1"
+    ],
+    [
+     "c2",
+     "c1"
+    ],
+    [
+     "c1",
+     "c4"
+    ]
+   ]
+  },
+  {
+   "id": "train_day_trip",
+   "note": "",
+   "input": {
+    "request": "a day trip video, keep it under a minute",
+    "asks": [
+     "Keep it under one minute"
+    ],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 8.0,
+      "subject": "old town street",
+      "summary": "Walking through a narrow old town street with cafes",
+      "setting": "old town",
+      "activity": "walking"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "departure board",
+      "summary": "A station departure board listing morning trains",
+      "setting": "train station"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "sunset over rooftops",
+      "summary": "The sun sets over the town's rooftops from a hill",
+      "setting": "viewpoint"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "train window",
+      "summary": "Fields and villages pass by a train window",
+      "setting": "inside a train"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "subject": "platform",
+      "summary": "Stepping onto a train from the platform with a backpack",
+      "setting": "train station",
+      "activity": "boarding"
+     },
+     {
+      "id": "c6",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "subject": "station sign",
+      "summary": "Getting off the train under a station name sign",
+      "setting": "arrival station",
+      "activity": "arriving"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c2",
+     "c5"
+    ],
+    [
+     "c5",
+     "c4"
+    ],
+    [
+     "c4",
+     "c6"
+    ],
+    [
+     "c6",
+     "c1"
+    ],
+    [
+     "c1",
+     "c3"
+    ]
+   ]
+  },
+  {
+   "id": "gym_session",
+   "note": "",
+   "input": {
+    "request": "video from my gym session",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "barbell squat",
+      "summary": "A heavy barbell squat set in a rack",
+      "activity": "lifting"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "shaker bottle",
+      "summary": "Mixing and drinking a protein shake by the lockers after training",
+      "activity": "drinking a shake"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "gym entrance",
+      "summary": "Walking in through the gym doors and scanning a card",
+      "activity": "arriving"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "floor stretch",
+      "summary": "Stretching on a mat, cooling down, visibly sweaty",
+      "activity": "stretching"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "treadmill",
+      "summary": "A light jog on the treadmill to warm up",
+      "activity": "warming up"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c3",
+     "c5"
+    ],
+    [
+     "c5",
+     "c1"
+    ],
+    [
+     "c1",
+     "c4"
+    ],
+    [
+     "c4",
+     "c2"
+    ]
+   ]
+  },
+  {
+   "id": "room_makeover",
+   "note": "",
+   "input": {
+    "request": "before and after of my room",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "finished room",
+      "summary": "The finished bedroom with new furniture, plants and warm lights",
+      "activity": "revealing the room"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 8.0,
+      "subject": "painting a wall",
+      "summary": "Rolling fresh white paint onto a scuffed wall",
+      "activity": "painting"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "empty room",
+      "summary": "An empty, dusty room with bare walls and boxes",
+      "activity": "showing the room before"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 9.0,
+      "subject": "flat-pack furniture",
+      "summary": "Assembling a wooden bed frame with a screwdriver",
+      "activity": "assembling furniture"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c3",
+     "c2"
+    ],
+    [
+     "c2",
+     "c4"
+    ],
+    [
+     "c4",
+     "c1"
+    ],
+    [
+     "c3",
+     "c1"
+    ]
+   ]
+  },
+  {
+   "id": "morning_vlog_hello_goodbye",
+   "note": "",
+   "input": {
+    "request": "a little vlog of my morning",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "desk",
+      "summary": "Typing at a desk with a notebook open",
+      "activity": "working"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "person talking",
+      "summary": "A person waves at the camera at a front door",
+      "says": "okay that's it for today, see you all tomorrow, bye",
+      "to_camera": true
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "coffee",
+      "summary": "Pouring coffee from a moka pot into a cup",
+      "activity": "making coffee"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "person talking",
+      "summary": "A person in bed talks to the camera",
+      "says": "good morning everyone, come spend the morning with me",
+      "to_camera": true
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c4",
+     "c3"
+    ],
+    [
+     "c4",
+     "c1"
+    ],
+    [
+     "c3",
+     "c2"
+    ],
+    [
+     "c1",
+     "c2"
+    ],
+    [
+     "c4",
+     "c2"
+    ]
+   ]
+  },
+  {
+   "id": "mountain_hike",
+   "note": "",
+   "input": {
+    "request": "hike recap",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 8.0,
+      "subject": "summit view",
+      "summary": "A wide view over valleys from a summit cross",
+      "setting": "mountain summit"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "car park",
+      "summary": "Back at the car, boots off, tired smile",
+      "setting": "car park",
+      "activity": "finishing"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "steep path",
+      "summary": "Climbing a steep rocky section using hands",
+      "setting": "mountain trail",
+      "activity": "climbing"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "trail sign",
+      "summary": "A wooden trailhead sign with route times",
+      "setting": "trailhead"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "forest path",
+      "summary": "Walking an easy path through pine forest",
+      "setting": "forest",
+      "activity": "walking"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c4",
+     "c5"
+    ],
+    [
+     "c5",
+     "c3"
+    ],
+    [
+     "c3",
+     "c1"
+    ],
+    [
+     "c1",
+     "c2"
+    ]
+   ]
+  },
+  {
+   "id": "market_to_table",
+   "note": "",
+   "input": {
+    "request": "from the market to the table",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "chopping board",
+      "summary": "Chopping peppers and onions on a board",
+      "activity": "chopping"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "market stall",
+      "summary": "Choosing vegetables at an outdoor market stall",
+      "setting": "street market",
+      "activity": "shopping"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "dinner table",
+      "summary": "Friends serve themselves from a big dish at a table",
+      "activity": "eating"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "subject": "tote bags",
+      "summary": "Carrying full tote bags up a staircase",
+      "activity": "carrying shopping home"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 8.0,
+      "subject": "oven tray",
+      "summary": "A tray of vegetables goes into a hot oven",
+      "activity": "roasting"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c2",
+     "c4"
+    ],
+    [
+     "c4",
+     "c1"
+    ],
+    [
+     "c1",
+     "c5"
+    ],
+    [
+     "c5",
+     "c3"
+    ]
+   ]
+  },
+  {
+   "id": "wedding_day",
+   "note": "",
+   "input": {
+    "request": "our wedding in 45 seconds",
+    "asks": [
+     "Make it 45 seconds"
+    ],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "first dance",
+      "summary": "The couple's first dance under string lights",
+      "activity": "dancing"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "empty venue",
+      "summary": "Staff set chairs and flowers in an empty garden venue",
+      "activity": "setting up"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "fireworks",
+      "summary": "Fireworks over the garden at night while guests cheer",
+      "activity": "fireworks"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "ceremony",
+      "summary": "The couple exchange rings in front of seated guests",
+      "activity": "ceremony"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "guests arriving",
+      "summary": "Guests arrive and hug at the garden gate in daylight",
+      "activity": "arriving"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c2",
+     "c5"
+    ],
+    [
+     "c5",
+     "c4"
+    ],
+    [
+     "c4",
+     "c1"
+    ],
+    [
+     "c1",
+     "c3"
+    ]
+   ]
+  },
+  {
+   "id": "shelf_build",
+   "note": "",
+   "input": {
+    "request": "building my new shelf",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "finished shelf",
+      "summary": "The finished shelf on the wall, filled with books",
+      "activity": "showing the result"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "drilling",
+      "summary": "Drilling holes into a wall with a level held against it",
+      "activity": "drilling"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "cardboard box",
+      "summary": "Cutting open a long cardboard box on the floor",
+      "activity": "unboxing"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "parts",
+      "summary": "Boards, brackets and screws laid out neatly on the floor",
+      "activity": "laying out parts"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c3",
+     "c4"
+    ],
+    [
+     "c4",
+     "c2"
+    ],
+    [
+     "c2",
+     "c1"
+    ]
+   ]
+  },
+  {
+   "id": "placed_opening_two_groups",
+   "note": "c1 is the creator's own placement; two groups, each ordered inside only",
+   "input": {
+    "request": "start with the drone shot, then the beach clips, then the city",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": null,
+      "kind": "video",
+      "duration_s": 6.0,
+      "group": "the drone shot",
+      "subject": "coastline from above",
+      "summary": "A drone flies along a coastline"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "group": "the beach clips",
+      "subject": "beach at dusk",
+      "summary": "The sun sets behind the sea, people pack their towels",
+      "activity": "sunset"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "group": "the beach clips",
+      "subject": "beach path",
+      "summary": "Walking down a wooden path onto an empty morning beach",
+      "activity": "arriving at the beach"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "group": "the beach clips",
+      "subject": "swimming",
+      "summary": "Swimming and splashing in the sea at midday",
+      "activity": "swimming"
+     },
+     {
+      "id": "c5",
+      "span": "s2",
+      "kind": "video",
+      "duration_s": 6.0,
+      "group": "the city",
+      "subject": "skyline at night",
+      "summary": "City skyline lit up at night from a rooftop",
+      "activity": "night view"
+     },
+     {
+      "id": "c6",
+      "span": "s2",
+      "kind": "video",
+      "duration_s": 5.0,
+      "group": "the city",
+      "subject": "hotel lobby",
+      "summary": "Checking in at a hotel desk with suitcases",
+      "activity": "checking in"
+     },
+     {
+      "id": "c7",
+      "span": "s2",
+      "kind": "video",
+      "duration_s": 6.0,
+      "group": "the city",
+      "subject": "street food",
+      "summary": "Eating grilled skewers at a busy street stall in the evening",
+      "activity": "eating"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c3",
+     "c4"
+    ],
+    [
+     "c4",
+     "c2"
+    ],
+    [
+     "c6",
+     "c7"
+    ],
+    [
+     "c7",
+     "c5"
+    ]
+   ]
+  },
+  {
+   "id": "german_matchday",
+   "note": "",
+   "input": {
+    "request": "mach ein Video von unserem Stadiontag",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "Torjubel",
+      "summary": "Die Kurve jubelt nach einem Tor, Fahnen wehen",
+      "activity": "Tor feiern"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "Person spricht",
+      "summary": "Zwei Freunde winken vor dem Stadion in die Kamera",
+      "says": "so das wars von uns, bis zum nächsten Mal, tschüss",
+      "to_camera": true
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "S-Bahn",
+      "summary": "Volle S-Bahn mit Fans in Trikots auf dem Weg zum Stadion",
+      "activity": "Anreise"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "Person spricht",
+      "summary": "Ein Mann spricht am Bahnsteig in die Kamera",
+      "says": "hallo zusammen, heute geht es ins Stadion, kommt mit",
+      "to_camera": true
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "Stadion von außen",
+      "summary": "Das Stadion von außen, Fans strömen zu den Eingängen",
+      "activity": "Ankommen"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c4",
+     "c3"
+    ],
+    [
+     "c3",
+     "c5"
+    ],
+    [
+     "c5",
+     "c1"
+    ],
+    [
+     "c1",
+     "c2"
+    ]
+   ]
+  },
+  {
+   "id": "turkish_tea",
+   "note": "",
+   "input": {
+    "request": "çay demleme videosu yap",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "çay bardağı",
+      "summary": "İnce belli bardağa demlikten çay dökülüyor",
+      "activity": "çay doldurma"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "konuşan kişi",
+      "summary": "Bir kadın mutfakta kameraya konuşuyor",
+      "says": "merhaba arkadaşlar, bugün size nasıl çay demlediğimi göstereceğim",
+      "to_camera": true
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "demlik",
+      "summary": "Demliğe kuru çay konuyor ve üzerine sıcak su ekleniyor",
+      "activity": "çayı demleme"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "çaydanlık",
+      "summary": "Ocakta çaydanlıkta su kaynıyor, buhar çıkıyor",
+      "activity": "su kaynatma"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "subject": "konuşan kişi",
+      "summary": "Kadın elinde çay bardağıyla kameraya gülümsüyor",
+      "says": "afiyet olsun, bir sonraki videoda görüşürüz",
+      "to_camera": true
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c2",
+     "c4"
+    ],
+    [
+     "c4",
+     "c3"
+    ],
+    [
+     "c3",
+     "c1"
+    ],
+    [
+     "c1",
+     "c5"
+    ]
+   ]
+  },
+  {
+   "id": "thin_records_filmed_at",
+   "note": "descriptions say almost nothing; the filming times are the evidence",
+   "input": {
+    "request": "make something nice from my trip",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "street",
+      "summary": "A street with people",
+      "filmed_at": "2026-08-14T17:40:00Z"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "building",
+      "summary": "A large building",
+      "filmed_at": "2026-08-14T09:05:00Z"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "water",
+      "summary": "Water and boats",
+      "filmed_at": "2026-08-14T12:30:00Z"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "sky",
+      "summary": "Sky at dusk",
+      "filmed_at": "2026-08-14T20:15:00Z"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c2",
+     "c3"
+    ],
+    [
+     "c3",
+     "c1"
+    ],
+    [
+     "c1",
+     "c4"
+    ]
+   ]
+  },
+  {
+   "id": "bakery_morning",
+   "note": "",
+   "input": {
+    "request": "a day at my bakery",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "customers",
+      "summary": "Customers queue at the counter and buy warm loaves",
+      "activity": "selling"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 7.0,
+      "subject": "oven",
+      "summary": "Trays of risen loaves slide into a deck oven",
+      "activity": "baking"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "dark street",
+      "summary": "Unlocking the bakery door on a dark street before dawn",
+      "activity": "opening up"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 8.0,
+      "subject": "dough",
+      "summary": "Kneading and shaping dough on a floured bench",
+      "activity": "shaping dough"
+     },
+     {
+      "id": "c5",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 5.0,
+      "subject": "shelves",
+      "summary": "Golden loaves are stacked onto the shop shelves",
+      "activity": "stocking shelves"
+     },
+     {
+      "id": "c6",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 4.0,
+      "subject": "closed sign",
+      "summary": "Turning the door sign to closed, empty shelves behind",
+      "activity": "closing"
+     }
+    ]
+   },
+   "precedence": [
+    [
+     "c3",
+     "c4"
+    ],
+    [
+     "c4",
+     "c2"
+    ],
+    [
+     "c2",
+     "c5"
+    ],
+    [
+     "c5",
+     "c1"
+    ],
+    [
+     "c1",
+     "c6"
+    ]
+   ]
+  }
+ ],
+ "restraint": [
+  {
+   "id": "four_wave_views",
+   "note": "four interchangeable views of the same sea",
+   "input": {
+    "request": "relaxing sea video",
+    "asks": [],
+    "clips": [
+     {
+      "id": "c1",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "waves",
+      "summary": "Waves roll onto a pebble shore"
+     },
+     {
+      "id": "c2",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "waves",
+      "summary": "Waves roll onto a pebble shore"
+     },
+     {
+      "id": "c3",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "waves",
+      "summary": "Waves roll onto a pebble shore, seen a little closer"
+     },
+     {
+      "id": "c4",
+      "span": "s1",
+      "kind": "video",
+      "duration_s": 6.0,
+      "subject": "waves",
+      "summary": "Waves roll onto a pebble shore"
+     }
+    ]
+   }
+  }
+ ]
+}
