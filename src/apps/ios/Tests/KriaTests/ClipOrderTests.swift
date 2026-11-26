@@ -141,7 +141,6 @@ final class ClipOrderTests: XCTestCase {
         XCTAssertEqual(thread.newest?.proposalID, "p3", "the newest card of any event is what the creator last saw")
         XCTAssertEqual(thread.newest?.orderedMediaIDs, ["c", "b", "a"])
         XCTAssertEqual(thread.anchorMessageID, "d2", "the strip sits under the newest message that carries a card")
-        XCTAssertEqual(thread.earlierMessageIDs, ["d1"], "an older carrier collapses to one line")
     }
 
     func testAnErrorMessageThatCarriesACardAnchorsTheStrip() throws {

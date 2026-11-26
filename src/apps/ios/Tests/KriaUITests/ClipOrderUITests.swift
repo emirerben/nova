@@ -316,10 +316,9 @@ final class ClipOrderUITests: XCTestCase {
         XCTAssertFalse(app.buttons["clip-order-use"].exists, "a confirm would not be taken")
     }
 
-    func testOlderCardsCollapseToOneLine() {
+    func testOlderCardsDrawNothing() {
         let app = launch(mode: "two")
         waitForStrip(app, count: 4)
-        XCTAssertTrue(element(app, "clip-order-superseded").exists, "the first draft's card is a one-line summary")
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "clip-order-strip").count, 1, "one live strip")
     }
 

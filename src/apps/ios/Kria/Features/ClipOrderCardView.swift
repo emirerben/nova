@@ -1,39 +1,32 @@
 import SwiftUI
 
-/// KRI-1591: how the clip-order strip is shown under a draft message.
-enum ClipOrderCardMode {
-    /// The newest card in the thread. `interactive` is false once a video exists (the timeline owns the order).
-    /// `confirm` sends the whole order the creator sees.
-    case current(card: ClipOrderCard, coordinator: ClipOrderCoordinator, interactive: Bool,
-                 confirm: (_ order: [String], _ moved: Set<String>) -> Void)
-    /// A newer card replaced this one.
-    case superseded
+/// What the chat hands the strip for the newest clip-order card in the thread. `interactive` is false once a video
+/// exists (the timeline owns the order). `confirm` sends the whole order the creator sees.
+struct ClipOrderStripInput {
+    let card: ClipOrderCard
+    let coordinator: ClipOrderCoordinator
+    let interactive: Bool
+    let confirm: (_ order: [String], _ moved: Set<String>) -> Void
 }
 
-/// The decided clip order under the draft message: numbered thumbnails, then "Change order" and "Use this order".
+/// KRI-1591: the decided clip order under the draft message: numbered thumbnails, then "Change order" and "Use this order".
 struct ClipOrderStripCard: View {
-    let mode: ClipOrderCardMode
-    let media: [CreationAttachedMedia]
-    let projectID: UUID?
-
-    var body: some View {
-        switch mode {
-        case .superseded:
-            KriaSupersededLine().accessibilityIdentifier("clip-order-superseded")
-        case .current(let card, let coordinator, let interactive, let confirm):
-            ClipOrderStrip(card: card, coordinator: coordinator, interactive: interactive, media: media,
-                           projectID: projectID, confirm: confirm)
-        }
-    }
-}
-
-private struct ClipOrderStrip: View {
     let card: ClipOrderCard
     @ObservedObject var coordinator: ClipOrderCoordinator
     let interactive: Bool
     let media: [CreationAttachedMedia]
     let projectID: UUID?
     let confirm: (_ order: [String], _ moved: Set<String>) -> Void
+
+    init(_ input: ClipOrderStripInput, media: [CreationAttachedMedia], projectID: UUID?) {
+        card = input.card
+        coordinator = input.coordinator
+        interactive = input.interactive
+        self.media = media
+        self.projectID = projectID
+        confirm = input.confirm
+    }
+
     @ScaledMetric(relativeTo: .caption) private var tileWidth: CGFloat = 64
 
     /// More than this many and the rest are summarised as "+N" (the sheet lists them all).
@@ -42,6 +35,9 @@ private struct ClipOrderStrip: View {
     var body: some View {
         let shown = coordinator.display(for: card)
         let canEdit = interactive && card.allowsEditing
+        let phase = ClipOrderCoordinator.phase(
+            status: coordinator.status, confirmed: card.confirmed && shown.order == card.orderedMediaIDs, order: shown.order,
+            failure: String(localized: "Kria couldn’t save this order. Try again."))
         KriaQuestionCard {
             Text("Order · \(shown.order.count) clips")
                 .kriaType(.label).foregroundStyle(KriaColor.mutedInk)
@@ -59,7 +55,7 @@ private struct ClipOrderStrip: View {
             }
             .accessibilityIdentifier("clip-order-tiles")
             if canEdit {
-                actions(shown: shown)
+                actions(shown: shown, phase: phase)
             } else {
                 Text("The order that plays")
                     .kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
@@ -107,13 +103,12 @@ private struct ClipOrderStrip: View {
             .accessibilityIdentifier("clip-order-overflow")
     }
 
-    @ViewBuilder private func actions(shown: (order: [String], moved: Set<String>)) -> some View {
-        let confirmed = card.confirmed && coordinator.status == .idle && shown.order == card.orderedMediaIDs
+    @ViewBuilder private func actions(shown: (order: [String], moved: Set<String>), phase: AskPhase<[String]>) -> some View {
+        let failure: String? = if case .failed(let text) = phase { text } else { nil }
+        let confirmed: Bool = if case .answered = phase { true } else { false }
         VStack(alignment: .leading, spacing: 8) {
-            if coordinator.status == .failed {
-                Text("Kria couldn’t save this order. Try again.")
-                    .kriaType(.caption).foregroundStyle(KriaColor.failureText)
-                    .accessibilityIdentifier("clip-order-failed")
+            if let failure {
+                KriaInlineFailure(text: failure).accessibilityIdentifier("clip-order-failed")
             }
             HStack(spacing: 8) {
                 Button("Change order") {
@@ -121,7 +116,7 @@ private struct ClipOrderStrip: View {
                 }
                 .buttonStyle(KriaButtonStyle(role: .secondary, size: .medium, onFill: true))
                 .accessibilityIdentifier("clip-order-change")
-                Button(coordinator.status == .failed ? String(localized: "Try again") : confirmed ? String(localized: "Order confirmed") : String(localized: "Use this order")) {
+                Button(failure != nil ? String(localized: "Try again") : confirmed ? String(localized: "Order confirmed") : String(localized: "Use this order")) {
                     confirm(shown.order, shown.moved)
                 }
                 .buttonStyle(KriaButtonStyle(role: .primary, size: .medium))

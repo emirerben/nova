@@ -17,7 +17,11 @@ struct SongTimelineCard: View {
     let question: SongOrderQuestion
     let media: [CreationAttachedMedia]
     let projectID: UUID
-    let mode: SongOrderCardMode
+    /// `answered` carries the confirmed arrangement, empty when that message's clips can no longer be named.
+    let phase: AskPhase<String>
+    var isBusy = false
+    /// Receives the structured answer and its readable message.
+    var submit: (SongOrderSubmission, String) -> Void = { _, _ in }
     let configuration: SongTimelineConfiguration
     /// Resolves a take's local original for the preview. Injected so tests can supply a fixture file.
     var previewURL: @MainActor (String) -> URL?
@@ -58,12 +62,15 @@ struct SongTimelineCard: View {
         }
     }
 
-    init(question: SongOrderQuestion, media: [CreationAttachedMedia], projectID: UUID, mode: SongOrderCardMode,
+    init(question: SongOrderQuestion, media: [CreationAttachedMedia], projectID: UUID, phase: AskPhase<String>,
+         isBusy: Bool = false, submit: @escaping (SongOrderSubmission, String) -> Void = { _, _ in },
          configuration: SongTimelineConfiguration, songDurationS: Double? = nil, previewURL: (@MainActor (String) -> URL?)? = nil) {
         self.question = question
         self.media = media
         self.projectID = projectID
-        self.mode = mode
+        self.phase = phase
+        self.isBusy = isBusy
+        self.submit = submit
         self.configuration = configuration
         self.previewURL = previewURL ?? { mediaID in
             #if DEBUG
@@ -90,29 +97,15 @@ struct SongTimelineCard: View {
     // MARK: body
 
     var body: some View {
-        switch mode {
-        case .answered(let summary):
-            HStack(spacing: 8) {
-                Image(systemName: summary == nil ? "circle.dashed" : "checkmark.circle.fill")
-                    .foregroundStyle(summary == nil ? KriaColor.mutedInk : KriaColor.success)
-                Text(Self.answeredText(summary: summary))
-                    .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(minHeight: 44, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("song-timeline-answered")
-        case .superseded:
-            KriaSupersededLine().accessibilityIdentifier("song-order-superseded")
-        case .active(let isSending, let submit):
-            VStack(alignment: .leading, spacing: 12) {
-                header
-                timelineBlock(isSending: isSending)
+        if case .answered(let summary) = phase {
+            KriaAnsweredReceipt(text: Self.answeredText(summary: summary.isEmpty ? nil : summary))
+                .accessibilityIdentifier("song-timeline-answered")
+        } else {
+            KriaQuestionCard(title: String(localized: "Place your clips on the song")) {
+                timelineBlock(isSending: isBusy)
                 notes
-                footer(isSending: isSending, submit: submit)
+                footer(isSending: isBusy)
             }
-            .padding(14)
-            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(alignment: .topLeading) { trayGhost }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { cardFrame = $0 }
             .accessibilityElement(children: .contain)
@@ -121,23 +114,12 @@ struct SongTimelineCard: View {
             .onDisappear { playback.pause(); endTrayDrag() }
             .onReceive(NotificationCenter.default.publisher(for: .kriaAudioCaptureWillStart)) { _ in playback.pause(); endTrayDrag() }
             .onChange(of: sheet) { _, opened in if opened != nil { playback.pause() } }
-            .sheet(item: $sheet) { sheetContent($0, isSending: isSending) }
+            .sheet(item: $sheet) { sheetContent($0, isSending: isBusy) }
         }
     }
 
     static func answeredText(summary: String?) -> String {
         summary.map { String(localized: "Arrangement confirmed: \($0)") } ?? String(localized: "Arrangement question closed")
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Place your clips on the song")
-                .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                .accessibilityAddTraits(.isHeader)
-            Text("Slide the timeline and press play to hear the song. Tap a clip to edit it, or press and hold a clip to move it.")
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     /// Everything that scrolls or drags sideways: no drag in here may open the projects drawer.
@@ -417,7 +399,7 @@ struct SongTimelineCard: View {
         }
     }
 
-    private func footer(isSending: Bool, submit: @escaping (SongOrderSubmission, String) -> Void) -> some View {
+    private func footer(isSending: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button("Use this arrangement") {
                 playback.pause()

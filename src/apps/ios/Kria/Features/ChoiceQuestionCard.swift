@@ -1,22 +1,16 @@
 import SwiftUI
 
-/// How a conflict-choice question is shown under its message (KRI-282).
-enum ChoiceQuestionCardMode {
-    /// The latest unanswered question: tappable. `submit` receives the structured answer and its readable message.
-    /// While the answer's message is still pending the card stays here with `isSending` true, so a refused send
-    /// reopens it with a failure line instead of silently flipping back.
-    case active(isSending: Bool, submit: (ChoiceSelectionSubmission, String) -> Void)
-    /// Already answered: read-only, collapsed. `summary` is what the creator chose.
-    case answered(summary: String?)
-    /// A newer question replaced this one before it was answered.
-    case superseded
-}
-
 /// Tappable options for a question whose answer is a decision between the creator's own instructions.
 /// The message text above already lists the options, so a build/server without this card reads the same.
 struct ChoiceQuestionCard: View {
     let question: ChoiceQuestion
-    let mode: ChoiceQuestionCardMode
+    /// Open to answer, or answered (`answered` carries what the creator chose). A failed send reopens the card with its
+    /// own failure line and "Try again".
+    let phase: AskPhase<String>
+    /// A send is in flight (this card's or anything else's): the options wait.
+    var isBusy = false
+    /// Receives the structured answer and its readable message.
+    var submit: (ChoiceSelectionSubmission, String) -> Void = { _, _ in }
     /// KRI-802: in a reply that also asks for clips, the option tapped but not sent yet (it goes with the clips).
     var heldKey: String? = nil
     /// KRI-802: what happens next while the tapped option waits for the clips.
@@ -35,33 +29,31 @@ struct ChoiceQuestionCard: View {
     var projectID: UUID? = nil
 
     var body: some View {
-        switch mode {
-        case .answered(let summary):
+        if case .answered(let summary) = phase {
             Group {
-                if let summary { KriaYouChose(text: summary) } else { KriaAnsweredReceipt(text: String(localized: "You answered")) }
+                if summary.isEmpty { KriaAnsweredReceipt(text: String(localized: "You answered")) } else { KriaYouChose(text: summary) }
             }
             .accessibilityIdentifier("choice-card-answered")
-        case .superseded:
-            KriaSupersededLine().accessibilityIdentifier("choice-card-superseded")
-        case .active(let isSending, let submit) where question.hasPreviews && heldKey == nil:
-            DesignPreviewStrip(question: question, projectID: projectID, isSending: isSending, isLocked: isTyping,
+        } else if question.hasPreviews && heldKey == nil {
+            DesignPreviewStrip(question: question, projectID: projectID, isSending: isBusy, isLocked: isTyping,
                                typeMyOwn: question.allowFreeText ? typeMyOwn : nil, allowsDecide: allowsDecide) { option, message in
                 submit(question.submission(for: option), message)
             }
             .padding(.top, 2)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("choice-card")
-        case .active(let isSending, let submit):
+        } else {
             VStack(alignment: .leading, spacing: 8) {
                 KriaAnswerStack(
                     options: question.options.map {
                         KriaAnswerOption(id: $0.key, title: $0.label, detail: $0.detail, isRecommended: $0.recommended,
                                          identifier: "choice-option-\($0.key)", isEditable: $0.editable)
                     },
-                    heldID: heldKey, isSending: isSending, isLocked: isTyping,
+                    heldID: heldKey, isSending: isBusy, isLocked: isTyping,
                     typeMyOwn: question.allowFreeText ? typeMyOwn : nil,
                     edit: question.allowFreeText && heldKey == nil ? edit.map { edit in { edit($0.title) } } : nil,
-                    decide: decideOption.map { option in { submit(question.submission(for: option), "Let Kria decide") } }
+                    decide: decideOption.map { option in { submit(question.submission(for: option), "Let Kria decide") } },
+                    retriesFailedSend: true
                 ) { option in
                     if let chosen = question.option(key: option.id) { submit(question.submission(for: chosen), question.message(for: chosen)) }
                 }

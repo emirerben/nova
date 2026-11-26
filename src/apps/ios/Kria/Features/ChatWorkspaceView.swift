@@ -623,6 +623,9 @@ private struct CreationWorkspaceView: View {
     @State private var protectedRegionProblem: ProtectedRegionProblem?
     /// KRI-723: the server's reason for refusing the last moments answer (404 / 422), shown on that question's card.
     @State private var momentOrderProblem: MomentOrderProblem?
+    /// The moments question the server said is out of date (409 `moment_order_stale`). The newest moments card, which
+    /// has another id, says so until the creator changes it or answers.
+    @State private var momentStaleQuestionID: String?
     @State private var isActing = false
     @State private var isThinking = false
     /// The turn request id doubles as the thought-summary lookup key. It is
@@ -970,30 +973,29 @@ private struct CreationWorkspaceView: View {
         return timelineMessages.first { $0.id == openID }?.displayedContent
     }
 
-    /// The strip sits under the newest message that carries a card and shows the newest card; older carriers
-    /// collapse to one line. Interactive only while the transcript is fresh, the server has not turned cards off,
-    /// and the card says a video does not exist yet.
-    private func clipOrderMode(for message: ChatTranscriptMessage) -> ClipOrderCardMode? {
+    /// The strip sits under the newest message that carries a card and shows the newest card; older carriers draw
+    /// nothing. Interactive only while the transcript is fresh, the server has not turned cards off, and the card
+    /// says a video does not exist yet.
+    private func clipOrderStrip(for message: ChatTranscriptMessage) -> ClipOrderStripInput? {
         let thread = clipOrderThread
-        guard message.role == .assistant, let card = thread.newest else { return nil }
-        if message.id == thread.anchorMessageID { return currentClipOrderMode(card) }
-        return thread.earlierMessageIDs.contains(message.id) ? .superseded : nil
+        guard message.role == .assistant, let card = thread.newest, message.id == thread.anchorMessageID else { return nil }
+        return currentClipOrderStrip(card)
     }
 
-    private func currentClipOrderMode(_ card: ClipOrderCard) -> ClipOrderCardMode {
+    private func currentClipOrderStrip(_ card: ClipOrderCard) -> ClipOrderStripInput {
         let interactive = transcriptIsFresh && capabilities?.clipOrderCards != false && card.editable
-        return .current(card: card, coordinator: clipOrder, interactive: interactive) { order, moved in
+        return ClipOrderStripInput(card: card, coordinator: clipOrder, interactive: interactive) { order, moved in
             confirmClipOrder(order: order, moved: moved, card: card)
         }
     }
 
     /// While the approval card is up, the draft message that introduced it is not drawn (the card stands for it), so
     /// the strip it carries sits directly above that card instead.
-    private var clipOrderStageMode: ClipOrderCardMode? {
+    private var clipOrderStageStrip: ClipOrderStripInput? {
         let thread = clipOrderThread
         guard let card = thread.newest, let anchor = thread.anchorMessageID,
               suppressedTimelineMessages.contains(anchor) else { return nil }
-        return currentClipOrderMode(card)
+        return currentClipOrderStrip(card)
     }
 
     /// One `clip_order_ops` turn with the whole order. It is not a chat send: no bubble, no thinking row, no draft
@@ -1540,18 +1542,18 @@ private struct CreationWorkspaceView: View {
                        clipSelectionMode: clipSelectionMode(for: message),
                        clipSelectionMedia: clipSelectionMedia(for: message),
                        clipSelectionLanguage: ClipAnswerLanguage(threadState: threadState),
-                       songOrderMode: songOrderMode(for: message),
+                       songOrder: songOrderAsk(for: message),
                        songOrderMedia: CreationAttachedMedia.parse(threadState),
                        songTimeline: songTimelineConfiguration,
                        songDurationS: CreationAttachedMedia.song(threadState)?.durationS,
                        projectID: project.id,
-                       choiceQuestionMode: choiceQuestionMode(for: message),
+                       choiceAsk: choiceAsk(for: message),
                        hidesAnswerEcho: echoesChoiceAnswer(message),
                        questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
                        songRangeMode: songRangeMode(for: message),
                        objectMarkMode: objectMarkMode(for: message),
-                       momentOrderMode: momentOrderMode(for: message),
-                       clipOrderMode: clipOrderMode(for: message),
+                       momentOrder: momentOrderAsk(for: message),
+                       clipOrder: clipOrderStrip(for: message),
                        replyOptionsMode: replyOptionsMode(for: message),
                        voiceoverScriptMode: voiceoverScriptMode(for: message),
                        answerOwn: { startAnsweringOwn(message) },
@@ -1572,8 +1574,8 @@ private struct CreationWorkspaceView: View {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
             }
         case .stage:
-            if let clipOrderStageMode {
-                ClipOrderStripCard(mode: clipOrderStageMode, media: CreationAttachedMedia.parse(threadState), projectID: project.id)
+            if let clipOrderStageStrip {
+                ClipOrderStripCard(clipOrderStageStrip, media: CreationAttachedMedia.parse(threadState), projectID: project.id)
                     .id("clip-order-stage-strip")
             }
             stageContent.id(entry.id)
@@ -1647,21 +1649,17 @@ private struct CreationWorkspaceView: View {
 
     /// Order card only when the server advertises `song_order_questions`. Interactive while it is the open ask;
     /// read-only afterwards.
-    private func songOrderMode(for message: ChatTranscriptMessage) -> SongOrderCardMode? {
+    private func songOrderAsk(for message: ChatTranscriptMessage) -> AskCardState<String, (SongOrderSubmission, String) -> Void>? {
         guard let question = message.songOrderQuestion else { return nil }
-        switch askFold.standing(message.id, question.questionID) {
-        case .open:
-            return .active(isSending: isSending || isActing || isThinking) { submission, text in
-                // A rejected send removes the pending message, which reopens the card for a retry.
-                Task { await send(message: text, songOrder: submission) }
+        let phase: AskPhase<String>? = askFold.phase(message.id, question.questionID, answer: {
+            answerMessage(of: message, askID: question.questionID)?.songOrderAnswer.map {
+                $0.summary(positions: SongOrderPositions.map(media: CreationAttachedMedia.parse(threadState), question: question))
             }
-        case .answered:
-            guard let submission = answerMessage(of: message, askID: question.questionID)?.songOrderAnswer else { return nil }
-            let positions = SongOrderPositions.map(media: CreationAttachedMedia.parse(threadState), question: question)
-            let summary = submission.summary(positions: positions)
-            return .answered(summary: summary.isEmpty ? nil : summary)
-        default:
-            return nil
+        })
+        guard let phase else { return nil }
+        return AskCardState(phase: phase, isBusy: isSending || isActing || isThinking) { submission, text in
+            // A rejected send removes the pending message, which reopens the card for a retry.
+            Task { await send(message: text, songOrder: submission) }
         }
     }
 
@@ -1707,49 +1705,43 @@ private struct CreationWorkspaceView: View {
 
     /// KRI-723: the "show me your moments" card, only when the server advertises `moment_order_questions`.
     /// Interactive while it is the open ask; read-only once an answer to it landed.
-    private func momentOrderMode(for message: ChatTranscriptMessage) -> MomentOrderCardMode? {
+    private func momentOrderAsk(for message: ChatTranscriptMessage) -> AskCardState<String, (MomentOrderAnswer) -> Void>? {
         guard let question = message.momentOrderQuestion else { return nil }
         let language = ClipAnswerLanguage(threadState: threadState)
-        switch askFold.standing(message.id, question.questionID) {
-        case .open:
-            let problem = momentOrderProblem?.questionID == question.questionID ? momentOrderProblem?.message : nil
-            return .active(isSending: isSending || isActing || isThinking, problem: problem) { answer in
-                // A refused send removes the pending message, which reopens the card (the choices are kept).
-                momentOrderProblem = nil
-                Task { await send(message: MomentOrderAnswer.message(language: language), momentOrder: answer) }
-            }
-        case .answered:
-            guard let answer = answerMessage(of: message, askID: question.questionID)?.momentOrderAnswer else { return nil }
-            return .answered(summary: MomentOrderStrings(language).answered(count: answer.answers.count))
-        default:
-            return nil
+        let problem = momentOrderProblem?.questionID == question.questionID ? momentOrderProblem?.message : nil
+        let isStale = momentStaleQuestionID.map { $0 != question.questionID } ?? false
+        let phase: AskPhase<String>? = askFold.phase(message.id, question.questionID, answer: {
+            answerMessage(of: message, askID: question.questionID)?.momentOrderAnswer
+                .map { MomentOrderStrings(language).answered(count: $0.answers.count) }
+        }, failure: problem, isStale: isStale)
+        guard let phase else { return nil }
+        return AskCardState(phase: phase, isBusy: isSending || isActing || isThinking) { answer in
+            // A refused send removes the pending message, which reopens the card (the choices are kept).
+            momentOrderProblem = nil
+            momentStaleQuestionID = nil
+            Task { await send(message: MomentOrderAnswer.message(language: language), momentOrder: answer) }
         }
     }
 
     /// Options only when the server advertises `choice_questions`. Interactive while it is the open ask; read-only
     /// (with the choice made, if known) afterwards.
-    private func choiceQuestionMode(for message: ChatTranscriptMessage) -> ChoiceQuestionCardMode? {
+    private func choiceAsk(for message: ChatTranscriptMessage) -> AskCardState<String, (ChoiceSelectionSubmission, String) -> Void>? {
         guard let question = message.choiceQuestion else { return nil }
-        let messages = timelineMessages
-        switch askFold.standing(message.id, question.questionID) {
-        case .open:
-            // The answer's message is still pending: the card stays open so a refused send reopens it with a reason.
-            if messages.contains(where: { $0.role == .user && $0.isPending }) { return .active(isSending: true) { _, _ in } }
-            return .active(isSending: isSending || isActing || isThinking) { submission, text in
-                if asksTogether(message) {
-                    holdBatchAnswer(for: message) { $0.hold(choice: submission, text: text) }
-                    return
-                }
-                answeredChoices[question.questionID] = submission
-                // A rejected send removes the pending message, which reopens the card for a retry.
-                Task { await send(message: text, choiceSelection: submission) }
-            }
-        case .answered:
-            let answer = answerMessage(of: message, askID: question.questionID)
+        let phase: AskPhase<String>? = askFold.phase(message.id, question.questionID, answer: {
             let chosen = answeredChoices[question.questionID].flatMap { question.option(key: $0.optionKey)?.label }
-            return .answered(summary: chosen ?? answer?.content ?? "")
-        default:
-            return nil
+            return chosen ?? answerMessage(of: message, askID: question.questionID)?.content ?? ""
+        })
+        guard let phase else { return nil }
+        // The answer's message is still pending: the card stays open so a refused send reopens it with a reason.
+        let busy = isSending || isActing || isThinking || timelineMessages.contains { $0.role == .user && $0.isPending }
+        return AskCardState(phase: phase, isBusy: busy) { submission, text in
+            if asksTogether(message) {
+                holdBatchAnswer(for: message) { $0.hold(choice: submission, text: text) }
+                return
+            }
+            answeredChoices[question.questionID] = submission
+            // A rejected send removes the pending message, which reopens the card for a retry.
+            Task { await send(message: text, choiceSelection: submission) }
         }
     }
 
@@ -3104,7 +3096,8 @@ private struct CreationWorkspaceView: View {
             pendingTurnSubmission = nil
             submissionAnchor = nil
             clearSubmissionReceipt()
-            if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
+            let refreshed = try? await model.api.project(threadID: project.id)
+            if let refreshed { apply(refreshed) }
             // KRI-588: the question is already closed on the server. Refresh and close the card here too, with
             // no alert: there is nothing left for the creator to fix.
             if staleSongRange, let songRangeQuestionID {
@@ -3114,9 +3107,15 @@ private struct CreationWorkspaceView: View {
             // KRI-374: the order was answered against a question Kria has since replaced. The thread refresh above
             // brings the new question (or the settled plan); say so instead of a generic conflict.
             // KRI-723: the moments question was replaced (or the take re-uploaded). The refresh above brings the newest
-            // card (the old one hides as superseded); say why, in the chat's language, instead of a generic conflict.
-            if momentOrderQuestionID != nil, error.conflictCode == MomentOrderAnswer.staleCode {
-                failure = ChatFailure(MomentOrderStrings(ClipAnswerLanguage(threadState: threadState)).stale)
+            // card (the old one is replaced); say why, in the chat's language, on that card, or as a failure when the
+            // refresh brought none.
+            if let momentOrderQuestionID, error.conflictCode == MomentOrderAnswer.staleCode {
+                let newest = refreshed?.events.compactMap { MomentOrderQuestion.parse(payload: $0.payload)?.questionID }.last
+                if let newest, newest != momentOrderQuestionID {
+                    momentStaleQuestionID = momentOrderQuestionID
+                } else {
+                    failure = ChatFailure(MomentOrderStrings(ClipAnswerLanguage(threadState: threadState)).stale)
+                }
                 return
             }
             if error.conflictCode == SongOrderSubmission.staleConflictCode {

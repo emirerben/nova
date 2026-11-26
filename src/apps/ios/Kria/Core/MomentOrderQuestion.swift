@@ -279,10 +279,6 @@ struct MomentOrderStrings {
     private func say(_ en: String, _ tr: String) -> String { turkish ? tr : en }
 
     var title: String { say("Show me your moments", "Anlarını göster") }
-    var hint: String {
-        say("Drag to reorder. Then tell me where each one is.",
-            "Sürükleyerek sırala. Sonra her birinin yerini söyle.")
-    }
     var point: String { say("Show where", "Yerini göster") }
     var skip: String { say("Not in my clips", "Kliplerimde yok") }
     var delegate: String { say("You pick", "Sen seç") }

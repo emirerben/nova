@@ -278,6 +278,8 @@ final class CreationChatFixture: @unchecked Sendable {
     private var momentQuestionID: String?
     private var askSequenceAsked = false
     private var momentRefused = false
+    private var choiceRefused = false
+    private var choiceAccepted = 0
     /// KRIA_CHAT_CLIP_ORDER (KRI-1591): the order the server holds, the order its last card showed, whether the creator
     /// confirmed it, the bodies it has seen per client event id (a reused id with another body is a 409, like the
     /// server), and the turn counter the echo mode prints.
@@ -558,9 +560,10 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CLIP_ORDER (KRI-1591): the first turn is answered with a draft whose message carries the clip-order
             // card. "caps-off" = the server has the cards switched off (the strip is read-only).
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_ORDER"] { capabilities["clip_order_cards"] = mode != "caps-off" }
-            // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
+            // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "refuse-first" = the same, and the first
+            // answer is refused; "legacy" = it still sends the
             // choice_question payload but does not advertise the capability (old-server text fallback).
-            if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
+            if ["1", "refuse-first"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"]) { capabilities["choice_questions"] = true }
             if HeldDraftReplayFixture.isEnabled || DesignPickerUITestFixture.isEnabled { capabilities["choice_questions"] = true }
             // A server that still advertises the removed place-hint capability: the app must ignore it.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] == "1" { capabilities["upload_place_hint"] = true }
@@ -1227,7 +1230,14 @@ final class CreationChatFixture: @unchecked Sendable {
                 momentQuestionID = nil
             }
             if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
-            if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
+            if let selection = body["choice_selection"] as? [String: Any] {
+                // KRIA_CHAT_CHOICE_QUESTION=refuse-first: the first answer is refused (422), the next goes through.
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "refuse-first", !choiceRefused {
+                    choiceRefused = true
+                    return response(["problem": ["code": "choice_refused", "message": "That answer was refused."]], status: 422)
+                }
+                userPayload["choice_selection"] = selection
+            }
             if let scope = body["scope"] as? [String] {
                 // Live plan & review: a scoped "Update video" turn is planned as editor operations on `scope` only.
                 guard reviewEnabled, runtime == 2 else {
@@ -1505,7 +1515,8 @@ final class CreationChatFixture: @unchecked Sendable {
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
                 if let selection = body["choice_selection"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
-                    append("assistant_response", text: "Got it. choice[\(selection["option_key"] ?? "")] question[\(selection["question_id"] ?? "")]")
+                    choiceAccepted += 1
+                    append("assistant_response", text: "Got it. choice[\(selection["option_key"] ?? "")] question[\(selection["question_id"] ?? "")] accepted[\(choiceAccepted)]")
                 } else {
                     append("assistant_response", text: "You asked for a chronological video and for the clips grouped by sport. Unfortunately your football and dodgeball clips were filmed mixed together, so I can't do both. Which do you prefer?\n1. Group by sport, chronological inside each sport (recommended)\n2. Keep it strictly chronological; sports may interleave\nTap an option, or tell me in your own words.", payload: [
                         "turn_id": turnID, "turn_value": "question",

@@ -11,8 +11,6 @@ enum SongRangeCardMode {
     case active(isSending: Bool, problem: String?, submit: (SongRangeAnswer, String) -> Void)
     /// Answered by a `song_range` message: one read-only line.
     case answered(summary: String, spoken: String)
-    /// A newer question replaced this one before it was answered.
-    case superseded
 }
 
 struct SongRangeQuestionCard: View {
@@ -25,8 +23,6 @@ struct SongRangeQuestionCard: View {
         switch mode {
         case .answered(let summary, let spoken):
             SongRangeAnsweredLine(summary: summary, spoken: spoken)
-        case .superseded:
-            KriaSupersededLine().accessibilityIdentifier("song-range-card-superseded")
         case .active(let isSending, let problem, let submit):
             SongRangeActiveCard(question: question, fallbackDurationS: fallbackDurationS,
                                 isSending: isSending, problem: problem, submit: submit)

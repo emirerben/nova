@@ -57,16 +57,6 @@ enum MomentReorderMath {
     }
 }
 
-/// How a moment question is shown under its message.
-enum MomentOrderCardMode {
-    /// The newest unanswered question: interactive. `problem` is the server's reason for refusing the last answer.
-    case active(isSending: Bool, problem: String?, submit: (MomentOrderAnswer) -> Void)
-    /// Answered by a `moment_order` message: one read-only line.
-    case answered(summary: String)
-    /// A newer question replaced this one before it was answered.
-    case superseded
-}
-
 /// Finds the take's original on this iPhone (phone projects keep originals in the project directory).
 @MainActor enum MomentOrderSource {
     static func localURL(projectID: UUID?, mediaID: String) -> URL? {
@@ -81,20 +71,21 @@ struct MomentOrderCard: View {
     let question: MomentOrderQuestion
     var projectID: UUID? = nil
     var language: ClipAnswerLanguage = .english
-    let mode: MomentOrderCardMode
+    /// `failed` carries the server's reason for refusing the last answer; `stale` says Kria looked at the take again
+    /// and this is the newest list.
+    let phase: AskPhase<String>
+    var isBusy = false
+    var submit: (MomentOrderAnswer) -> Void = { _ in }
 
     var body: some View {
-        switch mode {
-        case .answered(let summary):
+        if case .answered(let summary) = phase {
             KriaAnsweredReceipt(text: summary)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(summary)
                 .accessibilityIdentifier("moment-order-answered")
-        case .superseded:
-            KriaSupersededLine().accessibilityIdentifier("moment-order-superseded")
-        case .active(let isSending, let problem, let submit):
+        } else {
             MomentOrderActiveCard(question: question, projectID: projectID, strings: MomentOrderStrings(language),
-                                  isSending: isSending, problem: problem, submit: submit)
+                                  phase: phase, isSending: isBusy, submit: submit)
         }
     }
 }
@@ -103,15 +94,15 @@ private struct MomentOrderActiveCard: View {
     let question: MomentOrderQuestion
     let projectID: UUID?
     let strings: MomentOrderStrings
+    let phase: AskPhase<String>
     let isSending: Bool
-    let problem: String?
     let submit: (MomentOrderAnswer) -> Void
 
     @State private var draft: MomentOrderDraft
     /// The moment whose window picker is open.
     @State private var picking: PickTarget?
-    /// The server's reason is only true for the answer that was sent: any change hides it.
-    @State private var problemSeen = false
+    /// The server's reason (or the stale notice) is only true for the list as it was: any change hides it.
+    @State private var noticeSeen = false
     /// The row being dragged by its handle, how far it has moved, and each row's measured height.
     @State private var draggingKey: String?
     @State private var dragOffset: CGFloat = 0
@@ -126,13 +117,13 @@ private struct MomentOrderActiveCard: View {
 
     private static let rowSpacing: CGFloat = 8
 
-    init(question: MomentOrderQuestion, projectID: UUID?, strings: MomentOrderStrings, isSending: Bool,
-         problem: String?, submit: @escaping (MomentOrderAnswer) -> Void) {
+    init(question: MomentOrderQuestion, projectID: UUID?, strings: MomentOrderStrings, phase: AskPhase<String>,
+         isSending: Bool, submit: @escaping (MomentOrderAnswer) -> Void) {
         self.question = question
         self.projectID = projectID
         self.strings = strings
+        self.phase = phase
         self.isSending = isSending
-        self.problem = problem
         self.submit = submit
         _draft = State(initialValue: MomentOrderDraft(question: question))
     }
@@ -140,7 +131,7 @@ private struct MomentOrderActiveCard: View {
     private var localURL: URL? { MomentOrderSource.localURL(projectID: projectID, mediaID: question.mediaID) }
 
     var body: some View {
-        KriaQuestionCard(title: strings.title, helper: strings.hint) {
+        KriaQuestionCard(title: strings.title) {
             VStack(spacing: Self.rowSpacing) {
                 ForEach(draft.order, id: \.self) { key in
                     if let moment = question.moment(key) { row(moment) }
@@ -160,8 +151,8 @@ private struct MomentOrderActiveCard: View {
         .excludesDrawerGesture()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("moment-order-card")
-        .onChange(of: problem) { _, _ in problemSeen = false }
-        .onChange(of: draft) { _, _ in problemSeen = true }
+        .onChange(of: phase) { _, _ in noticeSeen = false }
+        .onChange(of: draft) { _, _ in noticeSeen = true }
         .sheet(item: $picking) { target in
             if let url = localURL {
                 MomentWindowSheet(url: url, takeDuration: question.durationS, strings: strings,
@@ -340,10 +331,17 @@ private struct MomentOrderActiveCard: View {
 
     private var footer: some View {
         let blocked = !draft.isComplete || !draft.overlapping.isEmpty
-        let reason = (problem != nil && !problemSeen) ? nil : (!draft.isComplete ? strings.chooseEach : nil)
+        let notice = noticeSeen ? nil : phase
+        var reason: String? = nil
+        if case .failed? = notice {} else if !draft.isComplete { reason = strings.chooseEach }
         return VStack(alignment: .leading, spacing: 8) {
-            if let problem, !problemSeen {
+            switch notice {
+            case .failed(let problem)?:
                 KriaInlineFailure(text: problem).accessibilityIdentifier("moment-order-error")
+            case .stale?:
+                KriaInlineNotice(text: strings.stale).accessibilityIdentifier("moment-order-stale")
+            default:
+                EmptyView()
             }
             Button(strings.send) {
                 if let answer = draft.answer(question: question) { submit(answer) }

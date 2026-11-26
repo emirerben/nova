@@ -2131,6 +2131,31 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["choice-option-chronological"].exists)
     }
 
+    func testARefusedChoiceAnswerSaysSoAndTryAgainSendsTheSameAnswerOnce() {
+        let app = launchChoiceQuestionFixture(capability: "refuse-first")
+        let chronological = app.buttons["choice-option-chronological"]
+        XCTAssertTrue(chronological.waitForExistence(timeout: 15))
+        chronological.tap()
+        let failure = app.descendants(matching: .any)["answer-send-failed"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 10), "the refusal reads as a red failure on the card")
+        XCTAssertEqual(failure.label, "Couldn’t send your answer.")
+        XCTAssertTrue(app.descendants(matching: .any)["choice-card"].exists, "the card stays open")
+        XCTAssertFalse(app.descendants(matching: .any)["choice-card-answered"].exists)
+        attachScreenshot(app, "choice-send-failed")
+        let retry = app.buttons["answer-try-again"]
+        XCTAssertTrue(retry.exists)
+        assertTouchTarget(retry.frame.height)
+        retry.tap()
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "choice[chronological]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "the retry carried the same structured answer")
+        XCTAssertTrue(app.descendants(matching: .any)["choice-card-answered"].waitForExistence(timeout: 5))
+        XCTAssertFalse(failure.exists)
+        let once = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "accepted[1]")).firstMatch
+        XCTAssertTrue(once.exists, "the server took the answer once, after refusing the first send")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "accepted[2]")).firstMatch.exists)
+        attachScreenshot(app, "choice-answered-after-retry")
+    }
+
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

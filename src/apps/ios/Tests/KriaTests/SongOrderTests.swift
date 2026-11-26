@@ -193,16 +193,6 @@ final class SongOrderTests: XCTestCase {
         XCTAssertTrue(SongOrderCard.caption(for: try XCTUnwrap(q.item(for: "b"))).hasPrefix("Could fit a few places"))
     }
 
-    @MainActor func testReorderAdviceIsOnlyGivenWhenSomethingCanBeReordered() {
-        let both = SongOrderCard.hint(ambiguous: 1, unmatched: 2)
-        XCTAssertTrue(both.contains("drag or use the arrows to fix the order"))
-        XCTAssertTrue(both.contains("2 clips Kria couldn’t place will be used as filler"))
-        let onlyUnmatched = SongOrderCard.hint(ambiguous: 0, unmatched: 1)
-        XCTAssertFalse(onlyUnmatched.contains("fix the order"), "nothing doubtful is fixable by dragging")
-        XCTAssertTrue(onlyUnmatched.contains("1 clip Kria couldn’t place will be used as filler"))
-        XCTAssertEqual(SongOrderCard.hint(ambiguous: 0, unmatched: 0), "Tap a clip to watch it, then drag or use the arrows to change the order.")
-    }
-
     @MainActor func testAnsweredCopyNeverClaimsAConfirmationItCannotName() {
         XCTAssertEqual(SongOrderCard.answeredText(summary: "Clip 2 · Clip 1"), "Order confirmed: Clip 2 · Clip 1")
         XCTAssertEqual(SongOrderCard.answeredText(summary: nil), "Order question closed")
