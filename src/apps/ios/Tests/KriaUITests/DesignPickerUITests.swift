@@ -38,6 +38,15 @@ final class DesignPickerUITests: XCTestCase {
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
+    private func localized(_ key: String, _ language: String?) -> String {
+        guard let language else { return key }
+        let catalog = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Kria/Resources/Localizable.xcstrings")
+        let strings = (try? JSONSerialization.jsonObject(with: Data(contentsOf: catalog)) as? [String: Any])?["strings"] as? [String: Any]
+        let unit = ((strings?[key] as? [String: Any])?["localizations"] as? [String: Any])?[language] as? [String: Any]
+        return (unit?["stringUnit"] as? [String: Any])?["value"] as? String ?? key
+    }
+
     private func launch(options: String? = nil, refuseFirst: Bool = false, sendDelay: Int? = nil,
                         language: String? = nil) -> XCUIApplication {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -53,15 +62,16 @@ final class DesignPickerUITests: XCTestCase {
         if let sendDelay { app.launchEnvironment["KRIA_CHAT_SEND_DELAY"] = String(sendDelay) }
         if let language { app.launchArguments += ["-AppleLanguages", "(\(language))", "-AppleLocale", "\(language)_\(language.uppercased())"] }
         app.launch()
-        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
-        app.buttons["Open projects"].tap()
+        let openProjects = app.buttons[localized("Open projects", language)]
+        XCTAssertTrue(openProjects.waitForExistence(timeout: 20))
+        openProjects.tap()
         let newChat = app.buttons["drawer-new-chat"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 5))
         XCTAssertTrue(waitFor(newChat, "enabled == true", timeout: 20))
         newChat.tap()
-        XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts[localized("What are we making?", language)].waitForExistence(timeout: 20))
         app.chooseFormat("montage")
-        let send = app.buttons["Send clips"]
+        let send = app.buttons[localized("Send clips", language)]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
         send.tap()
         return app
@@ -97,7 +107,8 @@ final class DesignPickerUITests: XCTestCase {
         let echo = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "design[A2] question[design-q-fixture]")).firstMatch
         XCTAssertTrue(echo.waitForExistence(timeout: 15), "the tap sends the structured answer for A2")
         XCTAssertTrue(element(app, "choice-card-answered").waitForExistence(timeout: 5), "the card closes on her choice")
-        XCTAssertTrue(element(app, "choice-receipt-preview").exists, "the receipt shows the style she chose")
+        XCTAssertTrue(waitFor(element(app, "choice-card-answered"), "value == %@", "Preview drawn over your clip"),
+                      "the receipt shows the style she chose")
 
         let confirm = app.buttons["Create this video"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 15))
@@ -150,12 +161,13 @@ final class DesignPickerUITests: XCTestCase {
         app.terminate()
     }
 
-    private func waitForStrip(_ app: XCUIApplication, keys: [String]) {
+    private func waitForStrip(_ app: XCUIApplication, keys: [String], language: String? = nil) {
         XCTAssertTrue(element(app, "design-preview-strip").waitForExistence(timeout: 20))
         for key in keys {
             let tile = app.buttons["choice-option-\(key)"]
             XCTAssertTrue(tile.waitForExistence(timeout: 5))
-            XCTAssertTrue(waitFor(tile, "value == %@", "Preview drawn over your clip", timeout: 20), "\(key) is drawn over her clip")
+            XCTAssertTrue(waitFor(tile, "value == %@", localized("Preview drawn over your clip", language), timeout: 20),
+                          "\(key) is drawn over her clip")
         }
     }
 
@@ -207,10 +219,10 @@ final class DesignPickerUITests: XCTestCase {
         XCTAssertFalse(app.buttons["choice-option-A1"].isEnabled, "the other styles are out while it sends")
         XCTAssertFalse(app.buttons["choice-option-B1"].isEnabled)
         attach(app, "ca4-submitting")
-        let receipt = element(app, "choice-receipt-preview")
-        XCTAssertTrue(receipt.waitForExistence(timeout: 20), "the receipt draws the chosen style")
-        XCTAssertTrue(element(app, "choice-card-answered").exists)
-        XCTAssertEqual(element(app, "choice-card-answered").label, "You chose: Bold on a soft shade")
+        let receipt = element(app, "choice-card-answered")
+        XCTAssertTrue(receipt.waitForExistence(timeout: 20))
+        XCTAssertEqual(receipt.label, "You chose: Bold on a soft shade")
+        XCTAssertTrue(waitFor(receipt, "value == %@", "Preview drawn over your clip"), "the receipt draws the chosen style")
         XCTAssertFalse(element(app, "design-preview-strip").exists)
         attach(app, "ca4-receipt")
         app.terminate()
@@ -258,13 +270,13 @@ final class DesignPickerUITests: XCTestCase {
         attach(app, "ca4-rows")
         app.buttons["choice-option-A2"].tap()
         XCTAssertTrue(element(app, "choice-card-answered").waitForExistence(timeout: 15), "a row still answers on tap")
-        XCTAssertFalse(element(app, "choice-receipt-preview").exists)
+        XCTAssertNotEqual(element(app, "choice-card-answered").value as? String, "Preview drawn over your clip", "a row's receipt is the capsule")
         app.terminate()
     }
 
     func testTurkishLabelsFitTheTiles() {
-        let app = launch(options: "3", language: "tr")
-        waitForStrip(app, keys: ["A1", "A2", "B1"])
+        let app = launch(options: "3tr", language: "tr")
+        waitForStrip(app, keys: ["A1", "A2", "B1"], language: "tr")
         let use = app.buttons["choice-use-style"]
         XCTAssertTrue(use.label.hasSuffix("kullan"), "the primary is Turkish; reads \(use.label)")
         let card = element(app, "choice-card").frame

@@ -31,12 +31,18 @@ struct ChoiceQuestionCard: View {
     var body: some View {
         if case .answered(let summary) = phase {
             Group {
-                if summary.isEmpty { KriaAnsweredReceipt(text: String(localized: "You answered")) } else { KriaYouChose(text: summary) }
+                if summary.isEmpty {
+                    KriaAnsweredReceipt(text: String(localized: "You answered"))
+                } else if let option = question.previewedOption(answered: summary) {
+                    DesignYouChose(option: option, projectID: projectID)
+                } else {
+                    KriaYouChose(text: summary)
+                }
             }
             .accessibilityIdentifier("choice-card-answered")
         } else if question.hasPreviews && heldKey == nil {
             DesignPreviewStrip(question: question, projectID: projectID, isSending: isBusy, isLocked: isTyping,
-                               typeMyOwn: question.allowFreeText ? typeMyOwn : nil, allowsDecide: allowsDecide) { option, message in
+                               typeMyOwn: question.allowFreeText ? typeMyOwn : nil) { option, message in
                 submit(question.submission(for: option), message)
             }
             .padding(.top, 2)
