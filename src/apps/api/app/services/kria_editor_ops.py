@@ -29,6 +29,7 @@ from app.agents._schemas.text_element import (
     resolve_narrated_storyboard_rows,
 )
 from app.config import settings
+from app.kria.clip_dim import stored_row_dim
 from app.kria.clip_tilt import ClipTilt
 from app.kria.editor_head import payload_current
 from app.kria.split_screen import is_blank_row
@@ -173,6 +174,9 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         if enabled("tilt_zoom", default=False):
             # KRI-1169: the Zoom slider's twin; open-only, like the backdrop above.
             fields["tilt_zoom"] = True
+    if enabled("dim", default=False):
+        # Present only while open, like `tilt`, so every other snapshot and prompt is unchanged.
+        fields["dim"] = True
     return fields
 
 
@@ -1582,7 +1586,10 @@ def _text_appearance_enabled() -> bool:
 
 def _appearance_group(bar_id: str) -> str | None:
     """Selector vocabulary for "all titles" / "all labels" (edit_copilot.py)."""
-    if bar_id == "guided-title":
+    from app.pipeline.title_family import title_family_of  # noqa: PLC0415
+
+    # KRI-1633: a picked intro style's `guided-title-line-N` rows are the same title.
+    if title_family_of(bar_id) == "guided-title":
         return "title"
     if bar_id.startswith(_CLIP_LABEL_BAR_PREFIX):
         return "label"
@@ -1943,6 +1950,10 @@ def build_editor_snapshot(
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
     if "clip" in families:
         snapshot["timeline_patch_capabilities"] = timeline_patch_capabilities(job, variant)
+        if snapshot["timeline_patch_capabilities"].get("dim") is True:
+            for slot, row in zip(slots, slot_rows, strict=True):
+                if (dim := stored_row_dim(row.get("dim"))) is not None:
+                    slot["dim"] = dim
         if snapshot["timeline_patch_capabilities"].get("tilt") is True:
             zoom_open = snapshot["timeline_patch_capabilities"].get("tilt_zoom") is True
             for slot, row in zip(slots, slot_rows, strict=True):
@@ -3057,10 +3068,33 @@ def _op_remove_visual_media(state: _DraftState, op: dict[str, Any]) -> None:
     state.changed.add("visual_media")
 
 
+def _title_stack(state: _DraftState, bar: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every live line of the stacked title ``bar`` heads (KRI-1633), else just ``bar``."""
+    from app.pipeline.title_family import title_family_of, title_stack_rows  # noqa: PLC0415
+
+    if title_family_of(bar.get("id")) is None:
+        return [bar]
+    live = [
+        row
+        for row in state.text_bars
+        if id(row) not in state.removed_text_bars and not row.get("removed")
+    ]
+    return title_stack_rows(live, bar)
+
+
+def _collapse_title_stack(state: _DraftState, bar: dict[str, Any]) -> dict[str, Any]:
+    from app.services.kria_editor_ops_text import _collapse_stacked_title  # noqa: PLC0415
+
+    stack = _title_stack(state, bar)
+    return _collapse_stacked_title(state, stack)[0] if len(stack) > 1 else bar
+
+
 def _op_edit_text(state: _DraftState, op: dict[str, Any]) -> None:
     from app.services.kria_editor_ops_text import keep_authored_breaks  # noqa: PLC0415
 
     bar = state.text_bar(op.get("bar_index"))
+    # KRI-1633: new words for the title of a picked intro style replace the whole stack.
+    bar = _collapse_title_stack(state, bar)
     bar["text"] = str(op["text"])
     keep_authored_breaks(bar)
     state.changed.add("text")
@@ -3077,8 +3111,12 @@ def _op_patch_text_style(state: _DraftState, op: dict[str, Any]) -> None:
     }
     if not patch:
         raise KriaEditorOpError("No portable text style fields were supplied")
+    bars: list[dict[str, Any]] = []
     for index in indexes:
-        bar = state.text_bar(index)
+        for row in _title_stack(state, state.text_bar(index)):
+            if not any(row is seen for seen in bars):
+                bars.append(row)
+    for bar in bars:
         bar.update(patch)
         if patch.get("position") not in (None, "custom"):
             # A named position ignores x/y fractions on the burn, but the editors
@@ -3089,7 +3127,7 @@ def _op_patch_text_style(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
-    bar = state.text_bar(op.get("bar_index"))
+    bars = _title_stack(state, state.text_bar(op.get("bar_index")))
     updates = {}
     for key in ("start_s", "end_s"):
         if key in op:
@@ -3097,9 +3135,10 @@ def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
             if not math.isfinite(value):
                 raise KriaEditorOpError("Text timing must be finite")
             updates[key] = value
-    bar.update(updates)
-    if isinstance(bar.get("id"), str):
-        state.explicit_text_ids.add(bar["id"])
+    for bar in bars:
+        bar.update(updates)
+        if isinstance(bar.get("id"), str):
+            state.explicit_text_ids.add(bar["id"])
     state.changed.add("text")
 
 
@@ -3182,7 +3221,9 @@ def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_remove_text(state: _DraftState, op: dict[str, Any]) -> None:
-    state.removed_text_bars.add(id(state.text_bar(op.get("bar_index"))))
+    state.removed_text_bars.update(
+        id(row) for row in _title_stack(state, state.text_bar(op.get("bar_index")))
+    )
     state.text = [row for row in state.text if id(row) not in state.removed_text_bars]
     state.changed.add("text")
 

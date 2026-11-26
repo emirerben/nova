@@ -25,6 +25,7 @@
     "caption_translation_disabled",
     "clip_backdrop_media_not_in_pool",
     "clip_backdrop_media_unavailable",
+    "clip_dim_unavailable",
     "clip_tilt_unavailable",
     "clip_tilt_zoom_unavailable",
     "guided_story_revision_unavailable",

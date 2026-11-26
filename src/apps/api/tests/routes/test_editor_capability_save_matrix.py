@@ -378,6 +378,11 @@ def _():
     )
 
 
+@row("panel-dim", "dim a panel clip")
+def _():
+    return Doc([slot(0, panel=0, dim=0.4), slot(2, panel=1)], [section()])
+
+
 @row("full-screen-before-and-after", "full screen clips around a split section")
 def _():
     return Doc(

@@ -3812,6 +3812,7 @@
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_add_remove__visual_media.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_audio.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_crop.json",
+        "src/apps/api/tests/fixtures/request_following/threads/action_clip_dim.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_duplicate.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look.json",
         "src/apps/api/tests/fixtures/request_following/threads/action_clip_look__custom_effect.json",
@@ -3948,16 +3949,18 @@
     {
       "id": "kri-1466-narrated-named-moment",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_narrated_footage_fit.py tests/tasks/test_kri1466_narrated_named_moment.py tests/tasks/test_tahini_narrated_pace_cues.py tests/kria/test_narrated_pace_same_clip_jump.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/pipeline/test_phone_narrated_plan.py tests/kria/test_brief_checks_narrated_alignment.py",
+      "api_tests": "tests/pipeline/test_narrated_footage_fit.py tests/tasks/test_kri1466_narrated_named_moment.py tests/tasks/test_tahini_narrated_pace_cues.py tests/kria/test_narrated_pace_same_clip_jump.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/pipeline/test_phone_narrated_plan.py tests/kria/test_brief_checks_narrated_alignment.py tests/kria/test_kri1517_cusco_t4_named_moments_review.py",
       "paths": [
         "src/apps/api/app/kria/narrated_render_checks.py",
         "src/apps/api/app/pipeline/narrated_footage_fit.py",
         "src/apps/api/tests/fixtures/narrated_alignment/kri1466_tor_moment.json",
+        "src/apps/api/tests/fixtures/narrated_alignment/kri1517_cusco_t4_moments.json",
         "src/apps/api/tests/fixtures/narrated_alignment/tahini_pace_cues.json",
         "src/apps/api/tests/pipeline/test_narrated_footage_fit.py",
         "src/apps/api/tests/tasks/test_kri1466_narrated_named_moment.py",
         "src/apps/api/tests/tasks/test_tahini_narrated_pace_cues.py",
-        "src/apps/api/tests/kria/test_narrated_pace_same_clip_jump.py"
+        "src/apps/api/tests/kria/test_narrated_pace_same_clip_jump.py",
+        "src/apps/api/tests/kria/test_kri1517_cusco_t4_named_moments_review.py"
       ]
     },
     {
@@ -4058,6 +4061,26 @@
       ]
     },
     {
+      "id": "kri-1633-intro-styles-api",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_intro_styles.py tests/pipeline/test_intro_styles_ios_fixture.py tests/pipeline/test_intro_scene_pick.py tests/services/test_intro_styles_contract.py tests/services/test_intro_styles_edit_ops.py tests/routes/test_intro_styles_e2e.py",
+      "paths": [
+        "src/apps/api/app/pipeline/intro_styles.py",
+        "src/apps/api/app/pipeline/title_family.py",
+        "src/apps/api/app/routes/intro_styles.py",
+        "src/apps/api/app/cli/intro_styles_fixtures.py",
+        "src/apps/api/app/cli/verify_intro_styles.py",
+        "src/apps/api/app/pipeline/intro_scene_pick.py",
+        "src/apps/api/tests/pipeline/test_intro_styles.py",
+        "src/apps/api/tests/pipeline/test_intro_styles_ios_fixture.py",
+        "src/apps/api/tests/services/test_intro_styles_contract.py",
+        "src/apps/api/tests/services/test_intro_styles_edit_ops.py",
+        "src/apps/api/tests/routes/test_intro_styles_e2e.py",
+        "src/apps/api/tests/fixtures/kri1633_old_stamp_rows.json",
+        "src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json"
+      ]
+    },
+    {
       "id": "kri-1614-intro-variety-intake",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_intro_variety.py tests/pipeline/test_intro_intake.py tests/pipeline/test_intro_scene.py",
@@ -4091,6 +4114,52 @@
         "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_light_wall.json",
         "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_compose_mid.json",
         "src/apps/api/tests/fixtures/agent_evals/intro_scene/golden/tr_decline_footage_unsuited.json"
+      ]
+    },
+    {
+      "id": "kri-1633-intro-styles-ios",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/IntroStylesOfferTests/testApplyReapplyAndUndoRestoreTheDocumentExactly",
+        "KriaTests/IntroStylesOfferTests/testTheSaveLaneEqualsTheOptionRowsRaw",
+        "KriaTests/IntroStylesOfferTests/testTurkishLooksDrawTheSameCapitalsAsTheServersPreview",
+        "KriaUITests/IntroStylesUITests/testOffersFittedLooksPickSavesAsEditableTitleRowsInEnglishAndTurkish"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/IntroStyles.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession+IntroStyles.swift",
+        "src/apps/ios/Kria/Features/NativeIntroStylesPanel.swift",
+        "src/apps/ios/Kria/Features/IntroStylesUITestFixture.swift",
+        "src/apps/ios/Tests/KriaTests/IntroStylesOfferTests.swift",
+        "src/apps/ios/Tests/KriaUITests/IntroStylesUITests.swift",
+        "src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.json"
+      ]
+    },
+    {
+      "id": "clip-dim",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_clip_dim_writers.py tests/routes/test_clip_dim_editor_save.py tests/agents/test_clip_dim_ai.py tests/kria/test_editor_capability_parity.py tests/routes/test_editor_save_code_catalog.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py",
+      "xctests": [
+        "KriaTests/ClipDimTests/testSharedFixtureValidDimsNormalize",
+        "KriaTests/ClipDimTests/testSharedFixtureInvalidDimsAreRejected",
+        "KriaTests/ClipDimTests/testApplyToAllDimsEveryClipAndOneClipCanThenChangeOnItsOwn",
+        "KriaTests/ClipDimTests/testRemovingASavedDimSendsAnExplicitNullBecauseAnOmittedKeyKeepsIt",
+        "KriaTests/ClipDimRenderTests/testADimmedClipExportsDarkerByItsStrengthUnderEveryTextStickerAndDrawing",
+        "KriaTests/ClipDimRenderTests/testANoDimRowCompilesByteIdenticalToAnUntouchedOne"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/clip_dim.py",
+        "src/apps/api/prompts/edit_copilot_ops/clip_dim.txt",
+        "src/apps/api/tests/kria/test_clip_dim_writers.py",
+        "src/apps/api/tests/routes/test_clip_dim_editor_save.py",
+        "src/apps/api/tests/agents/test_clip_dim_ai.py",
+        "tests/fixtures/clip-dim-row/v1.json",
+        "src/apps/ios/Kria/Core/ClipDim.swift",
+        "src/apps/ios/Kria/Features/NativeDimSheet.swift",
+        "src/apps/ios/Tests/KriaTests/ClipDimTests.swift",
+        "src/apps/ios/Tests/KriaTests/ClipDimRenderTests.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeDimUITests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/ClipDimCompositionTests.swift"
       ]
     }
   ]

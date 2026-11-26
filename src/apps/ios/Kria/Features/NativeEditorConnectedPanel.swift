@@ -3,6 +3,8 @@ import SwiftUI
 /// One destination owns both the visible inspector and the rail highlight.
 enum NativeEditorPanel: Equatable {
     case text(String), textCreation, captions, visuals, sounds
+    /// KRI-1633: fitted intro looks for the title ("Try intro styles"), opened from the Text tool.
+    case introStyles
     /// KRI-1501: the translated caption line's own track (opened from Captions, the timeline or the preview).
     case translation
     /// KRI-1118: the Talk-to-camera speaker background.
@@ -16,7 +18,7 @@ enum NativeEditorPanel: Equatable {
 
     var tool: NativeEditorTool {
         switch self {
-        case .text, .textCreation: return .text
+        case .text, .textCreation, .introStyles: return .text
         case .captions, .translation: return .captions
         case .visuals: return .visuals
         case .background, .speaker: return .background

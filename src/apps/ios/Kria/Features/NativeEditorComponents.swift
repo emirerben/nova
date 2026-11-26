@@ -546,6 +546,7 @@ struct NativeEditorContextStrip: View {
     let onAdjust: () -> Void
     var onCrop: () -> Void = {}
     var onTilt: () -> Void = {}
+    var onDim: () -> Void = {}
     /// KRI-717: opens the Range picker (which part of the source clip plays).
     var onRange: () -> Void = {}
     let onTransition: () -> Void
@@ -599,6 +600,19 @@ struct NativeEditorContextStrip: View {
                     .disabled(tiltBlocked != nil || !session.canEdit(.timeline))
                     .accessibilityIdentifier("native-editor-clip-tilt")
                     .accessibilityHint(tiltBlocked ?? String(localized: "Turn this clip to any angle"))
+                }
+
+                if session.canDimClips {
+                    let dimBlocked = session.dimBlockedReason(for: session.selection)
+                    Button(action: onDim) {
+                        Label("Dim", systemImage: "circle.lefthalf.filled")
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                    .disabled(dimBlocked != nil || !session.canEdit(.timeline))
+                    .accessibilityIdentifier("native-editor-clip-dim")
+                    .accessibilityHint(dimBlocked ?? String(localized: "Darken this clip's picture"))
                 }
 
                 // Toggles the selected clip's own sound (it used to open Adjust and show a static

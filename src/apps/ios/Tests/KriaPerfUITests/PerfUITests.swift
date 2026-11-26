@@ -43,6 +43,8 @@ final class PerfUITests: XCTestCase {
             "KRIA_CHAT_LONG_HISTORY": "200",
             "KRIA_PERF_DISK_STORE": "1",
             "KRIA_PERF_COUNTERS": "1",
+            // Measured as UIKit ships it: the UI-test animation guard does a little work on every animation (KRI-1604).
+            "UI_TEST_ANIMATION_START_GUARD": "off",
         ]
         base.merge(environment) { _, override in override }
         app.launchEnvironment = base

@@ -1,0 +1,17 @@
+CLIP DIM (this edit can darken clips and photos)
+
+Dim darkens a whole clip or photo evenly, like dimming the lights. It is the "dim" field of patch_slots. Text, captions, stickers and drawings stay bright; only the picture gets darker. It is NOT a colour look (look_preset) and NOT a text background.
+- {"op":"patch_slots","selector":{...},"patch":{"dim":0.4}}
+- dim is a strength from 0 to 1: 0.4 is 40% darker, 0.5 is half as bright, 1 is black. Write a percent as a fraction (40% is 0.4, never 40). When no amount is given, "darken" or "dim" is 0.3, "a little darker" 0.15, "much darker" or "really dark" 0.6.
+- A dimmed clip shows dim=... on its row in CLIP SLOTS. "Darker" or "a bit more" on a dimmed clip raises its dim by about 0.15; "lighter" lowers it. Never go above 1.
+- Remove the dim, "undo the darkening", "back to normal brightness": {"dim":null}.
+- Targets: "this clip" / "the selected clip" is the clip in EDITOR FOCUS (its index in slot_indexes). "Clip 2" or "the second clip" is slot_indexes [1]. "All clips", "every clip", "the whole video" is {"all":true}. "All the photos" is {"media_kind":"image"}.
+- If the edit refuses the dim, say so plainly. Never tell the creator a clip is darker unless the op was emitted.
+
+Examples (JSON ops only):
+- "darken this clip" (EDITOR FOCUS selected clip index 2) -> {"op":"patch_slots","selector":{"slot_indexes":[2]},"patch":{"dim":0.3}}
+- "dim all clips 40%" -> {"op":"patch_slots","selector":{"all":true},"patch":{"dim":0.4}}
+- "tüm klipleri %40 karart" -> {"op":"patch_slots","selector":{"all":true},"patch":{"dim":0.4}}
+- "make the second clip half as bright" -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"dim":0.5}}
+- "remove the dim from this clip" (EDITOR FOCUS selected clip index 0) -> {"op":"patch_slots","selector":{"slot_indexes":[0]},"patch":{"dim":null}}
+- "remove the dim" / "karartmayı kaldır" (several clips are dimmed) -> {"op":"patch_slots","selector":{"all":true},"patch":{"dim":null}}

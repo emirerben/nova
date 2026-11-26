@@ -77,6 +77,12 @@ def _stamped(title: str = EN) -> dict[str, Any]:
     return job.assembly_plan
 
 
+def _seeded(title: str = EN) -> dict[str, Any]:
+    job = FakeJob(title)
+    pick.stamp_seeded_intro_scene(job)
+    return job.assembly_plan
+
+
 def _resolve(plan, client, *, title: str = EN, applies: bool = True, frames=()):
     return pick.resolve_for_render(
         plan,
@@ -96,7 +102,7 @@ def _resolve(plan, client, *, title: str = EN, applies: bool = True, frames=()):
 def test_the_model_stamp_is_pinned_at_dispatch_and_adds_only_its_marker(monkeypatch):
     on = pick.pinned_intro_scene(_stamped())
     monkeypatch.setattr(settings, "intro_scene_model_enabled", False)
-    off = pick.pinned_intro_scene(_stamped())
+    off = pick.pinned_intro_scene(_seeded())
     assert on is not None and off is not None
     assert pick.model_requested(on) and not pick.model_requested(off)
     assert {k: v for k, v in on.items() if k != pick.MODEL_ASK_FIELD} == off  # the seed is the same
@@ -104,7 +110,7 @@ def test_the_model_stamp_is_pinned_at_dispatch_and_adds_only_its_marker(monkeypa
 
 def test_with_its_own_switch_off_the_stamp_is_exactly_the_seeded_one(monkeypatch):
     monkeypatch.setattr(settings, "intro_scene_model_enabled", False)
-    ask = pick.pinned_intro_scene(_stamped())
+    ask = pick.pinned_intro_scene(_seeded())
     assert ask is not None and pick.MODEL_ASK_FIELD not in ask
     assert set(ask) == {"version", "seed", "look", "inks", "candidates", "excluded"}  # KRI-1611's
 

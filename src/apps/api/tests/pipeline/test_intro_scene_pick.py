@@ -74,7 +74,7 @@ def _flags(monkeypatch):
 
 def _stamped(title: str = EN, **kwargs: Any) -> dict:
     job = FakeJob(title, **kwargs)
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     ask = pick.pinned_intro_scene(job.assembly_plan)
     assert ask is not None
     return ask
@@ -87,7 +87,7 @@ def test_nothing_is_stamped_with_the_flag_off(monkeypatch):
     monkeypatch.setattr(settings, "intro_scene_enabled", False)
     job = FakeJob()
     before = dict(job.assembly_plan)
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     assert job.assembly_plan == before
 
 
@@ -95,14 +95,14 @@ def test_nothing_is_stamped_with_the_flag_off(monkeypatch):
 def test_nothing_is_stamped_for_an_account_not_admitted(monkeypatch, ids):
     monkeypatch.setattr(settings, "intro_scene_user_ids", ids)
     job = FakeJob()
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     assert pick.INTRO_SCENE_ASK_FIELD not in job.assembly_plan
 
 
 def test_a_star_admits_every_account(monkeypatch):
     monkeypatch.setattr(settings, "intro_scene_user_ids", ["*"])
     job = FakeJob()
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     assert pick.INTRO_SCENE_ASK_FIELD in job.assembly_plan
 
 
@@ -110,7 +110,7 @@ def test_stamping_reads_no_prose(monkeypatch):
     """The stamp reads the job's pins (text policy, title-look ask), never the request words."""
     job = FakeJob()
     job.all_candidates["creator_request"] = "make the title bold serif in red"
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     assert pick.INTRO_SCENE_ASK_FIELD in job.assembly_plan
 
 
@@ -133,12 +133,12 @@ def test_stamping_reads_no_prose(monkeypatch):
             },
         ),
         (
-            "saved_text_rule",
+            "requested_title_font",
             {
                 "plan": {
                     PHONE_TEXT_STYLE_FIELD: {
                         **POLICY,
-                        "preferences": {"all_text": {"font_family": "Anton"}},
+                        "requested": {"title": {"font_family": "Anton"}},
                     }
                 }
             },
@@ -155,14 +155,14 @@ def test_stamping_reads_no_prose(monkeypatch):
 def test_scene_yields_to(label, kwargs):
     job = FakeJob(**kwargs)
     before = dict(job.assembly_plan)
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     assert job.assembly_plan == before, label
 
 
 def test_scene_needs_the_title_look_switch(monkeypatch):
     monkeypatch.setattr(settings, "title_look_enabled", False)
     job = FakeJob()
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     assert pick.INTRO_SCENE_ASK_FIELD not in job.assembly_plan
 
 
@@ -207,7 +207,7 @@ def test_a_job_stamps_the_looks_it_excluded():
             return SimpleNamespace(scalars=lambda: iter(["grotesk_hand", None, "serif_italic"]))
 
     job = FakeJob()
-    pick.stamp_intro_scene(job, session=Session())
+    pick.stamp_seeded_intro_scene(job, session=Session())
     ask = pick.pinned_intro_scene(job.assembly_plan)
     assert ask["excluded"] == ["grotesk_hand", "serif_italic"]
     assert ask["candidates"][0]["font_pair"] not in {"grotesk_hand", "serif_italic"}
@@ -219,7 +219,7 @@ def test_a_failed_history_lookup_only_means_no_exclusion():
             raise RuntimeError("db down")
 
     job = FakeJob()
-    pick.stamp_intro_scene(job, session=Session())
+    pick.stamp_seeded_intro_scene(job, session=Session())
     assert pick.INTRO_SCENE_ASK_FIELD in job.assembly_plan
 
 
@@ -567,7 +567,7 @@ def test_unstamped_job_draws_todays_rows():
 
 def test_stamped_job_draws_the_scene_and_yields_when_asked():
     job = FakeJob()
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     legacy, _ = _title_rows(None)
     rows, receipt = _title_rows(job.assembly_plan)
     assert rows != legacy and len(rows) >= 2
@@ -578,13 +578,13 @@ def test_stamped_job_draws_the_scene_and_yields_when_asked():
         _title_rows(job.assembly_plan, reserve_logo=True)[0]
         == _title_rows(None, reserve_logo=True)[0]
     )
-    ruled = {**POLICY, "preferences": {"all_text": {"font_family": "Anton"}}}
+    ruled = {**POLICY, "requested": {"title": {"font_family": "Anton"}}}
     assert _title_rows(job.assembly_plan, policy=ruled)[0] == legacy
 
 
 def test_flag_flip_after_dispatch_does_not_restyle(monkeypatch):
     job = FakeJob()
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     monkeypatch.setattr(settings, "intro_scene_enabled", False)
     rows, _receipt = _title_rows(job.assembly_plan)
     assert len(rows) >= 2  # the stamp, not the flag, decides
@@ -593,7 +593,7 @@ def test_flag_flip_after_dispatch_does_not_restyle(monkeypatch):
 def test_scene_survives_the_clear_of_captions_replacement():
     """`_title_clear_of_captions` places the title again with `replace`; the stamp serves both."""
     job = FakeJob()
-    pick.stamp_intro_scene(job)
+    pick.stamp_seeded_intro_scene(job)
     first, _ = _title_rows(job.assembly_plan)
     again, _ = _title_rows(job.assembly_plan, look_caption_avoid=lambda _window: [])
     assert [row["text"] for row in first] == [row["text"] for row in again]
@@ -627,3 +627,115 @@ def test_the_recent_looks_query_builds_against_postgres():
     assert pick.recent_intro_looks(Session(), USER) == ("serif_italic",)
     assert "jsonb_extract_path_text(jobs.assembly_plan" in seen[0]
     assert "ORDER BY jobs.created_at DESC" in seen[0] and "intro_scene_ask" not in seen[0]  # bound
+
+
+# --- KRI-1633: saved preferences never block the offer; only her look ask for this title ----------
+#
+# F2 saved preferences block the offer (the bug).   F3 her explicit title-look ask is ignored.
+# F4 a font she excluded is offered.                F5 old stamps re-render differently / new
+# jobs get a silent scene.
+
+_SAVED_PREFERENCES = {
+    "preferences": {
+        "title": {
+            "position": "top_left",
+            "favorite_fonts": ["Anton"],
+            "excluded_fonts": ["Zeyada"],
+            "font_family": "Anton",
+            "color": "#ffffff",
+            "stroke_width": 4,
+            "shadow_enabled": True,
+        },
+        "all_text": {"font_family": "Anton", "automatic_font": True},
+    },
+    "requested": {
+        "all_text": {"font_family": "Anton", "color": "#000000"},  # the strategy writer's knobs
+        "title": {"position": "top", "favorite_fonts": ["Anton"], "automatic_font": False},
+    },
+}
+
+
+def _legacy_has_text_ask(policy) -> bool:
+    """KRI-1611's rule, kept here only as the negative control (F2)."""
+    for source in (policy.get("requested"), policy.get("preferences")):
+        if not isinstance(source, dict):
+            continue
+        for role in ("all_text", "title"):
+            rule = source.get(role)
+            if isinstance(rule, dict) and any(k != "automatic_font" for k in rule):
+                return True
+    return False
+
+
+def test_saved_preferences_do_not_block_the_offer_but_the_old_rule_did():
+    policy = {**POLICY, **_SAVED_PREFERENCES}
+    assert _legacy_has_text_ask(policy) is True  # negative control: the old rule blocked
+    assert pick.has_text_ask(policy) is False
+
+
+@pytest.mark.parametrize("key", pick.TITLE_LOOK_ASK_KEYS)
+def test_her_look_ask_for_this_title_blocks(key):
+    value = {"font_family": "Anton", "color": "#fff", "stroke_width": 3, "shadow_enabled": False}
+    assert pick.has_text_ask({"requested": {"title": {key: value[key]}}}) is True
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        None,
+        {},
+        {"requested": {"title": {"position": "top_left"}}},
+        {"requested": {"all_text": {"font_family": "Anton"}}},
+        {"preferences": {"title": {"font_family": "Anton", "color": "#fff"}}},
+        {"requested": {"title": {"excluded_fonts": ["Anton"]}}},
+        {"requested": {"hook": {"font_family": "Anton"}}},
+    ],
+)
+def test_nothing_but_a_title_look_ask_counts(policy):
+    assert pick.has_text_ask(policy) is False
+
+
+def test_excluded_fonts_are_read_from_every_source_and_never_block():
+    policy = {
+        "preferences": {"title": {"excluded_fonts": ["Zeyada"]}},
+        "requested": {"all_text": {"excluded_fonts": ["Great Vibes"]}},
+    }
+    assert pick.excluded_font_families(policy) == {"zeyada", "great vibes"}
+    assert pick.excluded_font_families(None) == frozenset()
+    picked = pick.pick_candidates(EN, seed="s", excluded_fonts=pick.excluded_font_families(policy))
+    assert picked
+    for candidate in picked:
+        faces = scene_mod.FONT_PAIRS[candidate["font_pair"]]
+        assert faces.solid.family.casefold() not in {"zeyada", "great vibes"}
+        assert faces.accent.family.casefold() not in {"zeyada", "great vibes"}
+    assert {c["font_pair"] for c in picked}.isdisjoint({"grotesk_hand", "script_serif"})
+
+
+def test_the_automatic_pick_is_retired_with_the_model_switch_off(monkeypatch):
+    monkeypatch.setattr(settings, "intro_scene_model_enabled", False)
+    job = FakeJob()
+    before = dict(job.assembly_plan)
+    pick.stamp_intro_scene(job)
+    assert job.assembly_plan == before
+    assert pick.INTRO_SCENE_ASK_FIELD not in job.assembly_plan
+
+
+def test_the_model_arm_still_stamps_when_its_switch_is_on(monkeypatch):
+    monkeypatch.setattr(settings, "intro_scene_model_enabled", True)
+    job = FakeJob()
+    pick.stamp_intro_scene(job)
+    assert pick.model_requested(pick.pinned_intro_scene(job.assembly_plan) or {})
+
+
+def test_a_kri1611_stamped_job_renders_byte_identical_rows():
+    """F5: a job stamped under the old rule draws the same rows after the rule changed. The golden
+    was produced by origin/main's code (KRI-1611 rule) on this exact stamp and footage."""
+    import json
+    from pathlib import Path
+
+    golden = json.loads(
+        (Path(__file__).parent.parent / "fixtures" / "kri1633_old_stamp_rows.json").read_text()
+    )
+    rows, receipt = _title_rows(golden["plan"])
+    assert rows == golden["rows"]
+    assert {k: receipt[k] for k in golden["receipt"]} == golden["receipt"]

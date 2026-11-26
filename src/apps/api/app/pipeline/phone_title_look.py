@@ -41,12 +41,20 @@ from app.pipeline.cloud_render_evidence import normalize_text
 from app.pipeline.narrated_title import TITLE_FONT_FAMILY, narrated_title_placement
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import NormalizedBox
+from app.pipeline.title_family import (  # noqa: F401
+    _MIN_LINES,
+    TITLE_FAMILY_IDS,
+    TITLE_LOOK_PARAM,
+    _look_params,
+    is_title_look_row,
+    title_family_of,
+    title_look_line_ids,
+    title_stack_rows,
+)
 from app.text_fold import fold_text
 
 log = structlog.get_logger(__name__)
 
-TITLE_LOOK_PARAM = "title_look"
-_MIN_LINES = 2
 _MAX_LINES = 5
 _MIN_LINE_CHARS = 2
 
@@ -134,16 +142,6 @@ def split_title_lines(title: str | None) -> list[str] | None:
     return parts
 
 
-def _look_params(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    params = row.get("source_params")
-    look = params.get(TITLE_LOOK_PARAM) if isinstance(params, Mapping) else None
-    return look if isinstance(look, Mapping) else None
-
-
-def is_title_look_row(row: Mapping[str, Any]) -> bool:
-    return _look_params(row) is not None
-
-
 def title_look_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
     """Her title in typed form (`` / `` between lines), or ``None`` without look rows."""
     look_rows = [row for row in rows if is_title_look_row(row)]
@@ -165,11 +163,23 @@ def intro_plain_text(rows: Sequence[Mapping[str, Any]]) -> str | None:
     return " ".join(str(row.get("text") or "") for row in look_rows)
 
 
-def title_look_line_ids(bar_ids: Sequence[str]) -> list[str]:
-    """The ids a stacked title's lines carry (`opening-title`, `opening-title-line-N`), in the
-    order given. A whole-title edit addresses every one of them."""
-    first = title_mod.TALKING_TITLE_ELEMENT_ID
-    return [i for i in bar_ids if i == first or i.startswith(f"{first}-line-")]
+assert TITLE_FAMILY_IDS[0] == title_mod.TALKING_TITLE_ELEMENT_ID
+
+
+def intro_stack_as_one_row(rows: Sequence[Any]) -> list[Any]:
+    """KRI-1633: ``rows`` with an intro scene's lines (2-5 look rows of one title family, every
+    style ``intro_*``) folded into ONE row carrying her whole title (`intro_plain_text`), so the
+    render contract treats a picked look as one text, not as line 1's words. Anything that is not
+    such a stack (a typed " / " stack, a plain title, any other row) is returned as it was."""
+    live = [row for row in rows if isinstance(row, Mapping) and not row.get("removed")]
+    stack = [row for row in live if is_title_look_row(row) and title_family_of(row.get("id"))]
+    plain = intro_plain_text(stack) if len(stack) >= 2 else None
+    if plain is None or len({title_family_of(row.get("id")) for row in stack}) != 1:
+        return list(rows)
+    ordered = sorted(stack, key=lambda row: int((_look_params(row) or {}).get("line") or 0))
+    first = ordered[0]
+    gone = {id(row) for row in ordered[1:]}
+    return [{**row, "text": plain} if row is first else row for row in rows if id(row) not in gone]
 
 
 def collapse_title_look(
