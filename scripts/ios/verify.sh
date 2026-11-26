@@ -124,6 +124,28 @@ run_ui() {
   else
     verify_status=1
   fi
+  # Report only. A "60 s wait" is XCTest giving up on seeing the app go idle before a tap. The known cause is
+  # Core Animation reporting a start twice for an animation whose layer is already freed, and stopping it once.
+  # In UI-test launches the app drops that second start (UITestAnimationStartGuard) and the test bundle prints
+  # a line each time; "waits avoided" is drops minus the few whose second stop did come (KRI-1604).
+  local idle_waits guard_drops guard_stops guard_missed
+  idle_waits="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "App animations complete notification not received" || true)"
+  guard_drops="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "ANIMATION-GUARD dropped a second start" || true)"
+  guard_stops="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "ANIMATION-GUARD the stop for a dropped start" || true)"
+  guard_missed="$(cat "$RESULT_DIR"/ui*.log 2>/dev/null | grep -c "ANIMATION-GUARD missed one" || true)"
+  echo "UI idle ($label): ${idle_waits:-0} waits of 60 s for the app to go idle; guard dropped ${guard_drops:-0} second starts on freed layers, ${guard_stops:-0} of them got a stop later; ${guard_missed:-0} starts never stopped that the guard did not catch" \
+    | tee -a "$RESULT_DIR/selection.log"
+  # Surfaced like a test that passed only on retry: an annotation and a job-summary line, never a red by itself.
+  if [[ "${idle_waits:-0}" -gt 0 || "${guard_missed:-0}" -gt 0 ]]; then
+    echo "::warning title=UI test waited 60 s for the app to go idle::$label: ${idle_waits:-0} waits; ${guard_missed:-0} animation starts never stopped that the guard did not catch. Find the cause, do not retry (docs/runbooks/ios-development.md, KRI-1604)."
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+      {
+        echo "## UI tests that waited 60 s for the app to go idle"
+        echo
+        echo "- $label: ${idle_waits:-0} waits; ${guard_missed:-0} animation starts never stopped that the guard did not catch. Each needs a cause, not a retry (KRI-1604)."
+      } >> "$GITHUB_STEP_SUMMARY" || true
+    fi
+  fi
   # Fail-closed: both signals must be green for the phase to pass. A clean rerun
   # of every overrun replaces only the first run's exit status; verify still
   # requires every other selected test to have passed.

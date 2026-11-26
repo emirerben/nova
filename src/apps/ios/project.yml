@@ -165,6 +165,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.emirerben.kria.uitests
         GENERATE_INFOPLIST_FILE: YES
+        # XCTest makes one of these when the bundle loads; it prints each time the app's UI-test animation guard acts (KRI-1604).
+        INFOPLIST_KEY_NSPrincipalClass: UITestAnimationGuardLog
         TEST_TARGET_NAME: Kria
   KriaPerfUITests:
     type: bundle.ui-testing
