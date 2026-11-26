@@ -830,6 +830,11 @@ class PlanFacts:
     # None = not known (no manifest, no approved media snapshot, or ids that match nothing).
     attached_media_count: int | None = None
     unused_media_ids: tuple[str, ...] | None = None
+    # KRI-1517: a finished phone Voiceover render whose accepted record says its narration is the
+    # creator's recorded voiceover file (that writer narrates nothing else), and the language the
+    # record heard in it (None = not known). False everywhere else: nothing is claimed.
+    voiceover_file_narration: bool = False
+    voiceover_file_language: str | None = None
     # KRI-1523: the creator's own videos in attach order (never a photo or a Visuals `asset-`)
     # and the ones the plan uses / the finished phone render was made from, for a typed "use
     # only the second clip" ask (`_check_chosen_videos`). None = not known: nothing is claimed.
@@ -1653,6 +1658,39 @@ def media_use_facts(attached: Sequence[str], used: Iterable[str]) -> dict[str, A
         "attached_media_count": len(own),
         "unused_media_ids": tuple(media_id for media_id in own if media_id not in taken),
     }
+
+
+def narrated_media_use_facts(
+    clip_paths: Iterable[object],
+    record: Mapping[str, Any],
+    *,
+    voiceover_path: object = None,
+    excluded: Collection[str] = (),
+    media_ids_by_clip: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """KRI-1517: `media_use_facts` for a finished phone Voiceover render.
+
+    ``clip_paths`` are the approved clips (the binding's media snapshot), ``record`` the render's
+    `narrated_alignment`: each step names the clip it plays by its file name (``clip``) and its
+    phone source id (``media_id``). The voiceover file is never one of the clips, and neither is a
+    clip the creator asked to leave out (``excluded``: file names, paths or phone source ids;
+    ``media_ids_by_clip`` maps a file name to its phone source id).
+    """
+    voice = str(voiceover_path or "").rsplit("/", 1)[-1]
+    ids = media_ids_by_clip or {}
+    skip = {str(key).rsplit("/", 1)[-1] for key in excluded if key}
+    attached = [
+        name
+        for name in (str(path).rsplit("/", 1)[-1] for path in clip_paths if path)
+        if name and name != voice and name not in skip and ids.get(name) not in skip
+    ]
+    used = [
+        str(row.get(key) or "")
+        for row in record.get("steps") or []
+        if isinstance(row, Mapping)
+        for key in ("clip", "media_id")
+    ]
+    return media_use_facts(attached, used)
 
 
 def _draft_media_use(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
@@ -17907,11 +17945,46 @@ def _check_all_clips_used(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     )
 
 
+def _check_own_voiceover(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-1517: "Use my recorded Turkish voiceover." on a finished phone Voiceover render.
+
+    Met when the render's own record says its narration is the recorded file, the row types
+    nothing but the file's language, and the language the record heard in the file is that one.
+    A row that also asks about the bed, the clip sound or the pauses keeps its readers; a file
+    heard in another language, a record with no heard language (the worker clears it when caption
+    compilation fails) and a row whose language cannot be read keep today's answer (None).
+    """
+    typed = req.facts if isinstance(req.facts, Mapping) else {}
+    if (
+        not facts.voiceover_file_narration
+        or req.kind != "audio"
+        or not typed
+        or not set(typed) <= set(_VOICE_LANGUAGE_FACT_KEYS)
+        or _wants_bed_under_voice(req)
+        or _wants_bed_muted(req)
+        or _wants_cleanup(req)
+    ):
+        return None
+    asked = next(
+        (code for key in _VOICE_LANGUAGE_FACT_KEYS if (code := _language_code(typed.get(key)))),
+        None,
+    )
+    heard = _language_code(facts.voiceover_file_language)
+    if asked is None or heard is None or asked != heard:
+        return None
+    return _receipt(req, "met", None, verification="checked", stage="checked")
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if req.kind == "text_sequence" and compose_unmet_with_ops():
         return _check_text_sequence(req, facts)
-    # KRI-1515: the typed format and whole-set asks own their rows.
-    typed = _check_format_ask(req, facts) or _check_all_clips_used(req, facts)
+    # KRI-1515: the typed format and whole-set asks own their rows (KRI-1517: and a finished
+    # Voiceover's "use my recorded voiceover").
+    typed = (
+        _check_format_ask(req, facts)
+        or _check_all_clips_used(req, facts)
+        or _check_own_voiceover(req, facts)
+    )
     if typed is not None:
         return typed
     if _insert_clip_fact(req) and facts.edit_format in _TALKING_FORMATS:
@@ -19594,6 +19667,7 @@ __all__ = [
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",
+    "narrated_media_use_facts",
     "plan_facts_from_narrated_alignment",
     "plan_facts_from_phone_variant",
     "plan_facts_from_rendered_montage",

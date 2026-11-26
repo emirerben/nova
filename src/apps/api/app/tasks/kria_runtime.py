@@ -9329,6 +9329,40 @@ def _montage_media_use(binding: Any, job: Any, variant: Mapping[str, Any]) -> di
     return media_use_facts(attached, used)
 
 
+def _narrated_media_use(binding: Any, job: Any, record: Mapping[str, Any]) -> dict[str, Any]:
+    """KRI-1517: the clips the creator approved against the clips a finished phone Voiceover's
+    steps play; never the voiceover file or a clip the creator asked to leave out. {} when
+    unknown."""
+    from app.kria.brief_checks import narrated_media_use_facts  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
+
+    snapshot = getattr(binding, "media_snapshot", None) or {}
+    candidates = job.all_candidates or {}
+    strategy = candidates.get("creator_strategy") or {}
+    excluded = [
+        str(assignment.get("media_id"))
+        for intent in strategy.get("resolved_clip_intents") or []
+        if isinstance(intent, Mapping)
+        and intent.get("op") == "exclude"
+        and intent.get("status") in (None, "resolved")
+        for assignment in intent.get("assignments") or []
+        if isinstance(assignment, Mapping) and assignment.get("media_id")
+    ]
+    sources = (job.assembly_plan or {}).get(PHONE_SOURCES_FIELD)
+    media_ids = {
+        str(source.get("proxy_path")).rsplit("/", 1)[-1]: str(source.get("media_id"))
+        for source in (sources if isinstance(sources, list) else [])
+        if isinstance(source, Mapping) and source.get("proxy_path") and source.get("media_id")
+    }
+    return narrated_media_use_facts(
+        snapshot.get("clip_paths") or candidates.get("clip_paths") or [],
+        record,
+        voiceover_path=snapshot.get("voiceover_path") or candidates.get("voiceover_gcs_path"),
+        excluded=excluded,
+        media_ids_by_clip=media_ids,
+    )
+
+
 def _cleanup_note_retake_cut_possible(contract: object) -> bool:
     """Could this render's speech cleanup have cut a restarted sentence (KRI-1176)?
 
@@ -9535,6 +9569,16 @@ def _approved_generation_requirements_review(
                 facts,
                 narrated_cue_steps=plan_facts_from_narrated_alignment(narrated).narrated_steps,
             )
+            if settings.narrated_cue_receipts_enabled:
+                # KRI-1517: only the recorded voiceover file is ever narrated by this writer, and
+                # its steps name every clip that plays ("fill the rest with the other clips").
+                spoken = narrated.get("spoken_language")
+                facts = dataclasses.replace(
+                    facts,
+                    voiceover_file_narration=True,
+                    voiceover_file_language=str(spoken) if spoken else None,
+                    **_narrated_media_use(binding, job, narrated),
+                )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
     facts = _with_recipe_music(job, variant, facts)
