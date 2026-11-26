@@ -65,12 +65,26 @@ _PATCH_KEYS = frozenset(
         "source_audio_volume",
     }
 )
+# Keys open only while `timeline_patch_capabilities[gate]` is true; an absent gate is closed, so
+# the snapshot shows the model nothing and only the tool schema can keep it from asking.
+_GATED_PATCH_KEYS = {"dim": "dim", "tilt": "tilt", "muted": "muted", "source_audio_volume": "muted"}
 _TILT_KEYS = frozenset({"rotation_deg", "rotation_delta_deg", "zoom", "zoom_delta", "backdrop"})
 _TILT_ZOOM_KEYS = ("zoom", "zoom_delta")
 _TILT_MAX_TURN_DEG = 360.0
 _TILT_MAX_ZOOM_ASK = 1000.0
 _STRATEGIES = ("proportional", "uniform", "trim_tail")
 _FAMILY = frozenset({"clip", "clips", "timeline"})
+
+
+def offered_patch_keys(snapshot: dict) -> frozenset[str]:
+    """The ``patch_slots`` keys this edit opens: every key but a gated one whose gate is closed."""
+    capabilities = snapshot.get("timeline_patch_capabilities")
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    return frozenset(
+        key
+        for key in _PATCH_KEYS
+        if key not in _GATED_PATCH_KEYS or capabilities.get(_GATED_PATCH_KEYS[key]) is True
+    )
 
 
 # ── Parser coercion ───────────────────────────────────────────────────────────
@@ -339,18 +353,15 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             return None
         clean[key] = cleaned
     capabilities = snapshot.get("timeline_patch_capabilities")
-    if {"muted", "source_audio_volume"}.intersection(clean) and not (
-        isinstance(capabilities, dict) and capabilities.get("muted") is True
-    ):
+    closed = set(clean) - offered_patch_keys(snapshot)
+    if {"muted", "source_audio_volume"} & closed:
         state.reject(
             op=name,
             reason="capability_unavailable",
             detail="Source audio is unavailable for these clips",
         )
         return None
-    if "tilt" in clean and not (
-        isinstance(capabilities, dict) and capabilities.get("tilt") is True
-    ):
+    if "tilt" in closed:
         unavailable = say(
             en="I can't tilt clips on this edit.",
             tr="Bu videoda klipleri eğemiyorum.",
@@ -358,7 +369,7 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
         state.reject(op=name, reason="capability_unavailable", detail=unavailable)
         state.reply_notes.append(unavailable)
         return None
-    if "dim" in clean and not (isinstance(capabilities, dict) and capabilities.get("dim") is True):
+    if "dim" in closed:
         unavailable = say(
             en="I can't dim clips on this edit.",
             tr="Bu videoda klipleri karartamıyorum.",

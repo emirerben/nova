@@ -3,8 +3,8 @@
 ``EDIT_COPILOT_OUTPUT_MODE=tools`` runs ``ToolsEditCopilotAgent``. Each operation open on the
 edit (``_family_allowed``) is offered as a tool whose arguments schema is that operation's entry
 in the typed wire registry (``_creator_wire.copilot_operation_schemas``), with ``patch`` narrowed
-to the keys that op's coercer reads, so the parser and the tools come from one table. A ``reply``
-tool carries the turn's non-operation fields.
+to the keys that op's coercer reads (``patch_slots`` to the clip fields the edit opens), so the
+parser and the tools come from one table. A ``reply`` tool carries the turn's non-operation fields.
 
 The rules prompt goes in the provider's system block (cached); the turn block is the user
 message. Each operation's definition bullet moves out of the rules into its tool description,
@@ -30,8 +30,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agents._creator_wire import (
-    copilot_field_schemas,
     copilot_operation_schemas,
+    copilot_patch_field_schemas,
     copilot_schema,
 )
 from app.agents._runtime import SchemaError
@@ -85,9 +85,10 @@ def _schemas() -> tuple[dict[str, dict], dict]:
     return _registry(settings.copilot_direction_follows_request_enabled)
 
 
-def patch_fields() -> dict[str, frozenset[str]]:
+def patch_fields(snapshot: dict | None = None) -> dict[str, frozenset[str]]:
     """The keys each op's ``patch`` may set, from the coercer that reads that patch. The wire
-    types ``patch`` as the union of every op's keys; a tool offers only its own."""
+    types ``patch`` as the union of every op's keys; a tool offers only its own. With a
+    ``snapshot``, ``patch_slots`` offers only the clip fields that edit opens."""
     from app.agents.edit_copilot import (
         _CAPTION_META_FIELDS,
         _OVERLAY_PATCH_FIELDS,
@@ -97,6 +98,7 @@ def patch_fields() -> dict[str, frozenset[str]]:
     )
     from app.agents.editor_ops_v2.text import text_patch_fields
     from app.agents.editor_ops_v2.timeline import _PATCH_KEYS as SLOT_PATCH_FIELDS
+    from app.agents.editor_ops_v2.timeline import offered_patch_keys
 
     text = text_patch_fields()
     return {
@@ -108,7 +110,7 @@ def patch_fields() -> dict[str, frozenset[str]]:
         "add_text": text,
         "patch_text": text,
         "replace_text_sequence": text,
-        "patch_slots": SLOT_PATCH_FIELDS,
+        "patch_slots": SLOT_PATCH_FIELDS if snapshot is None else offered_patch_keys(snapshot),
     }
 
 
@@ -139,15 +141,15 @@ def _description(name: str, prose: str | None) -> str:
     return f"Editor operation {name}. Example arguments and rules: {prose}"
 
 
-def operation_tool(name: str, prose: str | None = None) -> ToolSpec:
+def operation_tool(name: str, prose: str | None = None, snapshot: dict | None = None) -> ToolSpec:
     schemas, _ = _schemas()
     branch = schemas[name]
     properties = {k: v for k, v in branch["properties"].items() if k != "op"}
-    keys = patch_fields().get(name)
+    keys = patch_fields(snapshot).get(name)
     if keys is not None and "patch" in properties:
         properties["patch"] = {
             **properties["patch"],
-            "properties": copilot_field_schemas(sorted(keys)),
+            "properties": copilot_patch_field_schemas(sorted(keys)),
         }
     parameters = {
         "type": "object",
@@ -230,7 +232,7 @@ def copilot_tools(snapshot: dict, prose: dict[str, str]) -> list[ToolSpec]:
     schemas, _ = _schemas()
     open_ops = [name for name in sorted(schemas) if _family_allowed(name, snapshot)]
     return [
-        *(operation_tool(name, prose.get(name)) for name in open_ops),
+        *(operation_tool(name, prose.get(name), snapshot) for name in open_ops),
         reply_tool(set(open_ops)),
     ]
 
