@@ -65,8 +65,6 @@ _PATCH_KEYS = frozenset(
         "source_audio_volume",
     }
 )
-# Keys open only while `timeline_patch_capabilities[gate]` is true (absent is closed); every other
-# key is open unless its own capability is false.
 _GATED_PATCH_KEYS = {"dim": "dim", "tilt": "tilt", "muted": "muted", "source_audio_volume": "muted"}
 _TILT_KEYS = frozenset({"rotation_deg", "rotation_delta_deg", "zoom", "zoom_delta", "backdrop"})
 _TILT_ZOOM_KEYS = ("zoom", "zoom_delta")
@@ -77,14 +75,16 @@ _FAMILY = frozenset({"clip", "clips", "timeline"})
 
 
 def offered_patch_keys(snapshot: dict) -> frozenset[str]:
-    """The ``patch_slots`` keys this edit opens: every key but a gated one whose gate is closed."""
+    """The ``patch_slots`` keys this edit opens; ``_coerce_patch_slots`` refuses the rest."""
     capabilities = snapshot.get("timeline_patch_capabilities")
     capabilities = capabilities if isinstance(capabilities, dict) else {}
-    return frozenset(
-        key
-        for key in _PATCH_KEYS
-        if key not in _GATED_PATCH_KEYS or capabilities.get(_GATED_PATCH_KEYS[key]) is True
-    )
+
+    def is_open(key: str) -> bool:
+        if key in _GATED_PATCH_KEYS:
+            return capabilities.get(_GATED_PATCH_KEYS[key]) is True
+        return capabilities.get(key) is not False
+
+    return frozenset(key for key in _PATCH_KEYS if is_open(key))
 
 
 # ── Parser coercion ───────────────────────────────────────────────────────────
@@ -389,16 +389,15 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
         state.reject(op=name, reason="capability_unavailable", detail=unavailable)
         state.reply_notes.append(unavailable)
         return None
-    if isinstance(capabilities, dict):
-        unavailable = [key for key in clean if capabilities.get(key) is False]
-        if unavailable:
-            state.invalid_value()
-            state.reject(
-                op=name,
-                reason="capability_unavailable",
-                detail="unsupported timeline field: " + ", ".join(unavailable),
-            )
-            return None
+    unavailable = [key for key in clean if key in closed]
+    if unavailable:
+        state.invalid_value()
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail="unsupported timeline field: " + ", ".join(unavailable),
+        )
+        return None
     preservation = _preservation_fields(payload, state)
     if preservation is None:
         return None

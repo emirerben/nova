@@ -3,8 +3,8 @@
 ``EDIT_COPILOT_OUTPUT_MODE=tools`` runs ``ToolsEditCopilotAgent``. Each operation open on the
 edit (``_family_allowed``) is offered as a tool whose arguments schema is that operation's entry
 in the typed wire registry (``_creator_wire.copilot_operation_schemas``), with ``patch`` narrowed
-to the keys that op's coercer reads (``patch_slots`` to the clip fields the edit opens), so the
-parser and the tools come from one table. A ``reply`` tool carries the turn's non-operation fields.
+to the keys that op's coercer reads, so the parser and the tools come from one table. A ``reply``
+tool carries the turn's non-operation fields.
 
 The rules prompt goes in the provider's system block (cached); the turn block is the user
 message. Each operation's definition bullet moves out of the rules into its tool description,
@@ -88,7 +88,7 @@ def _schemas() -> tuple[dict[str, dict], dict]:
 def patch_fields(snapshot: dict | None = None) -> dict[str, frozenset[str]]:
     """The keys each op's ``patch`` may set, from the coercer that reads that patch. The wire
     types ``patch`` as the union of every op's keys; a tool offers only its own. With a
-    ``snapshot``, ``patch_slots`` offers only the clip fields that edit opens."""
+    ``snapshot``, ``patch_slots`` offers only the keys that edit opens (``offered_patch_keys``)."""
     from app.agents.edit_copilot import (
         _CAPTION_META_FIELDS,
         _OVERLAY_PATCH_FIELDS,
