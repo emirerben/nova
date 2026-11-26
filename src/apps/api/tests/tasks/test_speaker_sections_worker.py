@@ -52,11 +52,18 @@ def _gate(monkeypatch, *, enabled=True, token=True) -> None:
     monkeypatch.setattr(settings, "phone_render_verified_features", features)
 
 
-def _run(monkeypatch, background, *, enabled=True, protocol=NEW, token=True):
+# What a build that draws layout windows advertises in `X-Kria-Client-Features` (Tadic,
+# #prs 2026-11-26: a protocol number alone also admits other branches' 59/60 builds).
+SECTIONS = ("speakerSections",)
+
+
+def _run(monkeypatch, background, *, enabled=True, protocol=NEW, token=True, features=SECTIONS):
     job = _green3_job(monkeypatch, background)
     _gate(monkeypatch, enabled=enabled, token=token)
     if protocol is not None:
         job.all_candidates["creator_client_protocol"] = protocol
+    if features is not None:
+        job.all_candidates["creator_client_features"] = list(features)
     gb._run_generative_job(str(job.id))
     assert job.status == "awaiting_device"
     return job
@@ -142,8 +149,42 @@ def test_an_intro_styles_only_build_never_gets_a_speaker_sections_plan(monkeypat
     assert "speaker_sections" not in _variant(intro_only)
 
     sections_build = _run(monkeypatch, STORED_BACKGROUND, protocol=SPEAKER_SECTIONS_PROTOCOL)
-    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL) is None
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL, SECTIONS) is None
     assert _recipe(sections_build).speaker_background.layout_windows
+
+
+@pytest.mark.parametrize(
+    ("protocol", "features"),
+    [
+        (NEW, None),
+        (NEW, ()),
+        (NEW + 1, ()),
+        # TestFlight 2112: protocol 58, clip dim, no speaker sections.
+        (NEW - 1, ("clipDim",)),
+        (NEW + 1, ("clipDim", "researchSelection", "overlayEvents")),
+    ],
+    ids=["59_no_features", "59_empty", "60_empty", "testflight_2112", "60_other_features"],
+)
+def test_a_build_that_does_not_advertise_sections_gets_todays_render(
+    monkeypatch, protocol, features
+):
+    """Tadic (#prs, 2026-11-26): Research Selection (#2533) advertises 59 and Overlay Events
+    (#2531) 60 without the sections renderer. A protocol minimum alone would admit them, so the
+    plan also needs the build to advertise `speakerSections`; without it the recipe is today's
+    single layout byte for byte."""
+    today = _run(monkeypatch, STORED_BACKGROUND, enabled=False)
+    asked = _run(monkeypatch, STORED_BACKGROUND, protocol=protocol, features=features)
+    assert json.dumps(_recipe(asked).model_dump(mode="json"), sort_keys=True) == json.dumps(
+        _recipe(today).model_dump(mode="json"), sort_keys=True
+    )
+    assert "speaker_sections" not in _variant(asked)
+
+
+@pytest.mark.parametrize("protocol", [NEW, NEW + 1])
+def test_a_build_that_advertises_sections_gets_them(monkeypatch, protocol):
+    job = _run(monkeypatch, STORED_BACKGROUND, protocol=protocol, features=SECTIONS)
+    assert _recipe(job).speaker_background.layout_windows
+    assert "speaker_sections" in _variant(job)
 
 
 def test_a_named_pace_is_kept(monkeypatch):
@@ -186,6 +227,7 @@ def test_a_speech_cut_keeps_each_layout_on_its_sections_words(monkeypatch):
         keep_segments=KEEP,
         take_s=TAKE_S,
         creator_client_protocol=NEW,
+        creator_client_features=SECTIONS,
         source_take_s=TAKE_FULL_S,
         sections_out=sections,
     )

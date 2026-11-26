@@ -21,7 +21,10 @@ from app.routes import generative_jobs as gj
 from app.services.client_protocol import (
     SPEAKER_SECTIONS_PROTOCOL,
     clear_request_context,
-    set_client_protocol,
+    set_client_features,
+)
+from app.services.client_protocol import (
+    set_client_protocol as _set_protocol,
 )
 from app.services.device_render import device_status
 from app.services.phone_subtitled_editor import (
@@ -64,6 +67,18 @@ LAYOUTS = [
 ]
 OLD = SPEAKER_SECTIONS_PROTOCOL - 1
 NEW = SPEAKER_SECTIONS_PROTOCOL
+# What a build with the sections renderer advertises in `X-Kria-Client-Features` (Tadic, #prs
+# 2026-11-26: other branches' builds took the same protocol numbers without it).
+SECTIONS = ("speakerSections",)
+
+
+def set_client_protocol(protocol, features=None) -> None:
+    """The calling build: a build at or past the sections protocol advertises them unless told
+    otherwise (``features``); an older build advertises nothing."""
+    _set_protocol(protocol)
+    if features is None:
+        features = SECTIONS if protocol is not None and protocol >= NEW else ()
+    set_client_features(list(features))
 
 
 @pytest.fixture(autouse=True)
@@ -255,6 +270,15 @@ def test_the_device_poll_tells_an_older_build_to_update(monkeypatch) -> None:
     }
     assert detail(job, NEW) is None
     assert detail(plain, OLD) is None
+    # Another branch's build with the same or a later number but no sections renderer.
+    for protocol, features in ((NEW, ()), (NEW + 1, ()), (NEW + 1, ("clipDim",))):
+        set_client_protocol(protocol, features)
+        status = SimpleNamespace(request=SimpleNamespace(recipe=_recipe(job)))
+        assert device_render._client_update_detail(job, {}, status) == {
+            "code": "client_update_required",
+            "feature": "speaker_sections",
+            "minimum_client_protocol": SPEAKER_SECTIONS_PROTOCOL,
+        }
 
 
 # --- row 30: a closed gate refuses a SET, never a clear; a bad list has its own code -----------
@@ -369,12 +393,18 @@ def test_the_save_section_rejects_unknown_span_keys_and_layouts() -> None:
         ({"flag": False}, NEW, False),
         ({"token": False}, NEW, False),
         ({"windows": False}, NEW, False),
+        # A build at or past the number that does not advertise sections (Tadic, 2026-11-26).
+        ({"features": ()}, NEW, False),
+        ({"features": ()}, NEW + 1, False),
+        ({"features": ("clipDim",)}, NEW - 1, False),
+        ({"features": SECTIONS}, NEW + 1, True),
     ],
 )
 def test_the_capability_key_follows_the_gate(monkeypatch, kwargs, protocol, expected) -> None:
     job = background_job(monkeypatch, pinned=POOL)
+    features = kwargs.pop("features", None)
     _open(monkeypatch, **kwargs)
-    set_client_protocol(protocol)
+    set_client_protocol(protocol, features)
     capabilities = gj._editor_capabilities(job, _variant(job))
     assert ("speaker_sections" in capabilities) is expected
     if expected:

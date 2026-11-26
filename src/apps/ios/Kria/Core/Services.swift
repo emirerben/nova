@@ -1468,6 +1468,12 @@ enum KriaClientProtocolContract {
     /// across it. The server plans layouts per topic only for this protocol.
     static let version = 59
     static let header = "X-Kria-Client-Protocol"
+    /// KRI-1558 (Tadic, #prs 2026-11-26): renderer features this build advertises in `X-Kria-Client-Features`. Another
+    /// branch's build can take the same protocol number without the renderer, so the server offers these only to a build
+    /// that names them, on top of the protocol number.
+    static let features: [String] = [MediaCapability.speakerSections.rawValue]
+    static let featuresHeader = "X-Kria-Client-Features"
+    static var featuresValue: String { features.joined(separator: ",") }
 }
 
 /// Process-wide: every `KriaAPI` instance (AuthModel, AppModel, the library
@@ -1502,6 +1508,7 @@ private actor MobileSessionRefreshCoordinator {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
+            request.setValue(KriaClientProtocolContract.featuresValue, forHTTPHeaderField: KriaClientProtocolContract.featuresHeader)
             request.httpBody = try JSONEncoder().encode(["refresh_token": current.refreshToken])
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
@@ -2056,6 +2063,7 @@ struct KriaAPI: KriaAPIClient {
         if let acceptLanguage = Self.acceptLanguage() { request.setValue(acceptLanguage, forHTTPHeaderField: "Accept-Language") }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
+        request.setValue(KriaClientProtocolContract.featuresValue, forHTTPHeaderField: KriaClientProtocolContract.featuresHeader)
         var storedSession = requiresAuth ? try tokenStore.read() : nil
         try validateNotificationOwner(expectedOwner, session: storedSession)
         // A token that is about to expire (or already has) is refreshed BEFORE the request, instead of the request

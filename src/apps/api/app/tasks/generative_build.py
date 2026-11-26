@@ -9291,6 +9291,7 @@ def _resolve_strategy_background(
     keep_segments: list[tuple[float, float]] | None = None,
     take_s: float | None = None,
     creator_client_protocol: int | None = None,
+    creator_client_features: object = (),
     title_end_s: float | None = None,
     layout_out: dict[str, Any] | None = None,
     entries_out: list[dict[str, Any]] | None = None,
@@ -9494,6 +9495,7 @@ def _resolve_strategy_background(
         take_s=take_s,
         source_take_s=source_take_s,
         creator_client_protocol=creator_client_protocol,
+        creator_client_features=creator_client_features,
     )
 
     # Qendresa item 18: what the creator named for the recordings (None while nothing is named).
@@ -9666,6 +9668,7 @@ def _speaker_section_layout(
     take_s: float | None,
     source_take_s: float | None,
     creator_client_protocol: int | None,
+    creator_client_features: object = (),
 ) -> tuple[list[Any], list[Any]]:
     """KRI-1558: ``(arranged, sections)`` for a strategy background, or ``([], [])``.
 
@@ -9678,7 +9681,7 @@ def _speaker_section_layout(
     from app.services.phone_rollout import speaker_sections_planned_for  # noqa: PLC0415
 
     if request.get("cadence_s") is not None or not speaker_sections_planned_for(
-        creator_client_protocol
+        creator_client_protocol, creator_client_features
     ):
         return [], []
     pictures: list[str] = []
@@ -12731,6 +12734,10 @@ def _run_phone_subtitled_job(
                                 creator_client_protocol=_stamped_protocol(
                                     all_candidates.get("creator_client_protocol")
                                 ),
+                                creator_client_features=all_candidates.get(
+                                    "creator_client_features"
+                                )
+                                or (),
                                 title_end_s=(
                                     max(float(row["end_s"]) for row in title_rows)
                                     if title_rows

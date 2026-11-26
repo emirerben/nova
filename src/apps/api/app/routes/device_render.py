@@ -565,10 +565,12 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     newer than the one that declined is not necessarily new enough for the recipe.
     """
     from app.services.client_protocol import (  # noqa: PLC0415
+        SPEAKER_SECTIONS_FEATURE,
         SPEAKER_SECTIONS_PROTOCOL,
         SPEECH_DUCK_PROTOCOL,
         SPLIT_BLANK_PANEL_PROTOCOL,
         SPLIT_COLLAPSE_PROTOCOL,
+        current_client_features,
     )
 
     protocol = _caller_protocol()
@@ -591,8 +593,13 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "feature": "split_blank_panel",
             "minimum_client_protocol": SPLIT_BLANK_PANEL_PROTOCOL,
         }
-    # KRI-1558: an older build would click at every layout change and could flash the uncut frame.
-    if "speakerSections" in recipe.required_capabilities and protocol < SPEAKER_SECTIONS_PROTOCOL:
+    # KRI-1558: an older build would click at every layout change and could flash the uncut frame;
+    # a build that does not advertise the feature (another branch's build with the same number)
+    # has no sections renderer at all.
+    if "speakerSections" in recipe.required_capabilities and (
+        protocol < SPEAKER_SECTIONS_PROTOCOL
+        or SPEAKER_SECTIONS_FEATURE not in current_client_features()
+    ):
         return {
             "code": "client_update_required",
             "feature": "speaker_sections",

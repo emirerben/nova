@@ -1298,6 +1298,8 @@ def speaker_sections_client_supported(*, require_client: bool | None = None) -> 
     `speaker_background_client_supported`.
     """
     from app.services.client_protocol import (  # noqa: PLC0415
+        SPEAKER_SECTIONS_FEATURE,
+        current_client_features,
         current_client_protocol,
         in_http_request,
     )
@@ -1307,7 +1309,13 @@ def speaker_sections_client_supported(*, require_client: bool | None = None) -> 
     if not require_client:
         return True
     protocol = current_client_protocol()
-    return protocol is not None and protocol >= settings.speaker_sections_min_client_protocol
+    # Tadic (#prs 2026-11-26): a build that took the same number on another branch has no
+    # sections renderer, so the build must also advertise the feature (`X-Kria-Client-Features`).
+    return (
+        protocol is not None
+        and protocol >= settings.speaker_sections_min_client_protocol
+        and SPEAKER_SECTIONS_FEATURE in current_client_features()
+    )
 
 
 def speaker_sections_supported(*, require_client: bool | None = None) -> bool:
@@ -1348,7 +1356,9 @@ def speaker_sections_unavailable_reason(*, require_client: bool | None = None) -
     return None
 
 
-def speaker_sections_planned_reason(client_protocol: int | None) -> str | None:
+def speaker_sections_planned_reason(
+    client_protocol: int | None, client_features: object = ()
+) -> str | None:
     """Why a plan may NOT lay the speaker out per section for the app build ``client_protocol``, or
     None when it may (the planner's twin of `speaker_sections_unavailable_reason`).
 
@@ -1356,7 +1366,8 @@ def speaker_sections_planned_reason(client_protocol: int | None) -> str | None:
     creator acted from (the drafting message, then ``creator_client_protocol`` on the Job), never
     the request context. Codes: ``disabled`` (the kill switch is off), ``unavailable`` (the
     background / windows lane or the ``speakerSections`` token is closed), ``app_too_old`` (no
-    stamp, or a build below ``speaker_sections_min_client_protocol``).
+    stamp, a build below ``speaker_sections_min_client_protocol``, or one that does not advertise
+    ``speakerSections`` in ``client_features``).
     """
     if not settings.speaker_sections_enabled:
         return "disabled"
@@ -1367,12 +1378,21 @@ def speaker_sections_planned_reason(client_protocol: int | None) -> str | None:
         return "unavailable"
     if client_protocol is None or client_protocol < settings.speaker_sections_min_client_protocol:
         return "app_too_old"
+    from app.services.client_protocol import (  # noqa: PLC0415
+        SPEAKER_SECTIONS_FEATURE,
+        parse_client_features,
+    )
+
+    # ``client_features``: what that build advertised (``creator_client_features`` on the Job).
+    # A build that does not name the feature has no sections renderer, whatever its number.
+    if SPEAKER_SECTIONS_FEATURE not in parse_client_features(client_features):
+        return "app_too_old"
     return None
 
 
-def speaker_sections_planned_for(client_protocol: int | None) -> bool:
+def speaker_sections_planned_for(client_protocol: int | None, client_features: object = ()) -> bool:
     """May a plan for the app build ``client_protocol`` lay the speaker out per section?"""
-    return speaker_sections_planned_reason(client_protocol) is None
+    return speaker_sections_planned_reason(client_protocol, client_features) is None
 
 
 def background_focus_client_supported(*, require_client: bool | None = None) -> bool:

@@ -33,6 +33,7 @@ from app.services import pipeline_trace
 from app.services.client_protocol import (
     SPEAKER_SECTIONS_PROTOCOL,
     clear_request_context,
+    set_client_features,
     set_client_protocol,
 )
 from app.services.phone_rollout import (
@@ -353,6 +354,7 @@ def test_a_closed_gate_drops_only_the_layouts_and_traces_it(
 ):
     _open(monkeypatch, **kwargs)
     set_client_protocol(protocol)
+    set_client_features("speakerSections")
     assert speaker_sections_unavailable_reason() == reason
     background = _sections_background(frame=_frame())
     stripped = strip_unsupported_background(PhoneSubtitledLanes(background=background))
@@ -380,6 +382,7 @@ def test_a_closed_gate_drops_only_the_layouts_and_traces_it(
 def test_an_open_gate_changes_nothing_and_traces_nothing(monkeypatch, events):
     _open(monkeypatch)
     set_client_protocol(SPEAKER_SECTIONS_PROTOCOL)
+    set_client_features("speakerSections")
     lanes = PhoneSubtitledLanes(background=_sections_background())
     assert strip_unsupported_background(lanes) is lanes
     assert events == []
@@ -413,15 +416,45 @@ def test_the_worker_gate_ignores_the_build_and_the_planner_reads_the_stamp(monke
     # No request: a worker has no app build, so only the server checks apply.
     assert speaker_sections_supported() and speaker_sections_unavailable_reason() is None
     assert speaker_sections_client_supported()
-    assert speaker_sections_planned_for(SPEAKER_SECTIONS_PROTOCOL)
-    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL - 1) == "app_too_old"
-    assert speaker_sections_planned_reason(None) == "app_too_old"
+    sections = ["speakerSections"]
+    assert speaker_sections_planned_for(SPEAKER_SECTIONS_PROTOCOL, sections)
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL - 1, sections) == "app_too_old"
+    assert speaker_sections_planned_reason(None, sections) == "app_too_old"
+    # Tadic (#prs 2026-11-26): the number alone is not enough; the build must advertise them.
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL) == "app_too_old"
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL + 1, ["clipDim"]) == (
+        "app_too_old"
+    )
     _open(monkeypatch, token=False)
-    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL) == "unavailable"
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL, sections) == "unavailable"
     _open(monkeypatch, windows=False)
-    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL) == "unavailable"
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL, sections) == "unavailable"
     _open(monkeypatch, flag=False)
-    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL) == "disabled"
+    assert speaker_sections_planned_reason(SPEAKER_SECTIONS_PROTOCOL, sections) == "disabled"
+
+
+@pytest.mark.parametrize(
+    ("protocol", "header", "expected"),
+    [
+        (SPEAKER_SECTIONS_PROTOCOL, "speakerSections", True),
+        (SPEAKER_SECTIONS_PROTOCOL + 1, "clipDim, speakerSections", True),
+        (SPEAKER_SECTIONS_PROTOCOL, None, False),
+        (SPEAKER_SECTIONS_PROTOCOL + 1, "", False),
+        (SPEAKER_SECTIONS_PROTOCOL + 1, "researchSelection,overlayEvents", False),
+        (SPEAKER_SECTIONS_PROTOCOL - 1, "clipDim", False),  # TestFlight 2112
+        (SPEAKER_SECTIONS_PROTOCOL - 1, "speakerSections", False),  # below the number
+        (SPEAKER_SECTIONS_PROTOCOL, "speaker-sections", False),  # malformed token
+    ],
+)
+def test_a_request_needs_the_number_and_the_advertised_feature(
+    monkeypatch, protocol, header, expected
+):
+    _open(monkeypatch)
+    set_client_protocol(protocol)
+    set_client_features(header)
+    assert speaker_sections_client_supported() is expected
+    assert speaker_sections_supported() is expected
+    assert (speaker_sections_unavailable_reason() is None) is expected
 
 
 def test_the_config_minimum_is_the_protocol_constant():
