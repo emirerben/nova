@@ -324,6 +324,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         layer.sourceCrop = clip.sourceCrop
                         layer.placementTilt = clip.placementTiltDegrees
                         layer.backdrop = clip.backdrop
+                        layer.dim = clip.dim
                         layer.overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: layerEnd)
                         if placement.start != clip.timelineStart { layer.fadeStart = clip.timelineStart }
                         layers.append(layer)
@@ -358,6 +359,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         layer.sourceCrop = clip.sourceCrop
                         layer.placementTilt = clip.placementTiltDegrees
                         if clip.stillLayout == nil { layer.backdrop = clip.backdrop }
+                        layer.dim = clip.dim
                         layer.overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: end)
                         if placement.start != clip.timelineStart { layer.fadeStart = clip.timelineStart }
                         layers.append(layer)

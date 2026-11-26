@@ -502,6 +502,13 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Tilted clips await native parity and device qualification",
             capability="clipTilt",
         )
+    if recipe_has_clip_dim(recipe) and "clipDim" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Dimmed clips await native parity and device qualification",
+            capability="clipDim",
+        )
     if recipe_has_clip_backdrop_media(recipe) and "clipBackdropMedia" not in set(
         settings.phone_render_verified_features
     ):
@@ -1535,6 +1542,47 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
         settings.media_tilt_enabled
         and "clipTilt" in set(settings.phone_render_verified_features)
         and clip_tilt_client_supported(require_client=require_client)
+    )
+
+
+def recipe_has_clip_dim(recipe: Any) -> bool:
+    """Does any clip of this recipe carry a ``dim``?"""
+    return any(
+        getattr(clip, "dim", None) is not None
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def clip_dim_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build draw a clip's ``dim`` and keep it on Save?
+
+    At least ``clip_dim_min_client_protocol``; an older build cannot decode the ``clipDim``
+    token and fails the whole recipe. ``require_client`` follows `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.clip_dim_min_client_protocol
+
+
+def clip_dim_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a phone edit's clips be dimmed right now".
+
+    True iff the kill switch (``clip_dim_enabled``, default off) is on, ``clipDim`` is in
+    ``phone_render_verified_features`` and the app-build gate holds (`clip_dim_client_supported`).
+    """
+    return bool(
+        settings.clip_dim_enabled
+        and "clipDim" in set(settings.phone_render_verified_features)
+        and clip_dim_client_supported(require_client=require_client)
     )
 
 

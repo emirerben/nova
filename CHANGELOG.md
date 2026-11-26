@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.26.0] - 2026-11-26
+
+### Changed
+- feat(ios): dim a clip or photo 0-100% in the editor and from chat, drawn on the phone under text (KRI-1608) (#2499) <!-- release-pr: 2499 -->
+
+## [0.90.25.0] - 2026-11-26
+
+### Changed
+- ci(api): the shard fails unless every xdist worker ran on its own database (KRI-1637) (#2528) <!-- release-pr: 2528 -->
+
+## [0.90.24.0] - 2026-11-26
+
+### Changed
+- fix(ios): UI tests no longer wait 60 s for idle after a doubled animation start on a freed layer (KRI-1604) (#2529) <!-- release-pr: 2529 -->
+
+## [0.90.23.0] - 2026-11-26
+
+### Changed
+- ci(ios): mark the keyboard's first-use tip as shown on the test simulator (KRI-1639) (#2527) <!-- release-pr: 2527 -->
+
+## [0.90.22.0] - 2026-11-26
+
+### Changed
+- test(intro-styles): fail on a title that touches a caption, over fixed job ids (KRI-1638) (#2530) <!-- release-pr: 2530 -->
+
+## [0.90.21.0] - 2026-11-25
+
+### Changed
+- ci(api): one test database per xdist worker, behind a switch that is off (KRI-1637) (#2526) <!-- release-pr: 2526 -->
+
+## [0.90.20.0] - 2026-11-25
+
+### Changed
+- test(ios): the connected-panels test plays a video that cannot end between its play and pause taps (KRI-1604) (#2525) <!-- release-pr: 2525 -->
+
+## [0.90.19.0] - 2026-11-25
+
+### Changed
+- feat(ios): Try intro styles offers fitted intro looks the creator picks on tap (KRI-1633) (#2522) <!-- release-pr: 2522 -->
+
 ## [0.90.18.0] - 2026-11-25
 
 ### Changed

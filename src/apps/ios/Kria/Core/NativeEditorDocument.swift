@@ -53,6 +53,11 @@ enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
 }
 
 extension EditorDocument {
+    /// KRI-1633: a `text_elements` row exactly as Save writes it, and rows read exactly as a loaded edit reads them,
+    /// so an intro style's rows take the same trip an edit's rows do (no `source_params` key is dropped).
+    func textRowJSON(_ element: EditorTextElement) -> JSONValue { encodeText(element) }
+    static func textElements(fromRows rows: [JSONValue]) -> [EditorTextElement] { decodeText(rows) }
+
     /// The same slots and removed slots once each is written the way Save writes it. Hydration builds a slot
     /// with a minimal `raw`, while a merge round trip fills in every wire key, so `==` calls identical slots different.
     func hasSameTimelineSlots(as other: EditorDocument) -> Bool {

@@ -352,6 +352,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 let framing = video[video.count - 1].transform.scale
                 video[video.count - 1].transform.scale = tilt.recipeScale(framing: framing)
             }
+            video[video.count - 1].dim = try Self.clipDim(authoredSlot?.raw["dim"])?.strength
         }
         // The video track is the composition's clock. Without it text and
         // captions clip to nothing, yet an unclamped media overlay still makes
@@ -1294,6 +1295,10 @@ enum NativeEditorRenderError: Error, Equatable {
 
     static func clipTilt(_ raw: JSONValue?) throws -> ClipTilt? {
         do { return try ClipTilt(row: raw) } catch { throw RecipeError.invalidTimeline }
+    }
+
+    static func clipDim(_ raw: JSONValue?) throws -> ClipDim? {
+        do { return try ClipDim(row: raw) } catch { throw RecipeError.invalidTimeline }
     }
 
     static func sourceCrop(_ raw: JSONValue?) throws -> NormalizedSourceRect? {

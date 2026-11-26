@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from app.kria.clip_dim import row_dim
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -276,6 +277,7 @@ def compile_phone_authored_timeline(
                 still_layout="supporting_card" if card else None,
                 transform=MediaTransform(**transform),
                 backdrop=None if card else backdrop,
+                dim=row_dim(row),
             )
         )
         cursor += duration

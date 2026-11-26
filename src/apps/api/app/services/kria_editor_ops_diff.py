@@ -27,6 +27,7 @@ from app.agents._schemas.text_animation_phases import (
     LEGACY_EFFECT_ENTRANCE,
     TEXT_ANIMATION_VOCAB,
 )
+from app.kria.clip_dim import stored_row_dim
 from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import say
 
@@ -432,6 +433,7 @@ _SLOT_FIELDS = (
     ("playback_rate", "timeline", lambda r: _r(r.get("playback_rate") or 1.0, 2)),
     ("source_crop", "timeline", lambda r: r.get("source_crop")),
     ("tilt", "timeline", lambda r: ClipTilt.from_row(r.get("tilt")).row()),
+    ("dim", "timeline", lambda r: stored_row_dim(r.get("dim"))),
     (
         "transition_after",
         "transition",
@@ -1459,6 +1461,19 @@ def _describe_layout(entry: DiffEntry) -> str:
     )
 
 
+def _describe_dim(entry: DiffEntry, who: str) -> str:
+    """The receipt for a dim: "Dimmed clip 2 40%", "Removed the dim from 3 clips"."""
+    afters = {t.after for t in entry.targets}
+    if afters == {None}:
+        return say(en="Removed the dim from {who}", tr="{who} karartması kaldırıldı", who=who)
+    if len(afters) != 1:
+        return say(en="Changed the dim of {who}", tr="{who} karartması değişti", who=who)
+    percent = round(next(iter(afters)) * 100)
+    return say(
+        en="Dimmed {who} {percent}%", tr="{who} %{percent} karartıldı", who=who, percent=percent
+    )
+
+
 def _describe_tilt(entry: DiffEntry, who: str) -> str:
     """The receipt for a tilt: "Tilted clip 2 10 degrees right, blurred background"."""
     afters = [t.after for t in entry.targets]
@@ -1591,6 +1606,8 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
             return say(en="Re-cropped {who}", tr="{who} yeniden kırpıldı", who=who)
         if name == "tilt":
             return _describe_tilt(entry, who)
+        if name == "dim":
+            return _describe_dim(entry, who)
         if name == "muted":
             return say(
                 en=(f"Muted {who}" if first.after else f"Unmuted {who}"),

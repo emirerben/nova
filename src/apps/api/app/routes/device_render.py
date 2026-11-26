@@ -104,11 +104,13 @@ from app.services.phone_rollout import (
     card_style_client_supported,
     card_tilt_client_supported,
     clip_backdrop_media_client_supported,
+    clip_dim_client_supported,
     clip_tilt_client_supported,
     color_moments_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     recipe_has_clip_backdrop_media,
+    recipe_has_clip_dim,
     recipe_has_clip_tilt,
     recipe_has_color_moments,
     recipe_has_freeze_frame,
@@ -766,6 +768,14 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "card_tilt",
             "minimum_client_protocol": settings.media_card_tilt_min_client_protocol,
+        }
+    if not clip_dim_client_supported() and recipe_has_clip_dim(recipe):
+        # An older build cannot decode the `clipDim` token, so the whole recipe would fail
+        # instead of rendering the clip undimmed.
+        return {
+            "code": "client_update_required",
+            "feature": "clip_dim",
+            "minimum_client_protocol": settings.clip_dim_min_client_protocol,
         }
     if not clip_tilt_client_supported() and recipe_has_clip_tilt(recipe):
         # KRI-1134: an older build cannot decode the `clipTilt` capability token, so the whole

@@ -3042,6 +3042,18 @@
               "default": null,
               "title": "Color"
             },
+            "dim": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Dim"
+            },
             "duration_beats": {
               "anyOf": [
                 {

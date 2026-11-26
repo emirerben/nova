@@ -67,6 +67,8 @@ PHONE_CAPS: dict[str, Any] = {
     "caption_animation": True,
 }
 
+_DIM_CAPS: dict[str, Any] = {"caps": {"clips": {**PHONE_CAPS["clips"], "dim": {"editable": True}}}}
+
 TITLE = PlanText(id="title", role="title", text="Harbour run", start_s=0.0, end_s=2.5)
 
 
@@ -538,6 +540,13 @@ SCENARIOS: list[Scenario] = [
         ],
     ),
     Scenario(
+        "clip_dim",
+        "Dim all the clips 40%.",
+        [{"op": "patch_slots", "field": "dim"}],
+        [{"op": "patch_slots", "selector": {"all": True}, "patch": {"dim": 0.4}}],
+        **_DIM_CAPS,
+    ),
+    Scenario(
         "clip_audio",
         "Mute the original sound.",
         [{"op": "set_mix"}],
@@ -860,7 +869,17 @@ def _probe(group: str, op: dict[str, Any], **kwargs: Any) -> Scenario:
 # The ops of an `agent_ops` group that SCENARIOS (one plain request per group) does not exercise,
 # each on the phone snapshot it needs. test_editor_capability_parity runs SCENARIOS and these: every
 # op and named field the parity table claims must survive the real parser and compiler here.
+def _first_clip_dimmed(variant: dict[str, Any]) -> None:
+    variant["user_timeline"]["slots"][0]["dim"] = 0.5
+
+
 PHONE_OP_PROBES: list[Scenario] = [
+    _probe(
+        "clip_dim",
+        {"op": "patch_slots", "selector": {"slot_indexes": [0]}, "patch": {"dim": None}},
+        variant=_first_clip_dimmed,
+        **_DIM_CAPS,
+    ),
     _probe("music_swap", {"op": "remove_music"}, variant=_talking_song, **TALKING_SONG),
     _probe("text_authoring", {"op": "add_text", "text": "Pier", "start_s": 3.0, "end_s": 5.0}),
     _probe(

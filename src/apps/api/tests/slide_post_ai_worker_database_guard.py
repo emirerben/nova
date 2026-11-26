@@ -2,6 +2,8 @@
 
 from urllib.parse import urlparse
 
+from tests._worker_database import worker_database_names
+
 PRIVATE_DATABASE = "nova_auto_convergence_ai_20261106_test"
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -22,5 +24,7 @@ def validate_database_url(url, environment):
         }.items()
     ):
         allowed.update({"nova_test", "nova_journey_test"})
+        # The api shards' per-worker copies of nova_test: exact names, never a prefix.
+        allowed.update(worker_database_names("nova_test"))
     assert parsed.path in {f"/{name}" for name in allowed}
     return parsed.path[1:]

@@ -29,6 +29,7 @@ from app.agents._schemas.text_element import (
     resolve_narrated_storyboard_rows,
 )
 from app.config import settings
+from app.kria.clip_dim import stored_row_dim
 from app.kria.clip_tilt import ClipTilt
 from app.kria.editor_head import payload_current
 from app.kria.split_screen import is_blank_row
@@ -174,6 +175,9 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         if enabled("tilt_zoom", default=False):
             # KRI-1169: the Zoom slider's twin; open-only, like the backdrop above.
             fields["tilt_zoom"] = True
+    if enabled("dim", default=False):
+        # Present only while open, like `tilt`, so every other snapshot and prompt is unchanged.
+        fields["dim"] = True
     return fields
 
 
@@ -1348,7 +1352,7 @@ def background_sections_open(job: Any, variant: dict[str, Any]) -> bool:
     """May chat lay the speaker out per section (KRI-1558)?
 
     The windows lane is open AND the sections gate holds (flag, ``speakerSections`` verified, a
-    protocol 58 build: `speaker_sections_unavailable_reason`, same worker-side client rule). False
+    protocol 59 build: `speaker_sections_unavailable_reason`, same worker-side client rule). False
     adds nothing to the snapshot or the prompt, so a closed gate is byte-identical to before.
     """
     if not background_windows_open(job, variant):
@@ -2022,6 +2026,10 @@ def build_editor_snapshot(
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
     if "clip" in families:
         snapshot["timeline_patch_capabilities"] = timeline_patch_capabilities(job, variant)
+        if snapshot["timeline_patch_capabilities"].get("dim") is True:
+            for slot, row in zip(slots, slot_rows, strict=True):
+                if (dim := stored_row_dim(row.get("dim"))) is not None:
+                    slot["dim"] = dim
         if snapshot["timeline_patch_capabilities"].get("tilt") is True:
             zoom_open = snapshot["timeline_patch_capabilities"].get("tilt_zoom") is True
             for slot, row in zip(slots, slot_rows, strict=True):

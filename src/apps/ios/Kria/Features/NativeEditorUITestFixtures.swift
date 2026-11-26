@@ -92,7 +92,10 @@ enum NativeEditorUITestFixtures {
         if arguments.contains("-ui-testing-editor-gameday-reset") { UserDefaults.standard.removeObject(forKey: gamedaySavedKey) }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         var value = draft(for: shape)
+        // A test that taps play and then pause needs a video that cannot end between the two taps on a slow Mac.
+        if shape == .captionVisuals, arguments.contains("-ui-testing-editor-long-video") { value = captionVisuals(clipCount: 5) }
         if arguments.contains("-ui-testing-editor-dual-captions") { value = dualCaptions(arguments: arguments) }
+        if IntroStylesUITestFixture.isEnabled { value = introStyles(variant: IntroStylesUITestFixture.editorVariant) }
         if arguments.contains("-ui-testing-editor-text-bend") {
             // KRI-646: the server advertises `editor_capabilities.text_bend` to a protocol-9 build on a device-rendered variant.
             var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
@@ -228,6 +231,8 @@ enum NativeEditorUITestFixtures {
     static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
     /// KRI-1136: the first timeline slot's saved `tilt`, kept across relaunches by the stub commit transport.
     static let savedTiltKey = "kria.ui-test.saved-tilt.v1"
+    /// Every timeline slot's saved `dim` by slot id, kept across relaunches by the stub commit transport.
+    static let savedDimsKey = "kria.ui-test.saved-dims.v1"
 
     /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
     static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
@@ -432,8 +437,11 @@ enum NativeEditorUITestFixtures {
         return value
     }()
 
-    static let captionVisuals: EditorDraft = {
-        let clips = [clip(0, start: 0, duration: 4)]
+    static let captionVisuals: EditorDraft = captionVisuals(clipCount: 1)
+
+    /// One 4 s cut by default; `clipCount` more of the same cut make the video longer and change nothing else.
+    static func captionVisuals(clipCount: Int) -> EditorDraft {
+        let clips = (0..<clipCount).map { clip($0, start: Double($0) * 4, duration: 4) }
         return draft(clips: clips, text: [], captions: true, music: false, sections: [
             "timeline_slots": slots(for: clips),
             "caption_cues": .array([.object(["id": .string("cue-paper"), "text": .string("One more game!"), "start_s": .number(0), "end_s": .number(2)])]),
@@ -447,7 +455,7 @@ enum NativeEditorUITestFixtures {
             "text_elements": .bool(true), "timeline": .bool(true), "visual_blocks": .bool(true),
             "camera_effects": .bool(true), "motion_scenes": .bool(true), "caption_editor_style": .bool(true),
             "visual_editor_style": .bool(true)])])
-    }()
+    }
 
     static let gamedaySavedKey = "native-editor-gameday-saved"
     static let gamedayPoolKey = "native-editor-gameday-pool"
@@ -756,6 +764,19 @@ enum NativeEditorUITestFixtures {
             "resolved_archetype": .string("subtitled"),
             "caption_language": .string(spoken),
             "editor_capabilities": .object(capabilities),
+        ])
+    }
+
+    /// `-ui-testing-editor-intro-styles` (KRI-1633): a phone edit whose server opens `editor_capabilities.intro_styles`, with the
+    /// plain title rows of the fixture's `editor_<block>` variant.
+    static func introStyles(variant: [String: JSONValue]) -> EditorDraft {
+        let clips = [clip(901, start: 0, duration: 6)]
+        return draft(clips: clips, text: [], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": variant["text_elements"] ?? .array([]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "editor_capabilities": variant["editor_capabilities"] ?? .object([:]),
         ])
     }
 
@@ -1275,6 +1296,11 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
+            if let reply = IntroStylesUITestFixture.respond(request) {
+                let http = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+                deliver(http, body: reply.data)
+                return
+            }
             let splitImport = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-split-import")
             if splitImport, url.path.hasSuffix("/upload-urls"), request.httpMethod == "POST" {
                 let files = requestFields()["files"]?.arrayValue ?? []
@@ -1419,6 +1445,13 @@ enum NativeEditorUITestCommitTransport {
                     } else if first["tilt"] != nil {
                         UserDefaults.standard.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
                     }
+                }
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim"), let slots = fields["timeline_slots"]?.arrayValue {
+                    var dims: [String: JSONValue] = [:]
+                    for slot in slots.compactMap(\.objectValue) {
+                        if let id = slot["slot_id"]?.stringValue, case .number? = slot["dim"] { dims[id] = slot["dim"] }
+                    }
+                    if let saved = try? JSONEncoder().encode(dims) { UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDimsKey) }
                 }
                 if let slots = fields["timeline_slots"]?.arrayValue,
                    slots.contains(where: { $0.objectValue?["slot_id"]?.stringValue?.hasPrefix("native-phone-talking-source") == true }),

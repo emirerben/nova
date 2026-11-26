@@ -107,7 +107,7 @@ _KIND_LANES: dict[str, Alts] = {
         ("captions", []),
         ("caption_meta", []),
         ("camera_effects", []),
-        ("timeline", ["look_preset", "playback_rate"]),
+        ("timeline", ["look_preset", "playback_rate", "dim"]),
         # KRI-1563: "add pictures" names no field the brief types; what changed behind the
         # speaker (or the cards over them) is shown under it, never left out of the reply.
         ("speaker_background", []),

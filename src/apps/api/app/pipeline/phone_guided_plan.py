@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, Literal
 
+from app.kria.clip_dim import row_dim
 from app.kria.portable_visual import AudioMuteWindow
 from app.kria.recipes import (
     AssetFingerprint,
@@ -641,6 +642,7 @@ def compile_phone_guided_plan(
                     transition=incoming,
                     still_layout="supporting_card" if moment.layout == "supporting_card" else None,
                     source_crop=_phone_source_crop(moment.source_crop, item_id=moment.moment_id),
+                    dim=row_dim(moment),
                     **_still_tilt_fields(moment),
                 )
             )
@@ -856,6 +858,7 @@ def compile_phone_guided_plan(
                 look="golden_hour" if moment.look_preset == "golden_hour" else None,
                 source_crop=source_crop,
                 backdrop=backdrop,
+                dim=row_dim(moment),
                 # The creator silenced this occurrence's own sound; a default clip stays
                 # byte-identical (volume unset).
                 **({"volume": 0.0} if moment.source_audio_muted else {}),

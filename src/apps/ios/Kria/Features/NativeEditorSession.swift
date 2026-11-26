@@ -2234,6 +2234,33 @@ enum EditorOpenIntent { case warm, open }
             }
             cleanDocument = document
         }
+        if IntroStylesUITestFixture.isEnabled {
+            // KRI-1633: the intro styles route and Save go to the fixture transport (no account, no server).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-intro-styles-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim") {
+            // A device-rendered montage whose server opens `clips.dim`; Save commits through the stub transport and every
+            // clip's saved dim comes back on the next launch (`-ui-testing-editor-dim-reset` starts undimmed).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-dim-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+            let defaults = UserDefaults.standard
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim-reset") {
+                defaults.removeObject(forKey: NativeEditorUITestFixtures.savedDimsKey)
+            }
+            if let data = defaults.data(forKey: NativeEditorUITestFixtures.savedDimsKey),
+               let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+                for index in document.clips.indices {
+                    if let id = document.clips[index].id, let value = saved[id] { document.clips[index].raw["dim"] = value }
+                }
+            }
+            document.capabilities["clips.dim"] = EditorCapability(editable: true)
+            cleanDocument = document
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range") {
             // KRI-717 on a Talking edit: Save goes through the real request encoder to the stub transport, which
             // keeps the saved rows and captions so a relaunch reopens the saved windows.
@@ -7566,7 +7593,7 @@ enum EditorOpenIntent { case warm, open }
     // MARK: Speaker layout per section (KRI-1558)
 
     /// The section controls exist only while the server advertises `speaker_sections` (gate open, this build speaks
-    /// protocol 58) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
+    /// protocol 59) and the frame controls are open. Without it a variant's layout windows are kept and drawn, never edited,
     /// and the speaker controls act on the whole-video frame exactly as before.
     var canEditSpeakerSections: Bool {
         canEditSpeakerBackgroundWindows && document.capabilities["speaker_sections"]?.editable == true
@@ -7583,7 +7610,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     /// Ticket step 5: with the section controls open and the timeline editable, a take cut into two or more speaker
-    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 58).
+    /// pieces (outside split screen) frames each piece on its own; this build plays such a split as one shot (protocol 59).
     private var scopesSpeakerPieces: Bool {
         guard canEditSpeakerSections, canEditTimeline else { return false }
         return document.clips.filter { !$0.removed && $0.splitSectionID == nil && isFramableSpeakerPiece($0) }.count >= 2
@@ -8592,6 +8619,19 @@ enum EditorOpenIntent { case warm, open }
     var captionTranslationSourceTexts: [String: String] = [:]
     /// The cue as last saved (the baseline for a translation loaded with the edit).
     func savedCaptionCue(id: String) -> EditorCaptionCue? { cleanDocument.captionCues.first { $0.id == id } }
+    // KRI-1633 intro styles on tap (see `NativeEditorSession+IntroStyles.swift`).
+    @Published var introStylesState: IntroStylesState = .idle
+    /// Set by a 404: the route is off for this account, so the entry goes away for this editor session.
+    var introStylesHidden = false
+    /// The title (baseline + words + window) the shown offer was built for, and the one a request is in flight for.
+    var introStylesOfferContext: String?
+    var introStylesLoadContext: String?
+    /// The intro-styles route for this variant; nil without a signed-in target.
+    var introStylesAPI: ((IntroStylesRequest) async throws -> IntroStylesResponse)? {
+        guard let api, let itemID, let variantKey else { return nil }
+        return { try await api.introStyles(itemID: itemID, variantID: variantKey, request: $0) }
+    }
+    func introStyleStartTime(titleID: String) -> TimeInterval? { startTime(for: EditorSelection(kind: .text, id: titleID)) }
     /// The caption-translation route for this variant; nil without a signed-in target.
     var captionTranslationAPI: ((CaptionTranslationRequest) async throws -> CaptionTranslationResponse)? {
         guard let api, let itemID, let variantKey else { return nil }
@@ -11018,7 +11058,7 @@ enum EditorOpenIntent { case warm, open }
     /// KRI-935: the preview's inputs belong to a newer version than the loaded edit. Load that
     /// version (keeping unsaved lanes) and rebuild the preview, instead of asking the creator to
     /// close and reopen the editor. Fenced to one reload per server generation.
-    private func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
+    func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
         // A save whose render is still pending owns the next generation; its preview refresh follows it.
         guard (error as? APIError)?.isBaselineConflict == true, api != nil, let jobID, variantKey != nil,
               activeSaveAttemptID == nil, pendingPreviewGeneration == nil else { return false }

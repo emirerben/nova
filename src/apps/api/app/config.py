@@ -1219,7 +1219,7 @@ class Settings(BaseSettings):
     # set SPEAKER_SECTIONS_ENABLED=true --app nova-video` + restart (api + worker); rollback =
     # `...=false` + restart. Design: docs/reviews/kri-1558-section-layout-failure-modes.md.
     speaker_sections_enabled: bool = False
-    speaker_sections_min_client_protocol: int = 58
+    speaker_sections_min_client_protocol: int = 59
     # Qendresa item 19: numbered list labels on a phone Talking edit. A brief text ("1. Spec-kit")
     # with no spoken trigger is shown when its item's part of the talk starts (where its
     # background recording is introduced, else the take's own words), as an ordinary text row on
@@ -1319,6 +1319,17 @@ class Settings(BaseSettings):
     # round-trips `zoom`). A save carrying a zoomed tilt from an older build, or one that would
     # overwrite a stored zoom, answers 426 `client_update_required` (`slide_tilt_zoom`).
     media_tilt_zoom_min_client_protocol: int = 33
+    # Clip dim: a main-track clip or photo drawn darker by a strength 0..1 (`TimelineClip.dim`,
+    # each encoded pixel times `1 - dim`, under text, captions, stickers and drawings), drawn ON
+    # DEVICE by `KriaMediaEngine` only (the cloud has no `clipDim`). The editor's `clips.dim`
+    # and the chat's patch_slots `dim` need this flag on, `clipDim` in
+    # PHONE_RENDER_VERIFIED_FEATURES (a JSON array; set after a physical-device preview + export
+    # check) and a build declaring protocol >= `clip_dim_min_client_protocol`. A pinned recipe
+    # that carries a dim answers 426 `client_update_required` (`clip_dim`) to an older build.
+    # Default FALSE (dark ship). Apply: token first, then `CLIP_DIM_ENABLED=true` (api + worker)
+    # + restart. Rollback = `...=false` + restart; recipes already pinned keep their dim.
+    clip_dim_enabled: bool = False
+    clip_dim_min_client_protocol: int = 58
     # KRI-1350: colour moments on a phone Talking edit -- black-and-white / warm / faded windows
     # of the finished video with white-flash, light-leak or dip-to-black edges, an end fade to
     # black, and an optional library sound locked to an edge. Kill switch for the chat op that

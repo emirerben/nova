@@ -2256,6 +2256,11 @@
     "A fact's heading": "Die Überschrift einer Info",
     "Its detail sits right under it, on one short line": "Das Detail steht direkt darunter, in einer kurzen Zeile",
     "One line on every clip, as if you were telling it": "Eine Zeile auf jedem Clip, als würdest du es erzählen",
-    "You named a sound effect, so I played that one and added no others": "Du hast einen Soundeffekt genannt, deshalb habe ich diesen abgespielt und keine weiteren hinzugefügt"
+    "You named a sound effect, so I played that one and added no others": "Du hast einen Soundeffekt genannt, deshalb habe ich diesen abgespielt und keine weiteren hinzugefügt",
+    "A dim is a strength from 0 to 1: 0.4 is 40% darker, 1 is black.": "Abdunkeln ist eine Stärke von 0 bis 1: 0.4 ist 40 % dunkler, 1 ist schwarz.",
+    "Changed the dim of {who}": "Abdunkelung von {who} geändert",
+    "Dimmed {who} {percent}%": "{who} um {percent} % abgedunkelt",
+    "I can't dim clips on this edit.": "Bei dieser Bearbeitung kann ich Clips nicht abdunkeln.",
+    "Removed the dim from {who}": "Abdunkelung von {who} entfernt"
   }
 }

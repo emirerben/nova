@@ -132,7 +132,7 @@ public struct SpeakerFullScreenWindow: Codable, Equatable, Sendable {
     }
 }
 
-/// KRI-1558: how the speaker is drawn in one span of the edit (capability `speakerSections`, protocol 58).
+/// KRI-1558: how the speaker is drawn in one span of the edit (capability `speakerSections`, protocol 59).
 public enum SpeakerLayoutMode: String, Codable, Equatable, Sendable {
     /// The speaker's own take, full-frame and untouched (as inside a full-screen window).
     case own

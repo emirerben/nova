@@ -200,6 +200,11 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                     guard schemaVersion == 2, backdrop.mediaAsset(in: assetManifest) != nil else { throw RecipeError.missingAssetReference }
                 }
             }
+            if let dim = clip.dim {
+                guard dim.isFinite, dim > 0, dim <= 1,
+                      tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
+                      clip.visualPlacement == nil else { throw RecipeError.invalidTimeline }
+            }
             for fade in [clip.audioFadeIn, clip.audioFadeOut].compactMap({ $0 }) {
                 guard fade.isFinite, (0...60).contains(fade) else { throw RecipeError.invalidTimeline }
             }
@@ -315,6 +320,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if clips.contains(where: { $0.transform.rotationDegrees != 0 || $0.backdrop != nil }) { result.insert(.clipTilt) }
+        if clips.contains(where: { $0.dim != nil }) { result.insert(.clipDim) }
         if !colorMoments.isEmpty || endFade != nil { result.insert(.colorMoments) }
         if clips.contains(where: { if case .media? = $0.backdrop { true } else { false } }) { result.insert(.clipBackdropMedia) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
@@ -451,6 +457,9 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var stillLayout: StillLayout?
     /// Drawn under the clip on the main video track; see `ClipBackdrop`. Needs `clipTilt`.
     public var backdrop: ClipBackdrop?
+    /// How dark the main-track clip's picture is drawn, `0 < dim <= 1`: each encoded pixel times `1 - dim`, under every
+    /// text, caption, sticker and drawing. Nil draws the clip as it is. Needs `clipDim`.
+    public var dim: Double?
     public var volume: Double
     /// Seconds of linear gain ramp at this clip's audio start/end (KRI-139):
     /// the music bed's fades and the cloud's 0.5 s voiceover fade-out. Used in
@@ -478,15 +487,16 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
                                                  fadeIn: overlayFadeIn == true, fadeOut: overlayFadeOut == true)
     }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut, backdrop, splitScreen, speakerFrameOverride }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut, backdrop, splitScreen, speakerFrameOverride, dim }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil, backdrop: ClipBackdrop? = nil, splitScreen: SplitScreenMembership? = nil, speakerFrameOverride: SpeakerFrameOverride? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil, backdrop: ClipBackdrop? = nil, splitScreen: SplitScreenMembership? = nil, speakerFrameOverride: SpeakerFrameOverride? = nil, dim: Double? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
         self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop; self.stillLayout = stillLayout
         self.overlayFadeIn = overlayFadeIn; self.overlayFadeOut = overlayFadeOut
         self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut; self.backdrop = backdrop; self.splitScreen = splitScreen; self.speakerFrameOverride = speakerFrameOverride
+        self.dim = dim
     }
 }
 
@@ -620,7 +630,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, textDesigns, singleWordText, freezeFrame,
          behindSubject, speakerBackground, clipTilt, clipBackdropMedia,
          speakerBackgroundWindows, speakerBackgroundColor, scriptFonts, speakerFrameWindows, backgroundFocus, splitScreen, splitCollapse, splitBlankPanel,
-         colorMoments, speechDuck, speakerSections
+         colorMoments, speechDuck, clipDim, speakerSections
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
