@@ -1,0 +1,41 @@
+{
+  "name": "Serif lockup on a dark room",
+  "expressible": "partial",
+  "footage_fit": "A talking head on a dark background with clear space above the head.",
+  "footage_plate": "dark_room",
+  "why_it_works": "A quiet serif line and one italic word in a single bright ink, with the room dimmed behind it.",
+  "missing_moves": [
+    {
+      "piece": "background dim behind the title",
+      "move": "a dim layer under the title rows that fades in with them; title rows know no other element"
+    },
+    {
+      "piece": "flash cover (about 0.1 s) and moment sounds timed to each element",
+      "move": "a cover/flash element and per-element sound cues; the scene carries one sound id for the whole intro"
+    }
+  ],
+  "approximations": [
+    {
+      "piece": "dimmed room",
+      "move": "none: the title sits on the undimmed footage"
+    }
+  ],
+  "scene_en": {
+    "decision": "compose",
+    "voices": ["solid", "solid", "solid", "accent"],
+    "font_pair": "serif_italic",
+    "ink": "chartreuse",
+    "zone": "above_head",
+    "entrance": "rise",
+    "sound": "soft-pop"
+  },
+  "scene_tr": {
+    "decision": "compose",
+    "voices": ["solid", "solid", "accent"],
+    "font_pair": "serif_italic",
+    "ink": "chartreuse",
+    "zone": "above_head",
+    "entrance": "rise",
+    "sound": "soft-pop"
+  }
+}

@@ -21,6 +21,8 @@ from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.brief_checks import (
+    _ORDER_NOT_PROMISED,
+    _REASON_TR,
     RENDER_PROMISE_TEXTS,
     _has_checker,
     _wants_source_sound_kept,
@@ -31,6 +33,7 @@ from app.kria.brief_checks import (
     defers_to_narrated_render,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
+    reason_in_every_language,
     speaker_background_waits_for_render,
     talking_caption_promise,
     unsaid_cue_reason,
@@ -461,6 +464,69 @@ def with_defaulted_order_receipts(
         and receipt.get("status") == "partial"
         and receipt.get("verification") == "unchecked"
         and receipt.get("reason") in neutral
+        else receipt
+        for receipt in receipts
+    ]
+
+
+def _order_not_promised(
+    req: BriefRequirement, facts: Any, contract: Any, *, editor_draft: bool
+) -> bool:
+    """KRI-1592: an order ask nothing in this draft commits to, which is said, never held.
+
+    #2458 credits the upload-order default only on the phone unified montage with no Visuals
+    (`_planned_order_basis`), while the group question it replaces is gone on every writer
+    (`unconfirmed_order_groups`). A Visuals montage, a voiceover montage on the native program
+    or a Talking "start with X" was then held on "I can't confirm this draft does it yet" with
+    nothing the creator could answer. Called for an ask nothing checked (``evidence_missing``):
+
+    * no writer vouches for an order (``ordering_basis``) and the contract pins none: a pinned
+      order is one the phone verifier refuses a render for, so declining it would pass approval
+      and fail the render (KRI-503); it keeps its hold;
+    * a strategy draft only: an editor draft's ops are its whole change, so an order they did
+      not make is not done (`_no_pre_render_checker`);
+    * not an order replacement: its missing proof is the worker's refusal after approval;
+    * not a prepared story: it keeps its frozen-evidence rule.
+    """
+    return bool(
+        unstated_order_default_on()
+        and req.kind == "order"
+        and req.order_replacement is None
+        and "collection_story" not in req.facts
+        and not editor_draft
+        and facts.ordering_basis is None
+        and not (contract is not None and contract.order_required and contract.order_ids)
+    )
+
+
+def with_declined_order_receipts(
+    receipts: list[dict[str, Any]] | None, report: Mapping[str, Any]
+) -> list[dict[str, Any]] | None:
+    """The draft's own receipts with each order ask readiness declined said the same way.
+
+    KRI-1592: a strategy draft's receipt for that ask reads "I can't confirm the order this draft
+    uses" (unchecked, "have a look") while readiness approved it as a limit of the video
+    (`_order_not_promised`), so the card would disagree with the approval. Only that unchecked
+    receipt takes readiness's line, as a checked ``not_possible`` whose reason is a format limit
+    (never a "simpler version?" choice); every other receipt is returned untouched."""
+    if not unstated_order_default_on() or receipts is None:
+        return receipts
+    said = set(reason_in_every_language(_ORDER_NOT_PROMISED))
+    declined = {
+        str(row["requirement_id"]): row["reason"]
+        for row in report.get("requirements") or ()
+        if row.get("disposition") == "declined" and row.get("reason") in said
+    }
+    return [
+        {
+            **receipt,
+            "status": "not_possible",
+            "verification": "checked",
+            "stage": "checked",
+            "reason": declined[rid],
+        }
+        if (rid := str(receipt.get("requirement_id"))) in declined
+        and receipt.get("verification") == "unchecked"
         else receipt
         for receipt in receipts
     ]
@@ -1052,13 +1118,21 @@ def assess_readiness(
             and _no_pre_render_checker(req, facts)
             else "evidence_missing"
         )
+        order_line = None
         if req.id in declined and own in {"unverified", "evidence_missing"}:
             # Nothing checked this ask, and the route cannot read it: said plainly, approvable.
             # (A checker's own verdict, e.g. the words are missing, is never hidden by this.)
             own = "declined"
+        elif own == "evidence_missing" and _order_not_promised(
+            req, facts, contract, editor_draft=editor_payload is not None
+        ):
+            own = "declined"
+            order_line = say(en=_ORDER_NOT_PROMISED, tr=_REASON_TR[_ORDER_NOT_PROMISED])
         disposition = "unsupported" if policy_problem else own
         own_reason = (
-            declined[req.id].text
+            order_line
+            if order_line is not None
+            else declined[req.id].text
             if own == "declined"
             else receipt.reason
             if checked

@@ -37,7 +37,7 @@ from app.agents._schemas.creator_policy import (
     UserSongUnavailableError,
     native_voiceover_only,
 )
-from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
 from app.agents.model_registry import cross_provider_fallback
@@ -66,6 +66,7 @@ from app.schemas.text_style_intent import normalize_label_position, normalize_ti
 from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_SFX_ASK,
+    CAPABILITY_SOUND_CUES,
     CAPABILITY_TIMED_CARDS,
     TalkingCutawayAvailability,
     ending_clip_candidates,
@@ -742,6 +743,28 @@ that the effects are placed where the speech, the pauses and the cuts call for t
 This section overrides any earlier line that says a bare "add sound effects" adds nothing, or
 only sounds tied to the moments the creator named: for the general ask, set `sfx_ask` and say
 that instead.
+""".strip("\n")
+
+
+# KRI-1598: sound cues on a phone montage WITH a recorded voiceover. Appended to the
+# `$reaction_beats_section` slot ONLY when the manifest advertises `reaction_beats:sound_only`
+# (`creator_capabilities.CAPABILITY_SOUND_CUES`); "" otherwise, so every other prompt stays
+# byte-identical. `repair_creator_reaction_beats` keeps only the sounds whatever the model writes.
+_MONTAGE_SOUND_CUES_PROMPT_SECTION = """
+SOUND CUES ON THE VOICEOVER (iPhone Montage with a recorded voiceover)
+When the creator wants a sound effect to play when their recorded voiceover says something ("a
+whoosh when I say Barcelona", "play a ding at 'the medal'", "'Barselona' dediğimde vınn sesi
+çal"), set `reaction_beats`: up to 24 objects, each {"beat_id": "short-slug", "trigger": "the
+exact words to listen for, copied as the creator quoted them, in their language", "after": "only
+count `trigger` when heard after this phrase, else null", "occurrence": "first"|"every",
+"sound": "a sound_effect catalog_id from the manifest's catalog if one matches, else the
+creator's own words such as \"whoosh\"/\"ding\""}. Every beat on this edit needs a `sound`
+and nothing else on screen: leave out `visual_id`, `display_mode`, `following_clip_id` and
+`closing_media`. Photos and stickers cannot pop up on the words of this edit; when the creator
+asks for one, keep any sound they asked for and say plainly in `summary` that the picture is
+not available on this edit yet. Never set `licensed_sfx` for a sound tied to the voiceover's
+words: the beat's `sound` plays it. Keep `edit_format` as it is. A general "add sound effects
+where they fit" with no named words is never a beat.
 """.strip("\n")
 
 
@@ -1483,12 +1506,55 @@ def with_music_ask_brief(section: str) -> str:
     )
 
 
-def brief_prompt_section(insert_clips_open: bool = False, full_opening_open: bool = False) -> str:
+# KRI-1523 (Cusco DJI T1): "Use only the good take: the second clip" on a Talking edit. The
+# model already wrote this fact once on its own; taught here so the planner keeps only those
+# videos (`clip_scope.apply_chosen_videos`) and the checker can judge the pick. Main Creator only:
+# the brief extractor never sees media ids, and its prompt keeps its bytes.
+_BRIEF_CHOSEN_VIDEOS_ANCHOR = "is `include_media_kind` alone."
+CHOSEN_VIDEOS_BRIEF_SENTENCE = (
+    ' When the creator picks which of their own attached videos the edit uses ("use only the'
+    ' second clip", "only the good take, not the first one", "sadece ikinci videoyu kullan"),'
+    " that `select` requirement records `selected_media_ids`: the exact manifest `media_id` of each"
+    " video to keep, never a photo, and never for a moment inside a clip."
+)
+
+
+def chosen_videos_taught(manifest: Any) -> bool:
+    """KRI-1523: teach the fact only on a Talking manifest with several of the creator's own
+    videos, while the switch is on. Every other prompt keeps its bytes, and a montage keeps its
+    clip intents (an untyped one-video row stays KRI-1488's)."""
+    own = [
+        media
+        for media in getattr(manifest, "media", None) or ()
+        if media.kind == "video" and not media.media_id.startswith("asset-")
+    ]
+    return (
+        settings.chosen_clips_ask_enabled
+        and getattr(manifest, "edit_format", None) in CLIP_INTENT_FREE_EDIT_FORMATS
+        and len(own) > 1
+    )
+
+
+def with_chosen_videos_brief(section: str) -> str:
+    """``section`` with the KRI-1523 sentence after the media-kind select paragraph."""
+    assert section.count(_BRIEF_CHOSEN_VIDEOS_ANCHOR) == 1, "brief chosen-videos anchor moved"
+    return section.replace(
+        _BRIEF_CHOSEN_VIDEOS_ANCHOR, _BRIEF_CHOSEN_VIDEOS_ANCHOR + CHOSEN_VIDEOS_BRIEF_SENTENCE
+    )
+
+
+def brief_prompt_section(
+    insert_clips_open: bool = False,
+    full_opening_open: bool = False,
+    chosen_videos_open: bool = False,
+) -> str:
     section = (
         with_insert_clip_brief(_BRIEF_PROMPT_SECTION)
         if insert_clips_open
         else _BRIEF_PROMPT_SECTION
     )
+    if chosen_videos_open:
+        section = with_chosen_videos_brief(section)
     if settings.brief_long_request_enabled:
         section = with_long_request_cap(section)
     if music_ask_taught():
@@ -1704,6 +1770,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if _sfx_ask_available(input.capability_manifest)
                     else ""
                 )
+                # KRI-1598: sound cues on a voiceover montage; "" unless the manifest advertises
+                # them.
+                + (
+                    "\n" + _MONTAGE_SOUND_CUES_PROMPT_SECTION
+                    if _sound_cues_available(input.capability_manifest)
+                    else ""
+                )
                 # Qendresa item 21: middle line + TikTok look; "" unless the flag is on.
                 + (
                     "\n" + _CLIP_TEXT_LOOK_PROMPT_SECTION
@@ -1776,6 +1849,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + brief_prompt_section(
                     bool(insert_clip_candidates(input.capability_manifest)),
                     speaker_full_opening_taught(input.capability_manifest),
+                    chosen_videos_taught(input.capability_manifest),
                 )
                 if input.brief_enabled
                 else ""
@@ -2622,6 +2696,15 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
     """
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    return bool(capability is not None and capability.available)
+
+
+def _sound_cues_available(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-1598: whether the SOUND CUES ON THE VOICEOVER guidance is shown: a read of the
+    manifest's own `reaction_beats:sound_only` capability (`resolve_creator_manifest` owns the
+    gate; `repair_creator_reaction_beats` keeps only the sounds whatever the model writes)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_SOUND_CUES)
     return bool(capability is not None and capability.available)
 
 

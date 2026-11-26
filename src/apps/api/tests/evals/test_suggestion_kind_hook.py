@@ -329,7 +329,7 @@ def test_the_prompt_guard_is_not_vacuous():
     """Control for F13: wording quoted back in a creator message is treated as already theirs,
     and the guard flags every way a prompt could carry the copy."""
     assert creator_quoted("Matcha for the slow start", ['Add "Matcha for the slow start"'])
-    assert not creator_quoted("Matcha for the slow start", ["Add a hook that matches the video"])
+    assert not creator_quoted("Matcha for the slow start", ["Find an opening title for my video"])
     card = resolve(next(iter(served_specs())).values[0])[2]
     for leaky in (
         f'Add the hook "{card.copy_text}"',
@@ -1037,8 +1037,8 @@ async def test_tapping_a_hook_card_through_the_real_seam_applies_its_text(monkey
         card = Suggestion(
             id=suggestion_id("hook", ["-"], snapshot_digest(ctx.snapshot)),
             kind="hook",
-            title="Add a hook to the opening",
-            prompt="Add a hook that matches the video",
+            title="Find an opening title",
+            prompt="Find an opening title for my video",
             copy_text=action.text,
             rank=1,
             action=action,

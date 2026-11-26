@@ -4839,7 +4839,104 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.session.isPlaying)
     }
 
-    private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>) {
+    /// A server answer that takes the text the creator typed.
+    private static var textSaved: EditorCommitResponse {
+        EditorCommitResponse(ok: true, generation: "g2",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+    }
+
+    /// KRI-1617: Save tapped while the editor was still preparing was dropped, and the button read "Save changes".
+    func testSaveTappedWhileTheEditorIsStillPreparingRunsOnceItIsReady() async throws {
+        let held = try await Self.preparingSession()
+        XCTAssertTrue(held.session.isLoadingEditor, "the load is still open, so this is the window the test is about")
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        XCTAssertTrue(held.session.hasUnsavedChanges)
+        await held.session.save()
+        XCTAssertEqual(held.spy.commitCount, 0, "nothing is sent while the load is open")
+        XCTAssertEqual(headerSaveControl(held.session), .saving, "the creator asked for a save, so the button says one is on its way")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let saved = await waitUntil { headerSaveControl(held.session) == .saved }
+        XCTAssertTrue(saved, "the save she asked for runs once the editor is ready; commits \(held.spy.commitCount), \(held.session.saveState)")
+        XCTAssertEqual(held.spy.commitCount, 1)
+    }
+
+    /// The editor still opens when its sources cannot be read, so a Save kept for the end of that load still runs
+    /// and the button never stays on "Saving" with nothing in flight.
+    func testASaveKeptForALoadWhoseSourcesFailStillRuns() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        await held.session.save()
+        XCTAssertEqual(headerSaveControl(held.session), .saving)
+        held.spy.sourcePoolError = .requestFailed(status: 503)
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let settled = await waitUntil { headerSaveControl(held.session) != .saving }
+        XCTAssertTrue(settled, "the button is still on Saving: \(held.session.saveState)")
+        XCTAssertEqual(headerSaveControl(held.session), .saved)
+        XCTAssertEqual(held.spy.commitCount, 1)
+    }
+
+    /// An edit made while the editor prepares, with no Save tap, stays an unsaved edit: nothing saves on its own.
+    func testAnEditMadeWhileTheEditorPreparesIsNotSavedUnasked() async throws {
+        let held = try await Self.preparingSession()
+        held.session.addText(content: "Typed while the preview prepares")
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(held.spy.commitCount, 0)
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+    }
+
+    /// A Save kept for one load does not ride into the next. A reload that replaces the document drops the edit the
+    /// Save was for, so an edit made after it is saved only when she taps Save again.
+    func testASaveKeptForALoadThatIsReplacedDoesNotSaveALaterEdit() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        await held.session.save()
+        XCTAssertEqual(headerSaveControl(held.session), .saving)
+        held.spy.suspendNextDraft = true
+        let reload = Task { @MainActor in await held.session.load(api: held.spy, threadID: held.threadID) }
+        let reloadBegan = await waitUntil { held.spy.draftIsSuspended }
+        XCTAssertTrue(reloadBegan, "the reload is held at its draft read, so the first load is already replaced")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        held.spy.suspendNextSourcePool = true
+        held.spy.resumeDraft()
+        let documentReplaced = await waitUntil { held.spy.sourcePoolIsSuspended }
+        XCTAssertTrue(documentReplaced)
+        XCTAssertFalse(held.session.hasUnsavedChanges, "the reload replaced the document, so the first edit is gone")
+        XCTAssertNotEqual(headerSaveControl(held.session), .saving, "nothing is left to save, so the button does not say a save is coming")
+        held.session.addText(content: "Typed after the reload, never saved")
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+        held.spy.resumeSourcePool()
+        _ = await reload.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(held.spy.commitCount, 0, "the earlier Save tap must not save an edit made after the reload")
+        XCTAssertEqual(headerSaveControl(held.session), .unsaved)
+    }
+
+    /// "Discard changes" on the leave prompt is her later answer. A Save kept for the load must not run after it.
+    func testASaveKeptForALoadIsNotSentAfterSheDiscardsHerChanges() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        await held.session.save()
+        XCTAssertEqual(headerSaveControl(held.session), .saving)
+        held.session.forgetSaveKeptForLoad()
+        XCTAssertNotEqual(headerSaveControl(held.session), .saving, "she chose to discard, so no save is coming")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(held.spy.commitCount, 0, "a discarded edit must not be saved")
+    }
+
+    private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>, threadID: UUID) {
         let jobID = UUID(), threadID = UUID()
         let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
         var stale = variant(duration: 2, generation: "g1")
@@ -4865,7 +4962,7 @@ final class NativeEditorSessionTests: XCTestCase {
         let loading = Task { @MainActor in await session.load(api: spy, threadID: threadID) }
         _ = await waitUntil { spy.sourcePoolIsSuspended }
         XCTAssertTrue(spy.sourcePoolIsSuspended)
-        return (session, spy, loading)
+        return (session, spy, loading, threadID)
     }
 
     /// What NativeEditorProjectHeader renders for its Save button.

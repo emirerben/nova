@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// Pure logic behind slide-to-select in media grids (KRI-282 follow-up). No UI types so it is unit-testable:
 /// tile frames + a finger path in, the ordered set of touched tile indices out.
@@ -75,12 +76,26 @@ enum DragSelect {
         return trail.indices
     }
 
-    /// Points per auto-scroll tick (positive = down) when the finger nears the top or bottom of the viewport;
-    /// speed ramps up the closer to (or past) the edge. 0 in the middle.
-    static func autoScrollStep(fingerY: CGFloat, viewportHeight: CGFloat, edge: CGFloat = 72, maxStep: CGFloat = 14) -> CGFloat {
+    /// Auto-scroll speed in points per second (positive = down) when the finger nears the top or bottom of the
+    /// viewport; it ramps up the closer to (or past) the edge. 0 in the middle. A speed, not a step: a tick lasts
+    /// as long as the app takes to redraw, and a step per tick made a slow device scroll slowly (KRI-1602).
+    static func autoScrollVelocity(fingerY: CGFloat, viewportHeight: CGFloat, edge: CGFloat = 72, maxSpeed: CGFloat = 840) -> CGFloat {
         guard viewportHeight > edge * 2 else { return 0 }
-        if fingerY < edge { return -maxStep * min(1, (edge - fingerY) / edge) }
-        if fingerY > viewportHeight - edge { return maxStep * min(1, (fingerY - (viewportHeight - edge)) / edge) }
+        if fingerY < edge { return -maxSpeed * min(1, (edge - fingerY) / edge) }
+        if fingerY > viewportHeight - edge { return maxSpeed * min(1, (fingerY - (viewportHeight - edge)) / edge) }
         return 0
+    }
+
+    /// Points to scroll for the time since the last tick, never further than `limit`: the tile under the finger is
+    /// read once per tick, so a step longer than a tile would let a row pass unseen after a stall.
+    static func autoScrollDistance(velocity: CGFloat, elapsed: TimeInterval, limit: CGFloat) -> CGFloat {
+        guard velocity.isFinite, elapsed.isFinite, elapsed > 0, limit > 0 else { return 0 }
+        return min(max(velocity * elapsed, -limit), limit)
+    }
+
+    /// The furthest one tick may scroll: three quarters of the shortest tile on screen.
+    static func autoScrollLimit(frames: [Int: CGRect]) -> CGFloat {
+        guard let shortest = frames.values.map(\.height).min(), shortest > 0 else { return 44 }
+        return shortest * 0.75
     }
 }

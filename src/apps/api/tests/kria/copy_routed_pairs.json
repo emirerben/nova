@@ -213,6 +213,11 @@
   ],
   [
    "app/kria/brief_checks.py",
+   "I'll put the clips you named first or last as you asked, and check it in the finished video",
+   "Adını verdiğin klipleri istediğin gibi başa ya da sona koyacağım ve bitmiş videoda kontrol edeceğim"
+  ],
+  [
+   "app/kria/brief_checks.py",
    "I'll show it on the {word} you picked, at {clock} in your take; if I can't find that one, it won't appear",
    "{v1}{word} anında, çekiminin {clock} noktasında gösteririm; o anı bulamazsam yazı çıkmaz"
   ],
@@ -245,6 +250,11 @@
    "app/kria/brief_checks.py",
    "Pop-ins on {joined}",
    "{join_parts_tr}{tail_tr} çıkıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Some pauses or lines were cut from your voiceover, so it doesn't play whole.",
+   "Seslendirmenden bazı duraklamalar ya da cümleler kesildi, o yüzden tamamı oynamıyor."
   ],
   [
    "app/kria/brief_checks.py",
@@ -435,6 +445,11 @@
    "app/kria/brief_checks.py",
    "You're full screen in your own take for the first {seconds} s, then {corner_0}.",
    "{v2}, sonra {corner_1}sın."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Your whole voiceover plays and the pictures are cut to it",
+   "Seslendirmenin tamamı oynar, görüntüler ona göre kesilir"
   ],
   [
    "app/kria/brief_checks.py",
@@ -1818,6 +1833,11 @@
   ],
   [
    "app/tasks/kria_runtime.py",
+   "- Done anyway: {what}",
+   "- Yine de yapıldı: {what}"
+  ],
+  [
+   "app/tasks/kria_runtime.py",
    "Balanced pacing",
    "Tempo: Dengeli"
   ],
@@ -2332,6 +2352,31 @@
    "bazı görsellerin"
   ],
   [
+   "app/kria/narrated_render_checks.py",
+   "{shots} shots in {total:.1f} s, about one every {average:.1f} s; the longest is {longest:.1f} s",
+   "{total:.1f} sn içinde {shots} çekim, ortalama {average:.1f} sn'de bir; en uzunu {longest:.1f} sn"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "{shots} shots in {total:.1f} s, about one every {average:.1f} s, not every {asked:.1f} s; the longest is {longest:.1f} s",
+   "{total:.1f} sn içinde {shots} çekim, ortalama {average:.1f} sn'de bir, {asked:.1f} sn'de bir değil; en uzunu {longest:.1f} sn"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "When you say {v1}, the clip you named is on screen ({step_start_s:.1f}–{step_end_s:.1f} s)",
+   "{v1} dediğinde söylediğin klip ekranda ({step_start_s:.1f}–{step_end_s:.1f} sn)"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "When you say {v1}, another clip is on screen ({step_start_s:.1f}–{step_end_s:.1f} s); the clip you named plays at {shown_at} s",
+   "{v1} dediğinde ekranda başka bir klip var ({step_start_s:.1f}–{step_end_s:.1f} sn); söylediğin klip {shown_at} sn arasında oynuyor"
+  ],
+  [
+   "app/kria/narrated_render_checks.py",
+   "I couldn't find {v1} in the finished voiceover; the clip you named plays at {shown_at} s",
+   "Bitmiş seslendirmede {v1} sözünü bulamadım; söylediğin klip {shown_at} sn arasında oynuyor"
+  ],
+  [
    "app/kria/brief_checks.py",
    "Left out {missing} of your {total} clips",
    "{total} klibinden {missing} tanesi dışarıda kaldı"
@@ -2430,6 +2475,41 @@
    "app/services/sfx_capability.py",
    "Nothing in this video clearly called for a sound effect, so I added none",
    "Bu videoda ses efekti isteyen net bir an olmadı, o yüzden hiçbirini eklemedim"
+  ],
+  [
+   "app/services/opening_titles.py",
+   "Your first sentence already pulls people in: “{line}”. I'd keep it without a title, or you can pick one of these.",
+   "İlk cümlen zaten izleyiciyi içine çekiyor: “{line}”. Başlıksız bırakmanı öneririm, istersen bunlardan birini seç."
+  ],
+  [
+   "app/services/opening_titles.py",
+   "I found one opening in what you said. Use it, or type your own.",
+   "Söylediklerinde bir açılış buldum. Bunu kullan ya da kendin yaz."
+  ],
+  [
+   "app/services/opening_titles.py",
+   "Here are {count} openings from what you said. Pick one and I'll open the video with it.",
+   "Söylediklerinden {count} açılış çıkardım. Birini seç, videoyu onunla açayım."
+  ],
+  [
+   "app/kria/planner.py",
+   "Do you have an idea, or would you like me to write one?",
+   "Aklında bir fikir var mı, yoksa ben mi yazayım?"
+  ],
+  [
+   "app/kria/planner.py",
+   "Which opening title should I use? Pick one, type your own, or skip it.",
+   "Hangi açılış başlığını kullanayım? Birini seç, kendin yaz ya da atla."
+  ],
+  [
+   "app/kria/planner.py",
+   "Once you choose, I'll do the rest of what you asked.",
+   "Sen seçince isteğinin kalanını da yapacağım."
+  ],
+  [
+   "app/services/sfx_capability.py",
+   "You named a sound effect, so I played that one and added no others",
+   "Bir ses efekti söyledin, o yüzden onu çaldım ve başka efekt eklemedim"
   ],
   [
    "app/kria/brief_checks.py",
@@ -2617,14 +2697,279 @@
    "Şarkını sesinin altında kısık çalacağım."
   ],
   [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed how the pictures behind you are framed",
+   "Arkandaki görsellerin kadrajı değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the background behind you",
+   "Arkandaki arka plan değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the colour moments",
+   "Renk anları değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the pictures behind you",
+   "Arkandaki görseller değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed when you're shown full screen",
+   "Tam ekran göründüğün anlar değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed where you sit on screen",
+   "Ekrandaki yerin değişti"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Couldn't: {ask}",
+   "Yapamadım: {ask}"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Couldn't: {ask} ({reason})",
+   "Yapamadım: {ask} ({reason})"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-left corner",
+   "Sol alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the bottom-right corner",
+   "Sağ alt köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-left corner",
+   "Sol üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Made you small in the top-right corner",
+   "Sağ üst köşede küçük gösteriliyorsun"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put a new picture behind you",
+   "Arkana yeni bir görsel kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put a plain colour behind you",
+   "Arkana düz bir renk kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put you back full screen",
+   "Tekrar tam ekrandasın"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Put {what} behind you",
+   "Arkana {what} kondu"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the background behind you",
+   "Arkandaki arka plan kaldırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the changing pictures behind you",
+   "Arkandaki değişen görseller kaldırıldı"
+  ],
+  [
+   "app/kria/ask_ledger.py",
+   "Your call: {ask}",
+   "Karar senin: {ask}"
+  ],
+  [
    "app/services/researched_text.py",
    "No sourced line for {count} of the clips.",
    "Kliplerden {count} tanesi için kaynaklı bir satır yazılamadı."
   ],
   [
+   "app/services/researched_text.py",
+   "I couldn't tell where clip {number} plays in your video, because it has no usable length. Your video is unchanged. I can still add titles without researched facts.",
+   "{number}. klibin videonda nerede oynadığını anlayamadım, çünkü kullanılabilir bir uzunluğu yok. Videon değişmedi. Araştırılmış bilgiler olmadan da başlık ekleyebilirim."
+  ],
+  [
    "app/kria/brief_checks.py",
    "I'll place sound effects on the cuts where your clips change",
    "Ses efektlerini kliplerin değiştiği geçişlere uygun şekilde koyarım"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "I'll add the sourced facts as on-screen text.",
+   "Kaynaklı bilgileri ekrana yazı olarak ekleyeceğim."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Which look should the text have?",
+   "Yazılar hangi görünümde olsun?"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Editorial serif",
+   "Editoryal serif"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A serif title, then small capitals over a serif line for each fact.",
+   "Serif bir başlık, ardından her bilgi için serif bir satırın üstünde küçük büyük harfler."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Bold on a soft shade",
+   "Yumuşak gölgede kalın"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A bold title, then a yellow heading over a small line, on a soft dark fade.",
+   "Kalın bir başlık, ardından yumuşak bir karartmanın üstünde sarı başlık ve küçük bir satır."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Centred display serif",
+   "Ortalanmış serif"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A large serif title and headings, each with a small line under it, centred.",
+   "Büyük serif başlık ve ara başlıklar, her birinin altında küçük bir satır, ortada."
+  ],
+  [
+   "app/services/choice_questions.py",
+   "Running guide",
+   "Akan anlatım"
+  ],
+  [
+   "app/services/choice_questions.py",
+   "A title, then one line on every clip, as if you were telling it.",
+   "Bir başlık, ardından her klipte sanki sen anlatıyormuşsun gibi bir satır."
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "Your opening title",
+   "Açılış başlığın"
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "A fact's heading",
+   "Bilginin başlığı"
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "Its detail sits right under it, on one short line",
+   "Ayrıntısı hemen altında, kısa bir satırda durur"
+  ],
+  [
+   "app/kria/text_design_ask.py",
+   "One line on every clip, as if you were telling it",
+   "Her klipte sanki sen anlatıyormuşsun gibi bir satır"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Photos and stickers can't pop up on your words in this edit yet, only sounds",
+   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, sadece ses"
+  ],
+  [
+   "app/kria/strategy_policy.py",
+   "Photos and stickers can't pop up on your words in this edit yet, so I left them out; sounds can still play on your words.",
+   "Bu düzenlemede sözlerine göre fotoğraf ya da çıkartma henüz çıkamıyor, o yüzden koymadım; sözlerine göre ses yine çalabilir."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I'll play it when I hear those words in your voiceover",
+   "Seslendirmende o sözleri duyduğumda çalarım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't promise the clip order on this kind of video yet, so it may not match what you asked",
+   "Bu tür bir videoda klip sırasını henüz garanti edemiyorum, o yüzden sıra istediğin gibi olmayabilir"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Clip {n} still plays too",
+   "{n}. klip de hâlâ oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "I can't tell which clip you mean: remove the clips you don't want from this chat and I'll make it from the rest",
+   "Hangi klibi kastettiğini anlayamadım: istemediğin klipleri bu sohbetten çıkar, kalanlardan yapayım"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Only clip {n} of your {total} is used",
+   "{total} klibinden sadece {n}. klip kullanılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Only the {count} clips you picked of your {total} are used",
+   "{total} klibinden sadece seçtiğin {count} klip kullanılıyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "The clip you picked isn't in this edit",
+   "Seçtiğin klip bu düzenlemede yok"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "{count} other clips still play too",
+   "{count} klip daha hâlâ oynuyor"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Speech cleanup cuts every pause to about 0.3 s unless a take is noisy, and I'll tell you after if any stay longer",
+   "Konuşma temizliği her duraklamayı yaklaşık 0,3 sn'ye kadar kısaltır (gürültülü çekimler hariç), daha uzun kalan olursa sonra sana söylerim"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "Choose Clean up speech when you approve: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” seçeneğini seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "If Clean up speech is offered when you approve, choose it: every pause is cut to about 0.3 s unless a take is noisy",
+   "Onaylarken “Konuşmayı temizle” çıkarsa onu seç, her duraklama yaklaşık 0,3 sn'ye kadar kısalır (gürültülü çekimler hariç)"
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "A dim is a strength from 0 to 1: 0.4 is 40% darker, 1 is black.",
+   "Karartma 0 ile 1 arasında bir güçtür: 0.4 yüzde 40 daha koyu, 1 siyahtır."
+  ],
+  [
+   "app/agents/editor_ops_v2/timeline.py",
+   "I can't dim clips on this edit.",
+   "Bu videoda klipleri karartamıyorum."
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Removed the dim from {who}",
+   "{who} karartması kaldırıldı"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Changed the dim of {who}",
+   "{who} karartması değişti"
+  ],
+  [
+   "app/services/kria_editor_ops_diff.py",
+   "Dimmed {who} {percent}%",
+   "{who} %{percent} karartıldı"
+  ],
+  [
+   "app/kria/clip_ties.py",
+   "More than one of your clips shows {shown}{more}. For each one, keep the clips to use ticked and untick the others.",
+   "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klipleri işaretli bırak, diğerlerinin işaretini kaldır."
   ]
  ],
  "retired": [
@@ -3047,6 +3392,11 @@
    "app/kria/brief_checks.py",
    "A Talking video can't do this, so it stays as filmed",
    "Konuşmalı videoda bunu yapamıyorum, çekimde olduğu gibi kalır"
+  ],
+  [
+   "app/kria/clip_ties.py",
+   "More than one of your clips shows {shown}{more}. For each one, keep the clip to use ticked and untick the others.",
+   "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klibi işaretli bırak, diğerlerinin işaretini kaldır."
   ]
  ]
 }

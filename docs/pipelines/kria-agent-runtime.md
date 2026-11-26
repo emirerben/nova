@@ -308,6 +308,22 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   keeps the full prose for the web chat and apps without the keys; the two must not drift,
   so `reply_from_editor_receipts` is the only writer of that prose. The stored `reason` of an
   ask that names no dimension is the bare change list ("I changed:" is added to the prose only).
+- **Ask ledger (KRI-1563, `KRIA_ASK_LEDGER_ENABLED`, default true).** An editor turn's receipts
+  and reply come from `app/kria/ask_ledger.py`: every requirement of the turn ends `done`
+  (with the change that proves it), `declined` (with a reason) or `needs_choice` (the turn's
+  question), and every change in the diff is named on the line of the ask that caused it or in
+  "Also changed" (no "first two" cut; the part of a change beyond what an ask named is listed
+  too). `AskLedger.gaps` checks both against the reply actually written and logs
+  `kria_ask_ledger_gap` (lane names and ids only). Proof is per field: a caption ask that names
+  a field ("in the middle", a font, a colour) is proved by that field only, and a place is
+  checked against where the captions end up (0.82 is not "middle"). A title the turn added
+  proves "add a title" whatever wrote its words (whether model words may be applied without
+  approval is KRI-1560's rule); a removed title proves "no title" (KRI-1355); "only my voice"
+  is the music off (KRI-1472). The diff reads the background behind a Talking speaker (pictures,
+  fill, corner, full-screen windows), colour moments and a Talking song. A copilot turn with no
+  ops answers each part (`no_op_ledger`; receipts ride the `assistant_response` event), and on a
+  failed-render correction a part the copilot could not do no longer throws away the in-place
+  ops for the others. Replay: `make kria-replay FIXTURE=kri1563_ask_ledger`.
 - **Length answers (KRI-737/738).** A longer clip keeps its old window and starts earlier
   in its source when the footage after its start runs out (`editor_ops_v2/timeline.py:
   _fit_window`; an explicit `in_s` is never moved). The copilot's "how short/long?" question
@@ -1243,9 +1259,23 @@ One flag, read in four places that must agree (KRI-503: planner, contract pin an
   draft records no ordering basis, so it read "I can't confirm the order this draft uses"), only for a ready
   report.
 
-Not covered: an edit that shows Visuals photos, a non-phone writer or the native program keep today's
-behaviour for the pin (the groups are no longer asked about, so readiness holds them on "I can't confirm this
-draft does it yet" instead). The disclosure rides the requirement receipt, not the reply prose (the reply keeps the model's summary
+Not covered by the pin: an edit that shows Visuals photos, a non-phone writer or the native program (the
+groups are no longer asked about there). KRI-1592: on those writers an order ask nothing commits to is
+declined instead of held on "I can't confirm this draft does it yet": `approval_readiness._order_not_promised`
+rates it `declined` ("I can't promise the clip order on this kind of video yet, so it may not match what you
+asked", EN/TR/DE, a format limit in `brief_checks._FORMAT_LIMIT_EN`, so never a "simpler version?" card) and
+`with_declined_order_receipts` puts the same line on the draft turn's own receipt. Only with the flag on, only
+for a strategy draft (an editor draft's ops are its whole change), never for an order replacement, and only
+when no writer vouches for an order and the contract pins none: a pinned order is one the phone verifier
+refuses a render for, so it keeps its hold (approval would only move the refusal after the render). After
+approval the unified montage worker renders a plan whose own order receipt misses and only says so in a note
+(KRI-129), so with the flag on `phone_montage_preflight.readiness_plan_blockers` also returns order asks: a
+Visuals montage whose plan misses the order is held before approval instead of rendering in the wrong order.
+The flag is on in production (KRI-1587). Guard: `tests/kria/test_kri1592_order_on_other_writers.py` (a
+Visuals montage, a voiceover montage on the native program and a Talking "start with X", each held before and
+offered after; `test_flag_on_replay_per_writer` runs production's flags, including #2483's clip-order ledger,
+across the three writers: an order nothing pins proceeds, an explicit filming or added order and a pinned order
+keep the verdict they have without this change; the checked cases stay held). The disclosure rides the requirement receipt, not the reply prose (the reply keeps the model's summary
 when every judged ask is met, like the "group first" clause). After render the receipt says `met` with no
 reason. A later change plans story order with the model, keeps a ledger and offers drag cards; this one is
 the deterministic default only. Guard: `tests/kria/test_unstated_order_default.py` (the failure-mode list
@@ -1340,12 +1370,38 @@ later render is not blocked by an unservable ask. Key-less "first/last/then" ask
 keep their draft; a message that asks for anything else keeps its draft. A turn with a render whose editor
 target could not load also reads as "not rendered".
 
+**Taking an order back (KRI-1594).** Every reader folds the same events (`ledger_events_clause`:
+the assistant events plus the system `turn_cancelled` events), and `fold_clip_order` drops what was
+taken back. A draft undo (`draft_undone`, `restored_from_draft_id`) puts the ledger back to what it was
+the moment the restored draft was last the newest one, so the undone draft's entries leave with it and
+undoing the undo brings them back; a restored draft with no event of its own (the baseline under a first
+editor update) goes back to just before the undone draft. A removed or stopped message
+(`runtime.cancel_turn`) writes a `retract` row naming its turn: that turn's entries never count, even
+when its worker finishes after the cancel. A turn that restarts the request before a render (the
+extraction's typed `starts_fresh`, or the message after a "Change my request" tap, noted through
+`clip_order_ledger.note_restarted`) plans on the order the clips were added (`planning_state`) and
+writes a reset row ahead of its own entries. After a render the timeline is the order and no reset is
+written. Retraction rows use the actor `retract`, which `LedgerEntry.from_payload` rejects, so a reader
+that only replays entries skips them. The `creator_agent` route folds each chat on its own.
+
+**One reader per rule (KRI-1594).** Which order rows place clips now is `clip_order_sequence.seats_now`
+(the planner, the contract, the phone preflight, dispatch's `order_paths_by_resolved_intents` and the
+narrated worker's first/last/group pins all ask it; an `already_seated` row places nothing and its
+narrated receipt row claims no seat). The order-basis question gate's "placed" check
+(`choice_questions._placed_sequence`) reads `sequence_rows(seated=True)`, the rows the contract's own
+check reads, so a basis `order_by` row no longer counts as a placed sequence there. Clip names read the
+creator's group words through `clip_order_card.known_group_words` (the newest card's words, then the
+newest strategy's) in the card, the Main Creator's order line, the order listing and the reorder
+receipt; a note or group name that is exactly any clip's media id, file name or file stem is never a
+name (`labels_for`).
+
 **Not covered here.** Relative moves, swaps and undo BEFORE a render (the copilot needs a rendered
 variant; `_load_editor_target` returns nothing without one) are declined in one plain line when they are
 the turn's only ask (above). The first draft turn's `creator_text` entry seats only rows the planner resolved; an order that
 is the model's own story order (`ai_story`) is recorded only as the difference the next turn finds. The
-native render program still plays the model's `selected_media_ids` order. Guard:
-`tests/kria/test_clip_order_ledger.py` (the failure-mode list is its docstring).
+native render program (a recorded voiceover) still plays the model's `selected_media_ids` order (KRI-1594
+left it open: see the issue). Guards: `tests/kria/test_clip_order_ledger.py` and
+`tests/kria/test_clip_order_history_gaps.py` (the failure-mode lists are their docstrings).
 
 ## The clip-order card (`KRIA_CLIP_ORDER_LEDGER_ENABLED` + client protocol 54, KRI-1590)
 

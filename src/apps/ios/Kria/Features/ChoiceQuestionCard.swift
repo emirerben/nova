@@ -25,10 +25,14 @@ struct ChoiceQuestionCard: View {
     var changeHeld: (() -> Void)? = nil
     /// Hands the creator the composer to answer in their own words; nil hides the row.
     var typeMyOwn: (() -> Void)? = nil
+    /// KRI-1560: puts an editable option's words in the composer for the creator to change; nil hides the pencils.
+    var edit: ((String) -> Void)? = nil
     /// The creator is typing their own answer, so the blocks are disabled.
     var isTyping = false
     /// False for a reply that asks the clips too: Kria's decision then goes with the clips question.
     var allowsDecide = true
+    /// KRI-1582: whose clips a version 2 preview is drawn over (the chat's project).
+    var projectID: UUID? = nil
 
     var body: some View {
         switch mode {
@@ -39,15 +43,24 @@ struct ChoiceQuestionCard: View {
             .accessibilityIdentifier("choice-card-answered")
         case .superseded:
             KriaSupersededLine().accessibilityIdentifier("choice-card-superseded")
+        case .active(let isSending, let submit) where question.hasPreviews && heldKey == nil:
+            DesignPreviewStrip(question: question, projectID: projectID, isSending: isSending, isLocked: isTyping,
+                               typeMyOwn: question.allowFreeText ? typeMyOwn : nil, allowsDecide: allowsDecide) { option, message in
+                submit(question.submission(for: option), message)
+            }
+            .padding(.top, 2)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("choice-card")
         case .active(let isSending, let submit):
             VStack(alignment: .leading, spacing: 8) {
                 KriaAnswerStack(
                     options: question.options.map {
                         KriaAnswerOption(id: $0.key, title: $0.label, detail: $0.detail, isRecommended: $0.recommended,
-                                         identifier: "choice-option-\($0.key)")
+                                         identifier: "choice-option-\($0.key)", isEditable: $0.editable)
                     },
                     heldID: heldKey, isSending: isSending, isLocked: isTyping,
                     typeMyOwn: question.allowFreeText ? typeMyOwn : nil,
+                    edit: question.allowFreeText && heldKey == nil ? edit.map { edit in { edit($0.title) } } : nil,
                     decide: decideOption.map { option in { submit(question.submission(for: option), "Let Kria decide") } }
                 ) { option in
                     if let chosen = question.option(key: option.id) { submit(question.submission(for: chosen), question.message(for: chosen)) }

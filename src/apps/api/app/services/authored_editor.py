@@ -239,6 +239,7 @@ def prepare_authored_editor_commit(
         _find_variant,
         _prepare_editor_commit,
         _require_caption_animation_client,
+        _require_clip_dim_gates,
         _require_clip_tilt_gates,
         require_editor_clock_reader,
         variant_render_baseline,
@@ -265,6 +266,7 @@ def prepare_authored_editor_commit(
         }
     _require_caption_animation_client(job, variant, payload)
     _require_clip_tilt_gates(job, variant, payload)
+    _require_clip_dim_gates(job, variant, payload)
     if not is_authored_timeline(variant) and (
         payload.timeline_slots is None or not any(not row.removed for row in payload.timeline_slots)
     ):
@@ -679,14 +681,16 @@ def resolve_authored_phone_slots(
             raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
         total += duration
         tilt = slot.tilt if "tilt" in slot.model_fields_set else old.get("tilt")
+        dim = slot.dim if "dim" in slot.model_fields_set else old.get("dim")
         resolved.append(
             {
-                **slot.model_dump(mode="json", exclude={"tilt"}),
+                **slot.model_dump(mode="json", exclude={"tilt", "dim"}),
                 # A photo has no source clock. The phone still moves `in_s` for the right half
                 # of a cut and for a left trim, and the recipe compile refuses a photo that
                 # does not start at 0 (KRI-1423).
                 **({"in_s": 0.0} if source["kind"] == "image" else {}),
                 **({"tilt": tilt} if tilt is not None else {}),
+                **({"dim": dim} if dim is not None else {}),
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 # A new placement has no look. Stored as null it fails the timeline response,
                 # and a saved edit is read back as these rows.

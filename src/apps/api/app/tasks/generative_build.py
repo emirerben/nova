@@ -109,7 +109,7 @@ from app.pipeline.look_presets import (
     normalize_look_preset,
 )
 from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
-from app.pipeline.phone_title_look import title_look_text
+from app.pipeline.phone_title_look import intro_plain_text, title_look_text
 from app.pipeline.speech_cleanup_apply import (
     PREFLIGHT_JOB_CONTRACT_FIELD,
     PREFLIGHT_JOB_CONTRACT_VALUE,
@@ -2673,7 +2673,9 @@ def _refuse_sfx_on_speech_writer(candidates: dict) -> None:
     The creation manifest opens ``sound_effects`` for the guided formats, and only the
     guided / unified writers materialize a licensed effect. Rather than build a speech edit
     that quietly omits the effect the creator asked for (KRI-129: no silent overrides),
-    refuse it with the reason.
+    refuse it with the reason. A general ask (`sfx_ask`) is optional, so it never fails the
+    edit: the writer declines it on the variant's receipt instead
+    (`phone_speech_montage_job._sfx_ask_receipt`, KRI-1598).
     """
     strategy = candidates.get("creator_strategy")
     if isinstance(strategy, dict) and (strategy.get("licensed_sfx") or strategy.get("sfx_intent")):
@@ -5195,7 +5197,11 @@ def _run_phone_guided_job(
     # has no speech), then the plan compiles once more with them. A refusal renders the plain
     # compile and says so on the receipt, never a failed job. Kept off the canonical plan: only
     # this variant's private plan carries the rows, so the approved plan stays as approved.
-    sfx_choice_receipt: dict | None = None
+    # KRI-1598: a plan the ask is not served on (a named effect, a pinned narration) still says
+    # why on the receipt, so the judge answers instead of staying neutral.
+    sfx_choice_receipt: dict | None = _guided_sfx_ask_unserved_receipt(
+        plan, creator_strategy, snapshot
+    )
     sfx_rows: list[dict] = []
     if plan.narration is None and not plan.editor_sound_effects and not plan.licensed_sfx_intent:
         from app.services.phone_sfx_choice import read_sfx_ask  # noqa: PLC0415
@@ -5444,7 +5450,9 @@ def _run_phone_guided_job(
                 raw_plan["editor_sound_effects"]
             )
         if sfx_choice_receipt is not None:
-            from app.services.phone_sfx_choice import RECEIPT_FIELD as SFX_CHOICE_FIELD  # noqa: PLC0415
+            from app.services.phone_sfx_choice import (
+                RECEIPT_FIELD as SFX_CHOICE_FIELD,  # noqa: PLC0415
+            )
 
             # KRI-1561: what the general sound-effect ask got on this montage, and why not.
             current["variants"][0][SFX_CHOICE_FIELD] = sfx_choice_receipt
@@ -5939,8 +5947,20 @@ def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dic
     ask whose gate is open. The content-hash transcript cache serves a re-render; any failure
     reads as "no timed words", which the chooser reports as ``no_timed_evidence``.
     """
+    return _phone_montage_voice_transcript(job_id, voiceover_gcs_path)[0]
+
+
+def _phone_montage_voice_transcript(
+    job_id: str, voiceover_gcs_path: Any, *, verbatim_prompt: str | None = None
+) -> tuple[list[dict], str | None]:
+    """``_phone_montage_voice_words`` plus the language whisper heard (``None`` when unknown).
+
+    KRI-1598: ``verbatim_prompt`` seeds whisper with the creator's sound-cue words, as the
+    Voiceover worker does, so a name comes back spelled the way the cue is written; it is part of
+    the transcript cache key. ``None`` keeps the call exactly as the general ask makes it.
+    """
     if not voiceover_gcs_path:
-        return []
+        return [], None
     try:
         from app.pipeline.transcribe import transcribe_whisper_cached  # noqa: PLC0415
         from app.storage import download_to_file  # noqa: PLC0415
@@ -5948,14 +5968,58 @@ def _phone_montage_voice_words(job_id: str, voiceover_gcs_path: Any) -> list[dic
         with tempfile.TemporaryDirectory() as tmpdir:
             local = os.path.join(tmpdir, "montage_voiceover")
             download_to_file(str(voiceover_gcs_path), local)
-            transcript = transcribe_whisper_cached(local)
+            transcript = (
+                transcribe_whisper_cached(local, verbatim_prompt=verbatim_prompt)
+                if verbatim_prompt
+                else transcribe_whisper_cached(local)
+            )
         return [
             {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
             for word in transcript.words
-        ]
+        ], (getattr(transcript, "language", None) or None)
     except Exception as exc:  # noqa: BLE001 - optional effects never fail the render
         log.warning("phone_montage_sfx.transcribe_failed", job_id=job_id, error=str(exc)[:200])
-        return []
+        return [], None
+
+
+def _montage_sound_cue_beats(strategy: Mapping[str, Any]) -> list[dict]:
+    """KRI-1598: the strategy's reaction beats as the voiceover montage plays them -- sound only.
+
+    The repair already took every picture off (`creator_capabilities._repair_sound_only_beats`);
+    this keeps the worker to the same contract for a stored or hand-written strategy: a beat
+    without a sound, or anchored to the title, is not a cue, and a picture field is dropped."""
+    raw = strategy.get("reaction_beats")
+    beats: list[dict] = []
+    for beat in raw if isinstance(raw, list) else []:
+        if not isinstance(beat, Mapping) or not beat.get("sound") or beat.get("anchor") == "title":
+            continue
+        beats.append(
+            {
+                key: value
+                for key, value in beat.items()
+                if key not in ("visual_id", "visual_role", "display_mode", "following_clip_id")
+            }
+        )
+    return beats
+
+
+def _montage_voice_end_s(recipe: Any) -> float:
+    """Where the recorded voice stops playing on the montage clock (KRI-1598).
+
+    The compiler caps the narration clip to the decided window (`phone_voiceover_montage_plan`,
+    ``narration-voice`` on the ``narration`` track), which can be shorter than the recording, so
+    a word after this point is never heard in the video."""
+    end = float(recipe.duration)
+    for track in recipe.tracks:
+        if track.id != "narration":
+            continue
+        ends = [
+            float(clip.timeline_start) + float(clip.source_duration) / float(clip.rate or 1.0)
+            for clip in track.clips
+        ]
+        if ends:
+            end = min(end, max(ends))
+    return end
 
 
 def _no_sound_effects_asked(snapshot: Any) -> bool:
@@ -5970,6 +6034,32 @@ def _no_sound_effects_asked(snapshot: Any) -> bool:
     except (ValueError, TypeError, AttributeError):
         return False
     return asks_no_sound_effects(brief)
+
+
+def _guided_sfx_ask_unserved_receipt(plan: Any, strategy: Any, snapshot: Any) -> dict | None:
+    """KRI-1598: the receipt for a general sound-effect ask this guided plan does not serve.
+
+    None when there is no ask, or when the plan is one the chooser serves (or an editor revision
+    that already holds its rows). A named effect (`licensed_sfx_intent`) plays alone: the
+    named-effect check (`validate_licensed_sfx_runtime`) refuses any other row on the next Save,
+    so nothing is chosen beside it and the receipt says ``named_effect``. A plan with a pinned
+    narration has no chooser here (``format_unsupported``). A live "no sound effects" outranks
+    both, as it does for every writer.
+    """
+    from app.services.phone_sfx_choice import declined_receipt, read_sfx_ask  # noqa: PLC0415
+    from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
+
+    if read_sfx_ask(strategy) is None:
+        return None
+    if plan.licensed_sfx_intent:
+        limit = SfxLimit.named_effect
+    elif plan.narration is not None and not plan.editor_sound_effects:
+        limit = SfxLimit.format_unsupported
+    else:
+        return None
+    if _no_sound_effects_asked(snapshot):
+        limit = SfxLimit.creator_said_no
+    return declined_receipt(limit)
 
 
 def _guided_ask_sfx_rows(resolved: list[Any], names: dict[str, Any]) -> list[dict]:
@@ -6616,15 +6706,50 @@ def _run_phone_voiceover_montage_job(
                 )
                 timed_cards = ()
 
+    # KRI-1598: the creator's named sound cues ("a whoosh when I say Barcelona"), sound only.
+    # The voice plays from the first frame, so its words are on the montage clock up to where the
+    # compiler caps it; the cue sounds join the KRI-281 sound-effect lane below. Never fails the
+    # job: every miss lands on `phone_beat_receipt`.
+    beat_receipt: dict | None = None
+    beat_sfx: list = []
+    cue_words: list[dict] | None = None
+    sound_beats = _montage_sound_cue_beats(raw_creator_strategy)
+    if sound_beats:
+        from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+            trigger_vocabulary_prompt,
+        )
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            phone_voiceover_montage_sound_cues_supported,
+        )
+
+        if phone_voiceover_montage_sound_cues_supported(require_client=False):
+            heard, spoken_language = _phone_montage_voice_transcript(
+                job_id,
+                decision.extras.get("voiceover_gcs_path"),
+                verbatim_prompt=trigger_vocabulary_prompt(sound_beats, None),
+            )
+            voice_end_s = _montage_voice_end_s(recipe)
+            cue_words = [word for word in heard if float(word["end_s"]) <= voice_end_s]
+            cue_lanes, _cue_visuals, beat_receipt = _phone_narrated_reaction_lanes(
+                job_id,
+                beats=sound_beats,
+                closing=None,
+                words=cue_words,
+                duration_s=float(recipe.duration),
+                language=spoken_language or language,
+                requirements=_phone_brief_live_requirements(snapshot),
+            )
+            beat_sfx = list(cue_lanes.sound_effects) if cue_lanes is not None else []
+        else:
+            log.info("phone_montage_sound_cues.gate_closed", job_id=job_id)
+
     # KRI-1561: a general "add sound effects where they fit" ask. The recorded voice plays from
     # the first frame, so its words are on the montage clock; the effects join the KRI-281 lane
-    # beside any timed cards, and a recipe the compiler refuses keeps its pre-effects shape.
+    # beside any timed cards (and the named cues, whose moments it leaves alone), and a recipe
+    # the compiler refuses keeps its pre-effects shape.
     sfx_choice_receipt: dict | None = None
+    chosen_sfx: list = []
     if raw_creator_strategy.get("sfx_ask"):
-        from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
-            replace_editor_lanes as _replace_lanes,
-        )
-        from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
         from app.services.sfx_capability import voiceover_sfx_limit  # noqa: PLC0415
         from app.services.sfx_chooser import SfxLimit  # noqa: PLC0415
 
@@ -6632,35 +6757,59 @@ def _run_phone_voiceover_montage_job(
         sfx_limit = (
             SfxLimit.creator_said_no if _no_sound_effects_asked(snapshot) else voiceover_sfx_limit()
         )
+        if sfx_limit is not None:
+            ask_words: list[dict] = []
+        elif cue_words is not None:
+            ask_words = cue_words  # KRI-1598: the voice is transcribed once
+        else:
+            ask_words = _phone_montage_voice_words(
+                job_id, decision.extras.get("voiceover_gcs_path")
+            )
         chosen_sfx, sfx_choice_receipt = _phone_choose_sound_effects(
             job_id,
             strategy=raw_creator_strategy,
             snapshot=snapshot,
             limit=sfx_limit,
-            words=(
-                _phone_montage_voice_words(job_id, decision.extras.get("voiceover_gcs_path"))
-                if sfx_limit is None
-                else []
-            ),
+            words=ask_words,
             duration_s=float(recipe.duration),
-            taken_at_s=[],
+            taken_at_s=[float(row.request.at_s) for row in beat_sfx],
             lane_drops=[],
         )
-        if chosen_sfx:
-            try:
-                recipe = _replace_lanes(
-                    recipe,
-                    lanes=PhoneSubtitledLanes(overlays=list(timed_cards), sound_effects=chosen_sfx),
-                    visuals=timed_visuals,
-                    video_track_id="montage",
-                )
-            except (UnsupportedPhonePlan, ValueError) as exc:
+    sound_rows = [*beat_sfx, *chosen_sfx]
+    if beat_sfx and chosen_sfx:
+        sound_rows.sort(key=lambda row: row.request.at_s)
+    if sound_rows:
+        from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+            replace_editor_lanes as _replace_lanes,
+        )
+        from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+
+        try:
+            recipe = _replace_lanes(
+                recipe,
+                lanes=PhoneSubtitledLanes(overlays=list(timed_cards), sound_effects=sound_rows),
+                visuals=timed_visuals,
+                video_track_id="montage",
+            )
+        except (UnsupportedPhonePlan, ValueError) as exc:
+            log.warning("phone_montage_sfx.compile_dropped", job_id=job_id, error=str(exc))
+            if chosen_sfx:
                 from app.services.phone_sfx_choice import demote_receipt  # noqa: PLC0415
 
-                log.warning("phone_montage_sfx.compile_dropped", job_id=job_id, error=str(exc))
                 sfx_choice_receipt = demote_receipt(
                     sfx_choice_receipt, [row.request.id for row in chosen_sfx]
                 )
+            if beat_receipt is not None and beat_sfx:
+                beat_receipt = _demote_beat_receipt(
+                    beat_receipt,
+                    sfx_ids=frozenset(row.request.id for row in beat_sfx),
+                    reason="compile_dropped",
+                )
+    if beat_receipt is not None:
+        try:
+            _record_phone_beat_events(variant_id=spec["variant_id"], receipt=beat_receipt)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
@@ -6733,6 +6882,9 @@ def _run_phone_voiceover_montage_job(
                 new_entry[TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
         if sfx_choice_receipt is not None:
             new_entry["phone_sfx_choice_receipt"] = sfx_choice_receipt
+        if beat_receipt is not None:
+            # KRI-1598: where each named sound cue landed (montage clock), or why not.
+            new_entry["phone_beat_receipt"] = beat_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
@@ -10222,6 +10374,9 @@ def _run_phone_subtitled_job(
             talking_title_duration_s = float(_raw_hold)
     title_rows: list[dict] = []
     title_receipt: dict[str, Any] | None = None
+    # KRI-1612: the model's intro-scene answer asked for in this run, pinned on the job at the
+    # end (`pin_model_pick`); ``None`` when nothing new was asked.
+    intro_model_pin: dict[str, Any] | None = None
     # KRI-514: the creator's closing text ("a 'MY PICK' badge"), a second row on
     # the same lane over the ending. Read only while its rollout is on, so the
     # flag-off recipe and variant stay byte-identical.
@@ -11787,7 +11942,15 @@ def _run_phone_subtitled_job(
                 caption_look=protected_caption_look,
                 **text_canvas,
             )
+            title_scene_plan: Mapping[str, Any] | None = snapshot
             if talking_title_text:
+                title_scene_plan, intro_model_pin = _intro_scene_model_plan(
+                    snapshot,
+                    talking_title_text,
+                    job_id=job_id,
+                    reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
+                    spoken_language=str(all_candidates.get("language") or "") or None,
+                )
 
                 def _place_title(
                     look_caption_avoid: Any, *, logo_below_band: bool = False
@@ -11803,10 +11966,11 @@ def _run_phone_subtitled_job(
                         position_x=speaker_position_x or 0.0,
                         protected=protected_plan,
                         caption_avoid=protected_caption_avoid,
-                        title_look_plan=snapshot,
+                        title_look_plan=title_scene_plan,
                         reserve_logo=beats_enabled and _asks_title_logo(all_candidates),
                         look_caption_avoid=look_caption_avoid,
                         logo_below_band=logo_below_band,
+                        spoken_language=str(all_candidates.get("language") or "") or None,
                         **text_canvas,
                     )
 
@@ -14140,6 +14304,10 @@ def _run_phone_subtitled_job(
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo/video as referenced.
             current[PHONE_VISUALS_FIELD] = visual_rows
+        # KRI-1612: pin the model's intro-scene answer so a re-render draws the same scene.
+        from app.pipeline.intro_scene_pick import pin_model_pick  # noqa: PLC0415
+
+        current = pin_model_pick(current, intro_model_pin)
         job.assembly_plan = current
         from app.pipeline.phone_initial_split_screen import compile_initial_split_screen
 
@@ -14161,7 +14329,9 @@ def _run_phone_subtitled_job(
             "captions": list(cues or []),
             **(
                 {
-                    "title": title_look_text(title_rows) or title_rows[0]["text"],
+                    "title": intro_plain_text(title_rows)
+                    or title_look_text(title_rows)
+                    or title_rows[0]["text"],
                     "title_bar_id": title_rows[0].get("id"),
                 }
                 if title_rows
@@ -14607,7 +14777,12 @@ def _phone_tight_pause_cut(
             else {}
         )
         new_plan, report = apply_tight_pauses(
-            cut_plan, clip_path, list(words), duration_s, **take_kwargs
+            cut_plan,
+            clip_path,
+            list(words),
+            duration_s,
+            relative_noise=settings.tight_pause_relative_floor_enabled,
+            **take_kwargs,
         )
         receipt = report.to_variant()
     except Exception as exc:  # noqa: BLE001 - the consented plan stands
@@ -14698,9 +14873,17 @@ def _measure_take_join_gaps(
     One row per pair of neighbours: ``gap_s`` = the tail the first still plays + the lead-in the
     next still plays (``None`` when either take's audio could not be measured). An uncut take
     (``plan`` None) plays whole."""
-    from app.pipeline.tight_pause_cut import measure_silence_spans  # noqa: PLC0415
+    from app.pipeline.tight_pause_cut import measure_take_silences  # noqa: PLC0415
 
-    spans = [measure_silence_spans(path, duration_s=duration) for _plan, path, duration in takes]
+    # KRI-1524: a take recorded hot is measured against its own floor (0.0 s otherwise).
+    spans = [
+        measure_take_silences(
+            path,
+            duration_s=duration,
+            relative_noise=settings.tight_pause_relative_floor_enabled,
+        )
+        for _plan, path, duration in takes
+    ]
     rows: list[dict[str, Any]] = []
     for index in range(len(takes) - 1):
         left, right = spans[index], spans[index + 1]
@@ -14831,6 +15014,9 @@ def _trim_take_joins(
         return replace(plan, keep_segments=keep, removed=removed, time_saved_s=saved)
 
     for index, (_plan, path, duration_s) in enumerate(takes):
+        # Unchanged by KRI-1524: this trim cuts by measured spans with no voice guard, so a take
+        # recorded loud keeps the old (deaf, so trim-nothing) measure here; only the guarded
+        # tight / long pass cuts it.
         spans = measure_silence_spans(path, duration_s=duration_s)
         if not spans:
             continue
@@ -14911,7 +15097,12 @@ def _phone_long_pause_cut(
         from app.pipeline.tight_pause_cut import apply_tight_pauses  # noqa: PLC0415
 
         new_plan, report = apply_tight_pauses(
-            cut_plan, clip_path, list(words), duration_s, min_pause_s=MAX_PAUSE_S
+            cut_plan,
+            clip_path,
+            list(words),
+            duration_s,
+            min_pause_s=MAX_PAUSE_S,
+            relative_noise=settings.tight_pause_relative_floor_enabled,
         )
         receipt = report.to_variant()
     except Exception as exc:  # noqa: BLE001 - the consented plan stands
@@ -15582,6 +15773,7 @@ def _style_rows_keeping_title_look(rows: list[dict], *, job_id: str, canvas: Any
     styled = [row if is_title_look_row(row) else restyled[row["id"]] for row in rows]
     # Q1 run 4: nothing measured the pixels under the final title block; outline a line the
     # footage swallows (`TITLE_LEGIBILITY_ENABLED`). Off or unmeasured: the rows as they were.
+    from app.pipeline.intro_scene_pick import intro_ink_pass  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
     from app.pipeline.phone_title_legibility import title_legibility_pass  # noqa: PLC0415
     from app.services.phone_text_styling import (  # noqa: PLC0415
@@ -15589,10 +15781,13 @@ def _style_rows_keeping_title_look(rows: list[dict], *, job_id: str, canvas: Any
         register_title_legibility,
     )
 
+    title_canvas = canvas if canvas is not None else _STORY_CANVAS
+    # KRI-1611: an intro scene takes the one ink of its pinned order that reads on the take.
+    styled = intro_ink_pass(styled, generation_title_frames(), canvas=title_canvas)
     styled, legibility_receipt = title_legibility_pass(
         styled,
         generation_title_frames(),
-        canvas=canvas if canvas is not None else _STORY_CANVAS,
+        canvas=title_canvas,
     )
     register_title_legibility(legibility_receipt)
     return styled
@@ -15938,6 +16133,7 @@ def _phone_talking_title_rows(
     reserve_logo: bool = False,
     look_caption_avoid: Any = None,
     logo_below_band: bool = False,
+    spoken_language: str | None = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
@@ -15964,6 +16160,26 @@ def _phone_talking_title_rows(
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     timeline_s = sum(max(0.0, end - start) for start, end in keep_segments)
+    scene_title = _intro_scene_title_rows(
+        opening_title,
+        duration_s=duration_s,
+        timeline_s=timeline_s,
+        binding=binding,
+        clip_path=clip_path,
+        keep_segments=keep_segments,
+        landscape_fit=landscape_fit,
+        position_x=position_x,
+        protected=protected,
+        caption_avoid=caption_avoid,
+        canvas=canvas,
+        title_look_plan=title_look_plan,
+        reserve_logo=reserve_logo,
+        look_caption_avoid=look_caption_avoid,
+        logo_below_band=logo_below_band,
+        spoken_language=spoken_language,
+    )
+    if scene_title is not None:
+        return scene_title
     rows: list[dict] | None = None
     position: str | None = None
     if settings.title_look_enabled:
@@ -16047,6 +16263,147 @@ def _phone_talking_title_rows(
     except Exception:  # noqa: BLE001 - observability only
         pass
     return placed_rows, receipt
+
+
+def _intro_scene_model_plan(
+    snapshot: Mapping[str, Any] | None,
+    title: str,
+    *,
+    job_id: str,
+    reserve_logo: bool,
+    spoken_language: str | None,
+) -> tuple[Mapping[str, Any] | None, dict[str, Any] | None]:
+    """KRI-1612: ``(plan the title is placed with, new model answer to pin)``. Asks the intro-scene
+    agent once, here, before the title is placed (placement can run twice per render). Not asked
+    when the model arm was not stamped, an answer is already pinned, or the scene would not apply
+    (a logo above the title, a pinned text rule). Never raises: the plan is returned unchanged."""
+    try:
+        from app.pipeline.intro_scene_pick import (  # noqa: PLC0415
+            has_text_ask,
+            language_of,
+            resolve_for_render,
+        )
+        from app.services.phone_text_styling import generation_title_frames  # noqa: PLC0415
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        policy = current_phone_text_policy() or {}
+        plan, pin = resolve_for_render(
+            snapshot,
+            title,
+            applies=settings.title_look_enabled and not reserve_logo and not has_text_ask(policy),
+            language=language_of(title, spoken_language),
+            footage_notes=str(policy.get("_footage_mood") or ""),
+            frames=generation_title_frames(),
+            job_id=job_id,
+        )
+        if pin is not None:
+            try:
+                record_pipeline_event("phone", "intro_scene_model", dict(pin))
+            except Exception:  # noqa: BLE001 - observability only
+                pass
+        return plan, pin
+    except Exception as exc:  # noqa: BLE001 - a styled intro never blocks a render
+        log.warning("intro_scene.model_plan_failed", error=str(exc)[:200])
+        return snapshot, None
+
+
+def _intro_scene_title_rows(
+    opening_title: str,
+    *,
+    duration_s: float | None,
+    timeline_s: float,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+    position_x: float,
+    protected: Any,
+    caption_avoid: Any,
+    canvas: Any,
+    title_look_plan: Mapping[str, Any] | None,
+    reserve_logo: bool,
+    look_caption_avoid: Any,
+    logo_below_band: bool,
+    spoken_language: str | None,
+) -> tuple[list[dict], dict[str, Any] | None] | None:
+    """KRI-1611: the stamped intro scene (`intro_scene_pick`) as the opening title's rows, placed
+    with the real `place_title_look` and used only when that receipt is clean. ``None`` (today's
+    rows, byte-identical) when the job carries no stamp, she asked for a logo above the title,
+    a text rule is pinned, or no stamped candidate fits this footage. Read from the stamp, never
+    the flag; the same call serves the re-placement after the captions are cleared."""
+    from app.pipeline.intro_scene_pick import (  # noqa: PLC0415
+        ask_for_fit,
+        fit_intro_scene,
+        has_text_ask,
+        language_of,
+        pinned_intro_scene,
+    )
+
+    ask = pinned_intro_scene(title_look_plan)
+    if ask is None or reserve_logo or not settings.title_look_enabled:
+        return None
+    if has_text_ask(current_phone_text_policy() or {}):
+        return None
+    # KRI-1612: the seeded stamp as it is, or the model arm's one pinned scene (a decline, a
+    # failed or missing answer: today's rows).
+    ask, arm_info = ask_for_fit(ask)
+    if ask is None:
+        try:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            record_pipeline_event("phone", "intro_scene", {"reason": "model_no_scene", **arm_info})
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+        return None
+    try:
+        from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+        from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+        from app.pipeline.phone_title_look import place_title_look  # noqa: PLC0415
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        canvas = canvas if canvas is not None else _STORY_CANVAS
+        display_width, display_height = display_dims(binding.original)
+        scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
+
+        def place(rows: list[dict], position: str | None) -> tuple[list[dict], dict[str, Any]]:
+            window = (float(rows[0]["start_s"]), float(rows[0]["end_s"]))
+            common = {
+                "clip_path": clip_path,
+                "keep_segments": keep_segments,
+                "display_width": display_width,
+                "display_height": display_height,
+                "canvas": canvas,
+                "scale": scale,
+                "position_x": position_x,
+                "avoid": caption_avoid(window) if caption_avoid else (),
+                **_protected_placement_kwargs(protected),
+            }
+            if not caption_avoid and look_caption_avoid:
+                common["avoid"] = look_caption_avoid(window)
+            return place_title_look(
+                rows, position=position, logo_below_band=logo_below_band, **common
+            )
+
+        rows, receipt, info = fit_intro_scene(
+            ask,
+            opening_title,
+            canvas=canvas,
+            timeline_duration_s=timeline_s,
+            duration_s=duration_s,
+            language=language_of(opening_title, spoken_language),
+            place=place,
+        )
+        info = {**info, **arm_info}
+        try:
+            record_pipeline_event("phone", "intro_scene", info)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
+        if rows is None or receipt is None:
+            return None
+        return rows, {**receipt, "intro_scene": info.get("chosen")}
+    except Exception as exc:  # noqa: BLE001 - a styled intro never blocks a render
+        log.warning("intro_scene.title_failed", error=str(exc)[:200])
+        return None
 
 
 def _phone_saved_title_rule() -> dict:
@@ -18037,6 +18394,7 @@ def _narrated_footage_fit(
     media_id_for_clip: Callable[[str], str | None],
     brief: Any,
     job_id: str,
+    spoken_words: Sequence[Any] = (),
 ) -> _NarratedFootageFit | None:
     """`fit_steps_to_footage` over this job's steps, failing open (KRI-1466).
 
@@ -18046,6 +18404,11 @@ def _narrated_footage_fit(
     order intent, or the brief's ``last_clip``), and the last clip when it should play on
     after the voice (KRI-842), keep their whole step. Any failure returns None and the steps
     render as they were; the outcome is on the trace.
+
+    Tahini run (``NARRATED_CUT_PACE_ENABLED``): the approved brief's typed pace
+    (`brief_cut_pace_s`) and its clip-scoped word cues (`_narrated_clip_cues`, timed on the
+    voiceover's ``spoken_words``) are passed on, and in-points round down. A clip shown again
+    on its word takes the moment named for that word; its step elsewhere does not.
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -18080,13 +18443,39 @@ def _narrated_footage_fit(
             for row in ((media_snapshot or {}).get("clip_assignments") or [])
             if isinstance(row, Mapping) and isinstance(row.get("analysis"), Mapping)
         }
+        pace_on = bool(settings.narrated_cut_pace_enabled)
+        cut_s: float | None = None
+        cues: list[Any] = []
+        cue_names: dict[str, str] = {}
+        if pace_on and brief is not None:
+            from app.kria.narrated_render_checks import brief_cut_pace_s  # noqa: PLC0415
+
+            live = list(brief.live())
+            cut_s = brief_cut_pace_s(live)
+            media_by_key = {
+                **{proxy_names[m]: m for m in durations if proxy_names.get(m)},
+                **{m: m for m in durations},
+            }
+            cues, cue_names = _narrated_clip_cues(
+                live, steps=steps, words=spoken_words, media_by_key=media_by_key
+            )
+        # (media, words) of a clip that comes back on its word: that word's moment is the cue's.
+        reshown = {
+            (cue.media_id, cue_names[cue.cue_id])
+            for cue in cues
+            if not any(
+                s.start_s <= cue.at_s < s.end_s and str(s.media_id) == cue.media_id for s in steps
+            )
+        }
         words_by_step: dict[str, list[str]] = {}
         rendered_by_step: dict[str, dict[str, Any]] = {}
         stored_by_step: dict[str, Mapping[str, Any]] = {}
         for step, clip_id in zip(steps, step_clip_ids, strict=True):
             media_id = str(step.media_id)
             keys = [key for key in (media_id, proxy_names.get(media_id)) if key]
-            words = [w for key in keys for w in words_by_key.get(key, [])]
+            words = [
+                w for key in keys for w in words_by_key.get(key, []) if (media_id, w) not in reshown
+            ]
             if not words:
                 continue
             words_by_step[str(step.step_id)] = list(dict.fromkeys(words))
@@ -18133,6 +18522,22 @@ def _narrated_footage_fit(
             # The brief names the clip to end on, or the last clip plays on after the voice
             # (KRI-842): nothing may follow the last step.
             keep_whole.add(str(steps[-1].step_id))
+        # Tahini run: where each cued clip shows what the creator named it for, by the same
+        # reading of its analysis (the render's, else the chat's stored record).
+        cue_moments = _narrated_cue_moments(
+            cues,
+            cue_names,
+            steps=steps,
+            step_clip_ids=step_clip_ids,
+            meta_by_clip=meta_by_clip,
+            stored=stored,
+            durations=durations,
+            locate=located_step_moments,
+        )
+        cues = [
+            replace(cue, moment=(m.start_s, m.end_s)) if (m := cue_moments.get(cue.cue_id)) else cue
+            for cue in cues
+        ]
         # The approved plan is the only word on reuse (never the request's text, KRI-470):
         # footage plays a second time only when it says `allow_repeat`.
         fit = fit_steps_to_footage(
@@ -18141,7 +18546,11 @@ def _narrated_footage_fit(
             moments={step_id: (m.start_s, m.end_s) for step_id, m in moments.items()},
             keep_whole=keep_whole,
             allow_replay=strategy.get("video_reuse_policy") == "allow_repeat",
+            **({"cut_s": cut_s, "cues": cues, "floor_in_points": True} if pace_on else {}),
         )
+        for cue_id, step_id in fit.cue_step_ids.items():
+            if cue_id in cue_moments:
+                moments[step_id] = cue_moments[cue_id]
     except Exception as exc:  # noqa: BLE001 - a better cut never costs the creator the video
         log.warning("narrated_footage_fit_failed", job_id=job_id, error=str(exc))
         record_pipeline_event(
@@ -18166,9 +18575,120 @@ def _narrated_footage_fit(
                 }
                 for step_id, moment in moments.items()
             ],
+            **(
+                {"cut_s": cut_s, "cue_steps": dict(fit.cue_step_ids), "cues": len(cues)}
+                if pace_on
+                else {}
+            ),
         },
     )
     return _NarratedFootageFit(fit=fit, moments=moments)
+
+
+def _narrated_clip_cues(
+    requirements: Sequence[Any],
+    *,
+    steps: Sequence[Any],
+    words: Sequence[Any],
+    media_by_key: Mapping[str, str],
+) -> tuple[list[Any], dict[str, str]]:
+    """Tahini run: the approved brief's clip-scoped word cues, timed on the voiceover.
+
+    A live non-text row scoped to one clip that names the words it plays on ("the fork bite
+    on "grab a fork"", `clip_cue_triggers`) is one `ClipCue` per named phrase found in the
+    voiceover, from the first word's start to the last word's end. Where the phrase is said
+    more than once, the time the step on screen already shows the clip wins (nothing to
+    change), else the first. Returns the cues and, by cue id, the row's own words for the shot
+    (to find the moment it names). A phrase the voiceover never says is no cue.
+    """
+    from app.kria.narrated_render_checks import clip_cue_triggers  # noqa: PLC0415
+    from app.pipeline.narrated_footage_fit import ClipCue  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import fold_tokens  # noqa: PLC0415
+
+    tokens: list[str] = []
+    owners: list[int] = []
+    for index, word in enumerate(words):
+        folded = fold_tokens(getattr(word, "text", ""))
+        tokens.extend(folded)
+        owners.extend([index] * len(folded))
+    cues: list[Any] = []
+    names: dict[str, str] = {}
+    for req in requirements:
+        asked = clip_cue_triggers(req)
+        media_id = media_by_key.get(asked[0]) if asked is not None else None
+        if asked is None or media_id is None:
+            continue
+        for number, trigger in enumerate(asked[1], start=1):
+            wanted = fold_tokens(trigger)
+            said = [
+                (owners[i], owners[i + len(wanted) - 1])
+                for i in range(len(tokens) - len(wanted) + 1)
+                if wanted and tokens[i : i + len(wanted)] == wanted
+            ]
+            if not said:
+                continue
+
+            def shown(span: tuple[int, int], media: str = media_id) -> bool:
+                at = float(words[span[0]].start_s)
+                return any(s.start_s <= at < s.end_s and str(s.media_id) == media for s in steps)
+
+            first, last = next((span for span in said if shown(span)), said[0])
+            cue_id = f"{req.id}:{number}"
+            cues.append(
+                ClipCue(
+                    cue_id=cue_id,
+                    media_id=media_id,
+                    at_s=round(float(words[first].start_s), 3),
+                    end_s=round(max(float(words[last].end_s), float(words[first].start_s)), 3),
+                )
+            )
+            names[cue_id] = " ".join(str(req.description or "").split())
+    return cues, names
+
+
+def _narrated_cue_moments(
+    cues: Sequence[Any],
+    names: Mapping[str, str],
+    *,
+    steps: Sequence[Any],
+    step_clip_ids: Sequence[str],
+    meta_by_clip: Mapping[str, Any],
+    stored: Mapping[str, Any],
+    durations: Mapping[str, float],
+    locate: Callable[..., Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Tahini run: by cue id, the moment its row's words name inside the cued clip (KRI-1466's
+    `located_step_moments`, on this render's analysis, else the chat's stored record)."""
+    from app.pipeline.phone_narrated_plan import NarratedPhoneStep  # noqa: PLC0415
+
+    clip_by_media = {str(s.media_id): c for s, c in zip(steps, step_clip_ids, strict=True)}
+    found: dict[str, Any] = {}
+    for cue in cues:
+        words = names.get(cue.cue_id) or ""
+        if not words or cue.media_id not in durations:
+            continue
+        probe = NarratedPhoneStep(
+            step_id=f"cue-{cue.cue_id}", media_id=cue.media_id, start_s=0.0, end_s=1.0
+        )
+        rendered = [
+            row if isinstance(row, Mapping) else getattr(row, "model_dump", dict)()
+            for row in (
+                getattr(meta_by_clip.get(clip_by_media.get(cue.media_id, "")), "best_moments", None)
+                or []
+            )
+        ]
+        analysis = {"best_moments": rendered} if rendered else stored.get(cue.media_id)
+        if not analysis:
+            continue
+        located = locate(
+            [probe],
+            words_by_step={probe.step_id: [words]},
+            analysis_by_step={probe.step_id: analysis},
+            durations=durations,
+        )
+        if probe.step_id in located:
+            found[cue.cue_id] = located[probe.step_id]
+    return found
 
 
 def _narrated_alignment_record(
@@ -18207,6 +18727,11 @@ def _narrated_alignment_record(
     fill_ids = footage_fit.fit.fill_step_ids if footage_fit is not None else frozenset()
     moments = footage_fit.moments if footage_fit is not None else {}
     moment_at = footage_fit.fit.moment_at_s if footage_fit is not None else {}
+    # Tahini run: a clip shown again on its named word is the creator's shot (its labels), but
+    # never the first / last seat its earlier step holds.
+    shown_again = (
+        frozenset(footage_fit.fit.cue_step_ids.values()) if footage_fit is not None else frozenset()
+    )
     labels_by_key: dict[str, list[str]] = {}
     placed_by_key: dict[str, list[dict[str, str]]] = {}
     for intent in strategy.get("resolved_clip_intents") or []:
@@ -18218,7 +18743,13 @@ def _narrated_alignment_record(
         name = " ".join(str(intent.get("attribute") or "").split())
         if not name:
             continue
-        spot = intent.get("position") if intent.get("op") == "order" else None
+        # A first / last row an earlier turn already seated names the clip, but no longer puts it
+        # there (KRI-1594: the creator has moved the clips since): its words stay, its spot goes.
+        spot = (
+            intent.get("position")
+            if intent.get("op") == "order" and not intent.get("already_seated")
+            else None
+        )
         for assignment in intent.get("assignments") or []:
             key = assignment.get("media_id") if isinstance(assignment, Mapping) else None
             if not key:
@@ -18254,7 +18785,7 @@ def _narrated_alignment_record(
                 "media_id": media_id,
                 "clip": clip,
                 "labels": [] if fill else labels,
-                "placed": [] if fill else placed,
+                "placed": [] if fill or str(step.step_id) in shown_again else placed,
                 "start_s": round(float(step.start_s), 3),
                 "end_s": round(float(step.end_s), 3),
                 "text": spoken[:_NARRATED_STEP_TEXT_CHARS],
@@ -18264,6 +18795,7 @@ def _narrated_alignment_record(
                     else {}
                 ),
                 **({"fill": True} if fill else {}),
+                **({"shown_on_word": True} if str(step.step_id) in shown_again else {}),
                 **({"source_start_s": source_start} if source_start > 0 else {}),
                 **(
                     {
@@ -18947,7 +19479,15 @@ def _run_phone_narrated_job(
                     variant_id="narrated",
                     glossary=_caption_glossary(snapshot, all_candidates),
                 )
-                cues = build_plain_cues(caption_transcript.words, attach_words=True)
+                # Tahini run: a spoken list's "2." stays with its words (off: as before).
+                from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+                    narrated_caption_blocks,
+                    narrated_cue_blocks,
+                )
+
+                cues = build_plain_cues(
+                    caption_transcript.words, attach_words=True, **narrated_cue_blocks()
+                )
                 cues = correct_caption_cues(
                     cues,
                     detected_lang,
@@ -18972,6 +19512,9 @@ def _run_phone_narrated_job(
                     cues = _apply_creator_spellings(
                         cues, _caption_glossary(snapshot, all_candidates)
                     )
+                # Tahini run: the finished sentences cut into short blocks (the phone Talking
+                # budget); off keeps the 14-word sentence cues.
+                cues = narrated_caption_blocks(cues)
                 # KRI-1177: this writer draws the typed caption look too, so the asked case is
                 # the cue text here as well (else its receipt reads as a look later changed).
                 cues = generation_caption_cues(cues, language=detected_lang)
@@ -19030,6 +19573,7 @@ def _run_phone_narrated_job(
                     media_id_for_clip=_media_id_for_clip,
                     brief=narrated_brief,
                     job_id=job_id,
+                    spoken_words=list(transcript.words),
                 )
                 if footage_fit is not None:
                     steps = footage_fit.fit.steps
@@ -19144,8 +19688,14 @@ def _run_phone_narrated_job(
                         bound=bool(snapshot.get("creator_brief_binding")),
                     )
 
-            opening_title_end_s = narrated_title_end_s(
-                transcript.words[0].end_s if transcript.words else None
+            # Tahini run: held to the end of the first sentence (2.5-3 s); off: a second
+            # after the first word, as the cloud narrated intro.
+            from app.pipeline.phone_narrated_plan import narrated_title_hold_end_s  # noqa: PLC0415
+
+            opening_title_end_s = (
+                narrated_title_hold_end_s(transcript.words)
+                if settings.narrated_title_legibility_enabled
+                else narrated_title_end_s(transcript.words[0].end_s if transcript.words else None)
             )
             spoken_rows: list[dict] = []
             spoken_receipt: dict | None = None
@@ -35222,19 +35772,18 @@ def _narrated_creator_clip_labels(
             clip_by_media.setdefault(key, clip_id)
 
     # Same seating as `clip_order_sequence.apply_sequence`: walk the order intents in
-    # listed order; a clip named by two intents belongs to the first one.
+    # listed order; a clip named by two intents belongs to the first one. Which rows seat is
+    # the one rule the planner, the contract and the phone preflight read (KRI-1594,
+    # `clip_order_sequence.seats_now`): a row an earlier turn already seated, which the
+    # creator has moved the clips away from since, seats nothing.
+    from app.services.clip_order_sequence import seats_now  # noqa: PLC0415
+
     pinned: dict[str, list[str]] = {"first": [], "last": []}
     groups: list[list[str]] = []
     claimed: set[str] = set()
     for intent in resolved:
         position = intent.get("position")
-        if (
-            intent.get("op") != "order"
-            or position not in (None, "first", "last")
-            or intent.get("order_by")
-            or intent.get("placeholder")
-            or intent.get("status") not in (None, "resolved")
-        ):
+        if not seats_now(intent) or intent.get("status") not in (None, "resolved"):
             continue
         members: list[str] = []
         for assignment in intent.get("assignments") or []:

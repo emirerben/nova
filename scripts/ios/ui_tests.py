@@ -39,6 +39,8 @@ PR_SHARD_TARGET_SECONDS = 35 * 60
 # Shard 1 of ios.yml also runs the unit suite; PR UI legs pass 0.
 UNIT_OVERHEAD_SECONDS = 7 * 60
 FEATURES = ("creation", "projects", "editor")
+# Accessibility identifiers of the editor's own controls start with this.
+EDITOR_CONTROL = '"native-editor-'
 FOCUSED = tuple(f"smoke,{group}" for group in FEATURES)
 UI_TEST_ROOT = "src/apps/ios/Tests/KriaUITests/"
 SWIFT_TEST_ROOT = "src/apps/ios/Tests/"
@@ -94,8 +96,9 @@ def manifest(root=ROOT):
     """Groups derived from the UI test sources, plus the hand-kept inputs.
 
     The file holds only what source cannot say: each XCTestCase class's feature
-    group (`classes`), the few tests that differ from it (`overrides`), the
-    smoke subset, and which app sources map to a group. A test method added,
+    group (`classes`), the few tests that differ from it (`overrides`), the tests
+    that also run with a second group because they cross into its screens
+    (`also`), the smoke subset, and which app sources map to a group. A test method added,
     renamed or removed inside a classified class needs no edit; an entry that
     names a test that is gone is ignored here and reported by `check`. A class absent
     from `classes` is not silently skipped: its tests join smoke, which every
@@ -113,6 +116,9 @@ def manifest(root=ROOT):
         raise ValueError("Invalid UI group manifest")
     if not set(data["sources"].values()) <= set(FEATURES):
         raise ValueError("Invalid source mapping")
+    also_entries = data.get("also", {})
+    if not set(also_entries.values()) <= set(FEATURES):
+        raise ValueError("Invalid second-group mapping")
     # An entry for a test that is gone selects nothing; `check` names it. Selection
     # keeps working so a rename cannot turn a PR's UI leg red without a message.
     overrides = {name: group for name, group in overrides.items() if name in names}
@@ -127,8 +133,16 @@ def manifest(root=ROOT):
         if not tests:
             raise ValueError(f"Empty or invalid UI group: {group}")
     groups["smoke"] = sorted(smoke) + unclassified
+    # A test's one group stays in `groups` (file_group needs a file to resolve to a single
+    # group). `also` adds tests to a second group's selection without moving them.
+    also = {group: [] for group in FEATURES}
+    for name, group in sorted(also_entries.items()):
+        test = f"KriaUITests/{name}"
+        if test in inventory and test not in groups[group]:
+            also[group].append(test)
     return {
         "groups": groups,
+        "also": also,
         "sources": data["sources"],
         "unclassified": sorted({test.split("/")[1] for test in unclassified}),
     }
@@ -160,6 +174,7 @@ def stale_entries(root=ROOT):
     return {
         "classes": sorted(set(data["classes"]) - classes),
         "overrides": sorted(set(data["overrides"]) - names),
+        "also": sorted(set(data.get("also", {})) - names),
         "smoke": sorted(set(data["smoke"]) - inventory),
         "sources": sorted(
             path for path in data["sources"] if not (root / path).is_file()
@@ -182,6 +197,12 @@ def check(root=ROOT, base=None, journeys=None, after_sync=False):
         manifest(root)
     except (OSError, ValueError, KeyError, TypeError) as error:
         problems.append(f"UI registry unreadable: {error}")
+    problems += [
+        f"UI test {name} uses editor controls (an identifier starting {EDITOR_CONTROL!r}) but "
+        "runs only with its own group: add it to `also` in scripts/ios/ui-test-groups.json "
+        'as "editor", so a change to the editor runs it'
+        for name in editor_crossers(root)
+    ]
     problems += stale_followers(root, base, journeys)
     problems += missing_swift_files(root, journeys)
     if problems and after_sync:
@@ -198,6 +219,37 @@ def check(root=ROOT, base=None, journeys=None, after_sync=False):
             "file rename first); delete an entry whose test was removed"
         )
     return problems
+
+
+def editor_crossers(root=ROOT):
+    """Tests outside the editor group whose own body names an editor control and
+    that no editor selection runs.
+
+    A change to the editor selects the editor group. A creation or slide-post test
+    that crosses into editor screens was left out of that selection: PR #2518
+    changed the editor's Save and its checks went green without the one UI test
+    that had shown the bug (`DesignPickerUITests`, group creation).
+
+    The rule reads only the test method's own text. A test that reaches the editor
+    through a helper is not seen: of 25 such tests found in the steps of a full
+    run (45426669125), 16 name a control themselves. The others are listed by hand.
+    """
+    try:
+        data = manifest(root)
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    runs_with_editor = set(data["groups"]["editor"]) | set(data["also"]["editor"])
+    found = []
+    for path in sorted((root / UI_TEST_ROOT).rglob("*.swift")):
+        source = path.read_text()
+        classes = re.findall(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b", source)
+        if len(classes) != 1:
+            continue
+        for name, body in method_bodies(source).items():
+            test = f"KriaUITests/{classes[0]}/{name}"
+            if EDITOR_CONTROL in body and test not in runs_with_editor:
+                found.append(f"{classes[0]}/{name}")
+    return found
 
 
 def unclassified(root=ROOT):
@@ -303,6 +355,9 @@ def follow_test_renames(data, renames):
         if old in data["overrides"]:
             data["overrides"][new] = data["overrides"].pop(old)
             changed.append(f"{old} -> {new}")
+        if old in data.get("also", {}):
+            data["also"][new] = data["also"].pop(old)
+            changed.append(f"also {old} -> {new}")
         smoke = [
             f"KriaUITests/{new}" if test == f"KriaUITests/{old}" else test
             for test in data["smoke"]
@@ -489,6 +544,8 @@ def sync(root=ROOT, base=None, journeys=None):
         if text != original:
             path.write_text(text)
     data["classes"] = dict(sorted(data["classes"].items()))
+    if "also" in data:
+        data["also"] = dict(sorted(data["also"].items()))
     MANIFEST.write_text(json.dumps(data, indent=2) + "\n")
     return changed
 
@@ -588,7 +645,8 @@ def select_groups(paths, root=ROOT, focused=None):
         group = groups.pop() if groups else None
         if group:
             covered = {
-                test.removeprefix("KriaUITests/") for test in data["groups"][group]
+                test.removeprefix("KriaUITests/")
+                for test in data["groups"][group] + data["also"][group]
             }
             tests -= covered
         value = ",".join(["smoke", *([group] if group else []), *sorted(tests)])
@@ -614,7 +672,7 @@ def expected_tests(value, root=ROOT):
         raise ValueError(f"Unknown UI tests selected: {sorted(unknown)}")
     return (
         set(data["groups"]["smoke"])
-        | (set(data["groups"][group]) if group else set())
+        | (set(data["groups"][group]) | set(data["also"][group]) if group else set())
         | selected
     )
 

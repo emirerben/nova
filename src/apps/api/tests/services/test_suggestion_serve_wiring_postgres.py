@@ -628,7 +628,8 @@ async def test_w8_the_hook_prompt_is_closed_and_the_legacy_chip_is_untouched(wor
     assert text.casefold() not in cards["hook"].prompt.casefold()
     out = sc.assemble_set(ctx, plan, hook_pick(text))
     chip = next(c for c in out.chips if c.kind == "hook")
-    assert chip.message == "Add a hook that matches the video"  # the KRI-756 chip keeps its words
+    # The KRI-756 chip keeps a closed, wordless prompt (KRI-1560 renamed it).
+    assert chip.message == "Find an opening title for my video"
 
 
 # ── W9 ──────────────────────────────────────────────────────────────────────────────

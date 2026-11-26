@@ -463,8 +463,12 @@ def test_j8_a_moment_on_the_word_is_not_blamed(monkeypatch) -> None:
 
     rows = _review(job, binding)
 
-    assert rows["r7"]["reason"] == "When you say Tor, clip 4 of 8 is on screen (9.8–14.7 s)."
-    assert rows["r4"]["reason"] == "When you say Zug, clip 1 of 8 is on screen (0.0–6.8 s)."
+    # KRI-1517: a cue naming its shot is judged against the clip the worker placed for it.
+    assert rows["r7"]["reason"] == (
+        "When you say Tor, the clip you named is on screen (9.8–14.7 s)"
+    )
+    assert rows["r7"]["status"] == "met"
+    assert rows["r4"]["reason"] == "When you say Zug, the clip you named is on screen (0.0–6.8 s)"
 
 
 def test_j8_a_moment_that_plays_late_is_said_so(monkeypatch) -> None:
@@ -487,10 +491,10 @@ def test_j8_a_moment_that_plays_late_is_said_so(monkeypatch) -> None:
     shown = _shown_at(clips, GOAL, 2.76)
     assert rows["r7"]["reason"] == (
         "When you say Tor, clip 4 of 4 is on screen (9.8–25.2 s), "
-        f"but the part you named comes at {shown:.1f} s."
+        f"but the part you named comes at {shown:.1f} s"
     )
     assert rows["r7"]["status"] == "partial"
-    # Another ask's cue on a clip with no located moment keeps its plain line.
-    assert rows["r4"]["reason"] == "When you say Zug, clip 1 of 4 is on screen (0.0–6.8 s)."
+    # Another ask's cue on a clip with no located moment: its shot is on screen (KRI-1517).
+    assert rows["r4"]["reason"] == "When you say Zug, the clip you named is on screen (0.0–6.8 s)"
     # The clip the creator ends on is still the last one.
     assert rows["r13"]["status"] == "met", rows["r13"]

@@ -32,6 +32,7 @@ def capability_job(monkeypatch: pytest.MonkeyPatch):
             "stillImages",
             "editorMedia",
             "clipTilt",
+            "clipDim",
             "clipTransitions",
             "freezeFrame",
             "crossfade",
@@ -39,6 +40,7 @@ def capability_job(monkeypatch: pytest.MonkeyPatch):
         ],
     )
     monkeypatch.setattr(settings, "media_tilt_enabled", True)
+    monkeypatch.setattr(settings, "clip_dim_enabled", True)
     variant = job.assembly_plan["variants"][0]
     sources = variant[EDITOR_SOURCES_FIELD]["sources"]
     for index in (2, 3, 4):

@@ -178,7 +178,7 @@ def make_session(owner):
 
 
 @pytest.fixture
-def journey(monkeypatch):
+def journey(monkeypatch, exclusive_notification_delivery):
     monkeypatch.setattr(settings, "mobile_jwt_secret", "ephemeral-notification-test-key")
     monkeypatch.setattr(settings, "token_encryption_key", Fernet.generate_key().decode())
     _fernet.cache_clear()

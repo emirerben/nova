@@ -1202,6 +1202,65 @@ remain intact. Diagnose picker failures from CI xcresult/logs before changing th
 suspected authorization race. Parallel execution on one simulator remains off:
 cloned simulators missed drawer controls in #1004.
 
+### UI tests and "the app is idle" (KRI-1604)
+
+Before each tap XCTest waits for the app to go idle, which includes "no UIKit
+animation is running". UIKit and XCTest both get that from counting the
+`animationDidStart:` and `animationDidStop:finished:` calls Core Animation
+sends to the animation group (`UIViewAnimationState`).
+
+Core Animation sometimes sends the start twice and the stop once for one
+animation. Every case seen is an animation whose layer was freed a few
+milliseconds after the animation was added, and SwiftUI frees 1 to 11 such
+layers on every keyboard move. Both starts come from QuartzCore's
+`run_animation_callbacks`. The count then never returns to zero and the next
+tap waits its full 60 s ("App animations complete notification not
+received"). Measured at about one keyboard move in 60 to 160. In the app
+nothing visible depends on that count: `keyboardDidShow` still arrives and the
+screen works.
+
+A second start is not always that defect. UIKit re-aims a sheet's running
+animations by starting them again, about 27 times per sheet, and stops each
+twice. Those layers are still there, and they must be counted as UIKit
+reports them, or the app would be called idle while the sheet still moves.
+
+`UITestAnimationStartGuard` (debug builds only) removes the wait without
+hiding anything a test checks:
+
+- It goes in when a UI test drives the app: at launch for `-ui-testing…`
+  launches, otherwise when XCTest's support code arrives in the process.
+- It notes which layer each UIKit animation was added to
+  (`CALayer addAnimation:forKey:`). A second start for an animation that has
+  not stopped **and whose layer is already freed** is not passed on. If its
+  second stop ever follows, that is dropped too, so the count cannot go below
+  zero. Every other call is passed on untouched.
+- XCTest hooks the same two methods after launch. A hook in front of the guard
+  would count the duplicate first, so the guard moves back in front when it
+  finds one.
+- It hooks a private UIKit class. If that class or a method the guard hooks is
+  gone, the app stops at launch with a message naming the guard, so a UI run
+  fails at once instead of going back to random 60 s waits.
+- Every drop is posted to the UI test bundle, whose principal class
+  (`UITestAnimationGuardLog`) prints `ANIMATION-GUARD dropped …` into the test
+  log, one line per event. `verify.sh` prints the totals per UI phase:
+  `UI idle (…): N waits of 60 s …; guard dropped M second starts on freed
+  layers, K of them got a stop later; J starts never stopped that the guard
+  did not catch`.
+- When an animation is freed with a start that was passed on and never
+  stopped, the guard did not catch that one. It prints
+  `ANIMATION-GUARD missed one …` with whether the layer was freed or still
+  there, so a 60 s wait that happens with the guard on names its animation.
+- A test that needs the app exactly as UIKit ships it launches with
+  `UI_TEST_ANIMATION_START_GUARD=off`.
+
+A 60 s wait with the guard on is a second cause, not this one: look at what
+was animating, do not add a retry. `verify.sh` raises it as a warning
+annotation and a job-summary line, the same way a test that passed only on
+retry is raised. It does not turn the run red by itself yet.
+
+The performance tests (`KriaPerfUITests`) launch with the guard off, so they
+measure the app as UIKit ships it.
+
 ## Native editor source assets
 
 `GET /generative-jobs/{job_id}/variants/{variant_id}/timeline` exposes additive

@@ -32,7 +32,7 @@ cut of it is a photo.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +43,9 @@ if TYPE_CHECKING:
 
 ONLY_KIND_FACT = "only_media_kind"
 INCLUDE_KIND_FACT = "include_media_kind"
+# KRI-1523: the manifest media ids of the creator's own videos a `select` ask keeps ("Use only the
+# good take: the second clip"); every other own video is left out.
+SELECTED_MEDIA_FACT = "selected_media_ids"
 # The clips the creator tapped or named, and the ones the server measured as too short to use
 # (KRI-1031): an exclusion settled this way can be judged against the finished timeline.
 _SETTLED_EVIDENCE = CREATOR_EVIDENCE | {LENGTH_EVIDENCE}
@@ -152,12 +155,60 @@ def exclusion_facts(
     )
 
 
+def chosen_clips_on() -> bool:
+    """KRI-1523 kill switch (`CHOSEN_CLIPS_ASK_ENABLED`)."""
+    from app.config import settings  # noqa: PLC0415
+
+    return settings.chosen_clips_ask_enabled
+
+
+def names_chosen_videos(req: Any) -> bool:
+    """KRI-1523: a ``select`` row carrying the typed ``selected_media_ids`` fact (a non-empty list):
+    the creator named which of their own videos to use ("Use only the good take: the second
+    clip"). Whether the ids name real videos is ``chosen_video_ids``'s question."""
+    facts = getattr(req, "facts", None) or {}
+    raw = facts.get(SELECTED_MEDIA_FACT) if isinstance(facts, Mapping) else None
+    return (
+        chosen_clips_on()
+        and getattr(req, "kind", None) == "select"
+        and isinstance(raw, list)
+        and bool(raw)
+    )
+
+
+def chosen_video_ids(req: Any, own_video_ids: Sequence[str]) -> tuple[str, ...] | None:
+    """KRI-1523: the creator's own videos a typed "use only these" ``select`` row names, in attach
+    order; None when it names none for sure.
+
+    Each listed id must be one of ``own_video_ids`` (the creator's attached videos, never a photo
+    or a Visuals ``asset-``), written whole or as a unique 6+ character tail (the model may drop
+    an own clip's ``analysis-proxy-ios-`` prefix, as it does in ``clip:`` scopes). A single id
+    that names nothing makes the whole row name nothing: a half-understood pick is never applied.
+    """
+    from app.kria.asset_holds import resolve_clip_scope  # noqa: PLC0415
+
+    if not names_chosen_videos(req) or not own_video_ids:
+        return None
+    own = list(dict.fromkeys(str(media_id) for media_id in own_video_ids))
+    chosen: set[str] = set()
+    for token in req.facts[SELECTED_MEDIA_FACT]:
+        media_id = resolve_clip_scope(token.strip(), own) if isinstance(token, str) else None
+        if media_id is None:
+            return None
+        chosen.add(media_id)
+    return tuple(media_id for media_id in own if media_id in chosen)
+
+
 __all__ = [
     "INCLUDE_KIND_FACT",
     "ONLY_KIND_FACT",
+    "SELECTED_MEDIA_FACT",
     "ExclusionFact",
+    "chosen_clips_on",
+    "chosen_video_ids",
     "exclusion_facts",
     "include_photo_ask",
+    "names_chosen_videos",
     "only_video_ask",
     "withdrawn_photo_asks",
 ]

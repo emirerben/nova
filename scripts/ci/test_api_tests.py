@@ -29,16 +29,32 @@ Ways the weight-packed shards can go wrong, written before the packing (KRI-1544
 16. Rows left by an earlier run in the same directory are judged as this run's.
 17. A test that needs git history is added, skips in the shards as allowed, and
     is never added to the job that has the history, so it runs nowhere.
+18. Per-worker databases (tests/_worker_database.py): the switch is off and the
+    run changes anyway; or it is on and pytest starts more workers than there
+    are databases, starts although creating them failed, or never receives the
+    switch because the workflow or conftest dropped its half.
+19. The switch is on and a worker ran on the shared database anyway (a later
+    edit moves the selection, a plugin imports the app first), and the shard is
+    green: the isolation is claimed and absent. Or the proof itself is hollow:
+    a worker wrote no row, the rows carry no database name, the name comes from
+    the environment while the already-imported app is on another database
+    (tests/test_ci_times_recorder.py), or pytest's own exit code is lost when
+    the proof passes.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().with_name("api-tests.py")
+REAL_API_ROOT = SCRIPT.parents[2] / "src/apps/api"
 spec = importlib.util.spec_from_file_location("api_tests", SCRIPT)
 api_tests = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -363,6 +379,148 @@ class ApiTestShardTests(unittest.TestCase):
             command[command.index("-n") : command.index("-n") + 3],
             ["-n", "auto", "--timeout=60"],
         )
+
+    def test_without_the_switch_the_run_is_the_one_it_was(self):
+        for value in (None, "0", "on"):
+            environ = {} if value is None else {api_tests.WORKER_DB_SWITCH: value}
+            self.assertIsNone(api_tests.worker_databases(environ, cpu_count=lambda: 4))
+        selected = api_tests.shard_files(self.api_root, 0)
+        command = api_tests.pytest_command(selected)
+        self.assertEqual(command, api_tests.pytest_command(selected, None))
+        self.assertEqual(command[command.index("-n") + 1], "auto")
+
+    def test_with_the_switch_pytest_gets_exactly_as_many_workers_as_databases(self):
+        environ = {api_tests.WORKER_DB_SWITCH: "1"}
+        self.assertEqual(api_tests.worker_databases(environ, cpu_count=lambda: 4), 4)
+        self.assertEqual(api_tests.worker_databases(environ, cpu_count=lambda: None), 1)
+        self.assertEqual(
+            api_tests.worker_database_command(4)[1:], ["-m", "tests._worker_database", "4"]
+        )
+        command = api_tests.pytest_command(api_tests.shard_files(self.api_root, 0), 4)
+        self.assertEqual(
+            command[command.index("-n") : command.index("-n") + 3], ["-n", "4", "--timeout=60"]
+        )
+
+    def run_main(self, environ, statuses, problems=()):
+        calls = []
+        proof = problems if callable(problems) else (lambda *arguments: list(problems))
+
+        def fake_run(command, **kwargs):
+            calls.append((command, dict(kwargs["env"])))
+            return mock.Mock(returncode=statuses[len(calls) - 1])
+
+        with (
+            mock.patch.object(api_tests.subprocess, "run", fake_run),
+            mock.patch.object(api_tests.os, "cpu_count", lambda: 4),
+            mock.patch.dict(api_tests.os.environ, environ, clear=True),
+            mock.patch.object(api_tests, "check_skips", lambda api_root: 0),
+            mock.patch.object(api_tests, "worker_database_problems", proof),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            return api_tests.main(["0"]), calls
+
+    def test_the_databases_are_made_before_pytest_and_a_failure_stops_the_shard(self):
+        url = "postgresql://postgres:postgres@localhost:5432/nova_test"
+        on = {api_tests.WORKER_DB_SWITCH: "1", "DATABASE_URL": url}
+        status, calls = self.run_main(on, [0, 0])
+        self.assertEqual(status, 0)
+        self.assertEqual(calls[0][0][1:4], ["-m", "tests._worker_database", "4"])
+        self.assertEqual(calls[1][0][0], "pytest")
+        self.assertIn("4", calls[1][0][calls[1][0].index("-n") + 1])
+        # Only pytest is told the copies exist, and only after they were made.
+        self.assertNotIn(api_tests.WORKER_DB_COPIED_FROM, calls[0][1])
+        self.assertEqual(calls[1][1][api_tests.WORKER_DB_COPIED_FROM], url)
+
+        status, calls = self.run_main(on, [3])
+        self.assertEqual(status, 3)
+        self.assertEqual(len(calls), 1, "pytest must not start without its databases")
+
+        status, calls = self.run_main({}, [0])
+        self.assertEqual(status, 0)
+        self.assertEqual([call[0][0] for call in calls], ["pytest"])
+        self.assertNotIn(api_tests.WORKER_DB_COPIED_FROM, calls[0][1])
+        self.assertEqual(calls[0][0][calls[0][0].index("-n") + 1], "auto")
+
+    def test_the_workflow_and_conftest_carry_their_half_of_the_switch(self):
+        repo = SCRIPT.parents[2]
+        workflow = (repo / ".github/workflows/ci.yml").read_text()
+        suite_step = workflow.split(
+            "      - name: Run API test shard with timing reports\n", 1
+        )[1].split("        run: python3 scripts/ci/api-tests.py", 1)[0]
+        self.assertIn(
+            f"          {api_tests.WORKER_DB_SWITCH}: "
+            "${{ vars.CI_API_DB_PER_WORKER == 'on' && '1' || '0' }}\n",
+            suite_step,
+        )
+        conftest = (repo / "src/apps/api/tests/conftest.py").read_text()
+        select = "_worker_database.select(os.environ)\n"
+        self.assertIn(select, conftest)
+        # Before the first fixture, so before any test or fixture imports the app.
+        self.assertLess(conftest.index(select), conftest.index("@pytest.fixture"))
+        self.assertNotIn("\nfrom app", conftest.split(select, 1)[0])
+        self.assertNotIn("\nimport app", conftest.split(select, 1)[0])
+        module = (repo / "src/apps/api/tests/_worker_database.py").read_text()
+        self.assertIn(f'SWITCH = "{api_tests.WORKER_DB_SWITCH}"\n', module)
+        self.assertIn(f'COPIED_FROM = "{api_tests.WORKER_DB_COPIED_FROM}"\n', module)
+
+    URL = "postgresql://postgres:postgres@localhost:5432/nova_test"
+
+    def startup_rows(self, databases):
+        directory = self.api_root / api_tests.TIMES
+        directory.mkdir(parents=True, exist_ok=True)
+        for worker, database in databases.items():
+            row = {"kind": "startup", "worker": worker, "seconds": 1.0, "items": 3}
+            if database is not None:
+                row["database"] = database
+            (directory / f"{worker}.jsonl").write_text(json.dumps(row) + "\n")
+
+    def problems(self, databases, workers=2):
+        self.startup_rows(databases)
+        expected = api_tests.worker_database_names(REAL_API_ROOT, self.URL, workers)
+        return api_tests.worker_database_problems(self.api_root, expected)
+
+    def test_the_expected_names_come_from_the_module_that_makes_the_copies(self):
+        self.assertEqual(
+            api_tests.worker_database_names(REAL_API_ROOT, self.URL, 3),
+            {"gw0": "nova_gw0_test", "gw1": "nova_gw1_test", "gw2": "nova_gw2_test"},
+        )
+
+    def test_every_worker_on_its_own_copy_is_no_problem(self):
+        self.assertEqual(self.problems({"gw0": "nova_gw0_test", "gw1": "nova_gw1_test"}), [])
+
+    def test_a_worker_on_the_shared_database_or_on_anothers_copy_is_named(self):
+        found = self.problems({"gw0": "nova_gw0_test", "gw1": "nova_test"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("gw1", found[0])
+        self.assertIn("nova_test", found[0])
+        found = self.problems({"gw0": "nova_gw1_test", "gw1": "nova_gw1_test"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("gw0", found[0])
+
+    def test_a_worker_that_left_no_row_or_no_database_name_is_a_problem(self):
+        self.assertTrue(self.problems({"gw0": "nova_gw0_test"}))
+        self.assertTrue(self.problems({"gw0": "nova_gw0_test", "gw1": None}))
+        shutil.rmtree(self.api_root / api_tests.TIMES)
+        expected = api_tests.worker_database_names(REAL_API_ROOT, self.URL, 2)
+        self.assertTrue(api_tests.worker_database_problems(self.api_root, expected))
+
+    def test_a_green_pytest_with_a_worker_on_the_shared_database_fails_the_shard(self):
+        on = {api_tests.WORKER_DB_SWITCH: "1", "DATABASE_URL": self.URL}
+        status, calls = self.run_main(on, [0, 0], problems=["gw1 ran on 'nova_test'"])
+        self.assertEqual(status, 1)
+        self.assertEqual(len(calls), 2)
+        status, _ = self.run_main(on, [0, 5])
+        self.assertEqual(status, 5, "pytest's own failure must survive a passing proof")
+        status, _ = self.run_main(on, [0, 5], problems=["gw1 ran on 'nova_test'"])
+        self.assertEqual(status, 5)
+
+    def test_without_the_switch_the_proof_is_not_asked_for(self):
+        def never(*arguments):
+            raise AssertionError("no proof without per-worker databases")
+
+        status, _ = self.run_main({}, [0], problems=never)
+        self.assertEqual(status, 0)
 
 
 if __name__ == "__main__":

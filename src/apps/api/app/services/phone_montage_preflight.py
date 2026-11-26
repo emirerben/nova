@@ -130,13 +130,25 @@ def readiness_plan_blockers(
     clip-speed and keep-whole asks come back (KRI-1295: any recorded kind, including style).
     A renderer limit stays the after-render note it was; order and
     length keep readiness's own checks. Fails open like ``phone_montage_blockers``.
+
+    KRI-1592: with ``KRIA_UNSTATED_ORDER_DEFAULT_ENABLED`` readiness approves an order ask nothing
+    pins (a montage showing Visuals) as "can't promise", while this plan's worker, after approval,
+    renders a plan whose order receipt misses and only says so in a note (KRI-129). So order asks
+    come back too: a plan that misses the order holds the draft before approval instead of
+    rendering in the wrong order.
     """
     from app.kria.brief_checks import _wants_whole_take, needs_creator_choice  # noqa: PLC0415
     from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
+    from app.services.order_mode import unstated_order_default_on  # noqa: PLC0415
 
     if brief is None:
         return []
-    planned_ids = {req.id for req in brief.live() if asks_clip_speed(req) or _wants_whole_take(req)}
+    orders = unstated_order_default_on()
+    planned_ids = {
+        req.id
+        for req in brief.live()
+        if asks_clip_speed(req) or _wants_whole_take(req) or (orders and req.kind == "order")
+    }
     if not planned_ids:
         return []
     return [

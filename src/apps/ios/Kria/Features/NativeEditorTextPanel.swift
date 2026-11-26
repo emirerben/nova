@@ -23,6 +23,8 @@ struct NativeTextPanelConfiguration {
     /// a one-line bar that grows with the words; the host gets the box's line count (`nil` when the
     /// box has no keyboard) so it can give the room to the preview and hide its own chrome.
     var onTypingChange: ((Int?) -> Void)?
+    /// KRI-1633: set by the video editor for a title row the server opened intro styles for; adds the entry row to Style.
+    var onOpenIntroStyles: (() -> Void)?
 }
 
 /// Sizes of the Text panel while its box has the keyboard (KRI-508). The editor reserves
@@ -240,6 +242,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
 
     private var styleControls: some View {
         VStack(spacing: 4) {
+            if let open = configuration.onOpenIntroStyles { NativeIntroStylesEntryRow(action: open) }
             VStack(alignment: .leading, spacing: 6) {
                 Menu {
                     ForEach(["Simple", "Bold", "Highlight"], id: \.self) { preset in
@@ -479,6 +482,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                         .overlay(Circle().stroke(string("color", "#FFFFFF") == hex ? KriaColor.sky : KriaColor.line, lineWidth: 2))
                         .frame(width: 28, height: 28).frame(minWidth: 44, minHeight: 44)
                 }.accessibilityLabel("Text color \(hex)")
+                .accessibilityAddTraits(string("color", "#FFFFFF") == hex ? .isSelected : [])
             }
             ColorPicker("Custom color", selection: colorBinding("color", fallback: "#FFFFFF"), supportsOpacity: false)
                 .labelsHidden().frame(minWidth: 44, minHeight: 44).accessibilityLabel("Custom text color")

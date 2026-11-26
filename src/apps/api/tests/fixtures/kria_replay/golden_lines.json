@@ -22,11 +22,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "I can't use the day in life story archetype on this video yet"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
             },
@@ -60,7 +55,7 @@
               "requirement_id": "g3"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't use the planned overlay display on this video yet, so it won't be shown\n- I can't add sound effects on this video yet, so none will be played\n- Also not applied on this video yet: crossfades between clips"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't use the planned overlay display on this video yet, so it won't be shown\n- I can't add sound effects on this video yet, so none will be played\n- I can't crossfade between clips on this video yet, so each clip cuts straight to the next"
         },
         "voice_no_captions": {
           "lines": [],
@@ -145,11 +140,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "day in life hikâye kalıbını bu videoda henüz kullanamıyorum"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor"
             },
@@ -183,7 +173,7 @@
               "requirement_id": "g3"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek\n- Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak\n- Bu videoda henüz uygulanmayanlar: klipler arası yumuşak geçiş"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek\n- Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak\n- Bu videoda henüz uygulanmayanlar: klipler arası yumuşak geçiş"
         },
         "voice_no_captions": {
           "lines": [],
@@ -285,11 +275,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "I can't use the day in life story archetype on this video yet"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
             },
@@ -318,7 +303,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (pop) on this video yet, so it shows without motion\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- Also not applied on this video yet: one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (pop) on this video yet, so it shows without motion\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- Also not applied on this video yet: the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
@@ -434,11 +419,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "day in life hikâye kalıbını bu videoda henüz kullanamıyorum"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor"
             },
@@ -467,7 +447,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda henüz uygulanmayanlar: öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Bu videoda henüz uygulanmayanlar: katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
@@ -575,11 +555,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "I can't use the day in life story archetype on this video yet"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
             },
@@ -590,7 +565,7 @@
             }
           ],
           "declines": [],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't add sound effects on this video yet, so none will be played"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't add sound effects on this video yet, so none will be played"
         },
         "voice_no_captions": {
           "lines": [
@@ -689,11 +664,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "day in life hikâye kalıbını bu videoda henüz kullanamıyorum"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor"
             },
@@ -704,7 +674,7 @@
             }
           ],
           "declines": [],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak"
         },
         "voice_no_captions": {
           "lines": [
@@ -805,11 +775,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "I can't use the day in life story archetype on this video yet"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
             },
@@ -825,7 +790,7 @@
             }
           ],
           "declines": [],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't use the planned overlay display on this video yet, so it won't be shown\n- Also not applied on this video yet: sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't use the planned overlay display on this video yet, so it won't be shown\n- I can't add sound effects on this video yet, so none will be played"
         },
         "voice_no_captions": {
           "lines": [
@@ -924,11 +889,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "day in life hikâye kalıbını bu videoda henüz kullanamıyorum"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor"
             },
@@ -944,7 +904,7 @@
             }
           ],
           "declines": [],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek\n- Bu videoda henüz uygulanmayanlar: ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek\n- Bu videoya henüz ses efekti ekleyemiyorum, hiçbiri çalmayacak"
         },
         "voice_no_captions": {
           "lines": [
@@ -1050,11 +1010,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "I can't use the day in life story archetype on this video yet"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
             },
@@ -1070,7 +1025,7 @@
             }
           ],
           "declines": [],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- Also not applied on this video yet: the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- I can't use the planned overlay display on this video yet, so it won't be shown\n- Also not applied on this video yet: sound effects"
         },
         "voice_no_captions": {
           "lines": [
@@ -1169,11 +1124,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "day in life hikâye kalıbını bu videoda henüz kullanamıyorum"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor"
             },
@@ -1189,7 +1139,7 @@
             }
           ],
           "declines": [],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Bu videoda henüz uygulanmayanlar: katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Planlanan katman gösterimini bu videoda henüz kullanamıyorum, gösterilmeyecek\n- Bu videoda henüz uygulanmayanlar: ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
@@ -1295,11 +1245,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "I can't use the day in life story archetype on this video yet"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
             },
@@ -1328,7 +1273,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add music under the spoken lines on this video yet, so it plays the clips' own sound\n- I can't animate the title (pop) on this video yet, so it shows without motion\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't use the day in life story archetype on this video yet\n- Also not applied on this video yet: one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- I can't add music under the spoken lines on this video yet, so it plays the clips' own sound\n- I can't animate the title (pop) on this video yet, so it shows without motion\n- I can't place the clip labels at the top on this video yet\n- I can't add the treatments (zoom, shake) on this video yet, so they won't be applied\n- I can't feature one hero clip on this video yet, so every clip is cut the same way\n- Also not applied on this video yet: the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
@@ -1434,11 +1379,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "day in life hikâye kalıbını bu videoda henüz kullanamıyorum"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor"
             },
@@ -1467,7 +1407,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoda konuşmaların altına henüz müzik ekleyemiyorum, o yüzden kliplerin kendi sesi çalacak\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- day in life hikâye kalıbını bu videoda henüz kullanamıyorum\n- Bu videoda henüz uygulanmayanlar: öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Bu videoda konuşmaların altına henüz müzik ekleyemiyorum, o yüzden kliplerin kendi sesi çalacak\n- Başlığı (pop) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek\n- Klip etiketlerini bu videoda henüz top konumuna yerleştiremiyorum\n- Şu efektleri (zoom, shake) bu videoda henüz ekleyemiyorum, uygulanmayacak\n- Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor\n- Bu videoda henüz uygulanmayanlar: katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [
@@ -1595,11 +1535,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "I can't use the day in life story archetype on this video yet"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "I can't feature one hero clip on this video yet, so every clip is cut the same way"
             },
@@ -1628,7 +1563,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- A slide post plays no added music or voiceover yet, so the planned audio won't be used\n- I can't make this video the length you asked for yet: a slide post's length follows its slides\n- I can't add the opening title (\"Kas in three days\") on this video yet\n- I can't add the closing title (\"See you next summer\") on this video yet\n- I can't put the planned label on each shot on this video yet\n- Also not applied on this video yet: the title animation, the clip label position, the treatments, the story archetype, one featured hero clip, the overlay display, sound effects"
+          "card": "Heads-up for this video:\n- I can't use the opening hook idea (\"Nobody tells you this about the old town\") on this video yet, so it won't be shown as text\n- I can't apply the kinetic caption style on this video yet, so it won't be used\n- A slide post plays no added music or voiceover yet, so the planned audio won't be used\n- I can't make this video the length you asked for yet: a slide post's length follows its slides\n- I can't add the opening title (\"Kas in three days\") on this video yet\n- I can't add the closing title (\"See you next summer\") on this video yet\n- I can't put the planned label on each shot on this video yet\n- Also not applied on this video yet: the title animation, the clip label position, the treatments, one featured hero clip, the overlay display, sound effects"
         },
         "voice_no_captions": {
           "lines": [
@@ -1769,11 +1704,6 @@
             },
             {
               "code": "not_applied_on_route",
-              "subject": "archetype",
-              "text": "day in life hikâye kalıbını bu videoda henüz kullanamıyorum"
-            },
-            {
-              "code": "not_applied_on_route",
               "subject": "hero_media_id",
               "text": "Bu videoda tek bir ana klibi öne çıkaramıyorum, bu yüzden bütün klipler aynı şekilde kesiliyor"
             },
@@ -1802,7 +1732,7 @@
               "requirement_id": "g2"
             }
           ],
-          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı\n- Açılış başlığını (\"Kas in three days\") bu videoya henüz ekleyemiyorum\n- Kapanış başlığını (\"See you next summer\") bu videoya henüz ekleyemiyorum\n- Planlanan etiketleri bu videoda henüz her çekime koyamıyorum\n- Bu videoda henüz uygulanmayanlar: başlık animasyonu, klip etiketi konumu, efektler, hikâye kalıbı, öne çıkan ana klip, katman gösterimi, ses efektleri"
+          "card": "Bu video için not:\n- Açılış kanca fikrini (\"Nobody tells you this about the old town\") bu videoda henüz kullanamıyorum, o yüzden yazı olarak gösterilmeyecek\n- kinetic altyazı stilini bu videoda henüz uygulayamıyorum, kullanılmayacak\n- Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı\n- Açılış başlığını (\"Kas in three days\") bu videoya henüz ekleyemiyorum\n- Kapanış başlığını (\"See you next summer\") bu videoya henüz ekleyemiyorum\n- Planlanan etiketleri bu videoda henüz her çekime koyamıyorum\n- Bu videoda henüz uygulanmayanlar: başlık animasyonu, klip etiketi konumu, efektler, öne çıkan ana klip, katman gösterimi, ses efektleri"
         },
         "voice_no_captions": {
           "lines": [

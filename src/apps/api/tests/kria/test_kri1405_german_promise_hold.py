@@ -299,13 +299,28 @@ def test_the_replay_brief_is_the_recorded_one():
     assert THREAD["turn_1_hold"]["omitted_requirement_ids"] == list(PROMISE_ROWS)
 
 
+def _kri1524_reworded(reason: str) -> str:
+    """Prod's German line as KRI-1524 rewords the tight-pause promise on purpose (it now names
+    the noisy-take exception the render applies); everything else stays prod's."""
+    from app.kria.copy_catalog import translate  # noqa: PLC0415
+
+    for old, new in (
+        (bc._TIGHT_IF_OFFERED_PRE_1524, bc._TIGHT_IF_OFFERED),
+        (bc._TIGHT_AT_APPROVAL_PRE_1524, bc._TIGHT_AT_APPROVAL),
+        (bc._TIGHT_PLANNED_PRE_1524, bc._TIGHT_PLANNED),
+    ):
+        reason = reason.replace(translate("de", old) or old, translate("de", new) or new)
+    return reason
+
+
 def test_replay_reaches_prods_german_reasons(ylab_prod):
-    """The replay reaches prod's own words, so the verdicts below are about prod's input."""
+    """The replay reaches prod's own words, so the verdicts below are about prod's input.
+    KRI-1524 rewords the tight-pause promise on purpose."""
     with reply_language_for("de"):
         rows = _rows(_assess())
     for rid in ("r4", "r5"):
         assert PROD_ROWS[rid]["disposition"] == "needs_choice"
-        assert rows[rid]["reason"] == PROD_ROWS[rid]["reason"], rows[rid]
+        assert rows[rid]["reason"] == _kri1524_reworded(PROD_ROWS[rid]["reason"]), rows[rid]
     # r6's prod line also says "auf German" (KRI-1408's English leak): only its start is pinned.
     prefix = "Jede Stimme in deinem Take bekommt Untertitel, auch die außerhalb des Bildes"
     assert PROD_ROWS["r6"]["reason"].startswith(prefix)

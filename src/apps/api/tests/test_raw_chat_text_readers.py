@@ -153,6 +153,13 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "text, and every strategy/manifest/contract check still runs",
         frozenset({"readiness_reply", "assess_readiness", "assess_saved_document"}),
     ),
+    "kria/ask_ledger.py": (
+        "plan_time",
+        "KRI-1563 no-op reply wording: quotes each stated requirement back beside its "
+        "done/declined/your-call state, which code already decided; it runs on the draft "
+        "before any render and decides nothing",
+        frozenset({"no_op_reply"}),
+    ),
     "kria/editor_receipts.py": (
         "plan_time",
         "editor-turn receipt wording: quotes the turn's stated requirement back beside what "
@@ -176,6 +183,13 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "schemas/clip_intents.py": ("plan_time", "caption grounding of clip intents", None),
     "schemas/edit_proposal.py": ("plan_time", "proposal brief schema", None),
     "services/clip_intent_planning.py": ("plan_time", "clip-intent planning", None),
+    "services/choice_questions.py": (
+        "plan_time",
+        "KRI-1582: the text design question's recommended option reads the request for a "
+        "subtitle ask before approval; the answer is pinned in choice_answers and the render "
+        "reads the snapshot's text_design, never the request",
+        frozenset({"ChoiceCapability", "_text_design"}),
+    ),
     "services/clip_intent_resolution.py": ("plan_time", "clip-intent resolution", None),
     "services/creator_sessions.py": ("plan_time", "compiles the active plan", None),
     "services/edit_direction_planner.py": ("plan_time", "direction snapshot planning", None),
@@ -225,13 +239,15 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "tasks/kria_runtime.py": (
         "carry",
         "approval claims / dispatch carry the request; KRI-968's simpler-version offer and "
-        "left-out lines quote a requirement's own wording unchanged into the reply, and the "
-        "offer's ids (not the words) decide what the simpler version drops",
+        "left-out lines (Tahini: and their 'Done anyway' twin) quote a requirement's own "
+        "wording unchanged into the reply, and the offer's ids (not the words) decide what the "
+        "simpler version drops",
         frozenset(
             {
                 "_ApprovalDispatchClaim",
                 "_claim_approval_dispatch",
                 "_complete_draft_turn",
+                "_done_anyway_line",
                 "_left_out_line",
                 "_simpler_version_offer",
                 "execute_kria_approval",

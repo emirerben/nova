@@ -219,10 +219,7 @@ import XCTest
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: newChat)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 20), .completed)
         newChat.tap()
-        let card = app.buttons[format]
-        XCTAssertTrue(card.waitForExistence(timeout: 10))
-        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
-        card.tap()
+        app.chooseFormatCard(app.buttons[format])
         return app
     }
 

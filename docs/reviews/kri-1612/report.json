@@ -1,0 +1,1606 @@
+{
+  "teardowns_version": "2026-11-24-kri-1610-1",
+  "environment": "prod-image",
+  "skia": "144.1",
+  "overall": "PASS",
+  "failed": [],
+  "wiring": [
+    {
+      "name": "same_seed_is_stable",
+      "expected": "equal",
+      "observed": "equal",
+      "ok": true
+    },
+    {
+      "name": "recent_look_is_tried_last",
+      "expected": "first pair != grotesk_loop",
+      "observed": "first pair script_serif",
+      "ok": true
+    },
+    {
+      "name": "unclean_real_receipt_falls_back",
+      "expected": "no rows",
+      "observed": "attempts_exhausted",
+      "ok": true
+    },
+    {
+      "name": "approval_accepts_her_title_as_a_stack",
+      "expected": "1 match",
+      "observed": "1 match",
+      "ok": true
+    },
+    {
+      "name": "approval_refuses_a_changed_word",
+      "expected": "no match",
+      "observed": "0 match",
+      "ok": true
+    },
+    {
+      "name": "approval_accepts_every_issued_pair_as_drawn",
+      "expected": "no pair refused",
+      "observed": "no pair refused",
+      "ok": true
+    },
+    {
+      "name": "unmeasured_take_never_keeps_a_dark_ink",
+      "expected": "light ink (luminance >= 0.5)",
+      "observed": "#FFFFFF (1.00)",
+      "ok": true
+    },
+    {
+      "name": "a_decline_is_todays_title",
+      "expected": "no rows (today's title)",
+      "observed": "rows=none; pin=decline",
+      "ok": true
+    },
+    {
+      "name": "an_unissued_ink_is_void",
+      "expected": "no rows (today's title)",
+      "observed": "rows=none; pin=failed",
+      "ok": true
+    },
+    {
+      "name": "a_sound_is_void",
+      "expected": "no rows (today's title)",
+      "observed": "rows=none; pin=failed",
+      "ok": true
+    },
+    {
+      "name": "smuggled_text_is_void",
+      "expected": "no rows (today's title)",
+      "observed": "rows=none; pin=failed",
+      "ok": true
+    },
+    {
+      "name": "a_split_nobody_issued_is_void",
+      "expected": "no rows (today's title)",
+      "observed": "rows=none; pin=failed",
+      "ok": true
+    },
+    {
+      "name": "the_pen_entrance_is_never_issued",
+      "expected": "no rows (today's title)",
+      "observed": "rows=none; pin=failed",
+      "ok": true
+    },
+    {
+      "name": "a_provider_error_is_todays_title",
+      "expected": "no rows",
+      "observed": "rows=none",
+      "ok": true
+    },
+    {
+      "name": "an_unclean_model_scene_is_todays_title",
+      "expected": "no rows, only the model's pair tried",
+      "observed": "rows=none; pairs ['grotesk_hand']",
+      "ok": true
+    },
+    {
+      "name": "a_pinned_answer_is_not_asked_again",
+      "expected": "0 calls, nothing new to pin",
+      "observed": "0 calls, new=none",
+      "ok": true
+    },
+    {
+      "name": "an_unreadable_model_ink_is_replaced_by_the_engine",
+      "expected": "an ink other than oxblood on the dark plate",
+      "observed": "drawn cream",
+      "ok": true
+    },
+    {
+      "name": "approval_reads_every_issued_entrance",
+      "expected": "none refused",
+      "observed": "none refused",
+      "ok": true
+    },
+    {
+      "name": "approval_cannot_read_the_pen_entrance_so_it_is_not_issued",
+      "expected": "pen refused by approval (flip this when pen can be issued)",
+      "observed": "pen accepted=False",
+      "ok": true
+    }
+  ],
+  "sweep": {
+    "compiled": 195,
+    "declined": {
+      "placement_unclean": 15,
+      "ink_off_zone": 6
+    },
+    "failed": []
+  },
+  "blind_controls": [],
+  "inexpressible": [
+    {
+      "id": "ref2",
+      "expressible": "no",
+      "missing_moves": [
+        {
+          "piece": "folder sticker (deer-print prop)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "label written on the folder",
+          "move": "a title row anchored to a sticker and layered above it; title rows are stacked by the title placement and know no other element"
+        },
+        {
+          "piece": "illustration card beside the folder",
+          "move": "a card option in the scene; cards exist as overlay cards but are not an IntroScene choice yet"
+        }
+      ]
+    },
+    {
+      "id": "ref3",
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "five topic photo cards around the speaker",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        },
+        {
+          "piece": "cards running past the canvas edge",
+          "move": "edge bleed: card position and scale beyond the canvas are unverified on phone"
+        },
+        {
+          "piece": "title laid out together with the cards (between them)",
+          "move": "a title zone aware of the card positions; the title zones offered are above the head, top left and mid frame"
+        }
+      ]
+    },
+    {
+      "id": "ref4",
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "five craft stars (denim, polka, button, navy)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "title under the chin (lower third)",
+          "move": "a lower-third title zone; place_title_look offers top, top left and middle only"
+        }
+      ]
+    },
+    {
+      "id": "ref5",
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "script label overlapping the serif subject",
+          "move": "row overlap: title rows always stack with a gap, they never overlap"
+        },
+        {
+          "piece": "2 + 2 photo grid",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        }
+      ]
+    }
+  ],
+  "engine_limits": [
+    {
+      "piece": "staggered entrance (the accent word lands after the solid rows)",
+      "move": "rows need their own start time; stacked_title_matches requires every row to start together within one frame, so the approval check must read a per-row delay first"
+    },
+    {
+      "piece": "flash cover (about 0.1 s) and moment sounds timed to each element",
+      "move": "a cover/flash element and per-element sound cues; the scene carries one sound id for the whole intro"
+    },
+    {
+      "piece": "pen-stroke reveal in a face other than Patrick Hand",
+      "move": "the handwriting effect draws Patrick Hand centerlines whatever font the row names, so the pen entrance is issued only with a Patrick Hand accent; Zeyada and Over the Rainbow reveal with the ink wipe instead"
+    },
+    {
+      "piece": "an ink picked from the footage",
+      "move": "the menu offers every ink; contrast against the footage is left to the existing legibility outline until the engine ranks inks per footage"
+    }
+  ],
+  "cases": [
+    {
+      "id": "ref1",
+      "name": "Title on the empty wall",
+      "language": "en",
+      "control": null,
+      "expressible": "yes",
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "solid",
+          "solid",
+          "solid",
+          "solid",
+          "accent",
+          "accent"
+        ],
+        "font_pair": "grotesk_hand",
+        "ink": "oxblood",
+        "zone": "above_head",
+        "entrance": "ink",
+        "sound": "accent-pop"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the biggest design trend",
+          "font_family": "Hanken Grotesk",
+          "size_px": 114,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1238,
+          "text_case": "upper"
+        },
+        {
+          "text": "right now",
+          "font_family": "Zeyada",
+          "size_px": 138,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.234
+        }
+      ],
+      "placement": {
+        "status": "squeezed",
+        "spot": "top_band",
+        "scale": 0.92,
+        "coverage": 0.0,
+        "lines": 2
+      },
+      "sound": "accent-pop",
+      "typed_title": "the biggest design trend / right now"
+    },
+    {
+      "id": "ref1",
+      "name": "Title on the empty wall",
+      "language": "tr",
+      "control": null,
+      "expressible": "yes",
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "solid",
+          "solid",
+          "solid",
+          "solid",
+          "solid",
+          "solid",
+          "accent",
+          "accent"
+        ],
+        "font_pair": "grotesk_hand",
+        "ink": "oxblood",
+        "zone": "above_head",
+        "entrance": "ink",
+        "sound": "accent-pop"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu yılın en büyük tasarım trendi",
+          "font_family": "Hanken Grotesk",
+          "size_px": 105,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1555,
+          "text_case": "upper"
+        },
+        {
+          "text": "şu an",
+          "font_family": "Zeyada",
+          "size_px": 128,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.2494
+        }
+      ],
+      "placement": {
+        "status": "squeezed",
+        "spot": "preset",
+        "scale": 0.85,
+        "coverage": 0.0,
+        "lines": 2
+      },
+      "sound": "accent-pop",
+      "typed_title": "bu yılın en büyük tasarım trendi / şu an"
+    },
+    {
+      "id": "ref2",
+      "name": "Folder sticker with an illustration",
+      "language": "en",
+      "control": null,
+      "expressible": "no",
+      "missing_moves": [
+        {
+          "piece": "folder sticker (deer-print prop)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "label written on the folder",
+          "move": "a title row anchored to a sticker and layered above it; title rows are stacked by the title placement and know no other element"
+        },
+        {
+          "piece": "illustration card beside the folder",
+          "move": "a card option in the scene; cards exist as overlay cards but are not an IntroScene choice yet"
+        }
+      ],
+      "rendered": false,
+      "verdict": "SKIPPED",
+      "title": null,
+      "reasons": [
+        "folder sticker (deer-print prop)",
+        "label written on the folder",
+        "illustration card beside the folder"
+      ]
+    },
+    {
+      "id": "ref2",
+      "name": "Folder sticker with an illustration",
+      "language": "tr",
+      "control": null,
+      "expressible": "no",
+      "missing_moves": [
+        {
+          "piece": "folder sticker (deer-print prop)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "label written on the folder",
+          "move": "a title row anchored to a sticker and layered above it; title rows are stacked by the title placement and know no other element"
+        },
+        {
+          "piece": "illustration card beside the folder",
+          "move": "a card option in the scene; cards exist as overlay cards but are not an IntroScene choice yet"
+        }
+      ],
+      "rendered": false,
+      "verdict": "SKIPPED",
+      "title": null,
+      "reasons": [
+        "folder sticker (deer-print prop)",
+        "label written on the folder",
+        "illustration card beside the folder"
+      ]
+    },
+    {
+      "id": "ref3",
+      "name": "Photo collage around the speaker",
+      "language": "en",
+      "control": null,
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "five topic photo cards around the speaker",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        },
+        {
+          "piece": "cards running past the canvas edge",
+          "move": "edge bleed: card position and scale beyond the canvas are unverified on phone"
+        },
+        {
+          "piece": "title laid out together with the cards (between them)",
+          "move": "a title zone aware of the card positions; the title zones offered are above the head, top left and mid frame"
+        }
+      ],
+      "title": "how am i using pinterest",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "solid",
+          "solid",
+          "solid",
+          "solid",
+          "accent"
+        ],
+        "font_pair": "grotesk_loop",
+        "ink": "chartreuse",
+        "zone": "above_head",
+        "entrance": "ink",
+        "sound": "soft-pop"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "how am i using",
+          "font_family": "Hanken Grotesk",
+          "size_px": 100.0,
+          "color": "#E6FF00",
+          "effect": "fade-in",
+          "y_frac": 0.1182
+        },
+        {
+          "text": "pinterest",
+          "font_family": "Over the Rainbow",
+          "size_px": 250.0,
+          "color": "#E6FF00",
+          "effect": "ink-reveal",
+          "y_frac": 0.1995
+        }
+      ],
+      "placement": {
+        "status": "squeezed",
+        "spot": "preset",
+        "scale": 1.0,
+        "coverage": 0.00669,
+        "lines": 2
+      },
+      "sound": "soft-pop",
+      "typed_title": "how am i using / pinterest"
+    },
+    {
+      "id": "ref3",
+      "name": "Photo collage around the speaker",
+      "language": "tr",
+      "control": null,
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "five topic photo cards around the speaker",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        },
+        {
+          "piece": "cards running past the canvas edge",
+          "move": "edge bleed: card position and scale beyond the canvas are unverified on phone"
+        },
+        {
+          "piece": "title laid out together with the cards (between them)",
+          "move": "a title zone aware of the card positions; the title zones offered are above the head, top left and mid frame"
+        }
+      ],
+      "title": "pinterest’i nasıl kullanıyorum",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "solid",
+          "solid",
+          "accent"
+        ],
+        "font_pair": "grotesk_loop",
+        "ink": "chartreuse",
+        "zone": "above_head",
+        "entrance": "ink",
+        "sound": "soft-pop"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "pinterest’i nasıl",
+          "font_family": "Hanken Grotesk",
+          "size_px": 100.0,
+          "color": "#E6FF00",
+          "effect": "fade-in",
+          "y_frac": 0.1182
+        },
+        {
+          "text": "kullanıyorum",
+          "font_family": "Over the Rainbow",
+          "size_px": 250.0,
+          "color": "#E6FF00",
+          "effect": "ink-reveal",
+          "y_frac": 0.1888
+        }
+      ],
+      "placement": {
+        "status": "squeezed",
+        "spot": "preset",
+        "scale": 1.0,
+        "coverage": 0.0,
+        "lines": 2
+      },
+      "sound": "soft-pop",
+      "typed_title": "pinterest’i nasıl / kullanıyorum"
+    },
+    {
+      "id": "ref4",
+      "name": "Scrapbook title with stickers",
+      "language": "en",
+      "control": null,
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "five craft stars (denim, polka, button, navy)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "title under the chin (lower third)",
+          "move": "a lower-third title zone; place_title_look offers top, top left and middle only"
+        }
+      ],
+      "title": "If Nobody Watches / Your Test Videos",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "solid",
+          "solid",
+          "solid",
+          "solid",
+          "solid",
+          "solid"
+        ],
+        "font_pair": "young_serif",
+        "ink": "butter",
+        "zone": "above_head",
+        "entrance": "pop",
+        "sound": "accent-pop"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "If Nobody Watches",
+          "font_family": "Young Serif",
+          "size_px": 92.0,
+          "color": "#F6E7A8",
+          "effect": "pop-in",
+          "y_frac": 0.1336
+        },
+        {
+          "text": "Your Test Videos",
+          "font_family": "Young Serif",
+          "size_px": 92.0,
+          "color": "#F6E7A8",
+          "effect": "pop-in",
+          "y_frac": 0.2133
+        }
+      ],
+      "placement": {
+        "status": "preset",
+        "scale": 1.0,
+        "coverage": 0.0,
+        "lines": 2
+      },
+      "sound": "accent-pop",
+      "typed_title": "If Nobody Watches / Your Test Videos"
+    },
+    {
+      "id": "ref4",
+      "name": "Scrapbook title with stickers",
+      "language": "tr",
+      "control": null,
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "five craft stars (denim, polka, button, navy)",
+          "move": "a sticker asset source (a pack or generated transparent PNGs); a content and licensing decision, open question 3 of the project"
+        },
+        {
+          "piece": "title under the chin (lower third)",
+          "move": "a lower-third title zone; place_title_look offers top, top left and middle only"
+        }
+      ],
+      "title": "Deneme Videolarınız / İzlenmiyorsa",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "solid",
+          "solid",
+          "solid"
+        ],
+        "font_pair": "young_serif",
+        "ink": "butter",
+        "zone": "above_head",
+        "entrance": "pop",
+        "sound": "accent-pop"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "Deneme Videolarınız",
+          "font_family": "Young Serif",
+          "size_px": 92.0,
+          "color": "#F6E7A8",
+          "effect": "pop-in",
+          "y_frac": 0.1313
+        },
+        {
+          "text": "İzlenmiyorsa",
+          "font_family": "Young Serif",
+          "size_px": 92.0,
+          "color": "#F6E7A8",
+          "effect": "pop-in",
+          "y_frac": 0.2464
+        }
+      ],
+      "placement": {
+        "status": "moved",
+        "scale": 1.0,
+        "coverage": 0.0,
+        "lines": 2
+      },
+      "sound": "accent-pop",
+      "typed_title": "Deneme Videolarınız / İzlenmiyorsa"
+    },
+    {
+      "id": "ref5",
+      "name": "Script title over a photo grid",
+      "language": "en",
+      "control": null,
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "script label overlapping the serif subject",
+          "move": "row overlap: title rows always stack with a gap, they never overlap"
+        },
+        {
+          "piece": "2 + 2 photo grid",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        }
+      ],
+      "title": "city guide: lisbon, day one",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "accent",
+          "accent",
+          "solid",
+          "solid",
+          "solid"
+        ],
+        "font_pair": "script_serif",
+        "ink": "white",
+        "zone": "above_head",
+        "entrance": "fade",
+        "sound": "whoosh-fast"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "city guide:",
+          "font_family": "Great Vibes",
+          "size_px": 190.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.1329
+        },
+        {
+          "text": "lisbon, day one",
+          "font_family": "Newsreader",
+          "size_px": 140.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.2435
+        }
+      ],
+      "placement": {
+        "status": "moved",
+        "scale": 1.0,
+        "coverage": 0.0,
+        "lines": 2
+      },
+      "sound": "whoosh-fast",
+      "typed_title": "city guide: / lisbon, day one"
+    },
+    {
+      "id": "ref5",
+      "name": "Script title over a photo grid",
+      "language": "tr",
+      "control": null,
+      "expressible": "partial",
+      "missing_moves": [
+        {
+          "piece": "script label overlapping the serif subject",
+          "move": "row overlap: title rows always stack with a gap, they never overlap"
+        },
+        {
+          "piece": "2 + 2 photo grid",
+          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+        }
+      ],
+      "title": "şehir rehberi: lizbon, ilk gün",
+      "scene": {
+        "decision": "compose",
+        "voices": [
+          "accent",
+          "accent",
+          "solid",
+          "solid",
+          "solid"
+        ],
+        "font_pair": "script_serif",
+        "ink": "white",
+        "zone": "above_head",
+        "entrance": "fade",
+        "sound": "whoosh-fast"
+      },
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "şehir rehberi:",
+          "font_family": "Great Vibes",
+          "size_px": 190.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.1329
+        },
+        {
+          "text": "lizbon, ilk gün",
+          "font_family": "Newsreader",
+          "size_px": 140.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.2435
+        }
+      ],
+      "placement": {
+        "status": "moved",
+        "scale": 1.0,
+        "coverage": 0.0,
+        "lines": 2
+      },
+      "sound": "whoosh-fast",
+      "typed_title": "şehir rehberi: / lizbon, ilk gün"
+    },
+    {
+      "id": "ref1",
+      "language": "en",
+      "title": "the biggest design trend right now",
+      "control": "two_inks",
+      "rendered": true,
+      "verdict": "FAIL",
+      "reasons": [
+        "more than one ink: ['#8A1C1F', '#FFFFFF']",
+        "a row is not in the scene's ink #8A1C1F"
+      ],
+      "rows": [
+        {
+          "text": "the biggest design trend",
+          "font_family": "Hanken Grotesk",
+          "size_px": 114,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1238,
+          "text_case": "upper"
+        },
+        {
+          "text": "right now",
+          "font_family": "Zeyada",
+          "size_px": 138,
+          "color": "#FFFFFF",
+          "effect": "ink-reveal",
+          "y_frac": 0.234
+        }
+      ]
+    },
+    {
+      "id": "ref1",
+      "language": "en",
+      "title": "the biggest design trend right now",
+      "control": "title_on_face",
+      "rendered": true,
+      "verdict": "FAIL",
+      "reasons": [
+        "row 1: ink covers the face (0.65)",
+        "row 2: ink covers the face (1.00)"
+      ],
+      "rows": [
+        {
+          "text": "the biggest design trend",
+          "font_family": "Hanken Grotesk",
+          "size_px": 114,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.42,
+          "text_case": "upper"
+        },
+        {
+          "text": "right now",
+          "font_family": "Zeyada",
+          "size_px": 138,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.52
+        }
+      ]
+    },
+    {
+      "id": "ref1",
+      "language": "tr",
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "control": "face_swapped_font",
+      "rendered": true,
+      "verdict": "FAIL",
+      "reasons": [
+        "row 1: font 'Satisfy', the pair says 'Hanken Grotesk'",
+        "row 1: renderer swapped the face (resolved 'Pacifico')",
+        "row 1: text clipped at TOP edge (bbox top=0px)"
+      ],
+      "rows": [
+        {
+          "text": "bu yılın en büyük tasarım trendi",
+          "font_family": "Satisfy",
+          "size_px": 105,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1555,
+          "text_case": "upper"
+        },
+        {
+          "text": "şu an",
+          "font_family": "Zeyada",
+          "size_px": 128,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.2494
+        }
+      ]
+    },
+    {
+      "id": "ref5",
+      "language": "en",
+      "title": "city guide: lisbon, day one",
+      "control": "ink_unreadable",
+      "rendered": true,
+      "verdict": "FAIL",
+      "reasons": [
+        "row 1: ink does not read on the footage (1.3:1)",
+        "row 2: ink does not read on the footage (1.3:1)"
+      ],
+      "rows": [
+        {
+          "text": "city guide:",
+          "font_family": "Great Vibes",
+          "size_px": 190.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.1329
+        },
+        {
+          "text": "lisbon, day one",
+          "font_family": "Newsreader",
+          "size_px": 140.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.2435
+        }
+      ]
+    },
+    {
+      "id": "pick-a-light",
+      "name": "seeded pick",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 84,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.1787
+        },
+        {
+          "text": "biggest design trend right now",
+          "font_family": "Instrument Serif",
+          "size_px": 90,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.2498
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-a",
+        "font_pair": "serif_italic",
+        "zone": "mid_frame",
+        "ink": "oxblood",
+        "entrance": "ink",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-a-dark",
+      "name": "seeded pick",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 84,
+          "color": "#FFFFFF",
+          "effect": "ink-reveal",
+          "y_frac": 0.1787
+        },
+        {
+          "text": "biggest design trend right now",
+          "font_family": "Instrument Serif",
+          "size_px": 90,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.2498
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-a",
+        "font_pair": "serif_italic",
+        "zone": "mid_frame",
+        "ink": "white",
+        "entrance": "ink",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-b-light",
+      "name": "seeded pick",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the biggest",
+          "font_family": "Instrument Serif",
+          "size_px": 138,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.0927
+        },
+        {
+          "text": "design trend",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 129,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1654
+        },
+        {
+          "text": "right now",
+          "font_family": "Instrument Serif",
+          "size_px": 138,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.2374
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-b",
+        "font_pair": "serif_italic",
+        "zone": "above_head",
+        "ink": "oxblood",
+        "entrance": "fade",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-b-dark",
+      "name": "seeded pick",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the biggest",
+          "font_family": "Instrument Serif",
+          "size_px": 138,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.0927
+        },
+        {
+          "text": "design trend",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 129,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.1654
+        },
+        {
+          "text": "right now",
+          "font_family": "Instrument Serif",
+          "size_px": 138,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.2374
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-b",
+        "font_pair": "serif_italic",
+        "zone": "above_head",
+        "ink": "white",
+        "entrance": "fade",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-c-light",
+      "name": "seeded pick",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the biggest design trend right",
+          "font_family": "Hanken Grotesk",
+          "size_px": 60,
+          "color": "#8A1C1F",
+          "effect": "pop-in",
+          "y_frac": 0.0878
+        },
+        {
+          "text": "now",
+          "font_family": "Over the Rainbow",
+          "size_px": 150,
+          "color": "#8A1C1F",
+          "effect": "pop-in",
+          "y_frac": 0.2003
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-c",
+        "font_pair": "grotesk_loop",
+        "zone": "mid_frame",
+        "ink": "oxblood",
+        "entrance": "pop",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-c-dark",
+      "name": "seeded pick",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the biggest design trend right",
+          "font_family": "Hanken Grotesk",
+          "size_px": 60,
+          "color": "#FBF1D8",
+          "effect": "pop-in",
+          "y_frac": 0.0878
+        },
+        {
+          "text": "now",
+          "font_family": "Over the Rainbow",
+          "size_px": 150,
+          "color": "#FBF1D8",
+          "effect": "pop-in",
+          "y_frac": 0.2003
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-c",
+        "font_pair": "grotesk_loop",
+        "zone": "mid_frame",
+        "ink": "cream",
+        "entrance": "pop",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-a-light",
+      "name": "seeded pick",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu",
+          "font_family": "Hanken Grotesk",
+          "size_px": 66,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1117
+        },
+        {
+          "text": "yılın",
+          "font_family": "Over the Rainbow",
+          "size_px": 165,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.1784
+        },
+        {
+          "text": "en büyük tasarım trendi şu an",
+          "font_family": "Hanken Grotesk",
+          "size_px": 66,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.2541
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-a",
+        "font_pair": "grotesk_loop",
+        "zone": "above_head",
+        "ink": "oxblood",
+        "entrance": "ink",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-a-dark",
+      "name": "seeded pick",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu",
+          "font_family": "Hanken Grotesk",
+          "size_px": 66,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.1117
+        },
+        {
+          "text": "yılın",
+          "font_family": "Over the Rainbow",
+          "size_px": 165,
+          "color": "#FFFFFF",
+          "effect": "ink-reveal",
+          "y_frac": 0.1784
+        },
+        {
+          "text": "en büyük tasarım trendi şu an",
+          "font_family": "Hanken Grotesk",
+          "size_px": 66,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.2541
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-a",
+        "font_pair": "grotesk_loop",
+        "zone": "above_head",
+        "ink": "white",
+        "entrance": "ink",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-b-light",
+      "name": "seeded pick",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu yılın",
+          "font_family": "Hanken Grotesk",
+          "size_px": 74,
+          "color": "#8A1C1F",
+          "effect": "pop-in",
+          "y_frac": 0.1066,
+          "text_case": "upper"
+        },
+        {
+          "text": "en büyük tasarım",
+          "font_family": "Zeyada",
+          "size_px": 90,
+          "color": "#8A1C1F",
+          "effect": "pop-in",
+          "y_frac": 0.1808
+        },
+        {
+          "text": "trendi şu an",
+          "font_family": "Hanken Grotesk",
+          "size_px": 74,
+          "color": "#8A1C1F",
+          "effect": "pop-in",
+          "y_frac": 0.255,
+          "text_case": "upper"
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-b",
+        "font_pair": "grotesk_hand",
+        "zone": "top_left",
+        "ink": "oxblood",
+        "entrance": "pop",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-b-dark",
+      "name": "seeded pick",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu yılın",
+          "font_family": "Hanken Grotesk",
+          "size_px": 74,
+          "color": "#FFFFFF",
+          "effect": "pop-in",
+          "y_frac": 0.1066,
+          "text_case": "upper"
+        },
+        {
+          "text": "en büyük tasarım",
+          "font_family": "Zeyada",
+          "size_px": 90,
+          "color": "#FFFFFF",
+          "effect": "pop-in",
+          "y_frac": 0.1808
+        },
+        {
+          "text": "trendi şu an",
+          "font_family": "Hanken Grotesk",
+          "size_px": 74,
+          "color": "#FFFFFF",
+          "effect": "pop-in",
+          "y_frac": 0.255,
+          "text_case": "upper"
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-b",
+        "font_pair": "grotesk_hand",
+        "zone": "top_left",
+        "ink": "white",
+        "entrance": "pop",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-c-light",
+      "name": "seeded pick",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu yılın",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 129,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.0911
+        },
+        {
+          "text": "en büyük tasarım trendi şu an",
+          "font_family": "Instrument Serif",
+          "size_px": 138,
+          "color": "#8A1C1F",
+          "effect": "slide-up",
+          "y_frac": 0.2098
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-c",
+        "font_pair": "serif_italic",
+        "zone": "above_head",
+        "ink": "oxblood",
+        "entrance": "rise",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-c-dark",
+      "name": "seeded pick",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu yılın",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 129,
+          "color": "#FBF1D8",
+          "effect": "fade-in",
+          "y_frac": 0.0911
+        },
+        {
+          "text": "en büyük tasarım trendi şu an",
+          "font_family": "Instrument Serif",
+          "size_px": 138,
+          "color": "#FBF1D8",
+          "effect": "slide-up",
+          "y_frac": 0.2098
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-c",
+        "font_pair": "serif_italic",
+        "zone": "above_head",
+        "ink": "cream",
+        "entrance": "rise",
+        "tried": 0
+      }
+    },
+    {
+      "id": "pick-a-dark",
+      "name": "seeded pick",
+      "language": "en",
+      "control": "pick_ink_unreadable",
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "FAIL",
+      "reasons": [
+        "row 1: ink does not read on the footage (1.7:1)",
+        "row 2: ink does not read on the footage (1.7:1)"
+      ],
+      "rows": [
+        {
+          "text": "the",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 84,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.1787
+        },
+        {
+          "text": "biggest design trend right now",
+          "font_family": "Instrument Serif",
+          "size_px": 90,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.2498
+        }
+      ],
+      "pick": {
+        "seed": "kri1611-a",
+        "font_pair": "serif_italic",
+        "zone": "mid_frame",
+        "ink": "oxblood",
+        "entrance": "ink",
+        "tried": 0
+      }
+    },
+    {
+      "id": "model-en-light",
+      "name": "model pick (replayed)",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the biggest design trend",
+          "font_family": "Hanken Grotesk",
+          "size_px": 114,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1238,
+          "text_case": "upper"
+        },
+        {
+          "text": "right now",
+          "font_family": "Zeyada",
+          "size_px": 138,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.234
+        }
+      ],
+      "pick": {
+        "source": "model",
+        "asked_ink": "oxblood",
+        "drawn_ink": "oxblood",
+        "font_pair": "grotesk_hand",
+        "asked_zone": "above_head",
+        "drawn_zone": "above_head",
+        "entrance": "ink",
+        "prompt_version": "is-5b06f2dd33f5"
+      }
+    },
+    {
+      "id": "model-en-dark",
+      "name": "model pick (replayed)",
+      "language": "en",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "the biggest design trend right now",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "the biggest design trend right",
+          "font_family": "Instrument Serif",
+          "size_px": 150.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.1467
+        },
+        {
+          "text": "now",
+          "font_family": "Instrument Serif Italic",
+          "size_px": 140.0,
+          "color": "#FFFFFF",
+          "effect": "fade-in",
+          "y_frac": 0.2596
+        }
+      ],
+      "pick": {
+        "source": "model",
+        "asked_ink": "cream",
+        "drawn_ink": "white",
+        "font_pair": "serif_italic",
+        "asked_zone": "above_head",
+        "drawn_zone": "above_head",
+        "entrance": "fade",
+        "prompt_version": "is-5b06f2dd33f5"
+      }
+    },
+    {
+      "id": "model-tr-light",
+      "name": "model pick (replayed)",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu yılın en büyük tasarım trendi",
+          "font_family": "Hanken Grotesk",
+          "size_px": 105,
+          "color": "#8A1C1F",
+          "effect": "fade-in",
+          "y_frac": 0.1555,
+          "text_case": "upper"
+        },
+        {
+          "text": "şu an",
+          "font_family": "Zeyada",
+          "size_px": 128,
+          "color": "#8A1C1F",
+          "effect": "ink-reveal",
+          "y_frac": 0.2494
+        }
+      ],
+      "pick": {
+        "source": "model",
+        "asked_ink": "oxblood",
+        "drawn_ink": "oxblood",
+        "font_pair": "grotesk_hand",
+        "asked_zone": "above_head",
+        "drawn_zone": "above_head",
+        "entrance": "ink",
+        "prompt_version": "is-5b06f2dd33f5"
+      }
+    },
+    {
+      "id": "model-tr-dark",
+      "name": "model pick (replayed)",
+      "language": "tr",
+      "control": null,
+      "expressible": true,
+      "missing_moves": [],
+      "title": "bu yılın en büyük tasarım trendi şu an",
+      "rendered": true,
+      "verdict": "PASS",
+      "reasons": [],
+      "rows": [
+        {
+          "text": "bu yılın en büyük tasarım",
+          "font_family": "Newsreader",
+          "size_px": 129,
+          "color": "#E6FF00",
+          "effect": "fade-in",
+          "y_frac": 0.1304
+        },
+        {
+          "text": "trendi şu an",
+          "font_family": "Great Vibes",
+          "size_px": 175,
+          "color": "#E6FF00",
+          "effect": "fade-in",
+          "y_frac": 0.2405
+        }
+      ],
+      "pick": {
+        "source": "model",
+        "asked_ink": "chartreuse",
+        "drawn_ink": "chartreuse",
+        "font_pair": "script_serif",
+        "asked_zone": "above_head",
+        "drawn_zone": "above_head",
+        "entrance": "fade",
+        "prompt_version": "is-5b06f2dd33f5"
+      }
+    }
+  ],
+  "montage": "montage.png",
+  "report": "report.json"
+}

@@ -257,6 +257,18 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker + light).
     phone_voiceover_reaction_beats_enabled: bool = True
+    # KRI-1598: named sound cues ("a whoosh when I say Barcelona") on a phone montage-family
+    # edit WITH a recorded voiceover, sound only. Takes effect only while
+    # `phone_rollout.phone_voiceover_reaction_beats_supported()` holds (the same grounding and
+    # KRI-281 lanes the Voiceover beats use): the manifest then advertises
+    # `reaction_beats:sound_only`, the Main Creator is taught sound-only beats for that edit, the
+    # repair keeps a beat's sound and leaves its picture / the closing shot out with a notice,
+    # and `_run_phone_voiceover_montage_job` grounds the cues against the voice into the
+    # sound-effect lane (`phone_beat_receipt` on the variant). False (default): byte-identical
+    # -- no manifest key, no prompt section, beats stripped with today's notice, no grounding.
+    # Apply: `fly secrets set PHONE_VOICEOVER_MONTAGE_SOUND_CUES_ENABLED=true --app nova-video`
+    # + `fly machine restart <id>` (api + worker); rollback with `=false` the same way.
+    phone_voiceover_montage_sound_cues_enabled: bool = False
     # Exact-timed small cards: "show the menu photo as a small card at 3 seconds for 2
     # seconds" / "put the receipt in the corner during the second clip" on a
     # phone-rendered Montage (guided / unified montage, montage-family voiceover) or
@@ -521,6 +533,24 @@ class Settings(BaseSettings):
     # False: byte-identical rows and placement. Apply: `fly secrets set
     # TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
     title_legibility_enabled: bool = True
+    # Tahini run (2026-11-17, phone Voiceover): the narrated captions came out as whole
+    # sentences (14 words, 4 lines, 6 s on screen) and a spoken list's "2." / "3." each became
+    # a caption of its own. With this on, the phone narrated writer cuts its captions with the
+    # phone Talking budget (`captions.PHONE_CUE_BUDGET`: 8 words, 40 characters, 3 s) and a
+    # bare list number joins the words after it ("2. The topping."). Default TRUE. False:
+    # byte-identical cues. Apply: `fly secrets set NARRATED_CAPTION_BLOCKS_ENABLED=false`
+    # (api + worker) + restart.
+    narrated_caption_blocks_enabled: bool = True
+    # Tahini run: the phone narrated opening title was grey (#767676, the automatic fill's
+    # mid tone), dropped from its top spot to the middle of the food and gone after 1.56 s.
+    # With this on (`phone_narrated_plan.narrated_title_element`): white unless the creator
+    # chose a colour, a dark outline where the footage under it reads under 4.5:1 (the title
+    # legibility measurement, also behind TITLE_LEGIBILITY_ENABLED), its own top spot first
+    # when that is clear of faces and the wordmark (the captions then keep clear of the
+    # title), and held to the end of the first spoken sentence, 2.5-3 s. Default TRUE. False:
+    # byte-identical title and caption placement. Apply: `fly secrets set
+    # NARRATED_TITLE_LEGIBILITY_ENABLED=false` (api + worker) + restart.
+    narrated_title_legibility_enabled: bool = True
     # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
     # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
     # `subtitled` edit renders as an editable text row instead of the planner
@@ -825,6 +855,28 @@ class Settings(BaseSettings):
         if not self.creator_editorial_taste_enabled:
             return False
         allowed = {value.strip() for value in self.creator_editorial_taste_user_ids}
+        return "*" in allowed or str(user_id) in allowed
+
+    # KRI-1611: a fitted intro scene (`pipeline/intro_scene_pick.py`) on Talking edits. Read once at
+    # dispatch (`stamp_intro_scene`); workers branch on the stamp. Per-account JSON list of ids,
+    # ["*"] admits every account (ENABLED stays the kill switch). Off = today's title rows.
+    intro_scene_enabled: bool = False
+    intro_scene_user_ids: list[str] = []
+    # KRI-1612: its own kill switch for the model that picks the scene
+    # (`agents/intro_scene_designer`) instead of the seeded pick. Needs the two flags above;
+    # read once at dispatch and stamped, so a worker never re-reads it. Off = the seeded pick,
+    # byte-identical to KRI-1611.
+    intro_scene_model_enabled: bool = False
+    # KRI-1633: "Try intro styles" (`pipeline/intro_styles`, `routes/intro_styles`) reuses the two
+    # flags above and needs a build at this protocol (set by scripts/bump-protocol.py). The
+    # `intro_styles` editor capability is sent, and the route answers, only at or above it;
+    # INTRO_STYLES_MIN_CLIENT_PROTOCOL=999 removes the entry for every build.
+    intro_styles_min_client_protocol: int = 57
+
+    def intro_scene_for(self, user_id: object) -> bool:
+        if not self.intro_scene_enabled or user_id is None:
+            return False
+        allowed = {value.strip() for value in self.intro_scene_user_ids}
         return "*" in allowed or str(user_id) in allowed
 
     # Daily comparison of delayed Standard Usage Cost export with Nova's
@@ -1256,6 +1308,17 @@ class Settings(BaseSettings):
     # round-trips `zoom`). A save carrying a zoomed tilt from an older build, or one that would
     # overwrite a stored zoom, answers 426 `client_update_required` (`slide_tilt_zoom`).
     media_tilt_zoom_min_client_protocol: int = 33
+    # Clip dim: a main-track clip or photo drawn darker by a strength 0..1 (`TimelineClip.dim`,
+    # each encoded pixel times `1 - dim`, under text, captions, stickers and drawings), drawn ON
+    # DEVICE by `KriaMediaEngine` only (the cloud has no `clipDim`). The editor's `clips.dim`
+    # and the chat's patch_slots `dim` need this flag on, `clipDim` in
+    # PHONE_RENDER_VERIFIED_FEATURES (a JSON array; set after a physical-device preview + export
+    # check) and a build declaring protocol >= `clip_dim_min_client_protocol`. A pinned recipe
+    # that carries a dim answers 426 `client_update_required` (`clip_dim`) to an older build.
+    # Default FALSE (dark ship). Apply: token first, then `CLIP_DIM_ENABLED=true` (api + worker)
+    # + restart. Rollback = `...=false` + restart; recipes already pinned keep their dim.
+    clip_dim_enabled: bool = False
+    clip_dim_min_client_protocol: int = 58
     # KRI-1350: colour moments on a phone Talking edit -- black-and-white / warm / faded windows
     # of the finished video with white-flash, light-leak or dip-to-black edges, an end fade to
     # black, and an optional library sound locked to an edge. Kill switch for the chat op that
@@ -1607,6 +1670,16 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set SINGLE_TAKE_POINTER_ASK_ENABLED=false --app nova-video` + restart
     # (api + worker).
     single_take_pointer_ask_enabled: bool = True
+    # KRI-1523: a `select` row naming which of the creator's own videos to use (the typed
+    # `selected_media_ids` fact: "Use only the good take: the second clip", Cusco DJI T1
+    # 2026-11-17) keeps only those videos in a Talking plan (`clip_scope.apply_chosen_videos`)
+    # and is judged against the plan and the finished video (`brief_checks._check_chosen_videos`).
+    # A pick the server cannot tell apart (untyped, or ids naming no own video) on several videos
+    # says how to pick instead of "A Talking video can't do this". The Main Creator is taught the
+    # fact (`main_creator.CHOSEN_VIDEOS_BRIEF_SENTENCE`). Default TRUE. False: byte-identical
+    # (prompt included). Rollback: `fly secrets set CHOSEN_CLIPS_ASK_ENABLED=false --app
+    # nova-video` + restart (api + worker).
+    chosen_clips_ask_enabled: bool = True
     # KRI-1489: a pop-in ask that DESCRIBES its moments ("when I mention the launch and Vela's 2
     # posts") instead of quoting the spoken words is answered by the pop-ins the plan placed on
     # other words when there are at least as many spare pop-ins as unmatched names
@@ -1997,6 +2070,20 @@ class Settings(BaseSettings):
     # (`narrated_footage_fit`). Edits that follow a filming guide are left as they were.
     # false = every clip from its first frame, slowed to fill its step, byte-identical.
     narrated_footage_fit_enabled: bool = True
+    # Tahini run (job 1d062f21, 2026-11-17) kill switch. On a phone Voiceover edit with no
+    # filming guide: a typed cut pace on the approved brief ("change the picture about once a
+    # second", `approximate_cut_duration_s`) cuts every long step into shots of about that
+    # length from footage not yet shown, instead of one long or slowed clip per step; a clip
+    # the creator named on a word ("the fork bite on "grab a fork"") that plays elsewhere is
+    # shown again on that word from a part of it not yet shown; and a named moment a hair
+    # short of a cut of its own is no longer refused (`narrated_footage_fit`). Needs
+    # NARRATED_FOOTAGE_FIT_ENABLED. false = byte-identical.
+    narrated_cut_pace_enabled: bool = True
+    # Tahini run kill switch. The finished phone Voiceover review judges a clip named on a word
+    # (which clip is on screen when the word is said) and a typed cut pace (shots, average and
+    # longest from the render's steps) instead of listing them under "Have a look". Render-time
+    # only: a draft is never held for them. false = byte-identical.
+    narrated_cue_receipts_enabled: bool = True
 
     # KRI-889: cut the lines a creator named ("cut the line 'with bread, no'") out of a
     # narrated edit's recorded voiceover, phone and cloud, and promise it on the draft.
@@ -2216,6 +2303,20 @@ class Settings(BaseSettings):
         "and worker restart.",
     )
 
+    tight_pause_relative_floor_enabled: bool = Field(
+        default=True,
+        description="KRI-1524 bug-fix kill switch for the tight / long pause passes and the "
+        "several-take join measures. An action camera records hot, so an ordinary outdoor take's "
+        "room floor sits above -45 dBFS: the pass called every such take noisy and cut nothing, "
+        "and the -38 dB pause measure heard no pause in it at all (join gaps of 0.0 s). On: a take "
+        "above -45 dBFS is noisy only when its speech rises less than 25 dB above its floor; "
+        "otherwise it is cut with the same floor-relative protections and its pauses are measured "
+        "against its own floor (`tight_pause_cut.take_noise`, `measure_take_silences`). Takes at "
+        "or below -45 dBFS are unchanged. Off: every plan, report and receipt is byte-identical "
+        "to before. Kill switch: `fly secrets set TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED=false --app "
+        "nova-video` + api and worker restart.",
+    )
+
     speech_cleanup_slate_cut_enabled: bool = Field(
         default=False,
         description="Speech cleanup also cuts off-script pre-roll that opens a take: the first "
@@ -2368,6 +2469,20 @@ class Settings(BaseSettings):
         "Off is byte-identical to the late-word fix alone. Part of the source policy fingerprint, "
         "so a flip re-analyzes. Kill switch: `fly secrets set "
         "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker restart.",
+    )
+    speech_cleanup_stretched_pairs_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup stretched-pair fix (KRI-1627, Cusco T3). whisper-1 can stretch "
+        "BOTH the tail of the word before a pause and the head of the word after it into the "
+        "pause, so the stamps meet inside it and rule 3 never sees it (\"Dağları'nın … "
+        'bayırlarında", a 1.65 s mid-sentence pause kept). On (and with '
+        "SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED): the preflight analysis trims both stamps to "
+        "the silence edges, only when the KRI-1017 voicing detector hears the whole pause "
+        "voiceless, the previous voice ending and the next voice starting right at its edges "
+        "(app/pipeline/late_word_realign.py). Off is byte-identical to the stretched-word fix. "
+        "Part of the source policy fingerprint, so a flip re-analyzes. Kill switch: `fly secrets "
+        "set SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED=false --app nova-video` + api and worker "
+        "restart.",
     )
 
     speech_cleanup_aligner_model_dir: str = Field(
@@ -3257,6 +3372,17 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-1560: a title ask is answered with up to three titles built from what the creator said,
+    # in one question (`services/opening_titles`). Kill switch: false asks the older "do you have
+    # an idea, or should I write one?" question instead, and makes no extra model call.
+    kria_opening_title_options_enabled: bool = True
+
+    # KRI-1563: the ask ledger of a chat edit. Every part of the ask ends done, declined or
+    # waiting on a choice; the reply names every change (no "first two" cut), a turn that
+    # changed nothing still answers each part, and on a failed-render correction a part the
+    # copilot could not do no longer throws away the ops for the others. false = the previous
+    # receipts and replies. Apply: fly secret + restart api and worker.
+    kria_ask_ledger_enabled: bool = True
     # 29 Ekim lane E (KRI-1039): an ask the editor ops can express is composed with them
     # instead of refused, asked about or re-planned: a word-by-word title is one
     # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up
@@ -3266,8 +3392,9 @@ class Settings(BaseSettings):
     # Unstated clip order never blocks (PR 1): what the creator did not say about the order
     # INSIDE a group they described defaults to the order the clips were added, disclosed on the
     # card, instead of holding the draft behind "tell me the order". Honoured exactly: anything
-    # they did say. false = the previous hold, byte-identical. Apply: fly secret + restart
-    # api and worker.
+    # they did say. KRI-1592: where nothing pins an order (Visuals, voiceover, Talking writers) the
+    # order ask is declined with a plain line, never held. false = the previous hold,
+    # byte-identical. Apply: fly secret + restart api and worker.
     kria_unstated_order_default_enabled: bool = False
     # Clip order is one live, AI-aware state (PR 2): every order change (the creator's message,
     # a drag, a manual timeline edit, the AI's own story order) is one ledger entry; the chat
@@ -3304,6 +3431,22 @@ class Settings(BaseSettings):
     # phone drew, not off the Voiceover record's language alone. false = the hold and the
     # language-only review, byte-identical.
     narrated_caption_render_promise_enabled: bool = True
+    # Tahini (prod job 1d062f21, 2026-11-17): "Keep my whole voiceover" (an `audio` row typed
+    # `keep_whole_take`) on a phone Voiceover draft is a render promise ("Your whole voiceover
+    # plays and the pictures are cut to it"), never "This narrated planned edit cuts your
+    # footage down; a Talking edit keeps the whole take."; the finished video is judged by
+    # its speech cleanup outcome. false = the format sentence, byte-identical.
+    narrated_whole_voiceover_promise_enabled: bool = True
+    # Tahini: three phone Voiceover DRAFT asks that read "I can't confirm this draft does it
+    # yet": a typed caption look ("White captions") is drawn by that writer too and said as
+    # done; "<x> sounds ... under my voice" is the footage bed like "the crowd" (KRI-1465);
+    # and a first/last clip the draft's resolved order intents pin is a render promise.
+    # false = all three as before, byte-identical.
+    narrated_draft_promises_enabled: bool = True
+    # Tahini: the finished video's review re-checks each ask the simpler version left out
+    # against the render; one the video does anyway reads "Done anyway: ..." instead of "Left
+    # out as agreed: ...". false = every left-out line as before, byte-identical.
+    left_out_recheck_enabled: bool = True
     # KRI-1354 (de1): "Make it without these" looped. A "simpler version" tap on a strategy
     # refusal still counts on later turns that are only choice taps (e.g. the readiness hold's
     # card), with no draft since, for the same dropped fields. false = per-turn consent only,

@@ -31,6 +31,7 @@ import XCTest
 
         await sessions.reconcile(key, capabilities: capabilities)
         await sessions.reconcile(key, capabilities: capabilities, retry: true)
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         let automatic = await exporter.calls
         XCTAssertEqual(automatic, 0, "A newer revision from a changed generation must not release a creator Stop")
@@ -38,6 +39,7 @@ import XCTest
         XCTAssertEqual(sessions.presentations[key]?.phase, .cancelled)
 
         await sessions.resumeFromUser(key)
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         let resumed = await exporter.calls
         XCTAssertEqual(resumed, 1, "Only the typed Resume may render the newer revision")
@@ -69,6 +71,7 @@ import XCTest
         await remote.move(to: newer)
         await sessions.reconcile(key, capabilities: capabilities)
         await sessions.reconcile(key, capabilities: capabilities, retry: true)
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         let automatic = await exporter.calls
         XCTAssertEqual(automatic, 0, "A later revision stays held after a published result")
@@ -78,6 +81,7 @@ import XCTest
         // queued behind it and return first. Wait for the Resume's real outcome, with a deadline, then assert it.
         await sessions.resumeFromUser(key)
         _ = await eventually { await exporter.calls == 1 && (try? store.load(storageKey))?.state == .released }
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         let resumed = await exporter.calls
         let diagnostic = "presentation=\(String(describing: sessions.presentations[key])) intent=\(String(describing: try? store.load(storageKey)))"
@@ -173,6 +177,7 @@ import XCTest
         await sessions.reconcile(key, capabilities: capabilities)
         await gate.open()
         let retried = await retry.value
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
 
         XCTAssertTrue(retried, "A poll that lands mid-retry must not fence the retry the creator just asked for")
@@ -208,6 +213,7 @@ import XCTest
         await sessions.reconcile(key, capabilities: capabilities)
         await gate.open()
         let retried = await retry.value
+        await sessions.waitUntilIdle()
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         XCTAssertFalse(retried, "A newer revision this retry did not mint is still a stale completion")
         let exports = await exporter.calls

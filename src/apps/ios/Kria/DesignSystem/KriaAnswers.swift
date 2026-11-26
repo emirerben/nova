@@ -190,6 +190,8 @@ struct KriaAnswerOption: Identifiable, Equatable {
     var detail: String? = nil
     var isRecommended = false
     var identifier: String? = nil
+    /// KRI-1560: the block gets a pencil beside it (`KriaAnswerStack.edit`).
+    var isEditable = false
 }
 
 /// A question's answers as full-width blocks, one under the other (Paper S2.03, S2.05, S2.06), then the optional
@@ -209,6 +211,8 @@ struct KriaAnswerStack: View {
     var pendingID: String?
     var isLocked = false
     var typeMyOwn: (() -> Void)?
+    /// KRI-1560: the pencil beside an editable block; it hands that block's words to the composer.
+    var edit: ((KriaAnswerOption) -> Void)?
     var decide: (() -> Void)?
     let select: (KriaAnswerOption) -> Void
 
@@ -220,14 +224,28 @@ struct KriaAnswerStack: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(options) { option in
-                KriaChoiceRow(title: option.title, detail: option.detail, state: state(of: option),
-                              isRecommended: option.isRecommended && !sendFailed) {
-                    tappedID = option.id
-                    sendFailed = false
-                    select(option)
+                HStack(alignment: .center, spacing: 8) {
+                    KriaChoiceRow(title: option.title, detail: option.detail, state: state(of: option),
+                                  isRecommended: option.isRecommended && !sendFailed) {
+                        tappedID = option.id
+                        sendFailed = false
+                        select(option)
+                    }
+                    .disabled(isSending || isLocked || (heldID != nil && option.id != heldID))
+                    .modifier(OptionIdentifier(identifier: option.identifier))
+                    if option.isEditable, let edit {
+                        Button { edit(option) } label: {
+                            Image(systemName: "pencil").font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(KriaColor.ink)
+                                .frame(width: 44, height: 48)
+                                .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSending || isLocked)
+                        .accessibilityLabel(Text("Edit “\(option.title)”"))
+                        .accessibilityIdentifier("\(option.identifier ?? option.id)-edit")
+                    }
                 }
-                .disabled(isSending || isLocked || (heldID != nil && option.id != heldID))
-                .modifier(OptionIdentifier(identifier: option.identifier))
             }
             if let typeMyOwn {
                 KriaChoiceRow(title: String(localized: "Type my own"), typeMyOwn: true, action: typeMyOwn)

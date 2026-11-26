@@ -10,7 +10,7 @@
       },
       {
         "file": "app/kria/planner.py",
-        "line": 7694,
+        "line": 8213,
         "tr": "{v1} güncellendi."
       }
     ],
@@ -85,7 +85,7 @@
       },
       {
         "file": "app/services/kria_editor_ops_diff.py",
-        "line": 777,
+        "line": 873,
         "tr": "{count} {noun_tr}"
       }
     ]

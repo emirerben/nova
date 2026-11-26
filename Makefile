@@ -2,7 +2,7 @@
         ios-generate ios-build ios-test ios-verify \
         kria-replay kria-replay-job verify-kria verify-kria-turns verify-protected-text verify-phone-render verify-converge \
         local-render local-render-build local-render-up local-render-down \
-        local-render-logs local-render-migrate verify-overlays verify-motion-performance \
+        local-render-logs local-render-migrate verify-overlays verify-intro-scenes verify-intro-styles verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
         workspace-pull workspace-push workspace-status \
         check-test-registries sync-test-registries
@@ -173,6 +173,37 @@ verify-overlays:
 		-v "$(OVERLAY_VERIFY_HOST_OUT):/app/.overlay-verify" \
 		-v "$(OVERLAY_VERIFY_FIXTURES_HOST):/app/tests/fixtures/overlay_verify:ro" \
 		api python -m app.cli.verify_overlays $(ARGS) --out /app/.overlay-verify
+
+# ── Intro-scene render check (KRI-1610) ───────────────────────────────────────
+# Compiles the five intro teardowns (src/apps/api/prompts/intro_teardowns.json) to title
+# rows, renders them through the real Skia path in the prod image, in English and Turkish,
+# and asserts they are un-clipped, off the face and captions, in one ink, in the scene's own
+# faces. Four negative controls must FAIL. Outputs .intro-verify/{report.json,montage.png};
+# read the montage. Run before a PR touching app/pipeline/intro_scene.py or the teardowns.
+INTRO_VERIFY_OUT ?= .intro-verify
+INTRO_VERIFY_HOST_OUT := $(abspath $(INTRO_VERIFY_OUT))
+
+verify-intro-scenes:
+	@mkdir -p $(INTRO_VERIFY_OUT)
+	@[ -f .env.local-render ] || touch .env.local-render
+	$(LOCAL_RENDER_COMPOSE) build api
+	$(LOCAL_RENDER_COMPOSE) run --rm --no-deps \
+		-e NOVA_IN_PROD_IMAGE=1 \
+		-v "$(INTRO_VERIFY_HOST_OUT):/app/.intro-verify" \
+		api python -m app.cli.verify_intro_scenes --out /app/.intro-verify
+
+# KRI-1633: "Try intro styles" through the real offer, phone Save and Skia in the prod image.
+INTRO_STYLES_VERIFY_OUT ?= .intro-styles-verify
+INTRO_STYLES_VERIFY_HOST_OUT := $(abspath $(INTRO_STYLES_VERIFY_OUT))
+
+verify-intro-styles:
+	@mkdir -p $(INTRO_STYLES_VERIFY_OUT)
+	@[ -f .env.local-render ] || touch .env.local-render
+	$(LOCAL_RENDER_COMPOSE) build api
+	$(LOCAL_RENDER_COMPOSE) run --rm --no-deps \
+		-e NOVA_IN_PROD_IMAGE=1 \
+		-v "$(INTRO_STYLES_VERIFY_HOST_OUT):/app/.intro-styles-verify" \
+		api python -m app.cli.verify_intro_styles --out /app/.intro-styles-verify
 
 # Maximum accepted Creator Block workload in the production image. The CLI
 # renders the 360-frame weighted ceiling plus the 12-block/96-asset ceiling,

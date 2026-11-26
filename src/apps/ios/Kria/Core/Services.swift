@@ -333,6 +333,8 @@ protocol KriaAPIClient: ReviewPlanTransport, SlidePostProposalClient, SongRangeC
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     /// KRI-1501: translates the given caption cues for the translated-line track. Persists nothing.
     func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse
+    /// KRI-1633: the fitted intro looks for a video's title. Persists nothing; the picked rows ride the ordinary Save.
+    func introStyles(itemID: String, variantID: String, request: IntroStylesRequest) async throws -> IntroStylesResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
     /// Live plan & review (contract v2): `GET creation-threads/{id}/plan`.
     func planSnapshot(threadID: UUID) async throws -> PlanSnapshot
@@ -618,6 +620,11 @@ extension KriaAPIClient {
     }
 
     func captionTranslation(itemID: String, variantID: String, request: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
+        _ = itemID; _ = variantID; _ = request
+        throw APIError.unsupported
+    }
+
+    func introStyles(itemID: String, variantID: String, request: IntroStylesRequest) async throws -> IntroStylesResponse {
         _ = itemID; _ = variantID; _ = request
         throw APIError.unsupported
     }
@@ -1450,7 +1457,13 @@ enum KriaClientProtocolContract {
     /// `editor_capabilities.caption_translation` and plans a translated line only for this protocol with `dualCaptions` verified.
     /// 53 (music under speech): a Talking or Voiceover recipe may carry `audio.speech_windows` with a music-role audio track; the
     /// device ducks that track under those windows. Needs `speechDuck`.
-    static let version = 55
+    /// 56 (KRI-1582): reads `choice_question` version 2, whose options may carry a `preview` (text layers drawn over a frame
+    /// of the creator's own clip). The server sends the informative text design picker with previews only to this protocol;
+    /// a 55 build gets the same question as text-only cards.
+    /// 58: draws a clip's `dim` (`TimelineClip.dim`, the `clipDim` capability) in the preview and the export, and keeps a
+    /// row's `dim` on Save. The server offers `editor_capabilities.clips.dim` only to this protocol (and only with `clipDim`
+    /// verified) and answers 426 `client_update_required` (`clip_dim`) to an older build that polls a dimmed recipe.
+    static let version = 58
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1857,6 +1870,10 @@ struct KriaAPI: KriaAPIClient {
     func captionTranslation(itemID: String, variantID: String, request translation: CaptionTranslationRequest) async throws -> CaptionTranslationResponse {
         try await request(path: "plan-items/\(itemID)/variants/\(variantID)/caption-translation", method: "POST",
                           bodyData: try JSONEncoder().encode(translation), decode: CaptionTranslationResponse.self)
+    }
+    func introStyles(itemID: String, variantID: String, request styles: IntroStylesRequest) async throws -> IntroStylesResponse {
+        try await request(path: "plan-items/\(itemID)/variants/\(variantID)/intro-styles", method: "POST",
+                          bodyData: try JSONEncoder().encode(styles), decode: IntroStylesResponse.self)
     }
     func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
         struct Body: Encodable {
@@ -2366,6 +2383,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "TIMELINE_TILT_WITH_LOOK": String(localized: "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here."),
             "clip_backdrop_media_not_in_pool": String(localized: "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here."),
             "clip_backdrop_media_unavailable": String(localized: "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here."),
+            "clip_dim_unavailable": String(localized: "Dim isn’t available right now. Remove the dim on that clip and save again. Your edits are still here."),
             "clip_tilt_unavailable": String(localized: "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here."),
             "clip_tilt_zoom_unavailable": String(localized: "Zoom isn’t available right now. Set the zoom back to 1x on that clip and save again. Your edits are still here."),
             "transitions_disabled": String(localized: "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here."),

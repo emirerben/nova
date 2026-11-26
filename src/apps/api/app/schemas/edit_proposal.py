@@ -1214,7 +1214,9 @@ def resolve_video_reuse_policy(
     if _TR_REUSE_POS.search(loose) or _TR_REUSE_LOOP_IT.search(loose):
         return "allow_repeat"
     if re.search(
-        r"\b(?:repeat|reuse|loop|replay|duplicate)\s+(?:the\s+|my\s+|these\s+|those\s+|this\s+)?"
+        # Tahini run: "reuse a clip if needed" (a / an / any / one / some clip) grants it too.
+        r"\b(?:repeat|reuse|loop|replay|duplicate)\s+"
+        r"(?:the\s+|my\s+|these\s+|those\s+|this\s+|an?\s+|any\s+|one\s+|some\s+)?"
         r"(?:(?:first|second|third|last|opening|ending|\d+)\s+)?"
         r"(?:videos?|clips?|footage|sources?|shots?|it|them)\b|"
         r"\b(?:videos?|clips?|footage|shots?)\b.{0,24}\b(?:twice|loop|repeat|again and again)\b|"

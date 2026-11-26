@@ -2,6 +2,216 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.31.0] - 2026-11-26
+
+### Changed
+- fix(kria): no heads-up about Kria's own hook, story or archetype nobody asked for (KRI-1474) (#2512) <!-- release-pr: 2512 -->
+
+## [0.90.30.0] - 2026-11-26
+
+### Changed
+- fix(kria): Cusco T3 "Sticker 1": cleanup cuts a pause whisper stretched both neighbouring words into (KRI-1627) (#2514) <!-- release-pr: 2514 -->
+
+## [0.90.29.0] - 2026-11-26
+
+### Fixed
+- fix(kria): "fill the rest with the other clips" is never a clip question (KRI-1519) (#2506) <!-- release-pr: 2506 -->
+
+## [0.90.28.0] - 2026-11-26
+
+### Fixed
+- fix(kria): "use only the good take" keeps only that clip on a Talking edit (KRI-1523) (#2508) <!-- release-pr: 2508 -->
+
+## [0.90.27.0] - 2026-11-26
+
+### Changed
+- docs(ci): failure-log rows for #2525, #2527, #2529 and #2530 (#2535) <!-- release-pr: 2535 -->
+
+## [0.90.26.0] - 2026-11-26
+
+### Changed
+- feat(ios): dim a clip or photo 0-100% in the editor and from chat, drawn on the phone under text (KRI-1608) (#2499) <!-- release-pr: 2499 -->
+
+## [0.90.25.0] - 2026-11-26
+
+### Changed
+- ci(api): the shard fails unless every xdist worker ran on its own database (KRI-1637) (#2528) <!-- release-pr: 2528 -->
+
+## [0.90.24.0] - 2026-11-26
+
+### Changed
+- fix(ios): UI tests no longer wait 60 s for idle after a doubled animation start on a freed layer (KRI-1604) (#2529) <!-- release-pr: 2529 -->
+
+## [0.90.23.0] - 2026-11-26
+
+### Changed
+- ci(ios): mark the keyboard's first-use tip as shown on the test simulator (KRI-1639) (#2527) <!-- release-pr: 2527 -->
+
+## [0.90.22.0] - 2026-11-26
+
+### Changed
+- test(intro-styles): fail on a title that touches a caption, over fixed job ids (KRI-1638) (#2530) <!-- release-pr: 2530 -->
+
+## [0.90.21.0] - 2026-11-25
+
+### Changed
+- ci(api): one test database per xdist worker, behind a switch that is off (KRI-1637) (#2526) <!-- release-pr: 2526 -->
+
+## [0.90.20.0] - 2026-11-25
+
+### Changed
+- test(ios): the connected-panels test plays a video that cannot end between its play and pause taps (KRI-1604) (#2525) <!-- release-pr: 2525 -->
+
+## [0.90.19.0] - 2026-11-25
+
+### Changed
+- feat(ios): Try intro styles offers fitted intro looks the creator picks on tap (KRI-1633) (#2522) <!-- release-pr: 2522 -->
+
+## [0.90.18.0] - 2026-11-25
+
+### Changed
+- feat(intro): Try intro styles on tap, backend (KRI-1633) (#2521) <!-- release-pr: 2521 -->
+
+## [0.90.17.0] - 2026-11-25
+
+### Changed
+- docs(ci): failure log row for the Save tapped during an editor load (KRI-1617) (#2524) <!-- release-pr: 2524 -->
+
+## [0.90.16.0] - 2026-11-25
+
+### Changed
+- fix(ios): slide-to-select auto-scroll keeps its speed on a slow device (KRI-1602) (#2493) <!-- release-pr: 2493 -->
+
+## [0.90.15.0] - 2026-11-25
+
+### Changed
+- fix(ios): Save tapped while the editor is still loading runs when it is ready (KRI-1617) (#2518) <!-- release-pr: 2518 -->
+
+## [0.90.14.0] - 2026-11-24
+
+### Changed
+- fix(ci): an editor change also runs the UI tests from other groups that enter the editor (KRI-1632) (#2520) <!-- release-pr: 2520 -->
+
+## [0.90.13.0] - 2026-11-24
+
+### Changed
+- fix(kria): Cusco T4 review judges each named moment on a Voiceover and says when its words are gone (KRI-1517) (#2513) <!-- release-pr: 2513 -->
+
+## [0.90.12.0] - 2026-11-24
+
+### Changed
+- docs(ci): failure-log rows for the five failures fixed on 2026-11-24 (#2519) <!-- release-pr: 2519 -->
+
+## [0.90.11.0] - 2026-11-24
+
+### Changed
+- test(ios): UI tests tap a format card only once it accepts taps (KRI-1604) (#2507) <!-- release-pr: 2507 -->
+
+## [0.90.10.0] - 2026-11-24
+
+### Changed
+- test(notifications): notification delivery tests no longer collide across test workers (KRI-1630) (#2517) <!-- release-pr: 2517 -->
+
+## [0.90.9.0] - 2026-11-24
+
+### Changed
+- fix(captions): caption correction keeps the words that were said (KRI-1520) (#2505) <!-- release-pr: 2505 -->
+
+## [0.90.8.0] - 2026-11-24
+
+### Changed
+- fix(kria): tight pauses work on a take recorded loud, and the 0.3 s promise names the noisy-take exception (KRI-1524) (#2509) <!-- release-pr: 2509 -->
+
+## [0.90.7.0] - 2026-11-24
+
+### Changed
+- fix(overlays): the intro render check no longer sits at the 60 s test limit (KRI-1629) (#2516) <!-- release-pr: 2516 -->
+
+## [0.90.6.0] - 2026-11-24
+
+### Changed
+- feat(intro): a bounded agent picks the intro scene from issued option ids, or declines (KRI-1612) (#2504) <!-- release-pr: 2504 -->
+
+## [0.90.5.0] - 2026-11-24
+
+### Changed
+- feat(intro): reference intake and a variety report in CI (KRI-1614) (#2503) <!-- release-pr: 2503 -->
+
+## [0.90.4.0] - 2026-11-24
+
+### Changed
+- feat(intro): server-issued options and a seeded pick for Talking intro scenes (KRI-1611) (#2501) <!-- release-pr: 2501 -->
+
+## [0.90.3.0] - 2026-11-24
+
+### Changed
+- test(ios): a request from an earlier test never reaches the next test's fake server (KRI-1607) (#2511) <!-- release-pr: 2511 -->
+
+## [0.90.2.0] - 2026-11-24
+
+### Changed
+- test(ios): phone-render tests wait for the session's own reads before each check (KRI-1605) (#2510) <!-- release-pr: 2510 -->
+
+## [0.90.1.0] - 2026-11-24
+
+### Changed
+- feat(intro): IntroScene schema, compiler to title rows, five teardowns, render check (KRI-1610) (#2500) <!-- release-pr: 2500 -->
+
+## [0.90.0.0] - 2026-11-24
+
+### Added
+- feat(kria): offer several opening titles grounded in what the creator said (KRI-1560) (#2455) <!-- release-pr: 2455 -->
+
+## [0.89.114.0] - 2026-11-24
+
+### Changed
+- feat(kria): named sound cues on a phone montage with a recorded voiceover, sound only, behind a flag (KRI-1598) (#2496) <!-- release-pr: 2496 -->
+
+## [0.89.113.0] - 2026-11-24
+
+### Changed
+- test(ios): camera-roll UI tests hold each request until the test lets it go (KRI-1604) (#2498) <!-- release-pr: 2498 -->
+
+## [0.89.112.0] - 2026-11-24
+
+### Changed
+- fix(kria): research captions work on a draft edited on the phone (KRI-1595) (#2480) <!-- release-pr: 2480 -->
+
+## [0.89.111.0] - 2026-11-24
+
+### Changed
+- feat(kria): chat edits answer every part of an ask as done, declined or waiting, checked in code (KRI-1563) (#2485) <!-- release-pr: 2485 -->
+
+## [0.89.110.0] - 2026-11-24
+
+### Changed
+- feat(kria): an order ask nothing pins is declined plainly on Visuals, voiceover and Talking edits instead of held (KRI-1592) (#2481) <!-- release-pr: 2481 -->
+
+## [0.89.109.0] - 2026-11-24
+
+### Changed
+- KRI-1598: say why no sound effects were placed on every montage writer (#2495) <!-- release-pr: 2495 -->
+
+## [0.89.108.0] - 2026-11-23
+
+### Changed
+- KRI-1585: writer rows carry the copy's language so A1 caps are Turkish (acceptance fixes) (#2494) <!-- release-pr: 2494 -->
+
+## [0.89.107.0] - 2026-11-23
+
+### Fixed
+- fix(kria): Tahini recipe run — Voiceover cuts at the asked pace and ends on the fork, no needless holds, short captions, readable title, no lost clip match (KRI-1529, KRI-1530) (#2382) <!-- release-pr: 2382 -->
+
+## [0.89.106.0] - 2026-11-23
+
+### Changed
+- fix(kria): the clip-order history takes back what undo, a removed message and a restarted request take back; every reader asks one rule (KRI-1594) (#2483) <!-- release-pr: 2483 -->
+
+## [0.89.105.0] - 2026-11-23
+
+### Changed
+- KRI-1582: informative text design picker with on-phone previews (KRI-1585 PR6) (#2492) <!-- release-pr: 2492 -->
+
 ## [0.89.104.0] - 2026-11-23
 
 ### Changed

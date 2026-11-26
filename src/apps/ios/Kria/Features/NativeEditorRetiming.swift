@@ -120,6 +120,7 @@ extension NativeEditorSession {
         if operation == "source_crop", section == .timeline, rendersOnDevice { return canCropClips }
         // KRI-1136: tilt only exists where the server explicitly lists `clips.tilt`.
         if operation == "tilt" { return canTiltClips }
+        if operation == "dim" { return canDimClips }
         guard !rendersOnDevice else { return false }
         let clipKeys: [String] = section == .timeline ? ["clips.\(operation)"] : []
         return canEditOperation(keys + clipKeys + [section.rawValue], section: section)
@@ -253,6 +254,57 @@ extension NativeEditorSession {
             }
         }
         return (applied, skipped)
+    }
+
+    // MARK: Dim
+
+    var canDimClips: Bool { document.capabilities["clips.dim"]?.editable == true }
+
+    func clipDim(for selection: EditorSelection) -> ClipDim? {
+        guard selection.kind == .clip,
+              let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }),
+              let raw = document.clips.first(where: { $0.id == clip.slotID })?.raw["dim"] else { return nil }
+        return try? ClipDim(row: raw)
+    }
+
+    func dimBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let selection, selection.kind == .clip else { return String(localized: "Select a clip to dim it.") }
+        guard canDimClips else {
+            return document.capabilities["clips.dim"]?.reason.map(nativeEditorWireLabel) ?? String(localized: "Dim isn’t available for this edit.")
+        }
+        return nil
+    }
+
+    /// Sets how dark a clip's picture is drawn. nil removes the row's `dim` key (an explicit null when the saved
+    /// row had one, so the Save clears it), so an undimmed clip is byte-identical to one that was never dimmed.
+    func setClipDim(_ dim: ClipDim?, for selection: EditorSelection) {
+        guard let section = footageSection(selection), section == .timeline,
+              canEditFootage(section, keys: ["footage.dim", "dim"], operation: "dim", resetting: dim == nil) else { return }
+        let clearValue = footageClearValue(selection, key: "dim")
+        transactDocument(section: section) { document in
+            mutateFootage(selection, in: &document) { raw in
+                if let dim { raw["dim"] = dim.rowValue }
+                else if let clearValue { raw["dim"] = clearValue }
+                else { raw.removeValue(forKey: "dim") }
+            }
+        }
+    }
+
+    /// Gives every clip and photo the same dim (nil removes it from all), in one undo step. A blank split-screen
+    /// block has no picture to dim and is left as it was. Returns how many clips it set.
+    @discardableResult
+    func applyClipDimToAllClips(_ dim: ClipDim?) -> Int {
+        guard canDimClips, canEditFootage(.timeline, keys: ["footage.dim", "dim"], operation: "dim", resetting: dim == nil) else { return 0 }
+        var applied = 0
+        transactDocument(section: .timeline) { document in
+            for index in document.clips.indices where !document.clips[index].isBlank && !document.clips[index].removed {
+                if let dim { document.clips[index].raw["dim"] = dim.rowValue }
+                else if let clear = clipSlotClearValue(slotID: document.clips[index].id ?? "", key: "dim") { document.clips[index].raw["dim"] = clear }
+                else { document.clips[index].raw.removeValue(forKey: "dim") }
+                applied += 1
+            }
+        }
+        return applied
     }
 
     func footagePlaybackRate(for selection: EditorSelection) -> Double {

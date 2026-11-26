@@ -58,7 +58,7 @@ setting the flag:
 `TIGHT_PAUSE_CUT_ENABLED` (default off; off is byte-identical) adds extra pause cuts to a
 consented phone Talking render when the approved brief records `pauses: "tight"` ("cut out all
 my pauses so it's tight"; Main Creator v121). It needs consented cleanup (`required_v1`), one
-clip, and a take whose room floor is at or below -45 dBFS; the render writes
+clip, and a take whose room floor is at or below -45 dBFS (or a loud but clean take, below); the render writes
 `variant["tight_pauses"]` and the receipt reports the measured longest pause (0.35 s limit). The
 thread projection also marks a recorded cleanup ask (`requested_in_chat`, `pause_style`) so new
 iPhone builds show Clean up speech already on; older builds ignore the fields. Design, limits
@@ -68,6 +68,25 @@ and evidence: `docs/reviews/qendresa-13-tight-pauses.md`.
    on the creator's own take, plus one take with background noise (expect no tight cuts).
 2. `fly secrets set TIGHT_PAUSE_CUT_ENABLED=true --app nova-video`, restart api and worker.
 3. Kill switch: the same secret `=false` + restart; renders already pinned keep their cuts.
+
+### Takes recorded loud (KRI-1524)
+
+An action camera records hot, so an ordinary outdoor take's room floor sits near -40 dBFS. With
+`TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED` (default **on**, bug-fix kill switch) a take above -45 dBFS
+is noisy only when its speech (95th percentile of 40 ms frames) rises less than 25 dB above its
+floor; otherwise the tight / long pass cuts it with the same floor-relative protections, and its
+pauses and the several-take join gaps are measured against its own floor (the unguarded fallback join trim keeps the old measure) (90 Hz high-passed
+20 ms RMS under floor + 10 dB, 0.12 s), not the -38 dB bar that heard no pause in it. Takes at or
+below -45 dBFS are unchanged. Measured on the kit and fixture clips: Cusco DJI / Qendresa
+talking takes 28-34 dB (now cut), restaurant / café / crowd takes 17-25 dB (still noisy). The
+draft promise says "unless a take is noisy" in EN/TR/DE; drafts stored with the old wording stay
+render promises. Replay and evidence: `scripts/dev/kri1524_tight_pause_replay.py`,
+`docs/reviews/kri-1524-tight-pauses-hot-takes.md`.
+
+1. Check a fresh several-take Talking render on an action-camera take: `tight_pauses.status` is
+   `applied` (not `noisy_take`) and `take_join_gaps` are non-zero measured values.
+2. Kill switch: `fly secrets set TIGHT_PAUSE_RELATIVE_FLOOR_ENABLED=false --app nova-video` +
+   api and worker restart; every plan, report and receipt is then byte-identical to before.
 
 ## Long pauses by default
 
@@ -315,6 +334,14 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   voicing (`diagnostics.voice_guard.dropped`) stays on purpose. Kill switch:
   `fly secrets set SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED=false --app nova-video` + api and worker
   restart. Failure modes: `docs/reviews/kri-1512-stretched-words-failure-modes.md`.
+- the same, but BOTH words beside the pause reach into it and their stamps meet inside it (Cusco T3
+  "Dağları'nın … bayırlarında", a 1.65 s mid-sentence pause, KRI-1627) → the head trim alone
+  refuses that shape as ambiguous. `SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED` (default on, needs
+  the switch above) trims both stamps to the silence edges when the voicing detector also hears
+  the previous word's voice end right before the pause and its stamp before the pause as voice;
+  a `tail: true` entry in `diagnostics.stretched_heads` marks each pair. Kill switch:
+  `fly secrets set SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED=false --app nova-video` + api and worker
+  restart. Failure modes: `docs/reviews/kri-1627-stretched-pairs-failure-modes.md`.
 - "cleanup cut whole words / a quiet second speaker" on a take with no real pause (two
   people talking, one far from the mic; a wrong-language or partial transcript) → the
   ambient silence floor sat above the quiet voice and the transcript had no token there.

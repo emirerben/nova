@@ -1,0 +1,84 @@
+{
+ "note": "KRI-1523: prod Cusco DJI T1 'Good Take' (thread d3c428b2, job d988bb99, server 80c96b04c, build 2016, 2026-11-17). Read-only admin GETs. The first draft's hold (event #7) and brief v1 as stored before the creator waived r1. No media, URLs or tokens.",
+ "user_message": "These two clips are the same line filmed twice. In the first clip I lose my thread and stop. The second clip is the good take. Use only the good take and cut my pauses so it's tight. Turkish captions.",
+ "hold_reply": "I can't make this yet:\n- Use only the good take: the second clip, not the first failed take: A Talking video can't do this, so it stays as filmed\nI held this first draft back. The simpler version leaves out: Use only the good take: the second clip, not the first failed take. Should I make it without these, or do you want to change your request?",
+ "hold_readiness": [
+  {
+   "requirement_id": "r1",
+   "disposition": "unsupported",
+   "reason": "A Talking video can't do this, so it stays as filmed"
+  },
+  {
+   "requirement_id": "r2",
+   "disposition": "unverified",
+   "reason": "If Clean up speech is offered when you approve, choose it and every pause is cut down to about 0.3 s"
+  },
+  {
+   "requirement_id": "r3",
+   "disposition": "unverified",
+   "reason": "Every voice in your take gets captions, off-camera ones too; they'll be in Turkish, and I'll check that in the finished video"
+  }
+ ],
+ "brief_v1": [
+  {
+   "id": "r1",
+   "kind": "select",
+   "facts": {
+    "selected_media_ids": [
+     "analysis-proxy-ios-6123A6AD-6F19-4B22-BFCB-468BAB21C493.mp4"
+    ]
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Use only the good take: the second clip, not the first failed take.",
+   "source_turn_id": "5e8b24b2-8141-4dc7-9364-6a7c816e79c9"
+  },
+  {
+   "id": "r2",
+   "kind": "style",
+   "facts": {
+    "pauses": "tight",
+    "speech_cleanup": true
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Cut my pauses so it's tight.",
+   "source_turn_id": "5e8b24b2-8141-4dc7-9364-6a7c816e79c9"
+  },
+  {
+   "id": "r3",
+   "kind": "style",
+   "facts": {
+    "captions": "on",
+    "caption_language": "tr"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Turkish captions.",
+   "source_turn_id": "5e8b24b2-8141-4dc7-9364-6a7c816e79c9"
+  }
+ ],
+ "media": [
+  {
+   "media_id": "analysis-proxy-ios-242C1F4D-D699-470D-82CC-7912FA78836F.mp4",
+   "kind": "video",
+   "filename_suffix": "836F.mp4"
+  },
+  {
+   "media_id": "analysis-proxy-ios-6123A6AD-6F19-4B22-BFCB-468BAB21C493.mp4",
+   "kind": "video",
+   "filename_suffix": "C493.mp4"
+  }
+ ],
+ "simpler_version_strategy_selected_media_ids": [
+  "analysis-proxy-ios-242C1F4D-D699-470D-82CC-7912FA78836F.mp4",
+  "analysis-proxy-ios-6123A6AD-6F19-4B22-BFCB-468BAB21C493.mp4"
+ ],
+ "finished_variant_phone_talking_multi_clip_roles": [
+  "speaker",
+  "speaker"
+ ]
+}

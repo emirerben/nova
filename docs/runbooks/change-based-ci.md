@@ -273,7 +273,9 @@ scheduled runs hours after the time in the workflow, and the delay moves: about
 5 hours in mid-October 2026, 7 to 9 hours in mid-November. The schedules are
 therefore written early (KRI-1552): `ci.yml` at 17:23 UTC and `ios.yml` at
 18:23 UTC, which today start at about 00:00 to 02:00 and 01:30 to 03:00 UTC. The
-iOS nightly then runs for about two and a half hours. To see when they really start:
+iOS nightly then runs for about two and three quarter hours from its first Mac leg (2 h 44 min on
+2026-11-22, run 45084537019: three Mac legs at once at most, 100 to 104 UI tests verified per leg), about
+three hours from the moment GitHub starts it. To see when they really start:
 
 ```sh
 gh api "repos/{owner}/{repo}/actions/workflows/ios.yml/runs?event=schedule&per_page=7" \

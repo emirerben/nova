@@ -38,10 +38,20 @@ final class ChoiceQuestionTests: XCTestCase {
     func testMalformedOrUnsupportedPayloadsYieldNoQuestion() {
         XCTAssertNil(ChoiceQuestion.parse(payload: nil))
         XCTAssertNil(ChoiceQuestion.parse(payload: [:]))
-        XCTAssertNil(ChoiceQuestion.parse(payload: payload(version: 2)), "newer version degrades to the text question")
+        XCTAssertNil(ChoiceQuestion.parse(payload: payload(version: 3)), "newer version degrades to the text question")
+        XCTAssertNotNil(ChoiceQuestion.parse(payload: payload(version: 2)), "version 2 is this build's own")
         XCTAssertNil(ChoiceQuestion.parse(payload: payload(questionID: "")))
         XCTAssertNil(ChoiceQuestion.parse(payload: payload(options: [])))
         XCTAssertNil(ChoiceQuestion.parse(payload: payload(options: [option("only", "One option")])), "one option is not a choice")
+    }
+
+    /// KRI-1560: a title Kria built from the creator's words carries `editable`; the card draws a pencil only then.
+    func testEditableIsReadAndOffByDefault() throws {
+        var editable = option("title_1", "Black doesn't suit everyone", detail: "0:12 · “Everyone says black goes with everything.”")
+        if case .object(var fields) = editable { fields["editable"] = .bool(true); editable = .object(fields) }
+        let q = try XCTUnwrap(ChoiceQuestion.parse(payload: payload(options: [editable, option("cancel", "No title")])))
+        XCTAssertEqual(q.options.map(\.editable), [true, false])
+        XCTAssertEqual(q.options[0].detail, "0:12 · “Everyone says black goes with everything.”")
     }
 
     func testDuplicateKeysAndBlankLabelsAreDropped() throws {
