@@ -1214,8 +1214,9 @@ class Settings(BaseSettings):
     # gets a layout (her own take, the cut-out small in a corner over a picture, or the picture
     # alone). Recipe field `speaker_background.layout_windows` (capability `speakerSections`, app
     # builds >= `speaker_sections_min_client_protocol` that ALSO advertise `speakerSections` in
-    # `X-Kria-Client-Features`; the number alone can belong to another branch's build). Default FALSE: off, every recipe, lane,
-    # editor document and receipt is byte-identical (one layout for the whole video). Apply: verify
+    # `X-Kria-Client-Features`; the number alone can belong to another branch's build). Default
+    # FALSE: off, every recipe, lane, editor document and receipt is byte-identical (one layout
+    # for the whole video). Apply: verify
     # `speakerSections` on a device, add it to PHONE_RENDER_VERIFIED_FEATURES, then `fly secrets
     # set SPEAKER_SECTIONS_ENABLED=true --app nova-video` + restart (api + worker); rollback =
     # `...=false` + restart. Design: docs/reviews/kri-1558-section-layout-failure-modes.md.
