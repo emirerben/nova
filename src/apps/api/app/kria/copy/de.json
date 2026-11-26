@@ -2269,6 +2269,9 @@
     "Changed the dim of {who}": "Abdunkelung von {who} geändert",
     "Dimmed {who} {percent}%": "{who} um {percent} % abgedunkelt",
     "I can't dim clips on this edit.": "Bei dieser Bearbeitung kann ich Clips nicht abdunkeln.",
-    "Removed the dim from {who}": "Abdunkelung von {who} entfernt"
+    "Removed the dim from {who}": "Abdunkelung von {who} entfernt",
+    "Continuing without the sourced facts.": "Ich mache ohne die belegten Fakten weiter.",
+    "Kept {kept} of {total} sourced facts.": "{kept} von {total} belegten Fakten behalten.",
+    "You chose to continue without the sourced facts.": "Du hast entschieden, ohne die belegten Fakten weiterzumachen."
   }
 }
