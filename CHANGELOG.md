@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.29.0] - 2026-11-26
+
+### Fixed
+- fix(kria): "fill the rest with the other clips" is never a clip question (KRI-1519) (#2506) <!-- release-pr: 2506 -->
+
 ## [0.90.28.0] - 2026-11-26
 
 ### Fixed
