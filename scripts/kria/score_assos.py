@@ -23,7 +23,8 @@ Checks:
 2.  pace and direction are not constants: the planner's pacing changes the compiled cut lengths
     in the expected direction, and the snapshot direction and pace come from the strategy.
 3.  hook: the planner's intro_hook is rendered, or declined with a reason before approval.
-4.  story order: story_structure changes the story order, or is declined or disclosed.
+4.  story order: story_structure changes the story order, or is declined or disclosed, or no
+    live ask carries it (a clip order: the Green 4/5 asked-only rule, KRI-1474).
 5.  length: every length the creator is shown before approval equals the recipe length.
 6.  "creator selected": stamped only for an explicit orientation pick, not an echoed default.
 7.  research that runs after approval is disclosed on the approval card.
@@ -774,10 +775,13 @@ def check_4_story(fx: dict, base: dict, rs: dict) -> dict:
     other = replay(build_job(fx, strategy=strategy), rs)
     applied = base["order"] != other["order"] or base["cuts"] != other["cuts"]
     declined = _ROUTE.field_disclosed(base["card"], "story_structure")
-    ok = applied or declined
+    # Green 4/5 + KRI-1474: the planner's own outline is named only when a live ask carries it
+    # (a clip order); with none, silence is right (`score_route` check 2 applies the same rule).
+    unasked = _ROUTE._planner_choice_nobody_asked(fx, "story_structure")
+    ok = applied or declined or unasked
     return _result(
         4,
-        "story order: story_structure applied or declined/disclosed",
+        "story order: story_structure applied, declined/disclosed, or nobody asked for it",
         ok,
         []
         if ok
@@ -789,6 +793,7 @@ def check_4_story(fx: dict, base: dict, rs: dict) -> dict:
             "story_structure": fx["strategy"]["story_structure"],
             "order_changes_with_structure": applied,
             "declined_on_card": declined,
+            "nobody_asked": unasked,
             "order_head": base["order"][:3],
         },
     )

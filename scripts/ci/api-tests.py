@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -38,6 +39,13 @@ TIMES = "test-results/ci-times"
 # and why. A skip that matches no entry fails the shard, so a check cannot
 # stop running without someone writing down the reason.
 EXPECTED_SKIPS = Path(__file__).resolve().with_name("api-expected-skips.json")
+# "1" gives every xdist worker its own copy of the migrated database
+# (src/apps/api/tests/_worker_database.py). ci.yml sets it from the repository
+# variable CI_API_DB_PER_WORKER, which is also the way back.
+WORKER_DB_SWITCH = "NOVA_TEST_DB_PER_WORKER"
+# Set for pytest once the copies exist: the URL they were copied from. conftest
+# moves a worker only while its DATABASE_URL is still this one.
+WORKER_DB_COPIED_FROM = "NOVA_TEST_DB_WORKER_COPIES_OF"
 
 
 def test_files(api_root: Path) -> list[Path]:
@@ -116,15 +124,79 @@ def shard_files(
     return selected
 
 
-def pytest_command(selected: list[Path]) -> list[str]:
-    """Keep the CI runner flags consistent across the isolated shards."""
+def worker_databases(environ: dict[str, str], cpu_count=None) -> int | None:
+    """How many per-worker databases this run needs; None while the switch is off."""
+    if environ.get(WORKER_DB_SWITCH) != "1":
+        return None
+    return (cpu_count or os.cpu_count)() or 1
+
+
+def worker_database_command(workers: int) -> list[str]:
+    return [sys.executable, "-m", "tests._worker_database", str(workers)]
+
+
+def worker_database_names(api_root: Path, url: str, workers: int) -> dict[str, str]:
+    """The database each xdist worker must have run on, from the module that makes the copies."""
+    spec = importlib.util.spec_from_file_location(
+        "_worker_database", api_root / "tests/_worker_database.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {
+        f"gw{index}": module.worker_url(url, f"gw{index}").rsplit("/", 1)[1]
+        for index in range(workers)
+    }
+
+
+def worker_database_problems(api_root: Path, expected: dict[str, str]) -> list[str]:
+    """Workers that did not run on their own copy, from the recorder's startup rows.
+
+    A worker's row names the database its loaded app was on once collection
+    had finished (tests/_ci_times.py asks the app, not the environment). No row
+    is a problem too: an unproven worker is not a proven one.
+    """
+    seen: dict[str, str | None] = {}
+    for path in sorted((api_root / TIMES).glob("*.jsonl")):
+        for line in path.read_text().splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("kind") == "startup":
+                seen[row.get("worker")] = row.get("database")
+    problems = []
+    for worker, database in sorted(expected.items()):
+        if worker not in seen:
+            problems.append(f"{worker} left no startup row: nothing shows which database it used")
+        elif seen[worker] != database:
+            problems.append(f"{worker} ran on {seen[worker]!r}, not on its own copy {database!r}")
+    return problems
+
+
+def check_worker_databases(api_root: Path, url: str, workers: int) -> int:
+    problems = worker_database_problems(api_root, worker_database_names(api_root, url, workers))
+    if not problems:
+        print(f"Worker databases: all {workers} workers ran on their own copy.")
+        return 0
+    print("::error::per-worker databases are switched on, but not every worker used its own.")
+    for problem in problems:
+        print(f"  {problem}")
+    return 1
+
+
+def pytest_command(selected: list[Path], workers: int | None = None) -> list[str]:
+    """Keep the CI runner flags consistent across the isolated shards.
+
+    With per-worker databases the worker count is the number of databases made;
+    a worker beyond it would find none and stop.
+    """
     return [
         "pytest",
         *(str(path) for path in selected),
         "-v",
         "--ignore=tests/quality",
         "-n",
-        "auto",
+        "auto" if workers is None else str(workers),
         "--timeout=60",
         "--durations=20",
         # Per-test times for scripts/ci/api-test-timings.py; ci.yml uploads it.
@@ -245,14 +317,29 @@ def main(argv: list[str] | None = None) -> int:
     selected = shard_files(api_root, shard)
     print(f"API test shard {shard}/{SHARD_COUNT}: {len(selected)} files")
     clear_rows(api_root)
+    env = pytest_env(dict(os.environ))
+    workers = worker_databases(env)
+    if workers is not None:
+        # Before pytest: Postgres will not copy a database that has open connections.
+        made = subprocess.run(
+            worker_database_command(workers), cwd=api_root, env=env, check=False
+        ).returncode
+        if made:
+            print("error: the per-worker test databases were not created", file=sys.stderr)
+            return made
+        env[WORKER_DB_COPIED_FROM] = env["DATABASE_URL"]
     status = subprocess.run(
-        pytest_command(selected),
+        pytest_command(selected, workers),
         cwd=api_root,
-        env=pytest_env(dict(os.environ)),
+        env=env,
         check=False,
     ).returncode
-    # Checked even when pytest failed, so one run reports both.
-    return status or check_skips(api_root)
+    # Both checked even when pytest failed, so one run reports everything.
+    skips = check_skips(api_root)
+    proof = 0
+    if workers is not None:
+        proof = check_worker_databases(api_root, env[WORKER_DB_COPIED_FROM], workers)
+    return status or skips or proof
 
 
 if __name__ == "__main__":

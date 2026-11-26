@@ -451,7 +451,9 @@ def test_the_creator_prompt_with_the_brief_on_changes_only_while_inserts_are_ope
     from app.agents.main_creator import (
         _BRIEF_PROMPT_SECTION,
         brief_prompt_section,
+        chosen_videos_taught,
         sfx_ask_taught,
+        with_chosen_videos_brief,
         with_sfx_ask_brief,
     )
 
@@ -459,8 +461,11 @@ def test_the_creator_prompt_with_the_brief_on_changes_only_while_inserts_are_ope
     manifest = _julio_manifest()
     closed = _brief_prompt(manifest)
     assert "insert_clip" not in closed and "IN THE MIDDLE of the talk" not in closed
+    # KRI-1523: a several-clip Talking manifest is taught the typed `selected_media_ids` fact.
+    chosen = chosen_videos_taught(manifest)
+    base = with_chosen_videos_brief(_BRIEF_PROMPT_SECTION) if chosen else _BRIEF_PROMPT_SECTION
     # KRI-1561: while a writer's gate is open the shared section carries the sound-effects fact.
-    base = with_sfx_ask_brief(_BRIEF_PROMPT_SECTION) if sfx_ask_taught() else _BRIEF_PROMPT_SECTION
+    base = with_sfx_ask_brief(base) if sfx_ask_taught() else base
     assert "\n" + base in closed
     # A montage / single-clip manifest is untouched even with the rollout open.
     monkeypatch.setattr(settings, "phone_talking_insert_clips_enabled", True)
@@ -473,8 +478,8 @@ def test_the_creator_prompt_with_the_brief_on_changes_only_while_inserts_are_ope
     )
     assert "insert_clip" not in _brief_prompt(montage)
     opened = _brief_prompt(manifest)
-    assert "\n" + brief_prompt_section(True) in opened
-    assert opened.replace(brief_prompt_section(True), base) != opened
+    assert "\n" + brief_prompt_section(True, chosen_videos_open=chosen) in opened
+    assert opened.replace(brief_prompt_section(True, chosen_videos_open=chosen), base) != opened
 
 
 def test_the_brief_extractor_prompt_teaches_inserts_only_when_told_they_are_open():

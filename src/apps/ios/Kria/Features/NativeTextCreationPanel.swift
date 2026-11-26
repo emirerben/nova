@@ -11,6 +11,8 @@ struct NativeTextCreationPanel: View {
     let onDone: (EditorSelection) -> Void
     /// Opens an existing block for editing. `nil` hides the list.
     var onSelectBlock: ((String) -> Void)?
+    /// KRI-1633: set when the server opened intro styles for this video's title; adds the "Try intro styles" row.
+    var onOpenIntroStyles: (() -> Void)?
     @State private var focused = false
     @Environment(\.nativeEditorConnectedPanel) private var connected
     /// One line of body text plus the editor's insets; it grows with Dynamic Type.
@@ -43,6 +45,7 @@ struct NativeTextCreationPanel: View {
                 .accessibilityIdentifier("native-editor-text-done")
             }
             .nativeEditorPanelResizeSurface()
+            if let open = onOpenIntroStyles { NativeIntroStylesEntryRow(action: { focused = false; open() }) }
             NativeExplicitLineTextEditor(text: Binding(
                 get: { session.pendingText?.text ?? "" },
                 set: { session.updatePendingText($0) }

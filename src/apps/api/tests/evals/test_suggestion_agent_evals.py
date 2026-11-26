@@ -867,7 +867,9 @@ def test_no_skia_is_imported_by_the_suggestion_eval():
     env = {
         **os.environ,
         "STORAGE_BUCKET": "nova-test",
-        "DATABASE_URL": "postgresql://postgres:postgres@localhost:5432/nova_test",
+        "DATABASE_URL": os.environ.get(
+            "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/nova_test"
+        ),
     }
     done = subprocess.run(
         [sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=240

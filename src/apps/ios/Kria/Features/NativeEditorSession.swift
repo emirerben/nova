@@ -202,8 +202,12 @@ enum EditorOpenIntent { case warm, open }
     /// True while an editor open or reload holds `isSaving` as its in-flight fence. The fence stays; the creator
     /// asked for no save, so the header reads `showsSavingIndicator` instead of `isSaving`.
     @Published private(set) var isLoadingEditor = false
-    var showsSavingIndicator: Bool { isSaving && !isLoadingEditor }
-    @Published var hasUnsavedChanges = false
+    var showsSavingIndicator: Bool { (isSaving && !isLoadingEditor) || saveRequestedDuringLoad }
+    /// KRI-1617: Save was tapped while the editor was still loading. A load holds `isSaving`, so the tap used to
+    /// return with nothing sent while the button still read "Save changes". It is kept and runs when the load ends.
+    /// It belongs to the edit it was tapped for: when that edit is gone (a reload replaced the document), so is it.
+    @Published private(set) var saveRequestedDuringLoad = false
+    @Published var hasUnsavedChanges = false { didSet { if !hasUnsavedChanges { saveRequestedDuringLoad = false } } }
     @Published var saveState: NativeEditorSaveState = .idle
     @Published var splitScreenActionError: String?
     /// "Top ends at 4.2s · aligned" while the end handle of a split clip is dragged; nil otherwise.
@@ -1732,6 +1736,20 @@ enum EditorOpenIntent { case warm, open }
         return editorLoadEpoch
     }
 
+    /// The one place a load that still owns the editor gives it back. A Save tapped during the load runs now, if the
+    /// editor loaded and the creator's edit is still there to save.
+    private func endEditorLoad() {
+        isSaving = false; isLoadingEditor = false
+        guard saveRequestedDuringLoad else { return }
+        saveRequestedDuringLoad = false
+        guard loadState == .loaded, hasUnsavedChanges else { return }
+        Task { await save() }
+    }
+
+    /// The creator chose "Discard changes" on the leave prompt: a Save kept for the end of the load must not run
+    /// after it.
+    func forgetSaveKeptForLoad() { saveRequestedDuringLoad = false }
+
     private var pendingRenderRetrySections: Set<EditorSection> = []
     /// Pending render intent survives a failed commit without becoming an authored edit.
     var hasPendingRenderRetry: Bool { !pendingRenderRetrySections.isEmpty }
@@ -2212,6 +2230,33 @@ enum EditorOpenIntent { case warm, open }
             }
             cleanDocument = document
         }
+        if IntroStylesUITestFixture.isEnabled {
+            // KRI-1633: the intro styles route and Save go to the fixture transport (no account, no server).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-intro-styles-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim") {
+            // A device-rendered montage whose server opens `clips.dim`; Save commits through the stub transport and every
+            // clip's saved dim comes back on the next launch (`-ui-testing-editor-dim-reset` starts undimmed).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-dim-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+            let defaults = UserDefaults.standard
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-dim-reset") {
+                defaults.removeObject(forKey: NativeEditorUITestFixtures.savedDimsKey)
+            }
+            if let data = defaults.data(forKey: NativeEditorUITestFixtures.savedDimsKey),
+               let saved = try? JSONDecoder().decode([String: JSONValue].self, from: data) {
+                for index in document.clips.indices {
+                    if let id = document.clips[index].id, let value = saved[id] { document.clips[index].raw["dim"] = value }
+                }
+            }
+            document.capabilities["clips.dim"] = EditorCapability(editable: true)
+            cleanDocument = document
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-talking-range") {
             // KRI-717 on a Talking edit: Save goes through the real request encoder to the stub transport, which
             // keeps the saved rows and captions so a relaunch reopens the saved windows.
@@ -2628,7 +2673,7 @@ enum EditorOpenIntent { case warm, open }
         pendingLoadObservation = { [weak self] in
             await self?.load(api: api, threadID: threadID, variantID: variantID, allowPlaybackFallback: allowPlaybackFallback)
         }
-        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false } }
+        defer { if editorLoadEpoch == epoch { endEditorLoad() } }
         do {
             let snapshot = try await readLoadObservation(epoch: epoch, target: "draft:\(threadID)") { try await api.draft(threadID: threadID) }
             guard editorLoadEpoch == epoch else { return }
@@ -3285,7 +3330,7 @@ enum EditorOpenIntent { case warm, open }
     private func abandonUnfinishedLoad() {
         guard loadState != .loaded else { return }
         _ = beginEditorLoad()
-        isSaving = false; isLoadingEditor = false
+        isSaving = false; isLoadingEditor = false; saveRequestedDuringLoad = false
         loadRetryTask?.cancel(); loadRetryTask = nil
         pendingLoadObservation = nil
         loadWaitingMessage = nil
@@ -3300,7 +3345,7 @@ enum EditorOpenIntent { case warm, open }
         if loadState != .loaded { retireOpenFlight(); return }
         guard openFlight == nil, !isSaving, pendingText == nil, !hasUnsavedChanges || hasOnlyChatStagedChanges else { return }
         _ = beginEditorLoad()
-        isSaving = false; isLoadingEditor = false
+        isSaving = false; isLoadingEditor = false; saveRequestedDuringLoad = false
         discardPlaybackForNewJob()
         serverBaseline = nil
         hasUnsavedChanges = false
@@ -3790,7 +3835,7 @@ enum EditorOpenIntent { case warm, open }
         saveState = .saving
         loadState = .loading
         Perf.begin("editor.open", id: editorJobID.uuidString)
-        defer { if editorLoadEpoch == epoch { isSaving = false; isLoadingEditor = false }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
+        defer { if editorLoadEpoch == epoch { endEditorLoad() }; Perf.end("editor.open", id: editorJobID.uuidString); Perf.mark("editor.open.done") }
         // Neither of these needs the job's status, so they start now and overlap it. They used to follow it one after
         // the other, three round trips in a row before the editor could show anything. The draft is compared with the
         // resolved variant only once that is known.
@@ -8489,6 +8534,19 @@ enum EditorOpenIntent { case warm, open }
     var captionTranslationSourceTexts: [String: String] = [:]
     /// The cue as last saved (the baseline for a translation loaded with the edit).
     func savedCaptionCue(id: String) -> EditorCaptionCue? { cleanDocument.captionCues.first { $0.id == id } }
+    // KRI-1633 intro styles on tap (see `NativeEditorSession+IntroStyles.swift`).
+    @Published var introStylesState: IntroStylesState = .idle
+    /// Set by a 404: the route is off for this account, so the entry goes away for this editor session.
+    var introStylesHidden = false
+    /// The title (baseline + words + window) the shown offer was built for, and the one a request is in flight for.
+    var introStylesOfferContext: String?
+    var introStylesLoadContext: String?
+    /// The intro-styles route for this variant; nil without a signed-in target.
+    var introStylesAPI: ((IntroStylesRequest) async throws -> IntroStylesResponse)? {
+        guard let api, let itemID, let variantKey else { return nil }
+        return { try await api.introStyles(itemID: itemID, variantID: variantKey, request: $0) }
+    }
+    func introStyleStartTime(titleID: String) -> TimeInterval? { startTime(for: EditorSelection(kind: .text, id: titleID)) }
     /// The caption-translation route for this variant; nil without a signed-in target.
     var captionTranslationAPI: ((CaptionTranslationRequest) async throws -> CaptionTranslationResponse)? {
         guard let api, let itemID, let variantKey else { return nil }
@@ -9303,6 +9361,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     private func save(retrying retrySections: Set<EditorSection>) async {
+        if isLoadingEditor, retrySections.isEmpty, hasUnsavedChanges { saveRequestedDuringLoad = true; return }
         guard !isSaving, activeSaveAttemptID == nil, finishingUploadCount == 0 else { return }
         guard await finishPendingAddsBeforeSave(), !isSaving, activeSaveAttemptID == nil else { return }
         let attemptID = UUID()
@@ -10914,7 +10973,7 @@ enum EditorOpenIntent { case warm, open }
     /// KRI-935: the preview's inputs belong to a newer version than the loaded edit. Load that
     /// version (keeping unsaved lanes) and rebuild the preview, instead of asking the creator to
     /// close and reopen the editor. Fenced to one reload per server generation.
-    private func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
+    func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
         // A save whose render is still pending owns the next generation; its preview refresh follows it.
         guard (error as? APIError)?.isBaselineConflict == true, api != nil, let jobID, variantKey != nil,
               activeSaveAttemptID == nil, pendingPreviewGeneration == nil else { return false }

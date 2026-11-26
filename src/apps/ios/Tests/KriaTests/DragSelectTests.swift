@@ -67,11 +67,50 @@ final class DragSelectTests: XCTestCase {
     }
 
     func testAutoScrollOnlyNearEdgesAndRamps() {
-        XCTAssertEqual(DragSelect.autoScrollStep(fingerY: 400, viewportHeight: 800), 0)
-        XCTAssertLessThan(DragSelect.autoScrollStep(fingerY: 20, viewportHeight: 800), 0)
-        XCTAssertGreaterThan(DragSelect.autoScrollStep(fingerY: 790, viewportHeight: 800), 0)
-        XCTAssertGreaterThan(DragSelect.autoScrollStep(fingerY: 790, viewportHeight: 800), DragSelect.autoScrollStep(fingerY: 740, viewportHeight: 800))
-        XCTAssertEqual(DragSelect.autoScrollStep(fingerY: 900, viewportHeight: 800), 14, "capped past the edge")
+        XCTAssertEqual(DragSelect.autoScrollVelocity(fingerY: 400, viewportHeight: 800), 0)
+        XCTAssertLessThan(DragSelect.autoScrollVelocity(fingerY: 20, viewportHeight: 800), 0)
+        XCTAssertGreaterThan(DragSelect.autoScrollVelocity(fingerY: 790, viewportHeight: 800), 0)
+        XCTAssertGreaterThan(DragSelect.autoScrollVelocity(fingerY: 790, viewportHeight: 800), DragSelect.autoScrollVelocity(fingerY: 740, viewportHeight: 800))
+        XCTAssertEqual(DragSelect.autoScrollVelocity(fingerY: 900, viewportHeight: 800), 840, "capped past the edge")
+        XCTAssertEqual(DragSelect.autoScrollVelocity(fingerY: 100, viewportHeight: 140), 0, "no room for two edge zones")
+    }
+
+    /// Failure modes of the auto-scroll's speed, written before it became time-based (KRI-1602):
+    /// 1. the grid moves a fixed distance per tick, so a device that redraws slowly scrolls slowly (the hosted
+    ///    simulator ticked every 77 ms and scrolled at a fifth of the speed);
+    /// 2. a display that ticks faster scrolls faster;
+    /// 3. one long stall moves the grid so far that a row passes under the finger unseen;
+    /// 4. a clock that did not advance, or went backwards, moves the grid;
+    /// 5. the limit turns a scroll up into a scroll down, or stops a small step.
+    func testAutoScrollCoversTheSameDistanceWhateverTheTickLength() {
+        let velocity = DragSelect.autoScrollVelocity(fingerY: 776, viewportHeight: 800)
+        XCTAssertEqual(velocity, 560, accuracy: 0.001, "two thirds into the edge zone")
+        func travelled(tick: TimeInterval, seconds: TimeInterval) -> CGFloat {
+            (0..<Int((seconds / tick).rounded())).reduce(0) { sum, _ in
+                sum + DragSelect.autoScrollDistance(velocity: velocity, elapsed: tick, limit: 120)
+            }
+        }
+        XCTAssertEqual(travelled(tick: 0.016, seconds: 4), 2240, accuracy: 1, "a 60 Hz phone")
+        XCTAssertEqual(travelled(tick: 0.008, seconds: 4), 2240, accuracy: 1, "a 120 Hz phone goes no faster")
+        XCTAssertEqual(travelled(tick: 0.080, seconds: 4), 2240, accuracy: 1, "a slow device goes no slower")
+    }
+
+    func testAutoScrollNeverPassesARowInOneTick() {
+        XCTAssertEqual(DragSelect.autoScrollDistance(velocity: 840, elapsed: 2, limit: 120), 120, "a two second stall")
+        XCTAssertEqual(DragSelect.autoScrollDistance(velocity: -840, elapsed: 2, limit: 120), -120, "and upwards")
+        XCTAssertEqual(DragSelect.autoScrollDistance(velocity: 840, elapsed: 0.016, limit: 120), 13.44, accuracy: 0.001, "a small step is untouched")
+        XCTAssertEqual(DragSelect.autoScrollDistance(velocity: 840, elapsed: 0, limit: 120), 0)
+        XCTAssertEqual(DragSelect.autoScrollDistance(velocity: 840, elapsed: -1, limit: 120), 0)
+        XCTAssertEqual(DragSelect.autoScrollDistance(velocity: 840, elapsed: .nan, limit: 120), 0)
+        XCTAssertEqual(DragSelect.autoScrollDistance(velocity: 0, elapsed: 0.016, limit: 120), 0)
+    }
+
+    func testAutoScrollLimitIsUnderTheShortestTile() {
+        XCTAssertEqual(DragSelect.autoScrollLimit(frames: frames), 120, "three quarters of a 160 pt tile")
+        var mixed = frames
+        mixed[9] = CGRect(x: 0, y: 504, width: 100, height: 80)
+        XCTAssertEqual(DragSelect.autoScrollLimit(frames: mixed), 60, "the shortest tile decides")
+        XCTAssertEqual(DragSelect.autoScrollLimit(frames: [:]), 44, "no tiles measured yet")
     }
 
     // MARK: state application

@@ -85,8 +85,11 @@ class Disclosure:
 
 
 # Strategy fields the planner fills on its own for every draft (Green 4/5). A route that does not
-# read one is worth a card line only when the creator asked for something it carries.
-PLANNER_OWNED_FIELDS = frozenset({"intro_hook", "story_structure", "pacing", "direction"})
+# read one is worth a card line only when the creator asked for something it carries. KRI-1474:
+# the story archetype too ("I can't use the day vlog story archetype"): no ask can name one.
+PLANNER_OWNED_FIELDS = frozenset(
+    {"intro_hook", "story_structure", "pacing", "direction", "archetype"}
+)
 
 
 def asked_only() -> bool:
@@ -95,15 +98,32 @@ def asked_only() -> bool:
 
 
 def creator_asked_for(field: str, requirements: Sequence[BriefRequirement] | None) -> bool:
-    """A live typed ask the planner-owned ``field`` carries: a clip order for the story structure,
-    on-screen text for the hook. Pacing and direction have no typed ask: an untyped one ("make it
-    fast") is the creator's own requirement and gets its own receipt on the card."""
+    """A live typed ask the planner-owned ``field`` carries: a clip order for the story structure
+    (a route that ignores the structure may drop the order, so it is said), opening words the
+    creator asks Kria to write ("add a catchy opening line") for the hook idea.
+
+    KRI-1474: words the creator wrote themselves (a title, a label: ``literal``) and per-clip
+    texts are not the hook idea; they have their own receipt line, so a heads-up about Kria's
+    hook only reads as Kria failing at something they asked. Pacing, direction and the archetype
+    have no typed ask: an untyped one ("make it fast") is the creator's own requirement and gets
+    its own receipt."""
     live = [req for req in requirements or () if req.live]
     if field == "story_structure":
         return any(req.kind in {"order", "text_sequence"} for req in live)
     if field == "intro_hook":
-        return any(req.kind == "text" for req in live)
+        return any(
+            req.kind == "text" and not req.literal and req.scope != "per_clip" for req in live
+        )
     return False
+
+
+def _unasked(field: str, requirements: Sequence[BriefRequirement] | None) -> bool:
+    """A planner-owned ``field`` the creator asked nothing about: no card line (switch on)."""
+    return (
+        field in PLANNER_OWNED_FIELDS
+        and asked_only()
+        and not creator_asked_for(field, requirements)
+    )
 
 
 def route_ignores(route: str | None, field: str) -> bool:
@@ -190,14 +210,10 @@ def strategy_notices(
             if field == "story_structure" and reason is None:
                 lines_of = getattr(table, "story_lines_notice", None)
                 text = lines_of(strategy) if lines_of is not None else None
-                if text:
+                if text and not _unasked(field, requirements):  # KRI-1474 (Cusco T5)
                     out.append(Disclosure(handling.code, field, text))
                 continue
-        if (
-            field in PLANNER_OWNED_FIELDS
-            and asked_only()
-            and not creator_asked_for(field, requirements)
-        ):
+        if _unasked(field, requirements):
             continue  # the planner's own idea, not the creator's: nothing they asked is dropped
         try:
             build = handling.build
@@ -461,7 +477,8 @@ def _heads_up() -> str:
 
 def approval_card_disclosures(disclosures: Sequence[Disclosure]) -> list[Disclosure]:
     """The disclosures the approval card shows (KRI-1403): none about the planner's own plan
-    fields (``PLANNER_OWNED_FIELDS``: a hook idea, a story structure, pacing, a direction).
+    fields (``PLANNER_OWNED_FIELDS``: a hook idea, a story structure, pacing, a direction, an
+    archetype).
 
     Those are Kria's ideas the route won't use, not something the creator asked for: a related
     ask (a clip order, a title) has its own receipt line on the card. The card has to fit one

@@ -1,0 +1,1174 @@
+{
+ "about": "Cusco DJI T4 'Altının yolu' (prod job 91270ec0, thread 04611131, build 2016, server 80c96b04c, 2026-11-17): a 63.3 s Turkish voiceover file over 11 silent clips, Clean up speech chosen (8 cuts, 10.1 s, incl. the 22.24-28.48 s retake KRI-1518 later stopped). `requirements` = the approved brief's rows; `narrated_alignment` = the render's recorded steps (assembly_plan.narrated_alignment, media renamed c0..c10); `variant` = variants[0] without its URL and storage paths; `review_event_27` = the receipts the review showed. Read-only admin GET of the job debug; no media.",
+ "requirements": [
+  {
+   "id": "r1",
+   "kind": "audio",
+   "facts": {
+    "voiceover_language": "tr"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Use my recorded Turkish voiceover.",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  },
+  {
+   "id": "r2",
+   "kind": "style",
+   "facts": {
+    "captions": "on",
+    "caption_language": "tr"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Turkish captions.",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  },
+  {
+   "id": "r3",
+   "kind": "style",
+   "facts": {
+    "triggers": [
+     "arkadaşlar İspanyollar geldi"
+    ]
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Show the paintings in gold frames when I say \"arkadaşlar İspanyollar geldi\".",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  },
+  {
+   "id": "r4",
+   "kind": "style",
+   "facts": {
+    "triggers": [
+     "İnkalar için"
+    ]
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Show the dark stone wall with the window when I say \"İnkalar için\".",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  },
+  {
+   "id": "r5",
+   "kind": "style",
+   "facts": {
+    "triggers": [
+     "Ant Dağları'ndan"
+    ]
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Show the snowy mountains when I say \"Ant Dağları'ndan\".",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  },
+  {
+   "id": "r6",
+   "kind": "style",
+   "facts": {
+    "triggers": [
+     "Osmanlı'ya dayanıyor"
+    ]
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Show the wide view of the city when I say \"Osmanlı'ya dayanıyor\".",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  },
+  {
+   "id": "r7",
+   "kind": "select",
+   "facts": {
+    "all": true
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Fill the rest with the other clips.",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  },
+  {
+   "id": "r8",
+   "kind": "text",
+   "facts": {},
+   "scope": "title",
+   "status": "open",
+   "literal": "Altının yolu",
+   "description": "Opening title.",
+   "source_turn_id": "379eb9fa-4daa-47b4-a68f-e4f2c1e6864a"
+  }
+ ],
+ "brief_version": 1,
+ "narrated_alignment": {
+  "steps": [
+   {
+    "clip": "c0",
+    "text": "Şimdi konuyu Osmanlı'ya bağlanıyor demiştim. Nasıl bağlanıyor? 1500'lerde arkadaşlar,",
+    "end_s": 7.423,
+    "labels": [
+     "the paintings in gold frames"
+    ],
+    "placed": [],
+    "start_s": 0.0,
+    "step_id": "seg_0",
+    "media_id": "c0"
+   },
+   {
+    "clip": "c1",
+    "text": "İspanyollar geldi buralardan, işte bu bütün kutsal görünen takılar,",
+    "end_s": 15.957,
+    "labels": [
+     "the paintings in gold frames"
+    ],
+    "placed": [],
+    "start_s": 7.423,
+    "step_id": "seg_1",
+    "media_id": "c1"
+   },
+   {
+    "clip": "c2",
+    "text": "inkalar için altın kutsal bir şeydi.",
+    "end_s": 17.957,
+    "labels": [
+     "the dark stone wall with the window"
+    ],
+    "moment": {
+     "at_s": 15.957,
+     "words": "the dark stone wall with the window",
+     "source_end_s": 3.0,
+     "source_start_s": 0.0
+    },
+    "placed": [],
+    "start_s": 15.957,
+    "step_id": "seg_2",
+    "media_id": "c2"
+   },
+   {
+    "clip": "c3",
+    "text": "İspanyollar bunu tabii ki nasıl silaha çevirdi, bunu anlatacağız.",
+    "end_s": 20.477,
+    "labels": [
+     "the other clips"
+    ],
+    "placed": [],
+    "start_s": 17.957,
+    "step_id": "seg_3",
+    "media_id": "c3"
+   },
+   {
+    "clip": "c4",
+    "text": "hepsini Armada Española, yani bu meşhur İspanyol deniz donanmasını",
+    "end_s": 28.677,
+    "labels": [
+     "the snowy mountains"
+    ],
+    "moment": {
+     "at_s": 20.477,
+     "words": "the snowy mountains",
+     "source_end_s": 2.29,
+     "source_start_s": 0.0
+    },
+    "placed": [],
+    "start_s": 20.477,
+    "step_id": "seg_4",
+    "media_id": "c4"
+   },
+   {
+    "clip": "c5",
+    "text": "kurup, maalesef Osmanlı donanmasını İnebahta Deniz Savaşı'nda mağlup ettiler.",
+    "end_s": 34.977,
+    "labels": [
+     "the paintings in gold frames",
+     "the snowy mountains"
+    ],
+    "placed": [],
+    "start_s": 28.677,
+    "step_id": "seg_5",
+    "media_id": "c5"
+   },
+   {
+    "clip": "c6",
+    "text": "Burada bizim tabii biz çok daha iyi tecrübeliyiz deniz konusunda normalde ama",
+    "end_s": 39.337,
+    "labels": [
+     "the other clips"
+    ],
+    "placed": [],
+    "start_s": 34.977,
+    "step_id": "seg_6",
+    "media_id": "c6"
+   },
+   {
+    "clip": "c7",
+    "text": "hem lojistik, hem güç olarak artık altınla kurdukları donanma çok güçlü",
+    "end_s": 45.307,
+    "labels": [
+     "the other clips"
+    ],
+    "placed": [],
+    "start_s": 39.337,
+    "step_id": "seg_7",
+    "media_id": "c7"
+   },
+   {
+    "clip": "c8",
+    "text": "ve daha büyük, daha fazla gemiye, savaş aletine sahipler",
+    "end_s": 48.237,
+    "labels": [
+     "the paintings in gold frames",
+     "the other clips"
+    ],
+    "placed": [],
+    "start_s": 45.307,
+    "step_id": "seg_8",
+    "media_id": "c8"
+   },
+   {
+    "clip": "c9",
+    "text": "ve bu şekilde bu hikayenin ucu",
+    "end_s": 51.683,
+    "labels": [
+     "the other clips"
+    ],
+    "placed": [],
+    "start_s": 48.237,
+    "step_id": "seg_9",
+    "media_id": "c9"
+   },
+   {
+    "clip": "c10",
+    "text": "Osmanlı'ya dayanıyor.",
+    "end_s": 53.223,
+    "labels": [
+     "the wide view of the city"
+    ],
+    "placed": [],
+    "start_s": 51.683,
+    "step_id": "seg_10",
+    "media_id": "c10"
+   }
+  ],
+  "brief_version": 1,
+  "generation_id": "3726985ebdaf4b429fee75c69a77a25b",
+  "ordering_basis": "spoken_word_alignment",
+  "spoken_language": "tr",
+  "caption_language": "tr",
+  "requirement_receipts": [
+   {
+    "stage": "checked",
+    "reason": "The captions are in Turkish.",
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 1,
+    "generation_id": "3726985ebdaf4b429fee75c69a77a25b",
+    "requirement_id": "r2",
+    "inferred_labels": [],
+    "target_media_ids": []
+   }
+  ],
+  "caption_language_request": "tr"
+ },
+ "variant": {
+  "ok": true,
+  "rank": 1,
+  "duration_s": 54.822813000000004,
+  "variant_id": "narrated",
+  "silence_cut": {
+   "removed": [
+    {
+     "end_s": 3.45,
+     "reason": "filler_acoustic",
+     "start_s": 3.21
+    },
+    {
+     "end_s": 8.142,
+     "reason": "silence",
+     "start_s": 7.265
+    },
+    {
+     "end_s": 12.615,
+     "reason": "silence",
+     "start_s": 12.165
+    },
+    {
+     "end_s": 16.12,
+     "reason": "silence",
+     "start_s": 15.925
+    },
+    {
+     "end_s": 28.48,
+     "reason": "retake",
+     "start_s": 22.24
+    },
+    {
+     "end_s": 49.475,
+     "reason": "silence",
+     "start_s": 49.085
+    },
+    {
+     "end_s": 56.235,
+     "reason": "silence",
+     "start_s": 55.605
+    },
+    {
+     "end_s": 60.53,
+     "reason": "silence",
+     "start_s": 59.455
+    }
+   ],
+   "version": 2,
+   "time_saved_s": 10.097,
+   "original_duration_s": 63.32
+  },
+  "brand_tail_s": 1.6,
+  "caption_cues": [
+   {
+    "id": "native-caption-0",
+    "text": "Şimdi konuyu Osmanlı'ya bağlayacağımı söylemiştim.",
+    "end_s": 3.06,
+    "words": [
+     {
+      "text": "Şimdi",
+      "end_s": 0.28,
+      "start_s": 0.0
+     },
+     {
+      "text": "konuyu",
+      "end_s": 0.58,
+      "start_s": 0.28
+     },
+     {
+      "text": "Osmanlı'ya",
+      "end_s": 2.3,
+      "start_s": 0.58
+     },
+     {
+      "text": "bağlayacağımı",
+      "end_s": 2.66,
+      "start_s": 2.3
+     },
+     {
+      "text": "söylemiştim.",
+      "end_s": 3.06,
+      "start_s": 2.66
+     }
+    ],
+    "start_s": 0.0
+   },
+   {
+    "id": "native-caption-1",
+    "text": "Nasıl bağlanıyor?",
+    "end_s": 3.92,
+    "words": [
+     {
+      "text": "Nasıl",
+      "end_s": 3.56,
+      "start_s": 3.36
+     },
+     {
+      "text": "bağlanıyor?",
+      "end_s": 3.92,
+      "start_s": 3.56
+     }
+    ],
+    "start_s": 3.36
+   },
+   {
+    "id": "native-caption-2",
+    "text": "1500'lerde arkadaşlar, İspanyollar geldi buralardan, işte bu bütün kutsal görünen takılar,",
+    "end_s": 15.957,
+    "words": [
+     {
+      "text": "1500'lerde",
+      "end_s": 5.7,
+      "start_s": 4.22
+     },
+     {
+      "text": "arkadaşlar,",
+      "end_s": 6.9,
+      "start_s": 5.7
+     },
+     {
+      "text": "İspanyollar",
+      "end_s": 7.703,
+      "start_s": 7.423
+     },
+     {
+      "text": "geldi",
+      "end_s": 9.183,
+      "start_s": 7.703
+     },
+     {
+      "text": "buralardan,",
+      "end_s": 10.883,
+      "start_s": 9.183
+     },
+     {
+      "text": "işte",
+      "end_s": 11.352,
+      "start_s": 11.172
+     },
+     {
+      "text": "bu",
+      "end_s": 11.812,
+      "start_s": 11.352
+     },
+     {
+      "text": "bütün",
+      "end_s": 12.672,
+      "start_s": 11.812
+     },
+     {
+      "text": "kutsal",
+      "end_s": 13.112,
+      "start_s": 12.672
+     },
+     {
+      "text": "görünen",
+      "end_s": 13.472,
+      "start_s": 13.112
+     },
+     {
+      "text": "takılar,",
+      "end_s": 14.232,
+      "start_s": 13.472
+     }
+    ],
+    "start_s": 4.22
+   },
+   {
+    "id": "native-caption-3",
+    "text": "İnkalar için altın kutsal bir şeydi.",
+    "end_s": 17.957,
+    "words": [
+     {
+      "text": "İnkalar",
+      "end_s": 16.277,
+      "start_s": 15.957
+     },
+     {
+      "text": "için",
+      "end_s": 16.477,
+      "start_s": 16.277
+     },
+     {
+      "text": "altın",
+      "end_s": 17.097,
+      "start_s": 16.477
+     },
+     {
+      "text": "kutsal",
+      "end_s": 17.477,
+      "start_s": 17.097
+     },
+     {
+      "text": "bir",
+      "end_s": 17.617,
+      "start_s": 17.477
+     },
+     {
+      "text": "şeydi.",
+      "end_s": 17.957,
+      "start_s": 17.617
+     }
+    ],
+    "start_s": 15.957
+   },
+   {
+    "id": "native-caption-4",
+    "text": "İspanyollar bunu tabii ki nasıl silaha çevirdi, bunu anlatacağız.",
+    "end_s": 20.357,
+    "words": [
+     {
+      "text": "İspanyollar",
+      "end_s": 18.477,
+      "start_s": 17.957
+     },
+     {
+      "text": "bunu",
+      "end_s": 18.697,
+      "start_s": 18.477
+     },
+     {
+      "text": "tabii",
+      "end_s": 18.857,
+      "start_s": 18.697
+     },
+     {
+      "text": "ki",
+      "end_s": 19.117,
+      "start_s": 18.857
+     },
+     {
+      "text": "nasıl",
+      "end_s": 19.257,
+      "start_s": 19.117
+     },
+     {
+      "text": "silaha",
+      "end_s": 19.497,
+      "start_s": 19.257
+     },
+     {
+      "text": "çevirdi,",
+      "end_s": 19.717,
+      "start_s": 19.497
+     },
+     {
+      "text": "bunu",
+      "end_s": 19.917,
+      "start_s": 19.817
+     },
+     {
+      "text": "anlatacağız.",
+      "end_s": 20.357,
+      "start_s": 19.917
+     }
+    ],
+    "start_s": 17.957
+   },
+   {
+    "id": "native-caption-5",
+    "text": "Hepsini Armada Española, yani bu meşhur İspanyol deniz donanmasını kurup,",
+    "end_s": 30.197,
+    "words": [
+     {
+      "text": "Hepsini",
+      "end_s": 21.257,
+      "start_s": 20.477
+     },
+     {
+      "text": "Armada",
+      "end_s": 23.457,
+      "start_s": 21.257
+     },
+     {
+      "text": "Española,",
+      "end_s": 24.177,
+      "start_s": 23.457
+     },
+     {
+      "text": "yani",
+      "end_s": 24.817,
+      "start_s": 24.477
+     },
+     {
+      "text": "bu",
+      "end_s": 25.757,
+      "start_s": 24.817
+     },
+     {
+      "text": "meşhur",
+      "end_s": 25.937,
+      "start_s": 25.757
+     },
+     {
+      "text": "İspanyol",
+      "end_s": 26.777,
+      "start_s": 25.937
+     },
+     {
+      "text": "deniz",
+      "end_s": 27.297,
+      "start_s": 26.777
+     },
+     {
+      "text": "donanmasını",
+      "end_s": 28.677,
+      "start_s": 27.297
+     },
+     {
+      "text": "kurup,",
+      "end_s": 29.937,
+      "start_s": 28.677
+     }
+    ],
+    "start_s": 20.477
+   },
+   {
+    "id": "native-caption-6",
+    "text": "maalesef Osmanlı donanmasını İnebahtı Deniz Savaşı'nda mağlup ettiler.",
+    "end_s": 34.977,
+    "words": [
+     {
+      "text": "maalesef",
+      "end_s": 30.917,
+      "start_s": 30.197
+     },
+     {
+      "text": "Osmanlı",
+      "end_s": 32.617,
+      "start_s": 30.917
+     },
+     {
+      "text": "donanmasını",
+      "end_s": 33.157,
+      "start_s": 32.617
+     },
+     {
+      "text": "İnebahtı",
+      "end_s": 33.617,
+      "start_s": 33.157
+     },
+     {
+      "text": "Deniz",
+      "end_s": 33.917,
+      "start_s": 33.617
+     },
+     {
+      "text": "Savaşı'nda",
+      "end_s": 34.337,
+      "start_s": 33.917
+     },
+     {
+      "text": "mağlup",
+      "end_s": 34.657,
+      "start_s": 34.337
+     },
+     {
+      "text": "ettiler.",
+      "end_s": 34.977,
+      "start_s": 34.657
+     }
+    ],
+    "start_s": 30.197
+   },
+   {
+    "id": "native-caption-7",
+    "text": "Burada bizim tabii biz çok daha iyi tecrübeliyiz deniz konusunda normalde ama hem lojistik,",
+    "end_s": 41.207,
+    "words": [
+     {
+      "text": "Burada",
+      "end_s": 35.597,
+      "start_s": 34.977
+     },
+     {
+      "text": "bizim",
+      "end_s": 35.917,
+      "start_s": 35.597
+     },
+     {
+      "text": "tabii",
+      "end_s": 36.097,
+      "start_s": 35.917
+     },
+     {
+      "text": "biz",
+      "end_s": 36.317,
+      "start_s": 36.097
+     },
+     {
+      "text": "çok",
+      "end_s": 36.477,
+      "start_s": 36.317
+     },
+     {
+      "text": "daha",
+      "end_s": 36.717,
+      "start_s": 36.477
+     },
+     {
+      "text": "iyi",
+      "end_s": 37.037,
+      "start_s": 36.717
+     },
+     {
+      "text": "tecrübeliyiz",
+      "end_s": 37.477,
+      "start_s": 37.037
+     },
+     {
+      "text": "deniz",
+      "end_s": 37.717,
+      "start_s": 37.477
+     },
+     {
+      "text": "konusunda",
+      "end_s": 38.017,
+      "start_s": 37.717
+     },
+     {
+      "text": "normalde",
+      "end_s": 38.617,
+      "start_s": 38.017
+     },
+     {
+      "text": "ama",
+      "end_s": 39.337,
+      "start_s": 38.617
+     },
+     {
+      "text": "hem",
+      "end_s": 40.377,
+      "start_s": 39.337
+     },
+     {
+      "text": "lojistik,",
+      "end_s": 40.957,
+      "start_s": 40.377
+     }
+    ],
+    "start_s": 34.977
+   },
+   {
+    "id": "native-caption-8",
+    "text": "hem güç olarak artık altınla kurdukları donanma çok güçlü ve daha büyük,",
+    "end_s": 46.267,
+    "words": [
+     {
+      "text": "hem",
+      "end_s": 41.367,
+      "start_s": 41.207
+     },
+     {
+      "text": "güç",
+      "end_s": 41.547,
+      "start_s": 41.367
+     },
+     {
+      "text": "olarak",
+      "end_s": 42.647,
+      "start_s": 41.547
+     },
+     {
+      "text": "artık",
+      "end_s": 43.547,
+      "start_s": 42.647
+     },
+     {
+      "text": "altınla",
+      "end_s": 44.007,
+      "start_s": 43.547
+     },
+     {
+      "text": "kurdukları",
+      "end_s": 44.347,
+      "start_s": 44.007
+     },
+     {
+      "text": "donanma",
+      "end_s": 44.647,
+      "start_s": 44.347
+     },
+     {
+      "text": "çok",
+      "end_s": 44.867,
+      "start_s": 44.647
+     },
+     {
+      "text": "güçlü",
+      "end_s": 45.307,
+      "start_s": 44.867
+     },
+     {
+      "text": "ve",
+      "end_s": 45.787,
+      "start_s": 45.307
+     },
+     {
+      "text": "daha",
+      "end_s": 45.967,
+      "start_s": 45.787
+     },
+     {
+      "text": "büyük,",
+      "end_s": 46.147,
+      "start_s": 45.967
+     }
+    ],
+    "start_s": 41.207
+   },
+   {
+    "id": "native-caption-9",
+    "text": "daha fazla gemiye, savaş aletine sahipler ve bu şekilde bu hikayenin ucu Osmanlı'ya dayanıyor.",
+    "end_s": 52.983,
+    "words": [
+     {
+      "text": "daha",
+      "end_s": 46.347,
+      "start_s": 46.267
+     },
+     {
+      "text": "fazla",
+      "end_s": 46.567,
+      "start_s": 46.347
+     },
+     {
+      "text": "gemiye,",
+      "end_s": 47.087,
+      "start_s": 46.567
+     },
+     {
+      "text": "savaş",
+      "end_s": 47.477,
+      "start_s": 47.337
+     },
+     {
+      "text": "aletine",
+      "end_s": 47.777,
+      "start_s": 47.477
+     },
+     {
+      "text": "sahipler",
+      "end_s": 48.237,
+      "start_s": 47.777
+     },
+     {
+      "text": "ve",
+      "end_s": 49.677,
+      "start_s": 48.237
+     },
+     {
+      "text": "bu",
+      "end_s": 49.797,
+      "start_s": 49.677
+     },
+     {
+      "text": "şekilde",
+      "end_s": 50.157,
+      "start_s": 49.797
+     },
+     {
+      "text": "bu",
+      "end_s": 50.823,
+      "start_s": 50.157
+     },
+     {
+      "text": "hikayenin",
+      "end_s": 51.083,
+      "start_s": 50.823
+     },
+     {
+      "text": "ucu",
+      "end_s": 51.683,
+      "start_s": 51.083
+     },
+     {
+      "text": "Osmanlı'ya",
+      "end_s": 52.743,
+      "start_s": 51.683
+     },
+     {
+      "text": "dayanıyor.",
+      "end_s": 52.983,
+      "start_s": 52.743
+     }
+    ],
+    "start_s": 46.267
+   }
+  ],
+  "render_status": "ready",
+  "caption_size_px": 56,
+  "edit_duration_s": 53.222813,
+  "caption_language": "tr",
+  "caption_margin_v": 1344,
+  "narrated_timings": [
+   {
+    "end_s": 7.423,
+    "start_s": 0.0,
+    "step_id": "seg_0",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 15.957,
+    "start_s": 7.423,
+    "step_id": "seg_1",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 17.957,
+    "start_s": 15.957,
+    "step_id": "seg_2",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 20.477,
+    "start_s": 17.957,
+    "step_id": "seg_3",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 28.677,
+    "start_s": 20.477,
+    "step_id": "seg_4",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 34.977,
+    "start_s": 28.677,
+    "step_id": "seg_5",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 39.337,
+    "start_s": 34.977,
+    "step_id": "seg_6",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 45.307,
+    "start_s": 39.337,
+    "step_id": "seg_7",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 48.237,
+    "start_s": 45.307,
+    "step_id": "seg_8",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 51.683,
+    "start_s": 48.237,
+    "step_id": "seg_9",
+    "confidence": 1.0
+   },
+   {
+    "end_s": 53.223,
+    "start_s": 51.683,
+    "step_id": "seg_10",
+    "confidence": 1.0
+   }
+  ],
+  "phone_text_style": {
+   "version": 1,
+   "requested": {},
+   "preferences": {
+    "all_text": {}
+   },
+   "selected_fonts": {},
+   "selection_calls": 2,
+   "selection_roles": [
+    "title"
+   ]
+  },
+  "caption_legibility": {
+   "moved": [],
+   "frames": 20,
+   "hidden": [],
+   "version": 1,
+   "pictures": 0,
+   "treatment": "outline",
+   "contrast_after": 21.0,
+   "lines_measured": 6,
+   "contrast_before": 1.45
+  },
+  "caption_text_color": "#FFFFFF",
+  "render_destination": "device",
+  "render_finished_at": "2026-11-17T10:55:32.510319+00:00",
+  "resolved_archetype": "narrated",
+  "silence_cut_outcome": "applied",
+  "voiceover_bed_level": 0.25,
+  "caption_editor_style": {
+   "alignment": "left",
+   "stroke_color": "#000000",
+   "max_width_frac": 0.68,
+   "position_x_frac": 0.10709786546495226,
+   "position_y_frac": 0.20359
+  },
+  "caption_stroke_width": 4,
+  "original_audio_level": 0.15,
+  "render_generation_id": "cb5252d0-2094-4670-87aa-38aeab836ccc",
+  "caption_shadow_enabled": false,
+  "voiceover_caption_font": "TikTok Sans Bold",
+  "caption_highlight_color": "#84CC16",
+  "voiceover_caption_style": "sentence",
+  "narrated_clip_assignments": [
+   {
+    "clip_id": "clip_0",
+    "step_id": "seg_0",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_0"
+   },
+   {
+    "clip_id": "clip_6",
+    "step_id": "seg_1",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_6"
+   },
+   {
+    "clip_id": "clip_2",
+    "step_id": "seg_2",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_2"
+   },
+   {
+    "clip_id": "clip_4",
+    "step_id": "seg_3",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_4"
+   },
+   {
+    "clip_id": "clip_3",
+    "step_id": "seg_4",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_3"
+   },
+   {
+    "clip_id": "clip_10",
+    "step_id": "seg_5",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_10"
+   },
+   {
+    "clip_id": "clip_5",
+    "step_id": "seg_6",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_5"
+   },
+   {
+    "clip_id": "clip_7",
+    "step_id": "seg_7",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_7"
+   },
+   {
+    "clip_id": "clip_9",
+    "step_id": "seg_8",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_9"
+   },
+   {
+    "clip_id": "clip_1",
+    "step_id": "seg_9",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_1"
+   },
+   {
+    "clip_id": "clip_8",
+    "step_id": "seg_10",
+    "source_start_s": 0.0,
+    "participant_key": "clip:clip_8"
+   }
+  ],
+  "narrated_title_text_elements": [
+   {
+    "id": "narrated-title",
+    "role": "generative_intro",
+    "text": "Altının yolu",
+    "color": "#FFFFFF",
+    "end_s": 1.280000001192093,
+    "effect": "fade-in",
+    "x_frac": 0.06,
+    "y_frac": 0.66797,
+    "removed": false,
+    "size_px": 104.0,
+    "start_s": 0.0,
+    "position": "custom",
+    "alignment": "left",
+    "size_class": "large",
+    "font_family": "Alte Haas Grotesk",
+    "stroke_width": 0.0,
+    "glow_strength": 0.0,
+    "source_params": {
+     "narrated_storyboard": "intro",
+     "phone_text_style_version": 1
+    },
+    "behind_subject": false,
+    "max_width_frac": 0.68,
+    "shadow_enabled": false
+   }
+  ]
+ },
+ "cleanup_removed_source_s": [
+  [
+   3.21,
+   3.45,
+   "filler_acoustic"
+  ],
+  [
+   7.265,
+   8.142,
+   "silence"
+  ],
+  [
+   12.165,
+   12.615,
+   "silence"
+  ],
+  [
+   15.925,
+   16.12,
+   "silence"
+  ],
+  [
+   22.24,
+   28.48,
+   "retake"
+  ],
+  [
+   49.085,
+   49.475,
+   "silence"
+  ],
+  [
+   55.605,
+   56.235,
+   "silence"
+  ],
+  [
+   59.455,
+   60.53,
+   "silence"
+  ]
+ ],
+ "review_event_27": [
+  {
+   "requirement_id": "r1",
+   "status": "partial",
+   "verification": "unchecked",
+   "reason": null
+  },
+  {
+   "requirement_id": "r2",
+   "status": "met",
+   "verification": "checked",
+   "reason": "The captions are in Turkish."
+  },
+  {
+   "requirement_id": "r3",
+   "status": "partial",
+   "verification": "unchecked",
+   "reason": null
+  },
+  {
+   "requirement_id": "r4",
+   "status": "partial",
+   "verification": "unchecked",
+   "reason": null
+  },
+  {
+   "requirement_id": "r5",
+   "status": "partial",
+   "verification": "unchecked",
+   "reason": null
+  },
+  {
+   "requirement_id": "r6",
+   "status": "partial",
+   "verification": "unchecked",
+   "reason": null
+  },
+  {
+   "requirement_id": "r7",
+   "status": "partial",
+   "verification": "unchecked",
+   "reason": null
+  },
+  {
+   "requirement_id": "r8",
+   "status": "met",
+   "verification": "checked",
+   "reason": null
+  }
+ ]
+}

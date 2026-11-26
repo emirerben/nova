@@ -3601,6 +3601,7 @@
                 "splitBlankPanel",
                 "clipTilt",
                 "clipBackdropMedia",
+                "clipDim",
                 "scriptFonts",
                 "colorMoments",
                 "speechDuck",
@@ -3753,6 +3754,7 @@
                 "splitBlankPanel",
                 "clipTilt",
                 "clipBackdropMedia",
+                "clipDim",
                 "scriptFonts",
                 "colorMoments",
                 "speechDuck",
@@ -5505,6 +5507,12 @@
             "nullable": true,
             "title": "Color",
             "type": "string"
+          },
+          "dim": {
+            "default": null,
+            "nullable": true,
+            "title": "Dim",
+            "type": "number"
           },
           "duration_beats": {
             "default": null,
@@ -15061,6 +15069,15 @@
             "default": null,
             "nullable": true
           },
+          "dim": {
+            "default": null,
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Dim",
+            "type": "number"
+          },
           "hold_duration": {
             "default": null,
             "maximum": 1800,
@@ -15458,6 +15475,12 @@
             "nullable": true,
             "title": "Color",
             "type": "string"
+          },
+          "dim": {
+            "default": null,
+            "nullable": true,
+            "title": "Dim",
+            "type": "number"
           },
           "duration_beats": {
             "default": null,

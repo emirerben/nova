@@ -13,7 +13,7 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 | Conversation threads | 31 | 77 | 52 | 7 | 18 | 68% | 13 |
 | Per-action set | 45 | 45 | 39 | 0 | 6 | 87% | 1 |
 
-Threads measured from recordings: 76. Threads awaiting recordings (not in the KPI): 3.
+Threads measured from recordings: 76. Threads awaiting recordings (not in the KPI): 4.
 
 ## Provenance
 
@@ -58,6 +58,7 @@ Threads measured from recordings: 76. Threads awaiting recordings (not in the KP
 | action_clip_add_remove__visual_media | Remove the photo I added. | reaches | ['remove_visual_media'] | met | parser accepted ['remove_visual_media'] |
 | action_clip_audio | Mute the original sound. | reaches | ['set_mix'] | met | parser accepted ['set_mix'] |
 | action_clip_crop | Crop the second clip tighter on the left side. | reaches | ['patch_slots'] | met | parser accepted ['patch_slots'] |
+| action_clip_dim | Dim all the clips 40%. | reaches | no op | unrecorded |  |
 | action_clip_duplicate | Duplicate the first clip. | reaches | ['duplicate_clip'] | met | parser accepted ['duplicate_clip'] |
 | action_clip_look | Give the whole video a golden hour look. | blocked at parse | no op | unmet | blocked on the phone (patch_slots: unsupported timeline field: look_preset); model emitted no op |
 | action_clip_look__custom_effect | Add a glitch effect to the second clip. | blocked at parse | no op | unmet | blocked on the phone (apply_custom_effect: I can't change that on this edit yet.); model emitted no op |

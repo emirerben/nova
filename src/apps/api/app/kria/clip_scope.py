@@ -38,7 +38,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import MAX_MAIN_CREATOR_SELECTED_MEDIA
@@ -506,6 +506,71 @@ def apply_clip_exclusions(
     return strategy.model_copy(update=update)
 
 
+def apply_chosen_videos(
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    requirements: Iterable[Any],
+) -> CreativeStrategy:
+    """``strategy`` keeping only the own videos a typed "use only these" ask names (KRI-1523).
+
+    Cusco DJI T1: "Use only the good take: the second clip" was filed as a ``select`` row with
+    ``selected_media_ids`` naming the good take, and the Talking plan still played both takes. A
+    Talking edit runs no clip-intent planner (``CLIP_INTENT_FREE_EDIT_FORMATS``), so this typed
+    fact is the only "which clips" ask it has; a montage keeps its intents (KRI-667 / KRI-993).
+
+    The own videos become exactly the named ones (a named video the model left out is added);
+    photos, Visuals and every other non-video item stay where they are, and a dropped hero is
+    cleared. Unchanged when the switch is off, an execution contract owns the media, the live
+    rows name no set for sure, name different sets or sit beside a live "use all the clips" ask,
+    the strategy itself places a video the ask leaves out (an insert, the ending, a backdrop: its
+    receipt then says that clip still plays), nothing would change, or the list would pass
+    ``MAX_MAIN_CREATOR_SELECTED_MEDIA``.
+    """
+    from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS  # noqa: PLC0415
+    from app.kria.brief import is_select_all_requirement  # noqa: PLC0415
+    from app.kria.select_asks import chosen_clips_on, chosen_video_ids  # noqa: PLC0415
+
+    if (
+        not chosen_clips_on()
+        or strategy.edit_format not in CLIP_INTENT_FREE_EDIT_FORMATS
+        or strategy.execution_contract is not None
+    ):
+        return strategy
+    requirements = [req for req in requirements if getattr(req, "live", True)]
+    own = [media.media_id for media in _own_videos(manifest.media)]
+    picks = {chosen for req in requirements if (chosen := chosen_video_ids(req, own)) is not None}
+    if len(picks) != 1 or any(is_select_all_requirement(req) for req in requirements):
+        # Two picks, or a live "use all the clips" beside one: the creator's asks disagree.
+        return strategy
+    (chosen,) = picks
+    left_out = set(own) - set(chosen)
+    if left_out & placed_media(strategy):
+        return strategy
+    # Native dispatch renders a non-empty list whatever the scope says (KRI-515 reads `all`
+    # only on guided), so only an empty list takes every attached item.
+    takes_everything = not strategy.selected_media_ids or (
+        strategy.media_scope == "all" and strategy.render_program != "native"
+    )
+    if takes_everything:
+        # Only the creator's own videos decide a Talking take: an empty pick narrows to the named
+        # videos alone, never to an explicit list of every Visual in the pool.
+        if not left_out:
+            return strategy
+        base, result = own, list(chosen)
+    else:
+        base = list(dict.fromkeys(strategy.selected_media_ids))
+        kept = [media_id for media_id in base if media_id not in left_out]
+        result = [*kept, *(media_id for media_id in chosen if media_id not in kept)]
+    if result == base:
+        return strategy
+    if strategy.render_program == "native" and len(result) > MAX_MAIN_CREATOR_SELECTED_MEDIA:
+        return strategy
+    update: dict[str, object] = {"media_scope": "selected", "selected_media_ids": result}
+    if strategy.hero_media_id in left_out:
+        update["hero_media_id"] = None
+    return strategy.model_copy(update=update)
+
+
 @dataclass(frozen=True)
 class SubjectScope:
     """What a subject scope did to the pick (KRI-993), for the log line and the tests."""
@@ -610,6 +675,7 @@ def apply_subject_scope(
 
 __all__ = [
     "SubjectScope",
+    "apply_chosen_videos",
     "apply_subject_scope",
     "scoped_clips",
     "LengthAsk",

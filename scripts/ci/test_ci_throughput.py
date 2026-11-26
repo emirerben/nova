@@ -699,5 +699,58 @@ class ArtifactTransferTests(unittest.TestCase):
             evidence.verify_named_tests(report, {"KriaTests/Example/testWorks"})
 
 
+class SimulatorKeyboardTipTests(unittest.TestCase):
+    """The test simulator starts with the keyboard's first-use tip marked as shown (KRI-1604).
+
+    On a new simulator iOS shows a "slide to type" tip the first time a keyboard is used. When
+    the tip arrives while XCTest is typing, the typed text reaches the field seconds after
+    `typeText` returns, and a test that reads the field at once fails
+    (AppleTextAccessibilityUITests on PR #2525). Ways the remedy can go wrong:
+
+    1. The setting is dropped in a later edit of the boot step and the tip is back.
+    2. It is written before the device has booted, where `simctl spawn` cannot run.
+    3. Writing it fails and the run goes on with the tip on.
+    4. It is written although the boot itself failed, hiding the boot failure's exit code.
+    """
+
+    WRITE = (
+        "simctl spawn SIM defaults write com.apple.keyboard.preferences "
+        "DidShowContinuousPathIntroduction -bool true"
+    )
+
+    def boot(self, bootstatus=0, write=0, in_progress=1):
+        verify = (Path(__file__).resolve().parents[2] / "scripts/ios/verify.sh").read_text()
+        function = re.search(r"^boot_simulator\(\) \{\n.*?^\}\n", verify, re.S | re.M).group()
+        harness = textwrap.dedent(
+            f"""
+            SIMULATOR_ID=SIM
+            simctl_wait() {{ echo "simctl $*" >> calls; return {bootstatus}; }}
+            simulator_boot_in_progress() {{ return {in_progress}; }}
+            xcrun() {{ echo "$*" >> calls; return {write}; }}
+            """
+        ) + function + "boot_simulator\n"
+        with tempfile.TemporaryDirectory() as directory:
+            done = subprocess.run(
+                ["/bin/bash", "-c", harness], cwd=directory, capture_output=True, text=True
+            )
+            calls = Path(directory, "calls")
+            return done.returncode, calls.read_text().splitlines() if calls.exists() else []
+
+    def test_the_tip_is_marked_as_shown_once_the_simulator_has_booted(self):
+        status, calls = self.boot()
+        self.assertEqual(status, 0)
+        self.assertEqual(calls, ["simctl bootstatus SIM -b", self.WRITE])
+
+    def test_a_failed_boot_keeps_its_own_exit_code_and_writes_nothing(self):
+        status, calls = self.boot(bootstatus=7)
+        self.assertEqual(status, 7)
+        self.assertNotIn(self.WRITE, calls)
+
+    def test_a_setting_that_cannot_be_written_fails_the_boot_step(self):
+        status, calls = self.boot(write=3)
+        self.assertEqual(status, 3)
+        self.assertIn(self.WRITE, calls)
+
+
 if __name__ == "__main__":
     unittest.main()

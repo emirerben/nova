@@ -527,3 +527,155 @@ def test_s6_a_drifting_end_before_a_late_word_is_not_a_straddler_in_a_second_pas
     moved = follow_late_runs(second, [run.to_diagnostic()])
     assert moved[:2] == second[:2]
     assert moved[2] != second[2]
+
+
+# ------------------------------------------------------------------ KRI-1627: stretched pairs
+# Cusco T3 around the 1.65 s pause, source seconds: whisper stretched the tail of "Dağları'nın"
+# (voice to 42.031) AND the head of "bayırlarında..." (voice from 43.593) into the silence
+# 42.028-43.617, meeting at 42.76. KRI-1512's head trim refuses it (h6); with the voicing detector
+# as the second witness both stamps go back to the silence edges. Failure modes `pN` as in
+# docs/reviews/kri-1627-stretched-pairs-failure-modes.md. Voiced runs are the clip's own.
+
+P_DURATION_S = 45.1
+P_WORDS = [
+    ("Cusco,", 38.74, 40.08),
+    ("enfes", 40.64, 41.10),
+    ("Ant", 41.10, 41.46),
+    ("Dağları'nın", 41.46, 42.76),
+    ("bayırlarında...", 42.76, 44.50),
+]
+P_SILENCES = [(38.723, 39.482), (39.983, 40.456), (40.981, 41.162), (41.326, 41.454)]
+P_SILENCES += [(42.028, 43.617), (44.795, 45.12)]
+P_PAUSE = (42.028, 43.617)
+P_TAIL, P_HEAD = 3, 4  # "Dağları'nın", "bayırlarında..."
+P_VOICE = _voice(
+    (39.548, 39.658),
+    (39.825, 39.928),
+    (40.475, 40.658),
+    (40.715, 40.858),
+    (41.165, 41.341),
+    (41.453, 42.031),
+    (43.593, 43.665),
+    (43.675, 44.46),
+    (44.59, 44.705),
+)
+
+
+def _pairs(words=P_WORDS, silences=P_SILENCES, voicing=P_VOICE, pairs=True):
+    return realign_stretched_heads(words, silences, P_DURATION_S, voicing=voicing, pairs=pairs)
+
+
+def _paired(words=P_WORDS, silences=P_SILENCES, pairs=True):
+    return [
+        head.index
+        for head in find_stretched_heads(words, silences, P_DURATION_S, pairs=pairs)
+        if head.tail
+    ]
+
+
+def test_the_t3_pair_goes_back_to_the_silence_edges():
+    times, [head] = _pairs()
+    assert head.index == P_HEAD and head.tail
+    assert times[P_TAIL] == (41.46, P_PAUSE[0])
+    assert times[P_HEAD] == (P_PAUSE[1], 44.50)
+    assert head.to_diagnostic() == {
+        "start_s": [42.76, 43.617],
+        "pause_s": [42.028, 43.617],
+        "previous_end_s": [42.76, 42.028],
+        "tail": True,
+    }
+
+
+def test_p1_voice_inside_the_pause_trims_nothing():
+    quiet_voice = _voice((41.453, 42.031), (42.70, 42.85), (43.593, 44.46))
+    times, heads = _pairs(voicing=quiet_voice)
+    assert heads == [] and times == [(s, e) for _t, s, e in P_WORDS]
+
+
+def test_p2_the_tail_stops_at_the_silence_start_not_at_the_voice_end():
+    """An unvoiced tail after the voice stays: the word ends at the silence start (rule 3 then
+    keeps KEPT_GAP_S/2 after it), never at the earlier voice end."""
+    early_end = _voice((41.453, 41.90), (43.593, 44.46))
+    times, [head] = _pairs(voicing=early_end)
+    assert head.tail and times[P_TAIL][1] == P_PAUSE[0] > 41.90
+
+
+def test_p3_sound_between_the_previous_voice_and_the_silence_trims_nothing():
+    gap_before = _voice((41.453, 41.75), (43.593, 44.46))  # voice ends 0.28 s before the span
+    _times, heads = _pairs(voicing=gap_before)
+    assert heads == []
+
+
+def test_p4_no_voice_in_the_previous_word_before_the_silence_trims_nothing():
+    late_onset = _voice((41.90, 42.031), (43.593, 44.46))  # 0.13 of 0.57 s voiced
+    _times, heads = _pairs(voicing=late_onset)
+    assert heads == []
+
+
+def test_p5_a_previous_word_that_cannot_fit_before_the_silence_is_no_pair():
+    short = _replace(P_WORDS, P_TAIL, 41.80, 42.76)  # 0.23 s before the span
+    short = _replace(short, P_TAIL - 1, 41.10, 41.80)
+    assert _paired(short) == []
+    # One syllable fits 0.18 s by speed; the part before the span is still under the minimum.
+    brief = [*P_WORDS[:P_TAIL], ("ve", 41.85, 42.76), P_WORDS[P_HEAD]]
+    brief = _replace(brief, P_TAIL - 1, 41.10, 41.85)
+    assert _paired(brief) == []
+    crowded = [*P_WORDS[:P_TAIL], ("Dağlarınınbayırlarınınyamaçlarının", 41.46, 42.76)]
+    crowded += [P_WORDS[P_HEAD]]
+    assert _paired(crowded) == []
+
+
+def test_p6_two_long_quiet_patches_in_the_previous_word_is_no_pair():
+    words = _replace(P_WORDS, P_TAIL, 40.20, 42.76)
+    words = _replace(words, P_TAIL - 1, 40.10, 40.20)
+    words = _replace(words, P_TAIL - 2, 40.08, 40.10)
+    silences = [*P_SILENCES[:4], (40.40, 41.10), P_PAUSE, P_SILENCES[-1]]
+    assert _paired(words, silences) == []
+
+
+def test_p7_overlapping_stamps_are_no_pair():
+    words = _replace(P_WORDS, P_TAIL, 41.46, 43.00)
+    assert _paired(words) == []
+
+
+def test_p8_a_failing_head_side_moves_neither_word():
+    no_head_voice = _voice((41.453, 42.031), (44.30, 44.46))  # head voice starts 0.68 s late
+    times, heads = _pairs(voicing=no_head_voice)
+    assert heads == [] and times[P_TAIL] == P_WORDS[P_TAIL][1:]
+
+
+def test_p9_pairs_off_is_the_kri1512_refusal():
+    assert _paired(pairs=False) == []
+    assert P_HEAD not in [h.index for h in find_stretched_heads(P_WORDS, P_SILENCES, 45.1)]
+    times, heads = _pairs(pairs=False)
+    assert heads == [] and times == [(s, e) for _t, s, e in P_WORDS]
+
+
+def test_p10_a_small_tail_overlap_is_the_plain_head_trim():
+    words = _replace(P_WORDS, P_TAIL, 41.46, 42.20)  # 0.17 s into the span
+    words = _replace(words, P_HEAD, 42.20, 44.50)
+    times, [head] = _pairs(words)
+    assert not head.tail and "tail" not in head.to_diagnostic()
+    assert times[P_TAIL] == (41.46, P_PAUSE[0]) and times[P_HEAD] == (P_PAUSE[1], 44.50)
+
+
+def test_p11_a_trimmed_pair_keeps_every_other_time_and_the_order():
+    times, _heads_ = _pairs()
+    assert all(times[i] == P_WORDS[i][1:] for i in range(len(P_WORDS)) if i not in (3, 4))
+    assert times[P_TAIL][1] <= times[P_HEAD][0]
+    starts = [start for start, _end in times]
+    assert starts == sorted(starts)
+
+
+def test_p14_a_second_pass_tail_in_the_cut_survives_the_remap():
+    """Another caption pass stamps "Dağları'nın" to 42.76 s again: the cut that now removes the
+    pause only takes its tail, so the word stays and ends at the cut."""
+    from app.pipeline.silence_cut import CutPlan, Removal, remap_words
+
+    plan = CutPlan(
+        keep_segments=[(0.0, 42.153), (43.492, 45.1)],
+        removed=[Removal(42.153, 43.492, "silence")],
+        time_saved_s=1.339,
+    )
+    [word] = remap_words([{"text": "Dağları'nın", "start_s": 41.46, "end_s": 42.76}], plan)
+    assert word["start_s"] == pytest.approx(41.46) and word["end_s"] == pytest.approx(42.153)

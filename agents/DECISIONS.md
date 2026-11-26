@@ -4177,6 +4177,33 @@ CLAUDE.md was already 77 bytes over its 38,000 budget on main when KRI-1562 need
 **Guards:** `test_the_prod_caption_over_an_english_fact_passes`, `test_a_hook_passes_the_deterministic_check_whatever_word_opens_it`, `test_grounding_reads_numbers_not_names`, `test_the_claim_reviewer_still_runs_and_its_rejection_holds_a_designed_answer` in `tests/pipeline/test_kri1580_kyoto_research_copy.py`.
 **Reversal condition:** a live run shows a fabricated place or person name reaching a shipped caption. Re-add a name check that compares across languages (the cited fact's names against the copy's, by script-aware name match or a translation-aware reviewer field), not by stem.
 
+## [2026-11-24] Clean up speech trims a stretched pair: both words whisper stretched into one pause (KRI-1627)
+
+Context. Cusco T3 "Sticker 1" (job a4f7b702) kept a 1.65 s mid-sentence pause (source 42.00–43.65 s)
+after KRI-1512. whisper-1 stretched the tail of "Dağları'nın" (voice to 42.031 s) AND the head of
+"bayırlarında" (voice from 43.593 s) into the silence 42.028–43.617 s; the stamps meet at 42.76 s,
+so the stamped gap is 0. KRI-1512's head trim refused it as "both edges in one pause", the shape
+rule 0 calls ambiguous (F6) because it has only silencedetect.
+
+Decision. With the KRI-1017 voicing detector as the second witness the shape is not ambiguous.
+`find_stretched_heads(pairs=True)` takes the previous word as a stretched tail (`tail=True`) when it
+reaches into the same span by >= 0.3 s, ends no later than the next word starts, overlaps no other
+long span, and holds its syllables before the span (>= 0.3 s, <= 12 syllables/s);
+`realign_stretched_heads` then also needs its voice to end within 0.2 s before the span and >= 30%
+voice in its stamp before the span, on top of every head gate. Both stamps go to the silence edges;
+either side failing moves neither. Switch `SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED` (default on, in
+the policy fingerprint, needs `SPEECH_CLEANUP_STRETCHED_WORDS_ENABLED`; off is byte-identical to
+KRI-1512), `DETECTOR_VERSION` → `mixed-gap-v12-stretched-pairs`. Real-audio replays: T3 gains the
+cut (42.153–43.492 s), Çiğdem S4 two (32.002–33.385 s, 67.382–68.141 s), T2, Çiğdem S2 and every
+Don Julio pass unchanged; every new cut sits within 4.2 dB of the floor and local whisper.cpp hears
+only its near-silence hallucination on it. Guards: `tests/tasks/test_kri1627_cusco_t3_pause_replay.py`,
+`tests/pipeline/test_late_word_realign.py` (`p*`). Failure modes:
+`docs/reviews/kri-1627-stretched-pairs-failure-modes.md`.
+
+Reversal condition. "Cleanup clipped the end of a word" traced to a `tail: true` entry in
+`diagnostics.stretched_heads`: `SPEECH_CLEANUP_STRETCHED_PAIRS_ENABLED=false` + api and worker
+restart (analyses redo through the fingerprint).
+
 ## [2026-11-24] The AI picks the order nobody stated, as a separate ranking agent (`KRIA_STORY_SEQUENCER_ENABLED`, KRI-1593)
 
 **Context:** the live clip order (KRI-1586) keeps what the creator says and defaults the rest to upload order. Owner direction for the rest: "the AI decides what fits the story; if it can't, upload order". Nothing was labelled `ai_story` before a render.

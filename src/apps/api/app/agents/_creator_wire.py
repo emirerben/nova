@@ -166,10 +166,11 @@ def copilot_operation_schemas() -> dict[str, dict]:
     return {branch["properties"]["op"]["const"]: branch for branch in ops}
 
 
-def copilot_field_schemas(names) -> dict[str, dict]:
-    """The wire type of each named Copilot field (raises on an unregistered name)."""
-    _, _, _, field = _copilot_operations()
-    return {name: field(name) for name in names}
+def copilot_patch_field_schemas(names) -> dict[str, dict]:
+    """The wire type of each named ``patch`` key, null included where null removes the value
+    (raises on an unregistered name)."""
+    _, _, _, patch_field = _copilot_operations()
+    return {name: patch_field(name) for name in names}
 
 
 def _copilot_operations():
@@ -276,6 +277,7 @@ def _copilot_operations():
         "window_end_s",
         "position_x_frac",
         "position_y_frac",
+        "dim",
     }
     list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
@@ -465,21 +467,19 @@ def _copilot_operations():
             "transition_duration_s",
             "playback_rate",
             "tilt",
+            "dim",
             "rotation_delta_deg",
             "muted",
             "source_audio_volume",
         }
     )
-    patch = obj(
-        {
-            k: (
-                {"anyOf": [field(k), {"type": "null"}]}
-                if k in {"background_color", "tilt"}
-                else field(k)
-            )
-            for k in sorted(patch_names)
-        }
-    )
+
+    def patch_field(name):
+        if name in {"background_color", "tilt", "dim"}:
+            return {"anyOf": [field(name), {"type": "null"}]}
+        return field(name)
+
+    patch = obj({k: patch_field(k) for k in sorted(patch_names)})
     ops = []
     from app.agents.editor_ops_v2.split_screen import _MODELS as split_screen_models
 
@@ -521,7 +521,7 @@ def _copilot_operations():
     pending = copy.deepcopy(ops)
     for operation in pending:
         operation["required"] = ["op"]
-    return ops, pending, selector, field
+    return ops, pending, selector, patch_field
 
 
 class WireContract:

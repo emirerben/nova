@@ -1179,12 +1179,14 @@ def _stretched_heads_realigned(
 
     triples = [(word.text, word.start_s, word.end_s) for word in words]
     spans = [(float(span[0]), float(span[1])) for span in silences]
-    if not find_stretched_heads(triples, spans, duration_s):
+    # KRI-1627: a head whose previous word's tail is stretched into the same pause too.
+    pairs = settings.speech_cleanup_stretched_pairs_enabled
+    if not find_stretched_heads(triples, spans, duration_s, pairs=pairs):
         return words, []
     voicing = _voicing_reader(audio_path, load_pcm, context_s=VOICE_CONTEXT_S)
     if voicing is None:
         return words, []
-    times, heads = realign_stretched_heads(triples, spans, duration_s, voicing=voicing)
+    times, heads = realign_stretched_heads(triples, spans, duration_s, voicing=voicing, pairs=pairs)
     if not heads:
         return words, []
     return _with_times(words, times), [head.to_diagnostic() for head in heads]

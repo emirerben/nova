@@ -15,8 +15,10 @@ asks use, the tied clips pre-ticked:
   footage match of another ask (N1's "the grill" matched three clips at 0.9, but one is the
   only flowers clip and one the only butcher clip: one is left, nothing to ask). Photos
   never count (a Visuals photo is a card, not the shot), a clip the creator left out never
-  counts, an include matching every footage clip is the whole set, not one shot, and an ask
-  the creator already answered (a tap, a typed file name) is never asked.
+  counts, an include matching every footage clip is the whole set, not one shot, an include
+  naming only the rest ("Fill the rest with the other clips", ``fills_the_rest``, KRI-1519) is
+  every clip not already placed, not one shot either, and an ask the creator already answered
+  (a tap, a typed file name) is never asked.
 * ``tie_question`` / ``with_tie_categories``: the picker for them, alone or added to the
   card the turn already asks (one card, one turn, as KRI-807 does for skips).
 
@@ -25,7 +27,8 @@ answer rides ``fold_clip_selections`` like every picker answer, so the tapped cl
 shot on later turns (``apply_creator_selections``) and it is never asked again. A shot the
 creator keeps both clips for is placed by the narrated alignment, as before.
 
-Nothing here reads creator words: the matches are the resolver's, the answers the creator's.
+No creator word is read beyond ``fills_the_rest``'s closed word list: the matches are the
+resolver's, the answers the creator's.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from app.services.clip_selection import (
     MAX_QUESTION_CLIPS,
     build_clip_question,
     category_label,
+    fills_the_rest,
     intent_key,
 )
 
@@ -77,7 +81,11 @@ def voiceover_ties(intents: Sequence[ResolvedClipIntent], clips: Sequence[_Clip]
     def footage(intent: ResolvedClipIntent) -> list[Any]:
         return [a for a in intent.assignments if a.media_id in order and a.media_id not in skipped]
 
-    live = [i for i in intents if i.status == "resolved" and i.op != "exclude"]
+    # KRI-1519: "the other clips" is every clip not already placed: never one shot, and it
+    # needs no clip of its own (it takes what the named shots leave).
+    live = [
+        i for i in intents if i.status == "resolved" and i.op != "exclude" and not fills_the_rest(i)
+    ]
     only_match = {id(i): {a.media_id for a in footage(i)} for i in live}
     ties: list[TiedShot] = []
     for intent in live:
@@ -138,14 +146,15 @@ def _question_text(asked: Sequence[tuple[str, int]]) -> str:
         if len(asked) > 4
         else ""
     )
+    # KRI-1519: the picker takes several ticks per row, so the sentence says "clips".
     return say(
         en=(
             "More than one of your clips shows {shown}{more}. "
-            "For each one, keep the clip to use ticked and untick the others."
+            "For each one, keep the clips to use ticked and untick the others."
         ),
         tr=(
             "Şunlar birden fazla klibinde görünüyor: {shown}{more}. "
-            "Her biri için kullanılacak klibi işaretli bırak, diğerlerinin işaretini kaldır."
+            "Her biri için kullanılacak klipleri işaretli bırak, diğerlerinin işaretini kaldır."
         ),
         shown=shown,
         more=more,
