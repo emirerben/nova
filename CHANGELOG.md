@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.23.0] - 2026-11-26
+
+### Changed
+- ci(ios): mark the keyboard's first-use tip as shown on the test simulator (KRI-1639) (#2527) <!-- release-pr: 2527 -->
+
 ## [0.90.22.0] - 2026-11-26
 
 ### Changed
