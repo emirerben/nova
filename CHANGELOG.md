@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.90.27.0] - 2026-11-26
+
+### Changed
+- docs(ci): failure-log rows for #2525, #2527, #2529 and #2530 (#2535) <!-- release-pr: 2535 -->
+
 ## [0.90.26.0] - 2026-11-26
 
 ### Changed
