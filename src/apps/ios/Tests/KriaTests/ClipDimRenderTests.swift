@@ -89,13 +89,13 @@ final class ClipDimRenderTests: XCTestCase {
                 "stack_id": .string("pair-0"), "heading_level": .number(2), "corner": .string("bottom_left"), "bottom_frac": .number(0.5),
                 "shaped": .bool(true), "authored_text": .string("Tram 28"), "canvas_width": .number(1080), "canvas_height": .number(1920),
                 "gap_before_px": .number(0)])])])
-        let lyric = textRow("song-lyric-1", "LA LA LA", x: 0.5, y: 0.6, size: 72, color: "#A0C8FF",
+        let lyric = textRow("song-lyric-1", "LA LA LA", x: 0.3, y: 0.56, size: 72, color: "#A0C8FF",
                             extra: ["source_params": .object(["origin": .string("song")])])
         let caption: JSONValue = .object(["id": .string("cue-1"), "start_s": .number(0), "end_s": .number(1.5), "text": .string("WORDS")])
         let sticker: JSONValue = .object(["id": .string("sticker"), "start_s": .number(0), "end_s": .number(1.5),
-                                          "x_frac": .number(0.78), "y_frac": .number(0.74), "scale": .number(0.25)])
+                                          "x_frac": .number(0.78), "y_frac": .number(0.6), "scale": .number(0.25)])
         let stroke: JSONValue = .object(["id": .string("stroke"), "start_s": .number(0), "end_s": .number(1.5), "canvas_aspect": .number(0.5625),
-            "center_x": .number(0.3), "center_y": .number(0.72), "scale": .number(1), "rotation_deg": .number(0),
+            "center_x": .number(0.3), "center_y": .number(0.68), "scale": .number(1), "rotation_deg": .number(0),
             "animation": .object(["entrance": .string("none"), "draw_duration_s": .number(1), "exit": .string("none")]),
             "strokes": .array([.object(["color": .string("#00E5FF"), "opacity": .number(1), "width_frac": .number(0.03), "texture": .string("pen"),
                                         "seed": .number(1), "points": .array([.array([.number(0.08), .number(0.72)]), .array([.number(0.5), .number(0.72)])])])])])
@@ -107,7 +107,7 @@ final class ClipDimRenderTests: XCTestCase {
         let session = NativeEditorSession(draft: saved.editorDraft(projectID: UUID()))
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         return try compiler.compile(document: session.document, clips: session.timelineClips, items: session.timelineItems,
-                                    sources: [0: fixture.source], mediaSources: ["overlay:sticker": fixture.sticker])
+                                    sources: [0: fixture.source], mediaSources: ["overlay:sticker": fixture.sticker], deviceCaptions: true)
     }
 
     private func export(_ program: NativeEditorRenderProgram, fixture: Fixture, name: String) async throws -> Frame {
@@ -162,11 +162,11 @@ final class ClipDimRenderTests: XCTestCase {
         static let all = [
             Layer(name: "pinned_corner_text", x: 0...0.6, y: 0.03...0.14, ink: (128, 255, 128)),
             Layer(name: "title", x: 0...1, y: 0.25...0.35, ink: (255, 255, 255)),
-            Layer(name: "informative_heading", x: 0...1, y: 0.38...0.53, ink: (255, 231, 160)),
-            Layer(name: "song_lyric", x: 0...1, y: 0.55...0.65, ink: (160, 200, 255)),
-            Layer(name: "sticker", x: 0.6...1, y: 0.65...0.83, ink: (255, 0, 255)),
-            Layer(name: "drawing", x: 0...0.58, y: 0.68...0.77, ink: (0, 229, 255)),
-            Layer(name: "caption", x: 0...1, y: 0.84...0.97, ink: (255, 255, 255)),
+            Layer(name: "informative_heading", x: 0...0.6, y: 0.38...0.5, ink: (255, 231, 160)),
+            Layer(name: "song_lyric", x: 0...0.55, y: 0.51...0.61, ink: (160, 200, 255)),
+            Layer(name: "sticker", x: 0.6...1, y: 0.5...0.7, ink: (255, 0, 255)),
+            Layer(name: "drawing", x: 0...0.58, y: 0.64...0.72, ink: (0, 229, 255)),
+            Layer(name: "caption", x: 0...1, y: 0.74...0.86, ink: (255, 255, 255)),
         ]
         static let picture = Layer(name: "picture", x: 0.62...0.95, y: 0.15...0.23, ink: (128, 128, 128))
     }
@@ -190,7 +190,9 @@ final class ClipDimRenderTests: XCTestCase {
         let undimmed = try program(dim: nil, fixture: fixture)
         XCTAssertNil(undimmed.recipe.tracks.first { $0.kind == .video }?.clips.first?.dim)
         XCTAssertFalse(undimmed.recipe.effectiveCapabilities.contains(.clipDim))
-        XCTAssertEqual(undimmed.recipe.tracks.filter { $0.kind == .overlay }.flatMap(\.clips).count, 1, "the sticker is an overlay clip")
+        let stickers = undimmed.recipe.tracks.filter { $0.kind == .overlay }.flatMap(\.clips)
+        XCTAssertEqual(stickers.count, 1, "the sticker is an overlay clip")
+        XCTAssertNil(stickers.first?.overlayAboveText, "a device render draws the sticker below the text, where clips are dimmed")
         XCTAssertEqual(undimmed.recipe.drawingLayers.count, 1, "the stroke is a drawing layer")
         XCTAssertGreaterThanOrEqual(undimmed.recipe.textLayers.count, 5, "title, pinned text, heading, lyric and caption are text layers")
         let plain = try await export(undimmed, fixture: fixture, name: "dim-0")
