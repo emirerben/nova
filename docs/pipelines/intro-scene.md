@@ -638,18 +638,21 @@ M47-M59 and their guards are in the `services/intro_props_layout.py` docstring.
   still refused.
 * **Preferences, not rules** (Emir, 2026-11-27). Every card rule here (`SHORT_CARD_S`, a mode's
   `max_width`, `MIN_WIDTH`, `MIN_CARD_S`, the stagger, the slots, off her face, the title ink,
-  the captions, the watermark and the frame edge) decides only what the offer lays out:
-  `compile_intro_scene`, `fit_card_looks`, its dry run (`card_moved`) and `MAX_POP_COMPILES`
-  run only inside `POST .../intro-styles`. Once the cards are in her edit, her drag, resize,
-  retime, copy and delete, a chat ask (`patch_overlay`) and a later title change Save exactly
-  what she set; nothing re-checks a card against these rules. What stays is what every card has:
-  a photo the job pinned for this edit, the Save's card checks (scale clamped to 0.05-1, centre
-  to 0-1, times to >= 0, end after start, unique ids, a path under her item), a window
-  cut at the video's end (a card wholly past it is not drawn), the tilt / zoom / video / full-screen
-  gates, and the caption line: a card centred under 0.62 keeps its place only when the Save finds
-  it clear of her captions, else it is drawn at 0.62. Tapping another look (or "No intro style")
-  in "Try intro styles" still replaces every `intro-card-*` card, as applying an option always
-  has. Guard: the "her edits" section of `tests/routes/test_intro_cards_e2e.py` (P1-P8).
+  the captions, the watermark and the frame edge) decides only what the offer lays out. The card
+  layout (`layout_intro_props`, reached only for a scene with an arrangement, which only the
+  offer issues with her photos), `fit_card_looks`, its dry run (`card_moved`) and
+  `MAX_POP_COMPILES` run only inside `POST .../intro-styles` (and the verify and fit tools).
+  Once the cards are in her edit, her drag, resize, retime, copy and delete, a chat ask
+  (`patch_overlay`) and a later title change Save exactly what she set; nothing re-checks a card
+  against these rules. What stays is what every card has: a photo the job pinned for this edit;
+  the Save's card checks (scale clamped to 0.05-1, centre to 0-1, times to >= 0, end after
+  start, unique ids, a path under her item); a window cut at the speaker clip's end (a card
+  wholly past it is not drawn); the tilt, zoom, video and full-screen gates; chat's card ops only
+  once the edit has its video; and the caption line: a card centred under 0.62 keeps its place
+  only when the Save finds it clear of her captions over its own window, else it is drawn at
+  0.62. Tapping another look (or "No intro style") in "Try intro styles" still replaces every
+  `intro-card-*` card, as applying an option always has. Guard: the "her edits" section of
+  `tests/routes/test_intro_cards_e2e.py` (P1-P8).
 
 **Measured (2026-11-27, offline: real face bands, synthetic photos, no Save).**
 `app/cli/intro_cards_fit.py` over stage B's 13 prod Talking edits (portrait photos; square and
