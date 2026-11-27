@@ -872,6 +872,11 @@ class Settings(BaseSettings):
     # `intro_styles` editor capability is sent, and the route answers, only at or above it;
     # INTRO_STYLES_MIN_CLIENT_PROTOCOL=999 removes the entry for every build.
     intro_styles_min_client_protocol: int = 57
+    # KRI-1613: the kill switch for an intro scene's own sound (one library sound on its line
+    # entrances, written as `introsfx-*` rows of the Talking sound-effect lane). Also needs that
+    # lane's gate (`sfx_capability.subtitled_sfx_limit`). Read on every render: off, a scene is
+    # compiled silent. Sounds already saved on an edit stay (they are ordinary lane rows).
+    intro_scene_sound_enabled: bool = False
 
     def intro_scene_for(self, user_id: object) -> bool:
         if not self.intro_scene_enabled or user_id is None:
