@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.12.0] - 2026-11-27
+
+### Fixed
+- fix(ios): Discard changes in a chat-opened editor restores the saved edit (KRI-1625) (#2540) <!-- release-pr: 2540 -->
+
 ## [0.91.11.0] - 2026-11-27
 
 ### Added
