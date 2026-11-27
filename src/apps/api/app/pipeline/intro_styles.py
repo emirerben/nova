@@ -756,11 +756,13 @@ def _tagged(
     ink: str,
     restore: Sequence[Mapping[str, Any]] | None = None,
     arrangement: str | None = None,
+    card_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """The placed rows as ``route``'s title rows, each carrying ``title_look.intro_style`` (so the
     next offer can mark the current look and tell a stack from a plain title). Line 1 also carries
     ``restore``, the title this look replaces, for "No intro style" (F15). A card look's rows
-    also name its ``arrangement`` and take its key."""
+    also name its ``arrangement`` and take its key; a pop look's name its ``card_mode`` (server
+    only: the phone carries ``source_params`` untouched)."""
     from app.pipeline.phone_title_look import TITLE_LOOK_PARAM  # noqa: PLC0415
 
     rows = remap_to_route(placed, route)
@@ -773,6 +775,7 @@ def _tagged(
         "zone": zone,
         "ink": ink,
         **({"arrangement": arrangement} if arrangement else {}),
+        **({"card_mode": card_mode} if card_mode and card_mode != "clean" else {}),
     }
     for index, row in enumerate(rows):
         look = dict(row["source_params"][TITLE_LOOK_PARAM])
@@ -786,6 +789,9 @@ def _tagged(
 # --- her photos as cards (KRI-1615 stage B, M31-M45) --------------------------------------------
 
 MAX_CARD_COMPILES = 8
+# Pop tries per arrangement, after its clean tries all declined (M44, M47): the pop title is the
+# title alone, so a later try mostly differs by font pair only.
+MAX_POP_COMPILES = 4
 # A card look's title sits between its card rows, so only the top-band zones are tried.
 _CARD_ZONES = ("above_head", "top_left")
 _PLACEMENT_EPS = 1e-6
@@ -795,9 +801,10 @@ class IntroCard(BaseModel):
     """One card of a card look, as the offer sends it (stage C parses exactly this).
 
     Canvas fractions of the 1080x1920 frame: ``x_frac``/``y_frac`` the centre, ``scale`` the
-    width; the phone draws the photo at its own shape. The card shows with the title
-    (``start_s``-``end_s``). ``caption_clear`` is what the Save will mark from the same server
-    evidence; the Save never reads it from the client (a `MediaOverlay` has no such field)."""
+    width; the phone draws the photo at its own shape. Each card shows for its own
+    ``start_s``-``end_s`` (a clean card exactly the title's window, a pop card a shorter window
+    inside it). ``caption_clear`` is what the Save will mark from the same server evidence; the
+    Save never reads it from the client (a `MediaOverlay` has no such field)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -923,7 +930,8 @@ def _stage_cards(
 
 
 def _card_moved(scratch: Any, variant_id: str, cards: Sequence[IntroCard]) -> str | None:
-    """``card_moved`` unless the recompiled recipe draws every card where the offer put it."""
+    """``card_moved`` unless the recompiled recipe draws every card where and when the offer put
+    it (M41, M57)."""
     from app.services.device_render import device_status  # noqa: PLC0415
 
     recipe = device_status(scratch, variant_id).request.recipe
@@ -941,6 +949,8 @@ def _card_moved(scratch: Any, variant_id: str, cards: Sequence[IntroCard]) -> st
                 (placement.width_fraction, card.scale),
                 (placement.x_fraction, card.x_frac),
                 (placement.y_fraction, card.y_frac),
+                (placement.window_start, card.start_s),
+                (placement.window_end, card.end_s),
             )
         ):
             return "card_moved"
@@ -971,6 +981,7 @@ def fit_card_looks(
     together and declines anything that does not fit); the first that the dry-run Save accepts,
     cards where they were placed, is the look. Never raises."""
     from app.services import intro_card_pool as pool  # noqa: PLC0415
+    from app.services import intro_props_layout as props_mod  # noqa: PLC0415
 
     def decline(reason: str) -> list[CardLook]:
         declines[f"cards:{reason}"] = declines.get(f"cards:{reason}", 0) + 1
@@ -1000,7 +1011,11 @@ def fit_card_looks(
     ]
     window = round(title.end_s - title.start_s, 3)
 
-    def fit(candidate: dict, zone: str, arrangement: str, chosen: list) -> CardLook | str:
+    def fit(
+        candidate: dict, zone: str, arrangement: str, chosen: list, mode: str
+    ) -> CardLook | tuple[str, bool]:
+        """The look, or why not and whether its cards were laid out (then a clean layout
+        exists, so the cards never pop: M47)."""
         pair = candidate["font_pair"]
         entrance = candidate["entrance"]
         if entrance == "pen":
@@ -1026,11 +1041,15 @@ def fit_card_looks(
             duration_s=window,
             photo_aspects=[photo.aspect for photo in chosen],
             stage=stage,
+            card_mode=mode,
         )
+        laid_out = out.card_layout == scene_mod.CARD_LAYOUT_FIT
         if out.rows is None or out.props is None:
-            return out.reason
+            return (out.reason if laid_out else out.card_layout or out.reason), laid_out
         rows = retime_title_rows(out.rows, title.start_s, title.end_s)
-        start, end = title_window(rows)
+        windows = props_mod.CARD_MODES[mode].windows(len(chosen), *title_window(rows))
+        if windows is None:
+            return "title_too_brief", True
         placed = [
             {
                 "id": pool.card_id(index),
@@ -1045,7 +1064,9 @@ def fit_card_looks(
                 "start_s": start,
                 "end_s": end,
             }
-            for index, (card, photo) in enumerate(zip(out.props.cards, chosen, strict=True))
+            for index, (card, photo, (start, end)) in enumerate(
+                zip(out.props.cards, chosen, windows, strict=True)
+            )
         ]
         marks = pool.caption_clear_decisions(
             variant,
@@ -1056,34 +1077,49 @@ def fit_card_looks(
         cards = [IntroCard(**card, caption_clear=marks.get(card["id"], False)) for card in placed]
         look = Look(
             card_look_key(pair, arrangement),
-            _tagged(rows, route, offer, pair, entrance, zone, ink, restore, arrangement),
+            _tagged(rows, route, offer, pair, entrance, zone, ink, restore, arrangement, mode),
             zone,
             ink,
             entrance,
         )
         refusal = accept(look, cards, chosen) if accept else None
         if refusal:
-            return f"save_refused:{refusal}"
+            return f"save_refused:{refusal}", True
         return CardLook(look, cards, [card.box for card in out.props.cards])
+
+    def first_fit(
+        arrangement: str, chosen: list, mode: str, budget: int
+    ) -> CardLook | list[tuple[str, bool]]:
+        """The first try that fits in ``mode``, else each try's decline."""
+        declined: list[tuple[str, bool]] = []
+        for candidate, zone in tries[:budget]:
+            try:
+                result = fit(candidate, zone, arrangement, chosen, mode)
+            except Exception as exc:  # noqa: BLE001 - one look failing never fails the offer
+                log.warning("intro_styles.card_fit_failed", error=str(exc)[:200])
+                result = ("fit_error", True)
+            if isinstance(result, CardLook):
+                return result
+            declined.append(result)
+            decline(f"{mode}:{result[0]}")
+        if len(tries) > budget:
+            decline(f"{mode}:compile_budget")
+        return declined
 
     looks: list[CardLook] = []
     for arrangement in menu.arrangements:
         if arrangement == scene_mod.NO_ARRANGEMENT:
             continue
         chosen = list(photos[: scene_mod.ARRANGEMENTS[arrangement].slots])
-        for candidate, zone in tries[:MAX_CARD_COMPILES]:
-            try:
-                result = fit(candidate, zone, arrangement, chosen)
-            except Exception as exc:  # noqa: BLE001 - one look failing never fails the offer
-                log.warning("intro_styles.card_fit_failed", error=str(exc)[:200])
-                result = "fit_error"
-            if isinstance(result, CardLook):
-                looks.append(result)
-                break
-            decline(result)
-        else:
-            if len(tries) > MAX_CARD_COMPILES:
-                decline("compile_budget")
+        result = first_fit(arrangement, chosen, props_mod.CLEAN, MAX_CARD_COMPILES)
+        if (
+            not isinstance(result, CardLook)
+            and not any(laid_out for _reason, laid_out in result)
+            and any(reason == props_mod.NO_ROOM for reason, _laid_out in result)
+        ):
+            result = first_fit(arrangement, chosen, props_mod.POP, MAX_POP_COMPILES)  # M47
+        if isinstance(result, CardLook):
+            looks.append(result)
     return looks
 
 

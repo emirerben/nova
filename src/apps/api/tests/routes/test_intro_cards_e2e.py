@@ -54,7 +54,25 @@ CARDS = {"X-Kria-Client-Protocol": str(INTRO_CARDS_PROTOCOL)}
 OLD = {"X-Kria-Client-Protocol": str(INTRO_CARDS_PROTOCOL - 1)}
 # A speaker framed with room above her head and under her chin (refs 3 and 5 on the taste board).
 ROOMY_FACE = (0.32, 0.44, 0.68, 0.66)
+# A real close Talking take (a prod edit's saved face band): her head high and large, so no card
+# fits off her face for any font pair.
+CLOSE_FACE = (0.24, 0.163, 0.816, 0.509)
 PORTRAIT_PHOTO = 0.75
+# The documented stage B wire of one card; stage C parses exactly these keys.
+CARD_KEYS = {
+    "id",
+    "slot",
+    "media_id",
+    "gcs_path",
+    "generation",
+    "x_frac",
+    "y_frac",
+    "scale",
+    "caption_clear",
+    "z",
+    "start_s",
+    "end_s",
+}
 
 
 def _jpeg() -> bytes:
@@ -214,6 +232,19 @@ class Seeded:
                     )
         return out
 
+    def drawn_windows(self) -> dict[str, tuple[float, float]]:
+        """``{card id: (start, end)}`` the pinned recipe shows each card for, seconds."""
+        out = {}
+        for track in self.recipe().tracks:
+            for clip in track.clips:
+                placement = clip.visual_placement
+                if clip.id.startswith("subtitled-overlay-") and placement is not None:
+                    out[clip.id.removeprefix("subtitled-overlay-")] = (
+                        placement.window_start,
+                        placement.window_end,
+                    )
+        return out
+
     def title_evidence(self) -> list[dict]:
         return [
             {
@@ -333,6 +364,7 @@ def test_a_card_look_is_offered_saved_and_drawn_exactly_where_it_was_offered(mak
     assert all(
         c["gcs_path"] == seeded.path(c["media_id"]) and c["generation"] == "7" for c in cards
     )
+    assert all(set(card) == CARD_KEYS for card in cards)
     title_start = min(r["start_s"] for r in look["rows"])
     title_end = max(r["end_s"] for r in look["rows"])
     assert all((c["start_s"], c["end_s"]) == (title_start, title_end) for c in cards)
@@ -386,10 +418,47 @@ def test_an_old_build_and_the_switch_off_get_todays_offer(make, monkeypatch):
     assert stripped == old
 
 
-def test_a_close_speaker_gets_no_card_look(make):
-    seeded, client = make(face=fx.FACE)  # M35: the title alone fills the room above her head
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_a_close_speaker_gets_short_cards_that_may_cover_her(make, _flags, lang):
+    """Emir's ruling (2026-11-27): where no card fits off her face (the title alone fills the
+    room above her head, M35), the cards may cover her for a short time. Each shows at most
+    1.5 s, the first after the title lands and each next one 0.25 s later (M51); the Save keeps
+    every card where and when it was offered (M57); the wire is stage B's (no new field)."""
+    from app.pipeline.render_geometry import NormalizedBox
+    from app.services.intro_card_pool import card_box
+    from app.services.phone_card_layout import boxes_intersect
+
+    seeded, client = make(lang, face=CLOSE_FACE)
     body = offer(client, seeded)
-    assert body["available"] and not card_options(body)
+    looks = card_options(body)
+    assert len(looks) == 2, body.get("reason")  # around_speaker and the grid, one look each
+    assert len({o["key"] for o in body["options"]}) == len(body["options"])
+    look = looks[0]
+    cards = look["cards"]
+    assert all(set(card) == CARD_KEYS for card in cards)
+    title_start = min(r["start_s"] for r in look["rows"])
+    title_end = max(r["end_s"] for r in look["rows"])
+    starts = [c["start_s"] for c in cards]
+    assert title_start < starts[0]
+    assert [b - a for a, b in zip(starts, starts[1:], strict=False)] == pytest.approx(
+        [0.25] * (len(cards) - 1)
+    )
+    for card in cards:
+        assert card["start_s"] < card["end_s"] <= title_end
+        assert card["end_s"] - card["start_s"] <= 1.5 + 1e-9
+    face = NormalizedBox(*CLOSE_FACE)
+    boxes = [card_box(c["x_frac"], c["y_frac"], c["scale"], PORTRAIT_PHOTO) for c in cards]
+    assert any(boxes_intersect(box, face) for box in boxes), "the cards cover her, briefly"
+
+    saved = save(client, seeded, look["rows"], as_overlays(cards))
+    assert saved.status_code == 200, saved.text
+    drawn, windows = seeded.drawn_cards(), seeded.drawn_windows()
+    for card in cards:
+        assert drawn[card["id"]] == pytest.approx((card["x_frac"], card["y_frac"], card["scale"]))
+        assert windows[card["id"]] == pytest.approx((card["start_s"], card["end_s"]))
+    assert stacked_title_matches(seeded.title_evidence(), TITLES[lang], tolerance_s=0.05)
+    reoffer = offer(client, seeded, look["rows"])
+    assert [o["key"] for o in reoffer["options"] if o["current"]] == [look["key"]]
 
 
 def test_photos_that_cannot_be_cards_are_never_offered(make):
@@ -566,10 +635,11 @@ def test_her_card_later_in_the_video_stays_and_the_phone_may_fetch_every_photo(m
         assert grant.status_code == 200, grant.text
 
 
-def test_a_card_on_a_row_in_her_namespace_that_is_not_hers_is_refused(make, _flags):
-    """The wrong-content control (M32): the path is under her item's pool, the row is another
-    account's. Nothing is downloaded and no receipt is left behind."""
-    seeded, client = make()
+@pytest.mark.parametrize("face", [ROOMY_FACE, CLOSE_FACE], ids=["clean", "pop"])
+def test_a_card_on_a_row_in_her_namespace_that_is_not_hers_is_refused(make, _flags, face):
+    """The wrong-content control (M32, M59 for a pop look): the path is under her item's pool,
+    the row is another account's. Nothing is downloaded and no receipt is left behind."""
+    seeded, client = make(face=face)
     stranger = uuid.uuid4()
     with sync_session() as db:
         db.add(User(id=stranger, email=f"{stranger}@intro-cards.test"))
@@ -584,6 +654,8 @@ def test_a_card_on_a_row_in_her_namespace_that_is_not_hers_is_refused(make, _fla
         gcs_path=foreign_path,
     )
     look = card_options(offer(client, seeded))[0]
+    popped = look["cards"][0]["start_s"] > min(r["start_s"] for r in look["rows"])
+    assert popped == (face == CLOSE_FACE)
     assert foreign_path not in {c["gcs_path"] for c in look["cards"]}
     posted = as_overlays(look["cards"])
     posted[0]["src_gcs_path"] = foreign_path
