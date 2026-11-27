@@ -520,13 +520,14 @@ def test_none_over_a_card_look_takes_the_cards_away(make):
 
 def test_a_card_on_a_photo_that_cannot_be_a_card_is_refused_as_today(make):
     seeded, client = make()
-    sticker = seeded.add_photo(
+    # Neither a photo nor a sticker (KRI-1616): transparent, but a JPEG.
+    unusable = seeded.add_photo(
         created_at=datetime(2026, 10, 1, tzinfo=UTC),
         analysis={"dims_upright": True, "has_alpha": True},
     )
     look = card_options(offer(client, seeded))[0]
     posted = as_overlays(look["cards"])
-    posted[0]["src_gcs_path"] = seeded.path(sticker)
+    posted[0]["src_gcs_path"] = seeded.path(unusable)
     response = save(client, seeded, look["rows"], posted)
     assert response.status_code == 422, response.text  # M32, M33: the wrong-content control
     assert "isn't a photo Kria pinned" in response.json()["detail"]["reason"]

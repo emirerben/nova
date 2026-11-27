@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import storage
 from app.models import ContentPlan, GeneratedMediaOperation, PlanItem, PlanItemAsset
+from app.pipeline.image_clip import image_has_alpha
 from app.services.generated_asset_contracts import MAX_AUDIO_BYTES, MAX_IMAGE_BYTES, GeneratedAsset
 from app.services.generated_image_grounding import IMAGE_PROMPT_KEY, generated_image_analysis
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
@@ -136,6 +137,10 @@ def admit_generated_asset(
                 or hashlib.sha256(local.read_bytes()).hexdigest() != operation.content_sha256
             ):
                 raise ValueError("generated media stored digest mismatch")
+            # KRI-1616: what the Visuals pool records for any picture it analyses, so a
+            # transparent overlay she generated can be an intro sticker. A PNG carries no
+            # orientation, so its dimensions are upright.
+            transparent = image_has_alpha(str(local)) if image else None
     except Exception:
         operation.failure_code = "storage_failed"
         raise
@@ -154,13 +159,17 @@ def admit_generated_asset(
             aspect=width / height,
             source_filename="generated.png",
             content_hash=operation.content_sha256,
-            analysis=generated_image_analysis(
-                width=width,
-                height=height,
-                model=operation.model,
-                prompt=(operation.request_metadata or {}).get(IMAGE_PROMPT_KEY, ""),
-                title=operation.editable_title or "",
-            ),
+            analysis={
+                **generated_image_analysis(
+                    width=width,
+                    height=height,
+                    model=operation.model,
+                    prompt=(operation.request_metadata or {}).get(IMAGE_PROMPT_KEY, ""),
+                    title=operation.editable_title or "",
+                ),
+                "has_alpha": transparent,
+                "dims_upright": True,
+            },
             user_context=operation.editable_title or None,
         )
         db.add(asset)

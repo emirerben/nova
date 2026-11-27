@@ -171,3 +171,33 @@ def test_admitted_image_carries_prompt_text_for_autoplace(setup):
     assert row.analysis["generation_prompt"] == "a cold glass of beer on a pub table"
     assert row.user_context == "Editable"
     assert "on_screen_text" not in row.analysis
+
+
+def _rgba_png(background: tuple[int, int, int, int]) -> GeneratedAsset:
+    image = Image.new("RGBA", (1536, 1024), background)
+    image.paste((240, 200, 40, 255), (500, 300, 1036, 724))
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return GeneratedAsset(out.getvalue(), "image/png", "test", {}, editable_title="Star")
+
+
+@pytest.mark.parametrize(
+    ("background", "kind"),
+    [((0, 0, 0, 0), "sticker"), ((255, 255, 255, 255), "photo")],
+    ids=["transparent overlay", "opaque RGBA picture"],
+)
+def test_a_generated_picture_records_its_measured_alpha_for_intro_stickers(setup, background, kind):
+    """KRI-1616: the generate-overlay flow's transparent result can be an intro sticker; an
+    RGBA picture with no transparent pixel stays a photo (the wrong-content control)."""
+    from app.services.intro_card_pool import card_photo
+
+    db, op, owner, objects = setup
+    persist_generated_asset(db, op, _rgba_png(background), **owner)
+    admit_generated_asset(db, op, **owner)
+    row = db.add.call_args.args[0]
+
+    assert row.analysis["has_alpha"] is (kind == "sticker")
+    assert row.analysis["dims_upright"] is True
+    picture = card_photo(row, user_id=owner["owner_id"], item_id=owner["plan_item_id"])
+    assert picture is not None and picture.kind == kind
+    assert picture.aspect == pytest.approx(1536 / 1024)

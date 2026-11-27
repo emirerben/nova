@@ -991,6 +991,7 @@ def fit_card_looks(
         declines[f"cards:{reason}"] = declines.get(f"cards:{reason}", 0) + 1
         return []
 
+    photos = [photo for photo in photos if photo.kind == pool.PHOTO]
     if route != "talking" or len(photos) < 2:
         return decline("too_few_photos") if route == "talking" else []
     try:
