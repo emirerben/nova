@@ -315,7 +315,9 @@ struct NativeEditorView: View {
                 titleVisibility: .visible
             ) {
                 Button("Save and exit") { Task { await saveAndExit() } }
-                Button("Discard changes", role: .destructive) { session.forgetSaveKeptForLoad(); leave() }
+                if session.canDiscardChanges {
+                    Button("Discard changes", role: .destructive) { if session.discardChanges() { leave() } }
+                }
                 Button("Stay", role: .cancel) {}
             } message: {
                 Text("Stay in the editor to keep working, or save before leaving. Discarding loses your unsaved changes.")

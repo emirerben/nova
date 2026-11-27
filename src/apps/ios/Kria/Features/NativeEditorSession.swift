@@ -1750,9 +1750,32 @@ enum EditorOpenIntent { case warm, open }
         Task { await save() }
     }
 
-    /// The creator chose "Discard changes" on the leave prompt: a Save kept for the end of the load must not run
-    /// after it.
-    func forgetSaveKeptForLoad() { saveRequestedDuringLoad = false }
+    /// A Save in flight has already sent the document, and its answer lands on it, so a discard would undo what it saves.
+    /// A load holds `isSaving` as a fence only, and Save waiting on an upload has no attempt yet; both can be discarded.
+    var canDiscardChanges: Bool { activeSaveAttemptID == nil && !(isSaving && !isLoadingEditor) }
+
+    /// "Discard changes" on the leave prompt. The chat keeps this session after the editor closes, so leaving alone would
+    /// hand the edit to the next message, which saves it or sends it as the editor's state. Returns false, and changes
+    /// nothing, while `canDiscardChanges` is false.
+    ///
+    /// `appliedChatDraftRevision` stays: the next turn declares the discarded chat draft seen (the server then treats
+    /// the clean state as a deliberate discard) and a sync does not stage the same head again. A newer head still is.
+    /// `pendingRenderRetrySections` and a render or load failure stay too: they belong to what was already saved.
+    @discardableResult func discardChanges() -> Bool {
+        guard canDiscardChanges else { return false }
+        cancelTextCreation()
+        transactionBaseline = nil
+        undoStack.removeAll(); redoStack.removeAll()
+        changedSections.removeAll(); explicitlyDirtySections.removeAll()
+        chatStagedDocument = nil; chatStagedSections = []; chatStagedHasNoManualBase = false
+        document = cleanDocument
+        refreshDirtyState()
+        if case .failed = saveState, pendingRenderRetrySections.isEmpty { saveState = .idle }
+        if let selected = selection, !selectionExists(selected) { select(nil) }
+        refreshDuration()
+        prunePendingTimelineAdds()
+        return true
+    }
 
     private var pendingRenderRetrySections: Set<EditorSection> = []
     /// Pending render intent survives a failed commit without becoming an authored edit.
