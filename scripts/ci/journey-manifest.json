@@ -4126,13 +4126,14 @@
     {
       "id": "kri-1610-intro-scene",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_intro_scene_schema.py tests/pipeline/test_intro_scene.py",
+      "api_tests": "tests/pipeline/test_intro_scene_schema.py tests/pipeline/test_intro_scene.py tests/pipeline/test_intro_scene_props.py",
       "paths": [
         "src/apps/api/app/pipeline/intro_scene.py",
         "src/apps/api/prompts/intro_teardowns.json",
         "src/apps/api/app/cli/verify_intro_scenes.py",
         "src/apps/api/tests/pipeline/test_intro_scene_schema.py",
-        "src/apps/api/tests/pipeline/test_intro_scene.py"
+        "src/apps/api/tests/pipeline/test_intro_scene.py",
+        "src/apps/api/tests/fixtures/kri1615_clean_card_looks.json"
       ]
     },
     {

@@ -1,0 +1,1918 @@
+{
+ "en": [
+  {
+   "cards": [
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/0.jpg",
+     "generation": "7",
+     "id": "intro-card-1",
+     "media_id": "00000000-0000-0000-0000-000000000001",
+     "scale": 0.24816388888888888,
+     "slot": "prop_1",
+     "start_s": 0.0,
+     "x_frac": 0.14408194444444444,
+     "y_frac": 0.11306145833333332,
+     "z": 0
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/1.jpg",
+     "generation": "7",
+     "id": "intro-card-2",
+     "media_id": "00000000-0000-0000-0000-000000000002",
+     "scale": 0.3044917592592591,
+     "slot": "prop_2",
+     "start_s": 0.0,
+     "x_frac": 0.8277541203703704,
+     "y_frac": 0.9157552083333333,
+     "z": 1
+    }
+   ],
+   "current": false,
+   "key": "serif_italic+around_speaker",
+   "preview": {
+    "at_s": 1.74,
+    "cards": [
+     {
+      "box": {
+       "bottom": 0.20612291666666666,
+       "left": 0.02,
+       "right": 0.26816388888888887,
+       "top": 0.01999999999999999
+      },
+      "media_id": "00000000-0000-0000-0000-000000000001",
+      "media_kind": "image",
+      "z": 0
+     },
+     {
+      "box": {
+       "bottom": 0.98,
+       "left": 0.6755082407407409,
+       "right": 0.98,
+       "top": 0.8515104166666667
+      },
+      "media_id": "00000000-0000-0000-0000-000000000002",
+      "media_kind": "image",
+      "z": 1
+     }
+    ],
+    "fonts": {
+     "font-InstrumentSerif-Italic.ttf": "InstrumentSerif-Italic.ttf",
+     "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf"
+    },
+    "media_id": "clip-0",
+    "media_kind": "video",
+    "text_layers": [
+     {
+      "anchor_x": 540.0,
+      "anchor_y": 515.52,
+      "effect": "fade-in",
+      "end": 2.5,
+      "id": "preview-0",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 563.1207690429687,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 1.0,
+         "green": 1.0,
+         "red": 1.0
+        },
+        "font_asset_id": "font-InstrumentSerif-Italic.ttf",
+        "font_size": 140.0,
+        "glyphs": [
+         {
+          "glyph_id": 202,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 151,
+          "x": 38.08000183105469,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 104.72000122070312,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 247,
+          "x": 153.44000244140625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 127,
+          "x": 177.2400016784668,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 153,
+          "x": 237.5800018310547,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 277.9000015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 334.04000091552734,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 390.1800003051758,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 196,
+          "x": 438.9000015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 202,
+          "x": 481.1800003051758,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 247,
+          "x": 519.2600021362305,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 133,
+          "x": 543.060001373291,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 609.4200019836426,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 196,
+          "x": 658.1400032043457,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 153,
+          "x": 700.4200019836426,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 740.7400016784668,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 173,
+          "x": 796.8800010681152,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "the biggest design",
+        "x": 105.0899658203125
+       }
+      ],
+      "start": 0.6
+     },
+     {
+      "anchor_x": 540.0,
+      "anchor_y": 728.064,
+      "effect": "slide-up",
+      "end": 2.5,
+      "id": "preview-1",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 779.0648239746093,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 1.0,
+         "green": 1.0,
+         "red": 1.0
+        },
+        "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+        "font_size": 150.0,
+        "glyphs": [
+         {
+          "glyph_id": 202,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 192,
+          "x": 38.849998474121094,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 86.54999923706055,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 173,
+          "x": 139.79999923706055,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 133,
+          "x": 210.29999923706055,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 282,
+          "x": 278.85000228881836,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 192,
+          "x": 304.35000228881836,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 153,
+          "x": 352.0500030517578,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 385.50000381469727,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 151,
+          "x": 445.8000030517578,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 202,
+          "x": 516.3000030517578,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 282,
+          "x": 555.1500015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 173,
+          "x": 580.6500015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 179,
+          "x": 651.1500015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 216,
+          "x": 712.3500022888184,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "trend right now",
+        "x": 139.04998779296875
+       }
+      ],
+      "start": 0.0
+     }
+    ],
+    "time_s": 1.74
+   },
+   "recommended": false,
+   "rows": [
+    {
+     "alignment": "center",
+     "behind_subject": false,
+     "color": "#FFFFFF",
+     "effect": "fade-in",
+     "end_s": 2.5,
+     "font_family": "Instrument Serif Italic",
+     "id": "opening-title",
+     "line_spacing": 1.0,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 140.0,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "around_speaker",
+        "entrance": "rise",
+        "font_pair": "serif_italic",
+        "ink": "white",
+        "key": "serif_italic+around_speaker",
+        "offer_id": "is1-04c8ffd7380eb4c7",
+        "restore": [
+         {
+          "alignment": "center",
+          "behind_subject": false,
+          "effect": "fade-in",
+          "end_s": 2.5,
+          "font_family": "Playfair Display",
+          "id": "opening-title",
+          "position": "custom",
+          "removed": false,
+          "role": "generative_intro",
+          "size_class": "large",
+          "size_px": 117.0,
+          "source_params": {
+           "source": "opening_title"
+          },
+          "start_s": 0.0,
+          "text": "the biggest design trend right now",
+          "x_frac": 0.5,
+          "y_frac": 0.15
+         }
+        ],
+        "version": 1,
+        "zone": "above_head"
+       },
+       "line": 1,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_accent"
+      }
+     },
+     "start_s": 0.6,
+     "text": "the biggest design",
+     "x_frac": 0.5,
+     "y_frac": 0.2685
+    },
+    {
+     "alignment": "center",
+     "behind_subject": false,
+     "color": "#FFFFFF",
+     "effect": "slide-up",
+     "end_s": 2.5,
+     "font_family": "Instrument Serif",
+     "id": "opening-title-line-2",
+     "line_spacing": 1.0,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 150.0,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "around_speaker",
+        "entrance": "rise",
+        "font_pair": "serif_italic",
+        "ink": "white",
+        "key": "serif_italic+around_speaker",
+        "offer_id": "is1-04c8ffd7380eb4c7",
+        "version": 1,
+        "zone": "above_head"
+       },
+       "line": 2,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_solid"
+      }
+     },
+     "start_s": 0.0,
+     "text": "trend right now",
+     "x_frac": 0.5,
+     "y_frac": 0.3792
+    }
+   ]
+  },
+  {
+   "cards": [
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/0.jpg",
+     "generation": "7",
+     "id": "intro-card-1",
+     "media_id": "00000000-0000-0000-0000-000000000001",
+     "scale": 0.17131944444444436,
+     "slot": "prop_1",
+     "start_s": 0.0,
+     "x_frac": 0.34025412037037045,
+     "y_frac": 0.14187812500000002,
+     "z": 0
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/1.jpg",
+     "generation": "7",
+     "id": "intro-card-2",
+     "media_id": "00000000-0000-0000-0000-000000000002",
+     "scale": 0.30449175925925914,
+     "slot": "prop_2",
+     "start_s": 0.0,
+     "x_frac": 0.5931597222222222,
+     "y_frac": 0.14187812500000002,
+     "z": 1
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/2.jpg",
+     "generation": "7",
+     "id": "intro-card-3",
+     "media_id": "00000000-0000-0000-0000-000000000003",
+     "scale": 0.22842592592592575,
+     "slot": "prop_3",
+     "start_s": 0.0,
+     "x_frac": 0.40684027777777776,
+     "y_frac": 0.9157552083333333,
+     "z": 2
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/3.jpg",
+     "generation": "7",
+     "id": "intro-card-4",
+     "media_id": "00000000-0000-0000-0000-000000000004",
+     "scale": 0.17131944444444436,
+     "slot": "prop_4",
+     "start_s": 0.0,
+     "x_frac": 0.621712962962963,
+     "y_frac": 0.9157552083333333,
+     "z": 3
+    }
+   ],
+   "current": false,
+   "key": "serif_italic+grid_2x2",
+   "preview": {
+    "at_s": 1.74,
+    "cards": [
+     {
+      "box": {
+       "bottom": 0.20612291666666666,
+       "left": 0.25459439814814827,
+       "right": 0.42591384259259263,
+       "top": 0.07763333333333339
+      },
+      "media_id": "00000000-0000-0000-0000-000000000001",
+      "media_kind": "image",
+      "z": 0
+     },
+     {
+      "box": {
+       "bottom": 0.20612291666666666,
+       "left": 0.44091384259259264,
+       "right": 0.7454056018518518,
+       "top": 0.07763333333333339
+      },
+      "media_id": "00000000-0000-0000-0000-000000000002",
+      "media_kind": "image",
+      "z": 1
+     },
+     {
+      "box": {
+       "bottom": 0.98,
+       "left": 0.2926273148148149,
+       "right": 0.5210532407407407,
+       "top": 0.8515104166666667
+      },
+      "media_id": "00000000-0000-0000-0000-000000000003",
+      "media_kind": "image",
+      "z": 2
+     },
+     {
+      "box": {
+       "bottom": 0.98,
+       "left": 0.5360532407407408,
+       "right": 0.7073726851851851,
+       "top": 0.8515104166666667
+      },
+      "media_id": "00000000-0000-0000-0000-000000000004",
+      "media_kind": "image",
+      "z": 3
+     }
+    ],
+    "fonts": {
+     "font-InstrumentSerif-Italic.ttf": "InstrumentSerif-Italic.ttf",
+     "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf"
+    },
+    "media_id": "clip-0",
+    "media_kind": "video",
+    "text_layers": [
+     {
+      "anchor_x": 540.0,
+      "anchor_y": 515.52,
+      "effect": "fade-in",
+      "end": 2.5,
+      "id": "preview-0",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 563.1207690429687,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 1.0,
+         "green": 1.0,
+         "red": 1.0
+        },
+        "font_asset_id": "font-InstrumentSerif-Italic.ttf",
+        "font_size": 140.0,
+        "glyphs": [
+         {
+          "glyph_id": 202,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 151,
+          "x": 38.08000183105469,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 104.72000122070312,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 247,
+          "x": 153.44000244140625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 127,
+          "x": 177.2400016784668,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 153,
+          "x": 237.5800018310547,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 277.9000015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 334.04000091552734,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 390.1800003051758,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 196,
+          "x": 438.9000015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 202,
+          "x": 481.1800003051758,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 247,
+          "x": 519.2600021362305,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 133,
+          "x": 543.060001373291,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 609.4200019836426,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 196,
+          "x": 658.1400032043457,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 153,
+          "x": 700.4200019836426,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 740.7400016784668,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 173,
+          "x": 796.8800010681152,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "the biggest design",
+        "x": 105.0899658203125
+       }
+      ],
+      "start": 0.6
+     },
+     {
+      "anchor_x": 540.0,
+      "anchor_y": 728.064,
+      "effect": "slide-up",
+      "end": 2.5,
+      "id": "preview-1",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 779.0648239746093,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 1.0,
+         "green": 1.0,
+         "red": 1.0
+        },
+        "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+        "font_size": 150.0,
+        "glyphs": [
+         {
+          "glyph_id": 202,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 192,
+          "x": 38.849998474121094,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 137,
+          "x": 86.54999923706055,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 173,
+          "x": 139.79999923706055,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 133,
+          "x": 210.29999923706055,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 282,
+          "x": 278.85000228881836,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 192,
+          "x": 304.35000228881836,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 153,
+          "x": 352.0500030517578,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 147,
+          "x": 385.50000381469727,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 151,
+          "x": 445.8000030517578,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 202,
+          "x": 516.3000030517578,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 282,
+          "x": 555.1500015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 173,
+          "x": 580.6500015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 179,
+          "x": 651.1500015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 216,
+          "x": 712.3500022888184,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "trend right now",
+        "x": 139.04998779296875
+       }
+      ],
+      "start": 0.0
+     }
+    ],
+    "time_s": 1.74
+   },
+   "recommended": false,
+   "rows": [
+    {
+     "alignment": "center",
+     "behind_subject": false,
+     "color": "#FFFFFF",
+     "effect": "fade-in",
+     "end_s": 2.5,
+     "font_family": "Instrument Serif Italic",
+     "id": "opening-title",
+     "line_spacing": 1.0,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 140.0,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "grid_2x2",
+        "entrance": "rise",
+        "font_pair": "serif_italic",
+        "ink": "white",
+        "key": "serif_italic+grid_2x2",
+        "offer_id": "is1-04c8ffd7380eb4c7",
+        "restore": [
+         {
+          "alignment": "center",
+          "behind_subject": false,
+          "effect": "fade-in",
+          "end_s": 2.5,
+          "font_family": "Playfair Display",
+          "id": "opening-title",
+          "position": "custom",
+          "removed": false,
+          "role": "generative_intro",
+          "size_class": "large",
+          "size_px": 117.0,
+          "source_params": {
+           "source": "opening_title"
+          },
+          "start_s": 0.0,
+          "text": "the biggest design trend right now",
+          "x_frac": 0.5,
+          "y_frac": 0.15
+         }
+        ],
+        "version": 1,
+        "zone": "above_head"
+       },
+       "line": 1,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_accent"
+      }
+     },
+     "start_s": 0.6,
+     "text": "the biggest design",
+     "x_frac": 0.5,
+     "y_frac": 0.2685
+    },
+    {
+     "alignment": "center",
+     "behind_subject": false,
+     "color": "#FFFFFF",
+     "effect": "slide-up",
+     "end_s": 2.5,
+     "font_family": "Instrument Serif",
+     "id": "opening-title-line-2",
+     "line_spacing": 1.0,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 150.0,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "grid_2x2",
+        "entrance": "rise",
+        "font_pair": "serif_italic",
+        "ink": "white",
+        "key": "serif_italic+grid_2x2",
+        "offer_id": "is1-04c8ffd7380eb4c7",
+        "version": 1,
+        "zone": "above_head"
+       },
+       "line": 2,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_solid"
+      }
+     },
+     "start_s": 0.0,
+     "text": "trend right now",
+     "x_frac": 0.5,
+     "y_frac": 0.3792
+    }
+   ]
+  }
+ ],
+ "tr": [
+  {
+   "cards": [
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/0.jpg",
+     "generation": "7",
+     "id": "intro-card-1",
+     "media_id": "00000000-0000-0000-0000-000000000001",
+     "scale": 0.24333333333333337,
+     "slot": "prop_1",
+     "start_s": 0.0,
+     "x_frac": 0.1416666666666667,
+     "y_frac": 0.11125,
+     "z": 0
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/1.jpg",
+     "generation": "7",
+     "id": "intro-card-2",
+     "media_id": "00000000-0000-0000-0000-000000000002",
+     "scale": 0.3044917592592591,
+     "slot": "prop_2",
+     "start_s": 0.0,
+     "x_frac": 0.8277541203703704,
+     "y_frac": 0.9157552083333333,
+     "z": 1
+    }
+   ],
+   "current": false,
+   "key": "grotesk_loop+around_speaker",
+   "preview": {
+    "at_s": 1.74,
+    "cards": [
+     {
+      "box": {
+       "bottom": 0.2025,
+       "left": 0.02,
+       "right": 0.26333333333333336,
+       "top": 0.01999999999999999
+      },
+      "media_id": "00000000-0000-0000-0000-000000000001",
+      "media_kind": "image",
+      "z": 0
+     },
+     {
+      "box": {
+       "bottom": 0.98,
+       "left": 0.6755082407407409,
+       "right": 0.98,
+       "top": 0.8515104166666667
+      },
+      "media_id": "00000000-0000-0000-0000-000000000002",
+      "media_kind": "image",
+      "z": 1
+     }
+    ],
+    "fonts": {
+     "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+     "font-OvertheRainbow-Regular.ttf": "OvertheRainbow-Regular.ttf"
+    },
+    "media_id": "clip-0",
+    "media_kind": "video",
+    "text_layers": [
+     {
+      "anchor_x": 64.8,
+      "anchor_y": 456.576,
+      "effect": "slide-up",
+      "end": 2.5,
+      "id": "preview-0",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 477.576,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 0.6588235294117647,
+         "green": 0.9058823529411765,
+         "red": 0.9647058823529412
+        },
+        "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+        "font_size": 60.0,
+        "glyphs": [
+         {
+          "glyph_id": 358,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 253,
+          "x": 28.31999969482422,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 280,
+          "x": 60.84000015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 283,
+          "x": 95.04000091552734,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 351,
+          "x": 110.16000080108643,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 515,
+          "x": 136.14000034332275,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 351,
+          "x": 151.74000072479248,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 253,
+          "x": 177.7200002670288,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 280,
+          "x": 210.24000072479248,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 242,
+          "x": 244.44000148773193,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 253,
+          "x": 278.6400022506714,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 351,
+          "x": 311.16000270843506,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 283,
+          "x": 337.1400022506714,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 523,
+          "x": 352.26000213623047,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "şehir rehberi:",
+        "x": 64.8
+       }
+      ],
+      "start": 0.0
+     },
+     {
+      "anchor_x": 64.8,
+      "anchor_y": 672.576,
+      "effect": "fade-in",
+      "end": 2.5,
+      "id": "preview-1",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 726.4119375,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 0.6588235294117647,
+         "green": 0.9058823529411765,
+         "red": 0.9647058823529412
+        },
+        "font_asset_id": "font-OvertheRainbow-Regular.ttf",
+        "font_size": 150.0,
+        "glyphs": [
+         {
+          "glyph_id": 79,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 76,
+          "x": 36.474609375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 93,
+          "x": 65.771484375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 69,
+          "x": 159.375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 82,
+          "x": 229.248046875,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 81,
+          "x": 279.638671875,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 15,
+          "x": 353.90625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 3,
+          "x": 397.119140625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 76,
+          "x": 472.119140625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 79,
+          "x": 501.416015625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 78,
+          "x": 537.890625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 3,
+          "x": 608.349609375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 74,
+          "x": 683.349609375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 190,
+          "x": 762.451171875,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 81,
+          "x": 828.22265625,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "lizbon, ilk gün",
+        "x": 64.8
+       }
+      ],
+      "start": 0.6
+     }
+    ],
+    "time_s": 1.74
+   },
+   "recommended": false,
+   "rows": [
+    {
+     "alignment": "left",
+     "behind_subject": false,
+     "color": "#F6E7A8",
+     "effect": "slide-up",
+     "end_s": 2.5,
+     "font_family": "Hanken Grotesk",
+     "id": "opening-title",
+     "line_spacing": 1.02,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 60,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "around_speaker",
+        "entrance": "rise",
+        "font_pair": "grotesk_loop",
+        "ink": "butter",
+        "key": "grotesk_loop+around_speaker",
+        "offer_id": "is1-ec1558b7006d3140",
+        "restore": [
+         {
+          "alignment": "center",
+          "behind_subject": false,
+          "effect": "fade-in",
+          "end_s": 2.5,
+          "font_family": "Playfair Display",
+          "id": "opening-title",
+          "position": "custom",
+          "removed": false,
+          "role": "generative_intro",
+          "size_class": "large",
+          "size_px": 120.0,
+          "source_params": {
+           "source": "opening_title"
+          },
+          "start_s": 0.0,
+          "text": "şehir rehberi: lizbon, ilk gün",
+          "x_frac": 0.5,
+          "y_frac": 0.15
+         }
+        ],
+        "version": 1,
+        "zone": "top_left"
+       },
+       "line": 1,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_solid"
+      }
+     },
+     "start_s": 0.0,
+     "text": "şehir rehberi:",
+     "text_language": "tr",
+     "x_frac": 0.06,
+     "y_frac": 0.2378
+    },
+    {
+     "alignment": "left",
+     "behind_subject": false,
+     "color": "#F6E7A8",
+     "effect": "fade-in",
+     "end_s": 2.5,
+     "font_family": "Over the Rainbow",
+     "id": "opening-title-line-2",
+     "line_spacing": 1.0,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 150,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "around_speaker",
+        "entrance": "rise",
+        "font_pair": "grotesk_loop",
+        "ink": "butter",
+        "key": "grotesk_loop+around_speaker",
+        "offer_id": "is1-ec1558b7006d3140",
+        "version": 1,
+        "zone": "top_left"
+       },
+       "line": 2,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_accent"
+      }
+     },
+     "start_s": 0.6,
+     "text": "lizbon, ilk gün",
+     "text_language": "tr",
+     "x_frac": 0.06,
+     "y_frac": 0.3503
+    }
+   ]
+  },
+  {
+   "cards": [
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/0.jpg",
+     "generation": "7",
+     "id": "intro-card-1",
+     "media_id": "00000000-0000-0000-0000-000000000001",
+     "scale": 0.17131944444444436,
+     "slot": "prop_1",
+     "start_s": 0.0,
+     "x_frac": 0.34025412037037045,
+     "y_frac": 0.13825520833333338,
+     "z": 0
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/1.jpg",
+     "generation": "7",
+     "id": "intro-card-2",
+     "media_id": "00000000-0000-0000-0000-000000000002",
+     "scale": 0.30449175925925914,
+     "slot": "prop_2",
+     "start_s": 0.0,
+     "x_frac": 0.5931597222222222,
+     "y_frac": 0.13825520833333338,
+     "z": 1
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/2.jpg",
+     "generation": "7",
+     "id": "intro-card-3",
+     "media_id": "00000000-0000-0000-0000-000000000003",
+     "scale": 0.22842592592592575,
+     "slot": "prop_3",
+     "start_s": 0.0,
+     "x_frac": 0.40684027777777776,
+     "y_frac": 0.9157552083333333,
+     "z": 2
+    },
+    {
+     "caption_clear": true,
+     "end_s": 2.5,
+     "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/3.jpg",
+     "generation": "7",
+     "id": "intro-card-4",
+     "media_id": "00000000-0000-0000-0000-000000000004",
+     "scale": 0.17131944444444436,
+     "slot": "prop_4",
+     "start_s": 0.0,
+     "x_frac": 0.621712962962963,
+     "y_frac": 0.9157552083333333,
+     "z": 3
+    }
+   ],
+   "current": false,
+   "key": "grotesk_loop+grid_2x2",
+   "preview": {
+    "at_s": 1.74,
+    "cards": [
+     {
+      "box": {
+       "bottom": 0.2025,
+       "left": 0.25459439814814827,
+       "right": 0.42591384259259263,
+       "top": 0.07401041666666675
+      },
+      "media_id": "00000000-0000-0000-0000-000000000001",
+      "media_kind": "image",
+      "z": 0
+     },
+     {
+      "box": {
+       "bottom": 0.2025,
+       "left": 0.44091384259259264,
+       "right": 0.7454056018518518,
+       "top": 0.07401041666666675
+      },
+      "media_id": "00000000-0000-0000-0000-000000000002",
+      "media_kind": "image",
+      "z": 1
+     },
+     {
+      "box": {
+       "bottom": 0.98,
+       "left": 0.2926273148148149,
+       "right": 0.5210532407407407,
+       "top": 0.8515104166666667
+      },
+      "media_id": "00000000-0000-0000-0000-000000000003",
+      "media_kind": "image",
+      "z": 2
+     },
+     {
+      "box": {
+       "bottom": 0.98,
+       "left": 0.5360532407407408,
+       "right": 0.7073726851851851,
+       "top": 0.8515104166666667
+      },
+      "media_id": "00000000-0000-0000-0000-000000000004",
+      "media_kind": "image",
+      "z": 3
+     }
+    ],
+    "fonts": {
+     "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+     "font-OvertheRainbow-Regular.ttf": "OvertheRainbow-Regular.ttf"
+    },
+    "media_id": "clip-0",
+    "media_kind": "video",
+    "text_layers": [
+     {
+      "anchor_x": 64.8,
+      "anchor_y": 456.576,
+      "effect": "slide-up",
+      "end": 2.5,
+      "id": "preview-0",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 477.576,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 0.6588235294117647,
+         "green": 0.9058823529411765,
+         "red": 0.9647058823529412
+        },
+        "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+        "font_size": 60.0,
+        "glyphs": [
+         {
+          "glyph_id": 358,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 253,
+          "x": 28.31999969482422,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 280,
+          "x": 60.84000015258789,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 283,
+          "x": 95.04000091552734,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 351,
+          "x": 110.16000080108643,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 515,
+          "x": 136.14000034332275,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 351,
+          "x": 151.74000072479248,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 253,
+          "x": 177.7200002670288,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 280,
+          "x": 210.24000072479248,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 242,
+          "x": 244.44000148773193,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 253,
+          "x": 278.6400022506714,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 351,
+          "x": 311.16000270843506,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 283,
+          "x": 337.1400022506714,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 523,
+          "x": 352.26000213623047,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "şehir rehberi:",
+        "x": 64.8
+       }
+      ],
+      "start": 0.0
+     },
+     {
+      "anchor_x": 64.8,
+      "anchor_y": 672.576,
+      "effect": "fade-in",
+      "end": 2.5,
+      "id": "preview-1",
+      "rotation_degrees": 0.0,
+      "runs": [
+       {
+        "baseline_y": 726.4119375,
+        "blur_layers": [
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.45098039215686275,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 8.0,
+          "sigma": 14.0
+         },
+         {
+          "alpha_power": 1,
+          "color": {
+           "alpha": 0.7843137254901961,
+           "blue": 0.0,
+           "green": 0.0,
+           "red": 0.0
+          },
+          "dx": 0.0,
+          "dy": 2.0,
+          "sigma": 3.0
+         }
+        ],
+        "fill": {
+         "alpha": 1.0,
+         "blue": 0.6588235294117647,
+         "green": 0.9058823529411765,
+         "red": 0.9647058823529412
+        },
+        "font_asset_id": "font-OvertheRainbow-Regular.ttf",
+        "font_size": 150.0,
+        "glyphs": [
+         {
+          "glyph_id": 79,
+          "x": 0.0,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 76,
+          "x": 36.474609375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 93,
+          "x": 65.771484375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 69,
+          "x": 159.375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 82,
+          "x": 229.248046875,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 81,
+          "x": 279.638671875,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 15,
+          "x": 353.90625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 3,
+          "x": 397.119140625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 76,
+          "x": 472.119140625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 79,
+          "x": 501.416015625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 78,
+          "x": 537.890625,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 3,
+          "x": 608.349609375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 74,
+          "x": 683.349609375,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 190,
+          "x": 762.451171875,
+          "y": 0.0
+         },
+         {
+          "glyph_id": 81,
+          "x": 828.22265625,
+          "y": 0.0
+         }
+        ],
+        "letter_spacing": 0.0,
+        "shaped": false,
+        "stroke": {
+         "alpha": 0.9019607843137255,
+         "blue": 0.0,
+         "green": 0.0,
+         "red": 0.0
+        },
+        "stroke_width": 0.0,
+        "text": "lizbon, ilk gün",
+        "x": 64.8
+       }
+      ],
+      "start": 0.6
+     }
+    ],
+    "time_s": 1.74
+   },
+   "recommended": false,
+   "rows": [
+    {
+     "alignment": "left",
+     "behind_subject": false,
+     "color": "#F6E7A8",
+     "effect": "slide-up",
+     "end_s": 2.5,
+     "font_family": "Hanken Grotesk",
+     "id": "opening-title",
+     "line_spacing": 1.02,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 60,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "grid_2x2",
+        "entrance": "rise",
+        "font_pair": "grotesk_loop",
+        "ink": "butter",
+        "key": "grotesk_loop+grid_2x2",
+        "offer_id": "is1-ec1558b7006d3140",
+        "restore": [
+         {
+          "alignment": "center",
+          "behind_subject": false,
+          "effect": "fade-in",
+          "end_s": 2.5,
+          "font_family": "Playfair Display",
+          "id": "opening-title",
+          "position": "custom",
+          "removed": false,
+          "role": "generative_intro",
+          "size_class": "large",
+          "size_px": 120.0,
+          "source_params": {
+           "source": "opening_title"
+          },
+          "start_s": 0.0,
+          "text": "şehir rehberi: lizbon, ilk gün",
+          "x_frac": 0.5,
+          "y_frac": 0.15
+         }
+        ],
+        "version": 1,
+        "zone": "top_left"
+       },
+       "line": 1,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_solid"
+      }
+     },
+     "start_s": 0.0,
+     "text": "şehir rehberi:",
+     "text_language": "tr",
+     "x_frac": 0.06,
+     "y_frac": 0.2378
+    },
+    {
+     "alignment": "left",
+     "behind_subject": false,
+     "color": "#F6E7A8",
+     "effect": "fade-in",
+     "end_s": 2.5,
+     "font_family": "Over the Rainbow",
+     "id": "opening-title-line-2",
+     "line_spacing": 1.0,
+     "max_width_frac": 0.88,
+     "position": "custom",
+     "removed": false,
+     "role": "generative_intro",
+     "shadow_style": "high_visibility",
+     "size_class": "large",
+     "size_px": 150,
+     "source_params": {
+      "source": "opening_title",
+      "title_look": {
+       "intro_style": {
+        "arrangement": "grid_2x2",
+        "entrance": "rise",
+        "font_pair": "grotesk_loop",
+        "ink": "butter",
+        "key": "grotesk_loop+grid_2x2",
+        "offer_id": "is1-ec1558b7006d3140",
+        "version": 1,
+        "zone": "top_left"
+       },
+       "line": 2,
+       "lines": 2,
+       "stagger": "accent_after",
+       "style": "intro_accent"
+      }
+     },
+     "start_s": 0.6,
+     "text": "lizbon, ilk gün",
+     "text_language": "tr",
+     "x_frac": 0.06,
+     "y_frac": 0.3503
+    }
+   ]
+  }
+ ]
+}

@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
+import json
+import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -389,3 +392,30 @@ def test_a_layout_error_never_breaks_the_compile(monkeypatch):
 
     monkeypatch.setattr(props, "layout_intro_props", boom)
     assert _compile("grid_2x2").reason == "compile_error"
+
+
+# --- the offer's card looks on a framing with room (stage B, byte for byte) -------------------
+
+_CLEAN_GOLDEN = Path(__file__).resolve().parents[1] / "fixtures" / "kri1615_clean_card_looks.json"
+
+
+def test_card_looks_on_a_framing_with_room_are_stage_bs_byte_for_byte(monkeypatch):
+    """The card looks the offer makes where the cards fit off her face (rows, cards, windows,
+    previews), EN and TR, equal the golden captured from stage B before cards could pop over
+    her. `KRI1615_CLEAN_REGENERATE=1` rewrites it; only a reviewed look change may."""
+    from app.cli import intro_styles_fixtures as fx
+    from app.cli import verify_intro_styles as styles
+    from app.config import settings
+
+    for key, value in fx.flag_overrides().items():
+        monkeypatch.setattr(settings, key, value)
+    monkeypatch.setattr(settings, "intro_scene_model_enabled", False)
+    looks = {
+        lang: [o for o in styles._card_offer(lang, index)[3]["options"] if o.get("cards")]
+        for index, lang in enumerate(styles.CARD_TITLES)
+    }
+    text = json.dumps(looks, sort_keys=True, indent=1, ensure_ascii=False) + "\n"
+    if os.environ.get("KRI1615_CLEAN_REGENERATE") == "1":
+        _CLEAN_GOLDEN.write_text(text)
+    assert all(looks.values()), "a framing with room gets card looks in EN and TR"
+    assert text == _CLEAN_GOLDEN.read_text()
