@@ -99,9 +99,9 @@ the real Save, only the storage download replaced) and `make verify-intro-styles
   a card. `card_photo` checks owner, item and path for the offer and for the Save's pin, and
   the bind re-checks them before it reads a byte; a Save that posts such a card is refused
   with today's "isn't a photo Kria pinned" error (the wrong-content control).
-* M33 a photo that is not ready, has no generation, is transparent (a sticker, KRI-1616), has
-  no measured upright shape, is library-backed, deduplicated or too large. Excluded by
-  `card_photo`, so neither offered nor pinned.
+* M33 a photo that is not ready, has no generation, has no measured transparency or upright
+  shape, is library-backed, deduplicated or too large. Excluded by `card_photo`, so neither
+  offered nor pinned. A transparent one is a sticker (KRI-1616), never a photo card.
 * M34 fewer photos than slots. Two or three photos issue ``around_speaker`` only, four or more
   also ``grid_2x2``; under two, no card look.
 * M35 the arrangement does not fit her real framing. No card look (the reason is logged);

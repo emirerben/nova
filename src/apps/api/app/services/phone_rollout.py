@@ -1609,8 +1609,9 @@ def edge_bleed_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting build draw, and let her drag, a card centred past the frame?
 
     The build's capability (`INTRO_EDGE_BLEED_PROTOCOL`), never the offer's kill switch, so
-    turning bleed looks off never locks her out of an edit she saved. Outside a request (the
-    copilot edit, the approval task) a stored centre is kept: it came from an allowed Save.
+    turning bleed looks off never locks her out of an edit she saved. ``require_client`` follows
+    `clip_dim_client_supported` (outside a request: True, so the 426 fires only for a request);
+    the Save passes True to read the request's or a worker's bound sending build.
     """
     from app.services.client_protocol import (  # noqa: PLC0415
         INTRO_EDGE_BLEED_PROTOCOL,

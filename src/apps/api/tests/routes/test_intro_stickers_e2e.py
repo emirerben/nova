@@ -247,6 +247,13 @@ def test_s1_s4_s5_s8_a_sticker_look_is_offered_saved_and_drawn_where_it_was_offe
         if clip.id.startswith("subtitled-overlay-intro-card-sticker-")
     ]
     assert clips and all(clip.overlay_preserve_alpha is not False for clip in clips)
+    # saved as phone-lane image cards, which the editor's source pool serves with `preserve_alpha`
+    # (tests/routes/test_edge_bleed.py::test_b10_*)
+    saved_rows = {row["id"]: row for row in seeded.variant()["media_overlays"]}
+    assert all(
+        (saved_rows[c["id"]]["kind"], saved_rows[c["id"]]["source"]) == ("image", "phone_lane")
+        for c in cards
+    )
     reoffer = offer(client, seeded, look["rows"])
     assert [o["key"] for o in reoffer["options"] if o["current"]] == [look["key"]]
 

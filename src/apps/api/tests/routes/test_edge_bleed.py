@@ -10,8 +10,10 @@ Failure modes, one test each:
   stored changes), while its Save of an edit with no bleed still works;
 - B6 an older build polls a bled recipe and fails it as `invalidTimeline` (426 `edge_bleed`);
 - B7 the shared card schema changes for agents, the web and cloud renders (still [0, 1]);
-- B8 a Save outside a request (the copilot edit, the approval task) drops a stored bled centre;
-- B9 a full-screen card takes a bled centre.
+- B8 a Save outside a request (the copilot edit, the approval task) drops a stored bled centre,
+  or writes a new one for a sending build that cannot draw it;
+- B9 a full-screen card takes a bled centre;
+- B10 a saved Talking card's picture reaches the editor's live preview without its alpha.
 """
 
 from __future__ import annotations
@@ -33,8 +35,10 @@ from app.pipeline.phone_subtitled_lanes import SubtitledOverlayCard
 from app.routes.device_render import _client_update_detail
 from app.services.client_protocol import (
     INTRO_EDGE_BLEED_PROTOCOL,
+    bind_sending_build,
     clear_request_context,
     set_client_protocol,
+    unbind_sending_build,
 )
 from app.services.device_render import device_status
 from app.services.phone_subtitled_editor import project_phone_subtitled_editor_sections
@@ -128,6 +132,10 @@ def test_b3_her_drag_past_the_frame_reaches_the_recipe_and_reads_back(monkeypatc
         job.assembly_plan, job.assembly_plan["variants"][0]
     )
     assert sections["media_overlays"][0]["x_frac"] == -0.05
+    variant = job.assembly_plan["variants"][0]
+    variant.pop("_phone_subtitled_editor_lanes_v1")
+    from_recipe = project_phone_subtitled_editor_sections(job.assembly_plan, variant)
+    assert from_recipe["media_overlays"][0]["x_frac"] == -0.05, "read back from the pinned recipe"
 
 
 def test_b4_her_drag_past_the_bound_is_kept_at_the_bound_not_refused(monkeypatch):
@@ -192,6 +200,21 @@ def test_b8_a_save_outside_a_request_keeps_a_stored_bled_centre(monkeypatch):
     assert _row(job)["x_frac"] == -0.05
     assert _card_clip(job).visual_placement.x_fraction == -0.05
 
+    # a new centre past the frame from a worker: kept for a sending build that draws it, else
+    # clamped as before (a chat move from an older build must not lock her out)
+    token = bind_sending_build(INTRO_EDGE_BLEED_PROTOCOL - 1)
+    try:
+        _resave(job, media_overlays=[_overlay_payload(x_frac=-0.07)])
+    finally:
+        unbind_sending_build(token)
+    assert _row(job)["x_frac"] == 0.0
+    token = bind_sending_build(INTRO_EDGE_BLEED_PROTOCOL)
+    try:
+        _resave(job, media_overlays=[_overlay_payload(x_frac=-0.07)])
+    finally:
+        unbind_sending_build(token)
+    assert _row(job)["x_frac"] == -0.07
+
 
 def test_b9_a_full_screen_card_takes_no_bled_centre(monkeypatch):
     monkeypatch.setattr("app.config.settings.phone_subtitled_fullscreen_overlays_enabled", True)
@@ -201,3 +224,18 @@ def test_b9_a_full_screen_card_takes_no_bled_centre(monkeypatch):
     save(job, media_overlays=[_overlay_payload(x_frac=-0.05, display_mode="fullscreen")])
 
     assert _row(job)["x_frac"] == 0.0
+
+
+def test_b10_a_saved_talking_card_reaches_the_editor_preview_with_its_alpha(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    job = phone_job(monkeypatch)
+    job.assembly_plan["variants"][0]["video_path"] = "jobs/phone/subtitled.mp4"  # rendered
+    _from_build(INTRO_EDGE_BLEED_PROTOCOL)
+    save(job, media_overlays=[_overlay_payload(x_frac=-0.05)])
+
+    pool = gj._native_editor_assets(
+        job, "subtitled", sign_url=lambda path, _ttl: f"https://x/{path}"
+    )
+    [card] = [asset for asset in pool if asset["kind"] == "media_overlay"]
+    assert card["preserve_alpha"] is True

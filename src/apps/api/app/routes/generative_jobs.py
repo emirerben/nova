@@ -4923,11 +4923,16 @@ _BLEED_ROUNDING = 1e-6
 
 def _keep_edge_bleed(posted: list[dict], validated: list[dict], variant: dict) -> list[dict]:
     """KRI-1616: the shared card schema clamps a centre to [0, 1] (agents, the web and cloud
-    renders keep that). A phone Talking pip card she dragged past the frame keeps its centre,
-    within the renderer bound, when the sending build draws it; an older build posting one (a bled
-    edit it opened) is told to update instead of pulling her card back onto the frame."""
+    renders keep that). A phone Talking pip card dragged past the frame keeps its centre, within
+    the renderer bound, when the sending build draws it (the request's, or the one a worker binds
+    with `bind_sending_build`). An older build posting one (a bled edit it opened) is told to
+    update instead of pulling her card back. With no sending build (the approval task) only a
+    card's stored centre is kept; a new one is clamped as before."""
     from app.kria.portable_visual import clamp_to_edge_bleed  # noqa: PLC0415
-    from app.services.client_protocol import INTRO_EDGE_BLEED_PROTOCOL  # noqa: PLC0415
+    from app.services.client_protocol import (  # noqa: PLC0415
+        INTRO_EDGE_BLEED_PROTOCOL,
+        in_http_request,
+    )
     from app.services.phone_rollout import edge_bleed_client_supported  # noqa: PLC0415
     from app.services.phone_subtitled_editor import (  # noqa: PLC0415
         is_phone_subtitled_editor_variant,
@@ -4935,6 +4940,12 @@ def _keep_edge_bleed(posted: list[dict], validated: list[dict], variant: dict) -
 
     if not is_phone_subtitled_editor_variant(variant):
         return validated
+    draws = edge_bleed_client_supported(require_client=True)
+    stored = {
+        row.get("id"): row.get("x_frac")
+        for row in variant.get("media_overlays") or []
+        if isinstance(row, dict)
+    }
     kept: list[dict] = []
     for raw, card in zip(posted, validated, strict=True):
         x = raw.get("x_frac") if isinstance(raw, dict) else None
@@ -4946,8 +4957,9 @@ def _keep_edge_bleed(posted: list[dict], validated: list[dict], variant: dict) -
             or -_BLEED_ROUNDING <= x <= 1.0 + _BLEED_ROUNDING
         ):
             kept.append(card)
-            continue
-        if not edge_bleed_client_supported():
+        elif draws or (not in_http_request() and stored.get(card.get("id")) == x):
+            kept.append({**card, "x_frac": clamp_to_edge_bleed(float(x), float(card["scale"]))})
+        elif in_http_request():
             raise HTTPException(
                 status_code=426,
                 detail={
@@ -4956,7 +4968,8 @@ def _keep_edge_bleed(posted: list[dict], validated: list[dict], variant: dict) -
                     "minimum_client_protocol": INTRO_EDGE_BLEED_PROTOCOL,
                 },
             )
-        kept.append({**card, "x_frac": clamp_to_edge_bleed(float(x), float(card["scale"]))})
+        else:
+            kept.append(card)
     return kept
 
 

@@ -772,8 +772,9 @@ offer preference above leaves alone:
 
 * `VisualMediaPlacement` (Python and Swift) and `SubtitledOverlayCard` accept exactly that range.
 * The Save (`generative_jobs._keep_edge_bleed`) keeps a phone Talking pip card's centre past the
-  frame, clamped to the bound, when the sending build is at 64 (or outside a request: the copilot
-  edit and the approval task keep a stored centre).
+  frame, clamped to the bound, when the sending build is at 64: the request's, or the one a worker
+  binds (`bind_sending_build`). With no sending build (the approval task) it keeps only a card's
+  stored centre, so a chat move from an older build cannot write one and lock her out.
 * An older build that posts a bled card (an edit it opened) gets 426 `client_update_required`
   `edge_bleed` instead of a card pulled back onto the frame. So does an older build that polls a
   bled recipe (`device_render._client_update_detail`), instead of failing it as
