@@ -37,6 +37,33 @@ Ways this could go wrong, and the guard for each (tests/pipeline/test_intro_scen
   the ink, so `compile_intro_scene` declines them (`placement_unclean`, `ink_off_zone`). The
   typical face is a stand-in: the caller still holds the real placement receipt and MUST gate on
   `placement_is_clean(receipt)` before using the rows.
+
+KRI-1618 adds two moves, each an option id the engine maps through a table (`STAGGERS`,
+`STACKS`): the accent rows entering after the solid rows, and a script row tucked onto the serif
+row under it. Rows declare them in their ``title_look`` param; times and gaps are derived from
+that declaration, never stored as free numbers.
+
+* M1: the stagger holds back the solid rows, or the accent outlives them. Accent rows start at the
+  issued delay, solid rows at the title's start, and every row ends together.
+* M2: a delay nobody issued reaches the screen or passes approval. The delay is an id;
+  `stacked_title_matches` accepts a late row only at an issued delay (`title_family`).
+* M3: a stack whose accent leads (ref 5) fails the opening-title check. Approval reads the
+  stack's earliest start.
+* M4: a hold too short for the delay. The compiler declines (`hold_too_short`); a later retime
+  to a short window shows the rows together.
+* M5: a chat retime, the offer's window or a Range cut bends the delay. Every retime goes through
+  `title_family.retime_title_rows`, which derives starts from the declaration (idempotent).
+* M6: window code reads line 1 and misses the late row. `title_family.title_window`.
+* M7: the tuck with a pair that has no script face, or with no script row directly above a serif
+  row. `check_scene` refuses both (an inert declaration is refused too).
+* M8: the tuck buries the serif's letters or Turkish marks. The geometry is the approved taste
+  board's (B2): the script baseline sits `tuck_caps` serif cap heights above the serif baseline,
+  so only script descenders cross; checked by `make verify-intro-scenes` in English and Turkish.
+* M9: an undeclared overlap passes the render check. The verifier allows ink on ink only for a
+  declared script-over-serif pair (negative control).
+* M10: the phone clips or reorders overlapping rows. Observed not to
+  (`IntroRowMotionRenderTests`, on layers the compiler made).
+* M11: old pins, cassettes and goldens change. The defaults are today's look and add no key.
 """
 
 from __future__ import annotations
@@ -66,6 +93,8 @@ EntranceId = Literal["fade", "rise", "pop", "ink", "pen"]
 SoundId = Literal[
     "none", "accent-pop", "soft-pop", "click", "sparkle", "whoosh-fast", "camera-shutter"
 ]
+StaggerId = Literal["together", "accent_after"]
+StackId = Literal["gap", "script_over_serif"]
 
 _MAX_RUNS = 5
 _MIN_RUN_CHARS = 2
@@ -135,6 +164,27 @@ SOUNDS: tuple[str, ...] = (
     "whoosh-fast",
     "camera-shutter",
 )
+# Stagger id -> seconds the accent rows wait after the solid rows. 0.6 s is ref 1 on the approved
+# taste board (A1: the caps at 0.15 s, the handwritten accent at 0.75 s).
+TOGETHER = "together"
+STAGGERS: dict[str, float] = {TOGETHER: 0.0, "accent_after": 0.6}
+
+
+@dataclass(frozen=True)
+class Stack:
+    pairs: tuple[str, ...]  # the font pairs it may be used with
+    # A script (accent) row directly above a serif (solid) row: its baseline sits this many of
+    # the serif's cap heights above the serif baseline. None: every row keeps the plain gap.
+    tuck_caps: float | None = None
+
+
+GAP = "gap"
+# 1.28: the taste board's B2 (ref 5), Great Vibes 190 over Newsreader 140; only the script's
+# descenders reach into the serif's caps.
+STACKS: dict[str, Stack] = {
+    GAP: Stack(tuple(FONT_PAIRS)),
+    "script_over_serif": Stack(("script_serif",), tuck_caps=1.28),
+}
 
 
 class IntroScene(BaseModel):
@@ -150,6 +200,9 @@ class IntroScene(BaseModel):
     zone: ZoneId | None = None
     entrance: EntranceId | None = None
     sound: SoundId | None = None
+    # KRI-1618. The defaults are today's look, so an answer or pin from before reads unchanged.
+    stagger: StaggerId = TOGETHER
+    stack: StackId = GAP
 
     @model_validator(mode="after")
     def _shape(self) -> IntroScene:
@@ -157,7 +210,11 @@ class IntroScene(BaseModel):
         if self.decision == "decline":
             if self.decline_reason is None:
                 raise ValueError("a decline names its reason")
-            if self.voices or any(choice is not None for choice in choices):
+            if (
+                self.voices
+                or any(choice is not None for choice in choices)
+                or (self.stagger, self.stack) != (TOGETHER, GAP)
+            ):
                 raise ValueError("a decline carries no choices")
             return self
         if self.decline_reason is not None:
@@ -213,12 +270,17 @@ class IntroMenu:
     zones: tuple[str, ...]
     entrances: tuple[str, ...]
     sounds: tuple[str, ...]
+    staggers: tuple[str, ...] = (TOGETHER,)
+    stacks: tuple[str, ...] = (GAP,)
 
     def entrances_for(self, font_pair: str) -> tuple[str, ...]:
         """``pen`` draws Patrick Hand strokes, so only a pair whose accent face is Patrick Hand
         may use it (any other pair would silently show a different face than it names)."""
         accent = FONT_PAIRS[font_pair].accent.family
         return tuple(e for e in self.entrances if e != "pen" or accent == PEN_FAMILY)
+
+    def stacks_for(self, font_pair: str) -> tuple[str, ...]:
+        return tuple(s for s in self.stacks if font_pair in STACKS[s].pairs)
 
 
 def issue_menu(title: str) -> IntroMenu:
@@ -234,6 +296,8 @@ def issue_menu(title: str) -> IntroMenu:
         zones=tuple(ZONES),
         entrances=tuple(ENTRANCES),
         sounds=SOUNDS,
+        staggers=tuple(STAGGERS),
+        stacks=tuple(STACKS),
     )
 
 
@@ -252,8 +316,18 @@ def check_scene(scene: IntroScene, title: str, menu: IntroMenu) -> str | None:
         or scene.zone not in menu.zones
         or scene.entrance not in menu.entrances_for(scene.font_pair)
         or scene.sound not in menu.sounds
+        or scene.stagger not in menu.staggers
+        or scene.stack not in menu.stacks_for(scene.font_pair)
     ):
         return "option_not_issued"
+    runs = _runs(words, scene.voices)
+    if scene.stagger != TOGETHER and {run.voice for run in runs} != {"solid", "accent"}:
+        return "stagger_needs_both_voices"
+    if STACKS[scene.stack].tuck_caps is not None and not any(
+        upper.voice == "accent" and lower.voice == "solid"
+        for upper, lower in zip(runs, runs[1:], strict=False)
+    ):
+        return "stack_needs_script_above_serif"
     return None
 
 
@@ -433,14 +507,19 @@ def _build_rows(
         _MAX_WIDTH_FRAC,
         TITLE_LOOK_PARAM,
     )
+    from app.pipeline.title_family import MIN_LINE_S, retime_title_rows  # noqa: PLC0415
 
     assert scene.font_pair and scene.ink and scene.zone and scene.entrance  # checked upstream
     pair = FONT_PAIRS[scene.font_pair]
     solid_effect, accent_effect = ENTRANCES[scene.entrance]
     hold = float(duration_s) if duration_s is not None else _HOLD_S
     end_s = round(min(hold, float(timeline_duration_s)), 3)
-    if end_s < title_mod._TITLE_MIN_S / 5:
+    if end_s - STAGGERS[scene.stagger] < MIN_LINE_S:
         raise _Decline("hold_too_short")
+    motion = {
+        **({"stagger": scene.stagger} if scene.stagger != TOGETHER else {}),
+        **({"stack": scene.stack} if scene.stack != GAP else {}),
+    }
     left = scene.zone == "top_left"
     rows: list[dict[str, Any]] = []
     for index, run in enumerate(runs):
@@ -478,11 +557,12 @@ def _build_rows(
                     "line": index + 1,
                     "lines": len(runs),
                     "style": f"intro_{run.voice}",
+                    **motion,
                 },
             },
         )
         rows.append(element.model_dump(mode="json", exclude_none=True))
-    return rows
+    return retime_title_rows(rows, 0.0, end_s)
 
 
 def compile_intro_scene(

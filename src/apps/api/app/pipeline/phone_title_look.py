@@ -212,6 +212,22 @@ def _case_blind(value: object) -> str:
     return fold_text(normalize_text(value))
 
 
+def _shown_together(
+    starts: Sequence[float], ends: Sequence[float], *, tolerance_s: float
+) -> tuple[float, float] | None:
+    """``(start, end)`` of lines shown as one title, or ``None``. They leave together; each enters
+    with the first or one issued stagger after it (KRI-1618), never at any other time. The title
+    starts at its first entrance (the stagger is part of its entrance), ends at the shared exit."""
+    from app.pipeline.title_family import issued_delay  # noqa: PLC0415
+
+    first = min(starts)
+    if max(ends) - min(ends) > tolerance_s:
+        return None
+    if not all(issued_delay(start - first, tolerance_s=tolerance_s) for start in starts):
+        return None
+    return first, min(ends)
+
+
 def _intro_stack_matches(
     pool: Sequence[Mapping[str, Any]], wanted: str, *, tolerance_s: float
 ) -> list[dict]:
@@ -240,15 +256,16 @@ def _intro_stack_matches(
             ends = [item[2] for item in window]
             if any(lower <= upper for upper, lower in zip(ys, ys[1:], strict=False)):
                 continue
-            if max(starts) - min(starts) > tolerance_s or max(ends) - min(ends) > tolerance_s:
+            shown = _shown_together(starts, ends, tolerance_s=tolerance_s)
+            if shown is None:
                 continue
             if _case_blind(" ".join(str(item[3].get("text", "")) for item in window)) != target:
                 continue
             return [
                 {
                     "text": wanted,
-                    "start_s": starts[0],
-                    "end_s": min(ends),
+                    "start_s": shown[0],
+                    "end_s": shown[1],
                     "role": None,
                     "stacked_lines": [str(item[3].get("element_id")) for item in window],
                 }
@@ -520,11 +537,62 @@ def title_block_box(rows: Sequence[Mapping[str, Any]], *, canvas: _Canvas) -> No
     )
 
 
-def _stack(boxes: Sequence[NormalizedBox], top: float) -> list[NormalizedBox]:
+def _row_metrics(row: Mapping[str, Any], canvas: _Canvas) -> tuple[float, float, float]:
+    """(ascent, descent, cap height) in canvas px, at the size the renderer fits ``row`` to."""
+    import skia  # noqa: PLC0415
+
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.pipeline import text_overlay_skia as cloud  # noqa: PLC0415
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
+
+    [overlay] = build_overlays_from_text_elements(
+        [TextElement.model_validate(dict(row))],
+        video_duration_s=max(float(row["end_s"]), 0.1),
+        independent_box_alignment=True,
+    )
+    size = cloud.measure_text_overlay_box(overlay, render_canvas=canvas, resolved_size=True)
+    metrics = skia.Font(cloud._typeface_for_overlay(overlay), float(size["size_px"])).getMetrics()
+    return -metrics.fAscent, metrics.fDescent, metrics.fCapHeight
+
+
+def _tuck_gaps(rows: Sequence[Mapping[str, Any]], canvas: _Canvas) -> list[float | None]:
+    """KRI-1618: per pair of adjacent lines, the gap between their line boxes (fraction of the
+    canvas height, negative when they overlap) that a declared tuck sets, or ``None`` (the
+    caller's own gap). A tuck is a script (accent) line directly above a serif (solid) line, both
+    declaring the same ``stack``: the script baseline sits ``tuck_caps`` serif cap heights above
+    the serif baseline. A line box spans first baseline - ascent to last baseline + descent
+    (`text_overlay_skia._measure_block`), so this holds for a wrapped line too."""
+    from app.pipeline.intro_scene import STACKS  # noqa: PLC0415
+
+    gaps: list[float | None] = []
+    for upper, lower in zip(rows, rows[1:], strict=False):
+        above, below = _look_params(upper) or {}, _look_params(lower) or {}
+        stack = STACKS.get(str(above.get("stack")))
+        if (
+            stack is None
+            or stack.tuck_caps is None
+            or below.get("stack") != above.get("stack")
+            or (above.get("style"), below.get("style")) != ("intro_accent", "intro_solid")
+        ):
+            gaps.append(None)
+            continue
+        _ascent, descent_above, _cap = _row_metrics(upper, canvas)
+        ascent_below, _descent, cap_below = _row_metrics(lower, canvas)
+        gaps.append((stack.tuck_caps * cap_below - ascent_below - descent_above) / canvas.height)
+    return gaps
+
+
+def _line_gaps(rows: Sequence[Mapping[str, Any]], canvas: _Canvas) -> list[float]:
+    return [_GAP_FRAC if gap is None else gap for gap in _tuck_gaps(rows, canvas)]
+
+
+def _stack(
+    boxes: Sequence[NormalizedBox], top: float, gaps: Sequence[float]
+) -> list[NormalizedBox]:
     stacked = []
-    for box in boxes:
+    for box, gap in zip(boxes, [*gaps, 0.0], strict=True):
         stacked.append(NormalizedBox(box.left, top, box.right, top + box.height))
-        top += box.height + _GAP_FRAC
+        top += box.height + gap
     return stacked
 
 
@@ -652,7 +720,12 @@ def _squeeze(
         heights = [
             box.height - top - bottom for box, (top, bottom) in zip(layout, insets, strict=True)
         ]
-        height = sum(heights) + gap * (len(heights) - 1)
+        # A tuck is a gap between line boxes; ink to ink it also spans both insets between.
+        ink_gaps = [
+            gap if tuck is None else tuck + insets[index][1] + insets[index + 1][0]
+            for index, tuck in enumerate(_tuck_gaps(sized, canvas))
+        ]
+        height = sum(heights) + sum(ink_gaps)
         for kind, top in _candidates(
             height, faces, position, logo=reserve_logo, avoid=avoid, top_band=top_band
         ):
@@ -660,9 +733,9 @@ def _squeeze(
                 continue
             inks: list[NormalizedBox] = []
             cursor = top
-            for box, ink_h in zip(layout, heights, strict=True):
+            for box, ink_h, ink_gap in zip(layout, heights, [*ink_gaps, 0.0], strict=True):
                 inks.append(NormalizedBox(box.left, cursor, box.right, cursor + ink_h))
-                cursor += ink_h + gap
+                cursor += ink_h + ink_gap
             padded = [
                 NormalizedBox(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
                 for b in inks
@@ -775,10 +848,11 @@ def place_title_look(
         for size_rank, factor in enumerate(_SHRINK):
             sized = _sized(base, factor)
             measured = [_measure(r, canvas) for r in sized]
-            height = sum(b.height for b in measured) + _GAP_FRAC * (len(measured) - 1)
+            gaps = _line_gaps(sized, canvas)
+            height = sum(b.height for b in measured) + sum(gaps)
             spots = _candidates(height, faces, position, logo=reserve_logo, avoid=avoid)
             for spot_rank, (kind, top) in enumerate(spots):
-                boxes = _stack(measured, top)
+                boxes = _stack(measured, top, gaps)
                 if not _inside(boxes):
                     continue
                 coverage = _worst(boxes, hard)
@@ -875,7 +949,7 @@ def place_title_look(
             if best is None:
                 sized = _sized(base, _SHRINK[-1])
                 measured = [_measure(r, canvas) for r in sized]
-                boxes = _stack(measured, _BLOCK_TOP)
+                boxes = _stack(measured, _BLOCK_TOP, _line_gaps(sized, canvas))
                 factor, coverage = _SHRINK[-1], _worst(boxes, hard)
             else:
                 _, _, factor, sized, boxes = best
@@ -1062,8 +1136,8 @@ def stacked_title_matches(
 ) -> list[dict]:
     """The rendered stack that shows ``wanted`` line by line, or ``[]``.
 
-    Needs a distinct non-caption row per line with her exact words, all starting (and all
-    ending) together, stacked top to bottom in line order."""
+    Needs a distinct non-caption row per line with her exact words, shown together
+    (`_shown_together`), stacked top to bottom in line order."""
     lines = split_title_lines(wanted)
     pool = [row for row in rows if not str(row.get("element_id") or "").startswith("caption-")]
     if lines is None:
@@ -1083,15 +1157,16 @@ def stacked_title_matches(
             ys = [float(r["anchor_y"]) for r in combo]
         except (KeyError, TypeError, ValueError):
             continue
-        if max(starts) - min(starts) > tolerance_s or max(ends) - min(ends) > tolerance_s:
+        shown = _shown_together(starts, ends, tolerance_s=tolerance_s)
+        if shown is None:
             continue
         if any(lower <= upper for upper, lower in zip(ys, ys[1:], strict=False)):
             continue
         return [
             {
                 "text": wanted,
-                "start_s": starts[0],
-                "end_s": min(ends),
+                "start_s": shown[0],
+                "end_s": shown[1],
                 "role": None,
                 "stacked_lines": [str(r.get("element_id")) for r in combo],
             }

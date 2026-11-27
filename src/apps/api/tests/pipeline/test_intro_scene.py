@@ -498,3 +498,132 @@ def test_issued_menu_sweep_renders_clean_or_declines():
 def test_render_check_writes_the_montage_and_report(report):
     assert (report["out"] / report["montage"]).stat().st_size > 10_000
     assert (report["out"] / report["report"]).exists()
+
+
+# --- KRI-1618: the late accent and the script tucked onto the serif -------------------------
+#
+# M1 the stagger holds back the solid rows or the accent outlives them; M3 a stack whose accent
+# leads fails the opening check; M4 a hold too short for the delay; M7 the tuck with a pair that
+# has no script face, or no script row above a serif row; M8 the tuck buries the serif (the
+# geometry is the taste board's); M11 a scene without the moves changes.
+
+TR_VOICES = ["solid"] * 6 + ["accent"] * 2
+REF5_VOICES = ["accent", "accent", "solid", "solid", "solid"]
+REF5_TITLES = {"en": "city guide: lisbon, day one", "tr": "şehir rehberi: lizbon, ilk gün"}
+
+
+def _scene_rows(title, voices, lang, **over):
+    from app.pipeline.canvas import PORTRAIT  # noqa: PLC0415
+
+    scene = _compose(voices, sound="none", **over)
+    out = mod.compile_intro_scene(
+        scene, title, canvas=PORTRAIT, timeline_duration_s=30.0, language=lang
+    )
+    assert out.rows is not None, out.reason
+    placed, receipt = mod.place_on_typical_face(out.rows, out.position, PORTRAIT)
+    assert mod.placement_is_clean(receipt), receipt
+    return placed
+
+
+def _phone_layers(rows):
+    from app.pipeline.phone_subtitled_plan import _compile_text_lane  # noqa: PLC0415
+
+    return _compile_text_lane(rows, user_edited=False, timeline_duration_s=30.0)
+
+
+@pytest.mark.parametrize(
+    ("title", "voices", "lang"), [(TITLE_EN, EN_VOICES, "en"), (TITLE_TR, TR_VOICES, "tr")]
+)
+def test_a_late_accent_enters_after_the_solid_rows_and_leaves_with_them(title, voices, lang):
+    rows = _scene_rows(title, voices, lang, stagger="accent_after", ink="cream")
+    delay = mod.STAGGERS["accent_after"]
+    layers = _phone_layers(rows)
+    starts = {
+        row["source_params"]["title_look"]["style"]: layer.start
+        for row, layer in zip(rows, layers, strict=True)
+    }
+    assert starts == {"intro_solid": 0.0, "intro_accent": pytest.approx(delay)}
+    assert len({layer.end for layer in layers}) == 1
+    [match] = check.approval_matches(rows, title)
+    assert match["start_s"] == 0.0  # the title is up from its first entrance (opening check)
+
+
+def test_a_title_whose_accent_leads_still_opens_the_video():
+    rows = _scene_rows(
+        REF5_TITLES["en"],
+        REF5_VOICES,
+        "en",
+        font_pair="script_serif",
+        ink="white",
+        stagger="accent_after",
+    )
+    assert rows[0]["start_s"] == pytest.approx(mod.STAGGERS["accent_after"])
+    [match] = check.approval_matches(rows, REF5_TITLES["en"])
+    assert match["start_s"] == 0.0
+
+
+def test_a_hold_too_short_for_the_delay_is_declined_not_squeezed():
+    scene = _compose(EN_VOICES, font_pair="serif_italic", sound="none", stagger="accent_after")
+    short = _compile(scene, duration_s=mod.STAGGERS["accent_after"] + 0.05)
+    assert (short.rows, short.reason) == (None, "hold_too_short")
+    together = _compile(scene.model_copy(update={"stagger": "together"}), duration_s=0.65)
+    assert together.reason == "ok"
+
+
+@pytest.mark.parametrize(
+    ("over", "voices", "reason"),
+    [
+        (
+            {"font_pair": "grotesk_hand", "stack": "script_over_serif"},
+            EN_VOICES,
+            "option_not_issued",
+        ),
+        (
+            {"font_pair": "script_serif", "stack": "script_over_serif"},
+            EN_VOICES,
+            "stack_needs_script_above_serif",
+        ),
+        (
+            {"font_pair": "young_serif", "stagger": "accent_after"},
+            ["solid"] * 6,
+            "stagger_needs_both_voices",
+        ),
+    ],
+    ids=["no-script-face", "script-below-serif", "nothing-to-stagger"],
+)
+def test_a_move_that_cannot_apply_is_refused(over, voices, reason):
+    scene = _compose(voices, **over)
+    assert mod.check_scene(scene, TITLE_EN, mod.issue_menu(TITLE_EN)) == reason
+    assert _compile(scene).reason == reason
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_the_tuck_sets_the_script_baseline_where_the_taste_board_does(lang):
+    title = REF5_TITLES[lang]
+    common = {"font_pair": "script_serif", "ink": "white"}
+    tucked = _phone_layers(
+        _scene_rows(title, REF5_VOICES, lang, stack="script_over_serif", **common)
+    )
+    plain = _phone_layers(_scene_rows(title, REF5_VOICES, lang, **common))
+    serif = tucked[1].runs[0]
+    font = skia.Font(
+        skia.Typeface.MakeFromFile(
+            str(Path(__file__).resolve().parents[2] / "assets/fonts/Newsreader-Medium.ttf")
+        ),
+        serif.font_size,
+    )
+    rise = serif.baseline_y - tucked[0].runs[0].baseline_y
+    assert rise == pytest.approx(
+        mod.STACKS["script_over_serif"].tuck_caps * font.getMetrics().fCapHeight, abs=2.0
+    )
+    plain_rise = plain[1].runs[0].baseline_y - plain[0].runs[0].baseline_y
+    assert plain_rise > rise + 40  # without the declaration the rows keep the plain gap
+
+
+def test_a_scene_without_the_moves_compiles_to_todays_rows():
+    explicit = _compile(_compose(EN_VOICES, stagger="together", stack="gap"))
+    default = _compile(_compose(EN_VOICES))
+    assert explicit.rows == default.rows
+    for row in default.rows:
+        assert row["start_s"] == 0.0
+        assert set(row["source_params"]["title_look"]) == {"line", "lines", "style"}

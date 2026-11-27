@@ -143,10 +143,13 @@ def test_decline_is_explicit_and_carries_only_a_reason():
     assert scene.voices == ()
 
 
-def test_decline_with_choices_is_rejected():
+@pytest.mark.parametrize(
+    "choice", [{"ink": "cream"}, {"stagger": "accent_after"}, {"stack": "script_over_serif"}]
+)
+def test_decline_with_choices_is_rejected(choice):
     with pytest.raises(ValidationError):
         mod.IntroScene.model_validate(
-            {"decision": "decline", "decline_reason": "no_good_fit", "ink": "cream"}
+            {"decision": "decline", "decline_reason": "no_good_fit", **choice}
         )
 
 
@@ -163,7 +166,9 @@ def test_compose_missing_a_choice_is_rejected(missing):
         mod.IntroScene.model_validate(data)
 
 
-@pytest.mark.parametrize("field", ["font_pair", "ink", "zone", "entrance", "sound"])
+@pytest.mark.parametrize(
+    "field", ["font_pair", "ink", "zone", "entrance", "sound", "stagger", "stack"]
+)
 def test_compose_with_an_unknown_id_is_rejected(field):
     with pytest.raises(ValidationError):
         _compose(EN_VOICES, **{field: "made_up"})
