@@ -1701,3 +1701,62 @@ closer" to the end. No device render of a story-ordered draft has been inspected
 `tests/kria/test_story_order.py` (the
 failure-mode list is its docstring; it runs the real contract, readiness and
 `preflight_montage_plan`, with hand-written rankings).
+
+## Overlay generation on the thread (`overlay_set` events, KRI-1646)
+
+Generated overlays are asked for, answered and made in the chat, and a relaunch resumes with no second
+charge. `app/kria/overlay_set.py` owns the shape, the routes are `thread_router` in
+`routes/overlay_generation.py` (`/creation-threads/{thread_id}/overlay-sets...`). The existing
+`POST /plan-items/{item_id}/overlay-plan` is unchanged.
+
+**Gate.** `KRIA_SUGGESTION_GENERATED_OVERLAY_ENABLED` (default off), the generated-images account gate for the
+paid steps, and `OVERLAY_SET_MIN_CLIENT_PROTOCOL` (default 61; `999` = kill switch; apply with a fly secret on api +
+worker + restart). Capability `overlay_sets` on `GET /creation-threads/capabilities`. Flag off: every route is a
+404 and nothing is written. A build below the protocol gets a 426 on a write, and `overlay_set` events are left out
+of its thread read and its delta read (`overlay_set.visible_events`), so a build that cannot draw the card never
+decodes it even when another device caused the event. The set's bookkeeping lives in
+`thread.state["overlay_sets"]` (last 8 sets, removed from the public thread state).
+
+**Event.** `event_type: "overlay_set"`, role `assistant` (the creator's answer is role `user`), one event per
+change, each the whole set. The newest event of a `set_id` is what the creator last saw. The same object is every
+route's answer.
+
+```json
+{"v": 1, "set_id": "<uuid the client picked>", "phase": "ask|compose|progress|done",
+ "mode": "automatic|prompt|null", "prompts": ["a red scooter"],
+ "unit_price_usd": 0.04, "max_overlays": 6,
+ "overlays": [{"id": "<uuid>", "title": "...", "prompt": "...", "state": "making|ready|failed",
+               "operation_id": "<uuid>|null", "error_code": "provider_rejected|null", "retryable": true}],
+ "overlay_ids": ["<ready ids>"], "message": ""}
+```
+
+- `ask`: the card "Let Kria decide" / "Describe them". `compose`: the answer is stored (the price is
+  `unit_price_usd` times the rows, or up to `max_overlays` for `automatic`). `progress`: some overlay is `making`.
+  `done`: none is; the receipt lists the `ready` ids and a `failed` row keeps its retry. A retry moves the set back to
+  `progress`, then `done` again. Only the plan's `image` rows are made; its text and library rows are in the plan
+  response, not in `overlays`.
+- `failed` with `retryable: true` released its reservation. `retryable: false` (`provider_outcome_unknown`) may have
+  been paid and is never made again.
+- The creator's next turn is not rejected for these events (`conversation_revision_matches`), and the suggestion
+  chips treat them as bookkeeping.
+
+**Routes** (native, protocol >= the floor; ids are idempotent keys):
+
+1. `POST /creation-threads/{id}/overlay-sets` `{set_id}` writes the `ask`. A repeat returns the set.
+2. `POST .../{set_id}/compose` `{mode, prompts}` stores the answer (`prompt` needs 1 to 6 rows). The same answer
+   again returns the set; a different one is a 409.
+3. `POST .../{set_id}/plan` with the `OverlayPlanRequest` body plans from the stored answer (its `mode`/`prompt`
+   are ignored) and returns the `OverlayPlanResponse`. The plan is claimed on the set before the paid call, so a
+   duplicate returns the stored plan and a racing one is a 409 for 5 minutes; a failed plan releases the claim.
+   Every image row becomes a `making` overlay with the plan's own id.
+4. `POST .../{set_id}/overlays/{overlay_id}/generate` makes one image: the operation id is derived from
+   (set, overlay, attempt). It serves the first request, a repeat after a relaunch (finds the same operation, no
+   second charge) and a retry of a `failed`, `retryable` overlay (the next attempt, only that overlay). A `ready`
+   overlay returns the set and makes nothing.
+
+**Resume.** The phone drives the generates. After a relaunch it reads the thread, and repeats route 4 for every
+overlay still `making`; an operation that stayed unresolved while the app was away settles then. State is the
+thread's, so two reads of a set before and after a restart are equal.
+
+Guard: `tests/routes/test_overlay_thread_events.py` (the failure-mode list is its docstring; real Postgres,
+`bash scripts/dev/test-db.sh`). The planner and the image operation are recorders in it.

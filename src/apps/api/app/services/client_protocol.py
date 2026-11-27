@@ -138,6 +138,8 @@ SPEAKER_SECTIONS_PROTOCOL = 59
 
 RESEARCH_SELECTION_PROTOCOL = 60
 
+OVERLAY_SET_PROTOCOL = 61
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

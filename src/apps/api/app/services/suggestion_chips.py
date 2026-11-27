@@ -1493,6 +1493,7 @@ _BOOKKEEPING_EVENTS = frozenset(
         "media_added",
         "song_range_set",
         "speaker_background_set",
+        "overlay_set",
     }
 )
 _QUESTION_EVENTS = frozenset(
