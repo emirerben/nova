@@ -156,3 +156,63 @@ def test_her_typed_slash_stack_follows_the_same_rule():
     raw = [{"op": "rewrite_text", "selector": {"group": "title"}, "text": NEW}]
     compiled = _compile(job, variant, snapshot, raw)
     assert [r["text"] for r in _title_rows(compiled)] == [NEW]
+
+
+# --- KRI-1618: a late accent line moves with its title ---------------------------------------
+#
+# M5 a chat retime or a Range cut bends the accent's delay into one the approval check refuses;
+# a window too short for the delay leaves a line starting at or after its end.
+
+
+def _late_accent_scene() -> list[dict]:
+    scene = scene_mod.IntroScene(
+        decision="compose",
+        voices=("solid",) * 4 + ("accent",) * 2,
+        font_pair="grotesk_hand",
+        ink="oxblood",
+        zone="above_head",
+        entrance="ink",
+        sound="none",
+        stagger="accent_after",
+    )
+    out = scene_mod.compile_intro_scene(scene, EN, canvas=PORTRAIT, timeline_duration_s=30.0)
+    assert out.rows is not None, out.reason
+    placed, _receipt = _place_with()(out.rows, out.position)
+    return placed
+
+
+def _times(rows: list[dict]) -> dict[str, tuple[float, float]]:
+    return {r["source_params"]["title_look"]["style"]: (r["start_s"], r["end_s"]) for r in rows}
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "accent_start"),
+    [(0.5, 2.5, 0.5 + scene_mod.STAGGERS["accent_after"]), (0.5, 0.9, 0.5)],
+    ids=["moves-as-one-title", "too-short-for-the-delay-shows-together"],
+)
+def test_a_chat_retime_moves_a_late_accent_title_as_one(start, end, accent_start):
+    job, variant, snapshot, _others = _scene_job(_late_accent_scene())
+    raw = [{"op": "set_text_timing", "bar_index": 0, "start_s": start, "end_s": end}]
+    times = _times(_title_rows(_compile(job, variant, snapshot, raw)))
+    assert times["intro_solid"] == (start, end)
+    assert times["intro_accent"] == (pytest.approx(accent_start), end)
+
+
+def test_a_range_cut_that_bent_the_delay_is_undone_and_other_rows_are_left_alone():
+    from app.pipeline.title_family import retime_title_stacks
+
+    scene = _late_accent_scene()
+    caption = {"id": "caption-1", "text": "so", "start_s": 0.31, "end_s": 0.9}
+    accent = {"intro_accent": 0.4, "intro_solid": 0.0}  # a 0.2 s cut inside the first 0.6 s
+    bent = [
+        {**row, "start_s": accent[row["source_params"]["title_look"]["style"]], "end_s": 2.8}
+        for row in scene
+    ]
+    out = retime_title_stacks([*bent, caption])
+    assert _times(out[:-1]) == {
+        "intro_solid": (0.0, 2.8),
+        "intro_accent": (pytest.approx(scene_mod.STAGGERS["accent_after"]), 2.8),
+    }
+    assert out[-1] is caption
+    plain = _scene()  # a scene that declares no stagger is returned as it was
+    assert retime_title_stacks(plain) == plain

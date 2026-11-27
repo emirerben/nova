@@ -119,6 +119,7 @@ from app.pipeline.speech_cleanup_apply import (
     apply_speech_cleanup_to_audio,
     hydrate_job_speech_cleanup_snapshot,
 )
+from app.pipeline.title_family import title_window
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S, NarrationTrack
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
@@ -15539,7 +15540,7 @@ def _title_on_resolved_captions(
         avoid = _title_look_caption_avoid(
             cues, caption_style=caption_style, canvas=canvas, look=look
         )
-        window = (float(title_rows[0]["start_s"]), float(title_rows[0]["end_s"]))
+        window = title_window(title_rows)
         if [box.as_dict() for box in avoid(window)] == list(title_receipt["caption_boxes"]):
             return title_rows, title_receipt
         return place(avoid)
@@ -15584,7 +15585,7 @@ def _move_captions_off_title(
                 NormalizedBox(**{k: float(f[k]) for k in NormalizedBox.__annotations__})
                 for f in title_receipt.get("face_boxes") or []
             ],
-            window=(float(title_rows[0]["start_s"]), float(title_rows[0]["end_s"])),
+            window=title_window(title_rows),
             base_look=framed_compile.get("caption_look"),
         )
     except Exception as exc:  # noqa: BLE001 - the captions stay put; the log says why
@@ -16393,7 +16394,7 @@ def _phone_talking_title_rows(
             return [], None
         rows = [row]
     display_width, display_height = display_dims(binding.original)
-    window = (float(rows[0]["start_s"]), float(rows[0]["end_s"]))
+    window = title_window(rows)
     common = {
         "clip_path": clip_path,
         "keep_segments": keep_segments,
@@ -16543,7 +16544,7 @@ def _intro_scene_title_rows(
         scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
 
         def place(rows: list[dict], position: str | None) -> tuple[list[dict], dict[str, Any]]:
-            window = (float(rows[0]["start_s"]), float(rows[0]["end_s"]))
+            window = title_window(rows)
             common = {
                 "clip_path": clip_path,
                 "keep_segments": keep_segments,

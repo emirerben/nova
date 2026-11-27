@@ -84,6 +84,29 @@ def retime_title_rows(
     ]
 
 
+def retime_title_stacks(rows: Sequence[Any]) -> list[Any]:
+    """``rows`` with each stacked title that declares a stagger retimed over its own window
+    (`retime_title_rows`). For a lane the system moved row by row (a Range cut re-anchors each
+    text row through source time on its own), so a late accent line is back at its delay. Rows
+    of a stack that declares nothing, and every other row, are returned as they were."""
+    out = list(rows)
+    for family in TITLE_FAMILY_IDS:
+        lines = [
+            index
+            for index, row in enumerate(out)
+            if isinstance(row, Mapping)
+            and not row.get("removed")
+            and title_family_of(row.get("id")) == family
+            and is_title_look_row(row)
+        ]
+        stack = [out[index] for index in lines]
+        if len(stack) < _MIN_LINES or not any(_declared_delay(row) for row in stack):
+            continue
+        for index, row in zip(lines, retime_title_rows(stack, *title_window(stack)), strict=True):
+            out[index] = row
+    return out
+
+
 def issued_delay(delay: float, *, tolerance_s: float) -> bool:
     """Is ``delay`` (a line's entrance after the title's first) one the engine issues?"""
     from app.pipeline.intro_scene import STAGGERS  # noqa: PLC0415

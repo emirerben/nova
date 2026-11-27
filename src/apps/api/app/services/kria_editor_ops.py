@@ -3203,6 +3203,8 @@ def _op_patch_text_style(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
+    from app.pipeline.title_family import retime_title_rows, title_window  # noqa: PLC0415
+
     bars = _title_stack(state, state.text_bar(op.get("bar_index")))
     updates = {}
     for key in ("start_s", "end_s"):
@@ -3211,8 +3213,15 @@ def _op_set_text_timing(state: _DraftState, op: dict[str, Any]) -> None:
             if not math.isfinite(value):
                 raise KriaEditorOpError("Text timing must be finite")
             updates[key] = value
-    for bar in bars:
-        bar.update(updates)
+    if len(bars) > 1:
+        # KRI-1618: a stack moves as one title; a late accent line keeps its declared stagger.
+        start, end = title_window(bars)
+        retimed = retime_title_rows(bars, updates.get("start_s", start), updates.get("end_s", end))
+        updates_per_bar = [{"start_s": r["start_s"], "end_s": r["end_s"]} for r in retimed]
+    else:
+        updates_per_bar = [updates]
+    for bar, bar_updates in zip(bars, updates_per_bar, strict=True):
+        bar.update(bar_updates)
         if isinstance(bar.get("id"), str):
             state.explicit_text_ids.add(bar["id"])
     state.changed.add("text")
