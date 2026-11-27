@@ -8,8 +8,9 @@ verdict measures the DRAWN pixels exactly as the seeded picks are measured. It p
 and the engine's rules hold for whatever the model picks; it does NOT show the model's taste is
 good, which is Emir's blind compare (`app/cli/compare_intro_scenes.py`).
 
-Controls that MUST end in today's title (no rows): a decline, a void answer (unissued id, a sound,
-a split nobody issued, text smuggled in), a provider error, a model scene that cannot sit clear.
+Controls that MUST end in today's title (no rows): a decline, a void answer (unissued id, a cue
+with no sound, a split nobody issued, text smuggled in), a provider error, a model scene that
+cannot sit clear.
 Controls that MUST hold: a re-render of a pinned answer never calls the model again; an ink that
 does not read on the plate is replaced by the engine; the approval check accepts every issued
 entrance and still cannot read the handwriting ("pen") one, which is why it is not issued.
@@ -212,7 +213,7 @@ def model_wiring() -> list[dict[str, Any]]:
     refusals = {
         "a_decline_is_todays_title": {"decision": "decline", "decline_reason": "title_unsuited"},
         "an_unissued_ink_is_void": {**good, "ink": "hot_pink"},
-        "a_sound_is_void": {**good, "sound": "accent-pop"},
+        "a_cue_without_a_sound_is_void": {**good, "sound_cue": "accent"},
         "smuggled_text_is_void": {**good, "text": "HACKED"},
         "a_split_nobody_issued_is_void": {**good, "voices": ["accent"] * 6},
         "the_pen_entrance_is_never_issued": {**good, "entrance": "pen"},

@@ -3,8 +3,9 @@ from the options the server issued, or declines.
 
 **The agent picks, the engine builds.** Its only WRITE is an ``IntroScene`` (KRI-1610): a decision,
 one voice per word of her approved title, and an option id each for font pair, ink, zone,
-entrance, stagger and stack (KRI-1618: the accent landing late, a script tucked onto the serif;
-sound is always ``none``: an automatic sound is an open question on the project). The
+entrance, stagger and stack (KRI-1618: the accent landing late, a script tucked onto the serif),
+sound and sound cue (KRI-1613: a library sound on the accent's or every line's entrance; the
+engine resolves the sound and its time, and it plays only where every gate is open). The
 schema has no field that reaches the screen as text and none that holds a coordinate, size or
 time (``tests/pipeline/test_intro_scene_schema.py`` walks it), and the response schema sent with
 the call is closed over THIS call's issued ids, so even a provider that ignores it cannot widen
@@ -25,7 +26,8 @@ Failure modes this was written against (each has a replay cassette in
    `build_input`), an unknown ink)                         -> the answer is void
 2. a split that drops, adds or reorders a word, or one the picker never issued
                                                            -> void
-3. a smuggled field (``text``, ``why``, a number) or a sound -> void
+3. a smuggled field (``text``, ``why``, a number), a sound or cue never issued, or a cue
+   with no sound or no line to sit on                        -> void
 4. a decline that carries choices, or a half-filled compose  -> void (``IntroScene`` refuses it)
 5. a decline                                                 -> honoured: today's title, once
 6. provider error, timeout, truncation, malformed JSON       -> never raises out of the worker
@@ -67,6 +69,8 @@ _CATALOGUE = json.dumps(
         "entrances": list(scene_mod.ENTRANCES),
         "staggers": scene_mod.STAGGERS,
         "stacks": {k: [v.pairs, v.tuck_caps] for k, v in scene_mod.STACKS.items()},
+        "sounds": list(scene_mod.SOUNDS),
+        "sound_cues": {k: sorted(v) for k, v in scene_mod.SOUND_CUES.items()},
     },
     sort_keys=True,
 )
@@ -93,6 +97,14 @@ class IntroSceneInput(BaseModel):
     stacks: list[str] = Field(
         default_factory=lambda: [scene_mod.GAP], min_length=1, max_length=len(scene_mod.STACKS)
     )
+    sounds: list[str] = Field(
+        default_factory=lambda: [scene_mod.SILENT], min_length=1, max_length=len(scene_mod.SOUNDS)
+    )
+    sound_cues: list[str] = Field(
+        default_factory=lambda: [scene_mod.SILENT],
+        min_length=1,
+        max_length=len(scene_mod.SOUND_CUES),
+    )
     # Measured by the server from the real take frames: a trusted category, never model text.
     brightness: Brightness = "unknown"
     # UNTRUSTED: her title words (the voices line up with them) and what Gemini wrote about the
@@ -106,9 +118,10 @@ class IntroSceneInput(BaseModel):
             inks=tuple(self.inks),
             zones=tuple(self.zones),
             entrances=tuple(self.entrances),
-            sounds=("none",),  # an automatic sound is an open question on the project
+            sounds=tuple(self.sounds),
             staggers=tuple(self.staggers),
             stacks=tuple(self.stacks),
+            sound_cues=tuple(self.sound_cues),
         )
 
 
@@ -141,6 +154,8 @@ def build_input(
             entrances=[entrance for entrance in menu.entrances if entrance != "pen"],
             staggers=list(menu.staggers),
             stacks=list(menu.stacks),
+            sounds=list(menu.sounds),
+            sound_cues=list(menu.sound_cues),
             brightness=brightness if brightness in ("light", "mid", "dark") else "unknown",
             title_words=[word[:40] for word in words],
             footage_notes=" ".join(footage_notes.split())[:MAX_NOTES_CHARS],
@@ -171,7 +186,8 @@ def response_schema_for(input: IntroSceneInput) -> dict[str, Any]:  # noqa: A002
             "entrance": {"type": "string", "enum": list(input.entrances)},
             "stagger": {"type": "string", "enum": list(input.staggers)},
             "stack": {"type": "string", "enum": list(input.stacks)},
-            "sound": {"type": "string", "enum": ["none"]},
+            "sound": {"type": "string", "enum": list(input.sounds)},
+            "sound_cue": {"type": "string", "enum": list(input.sound_cues)},
         },
         "required": ["decision"],
     }
@@ -208,7 +224,7 @@ def _marked_title(title: str, voices: list[str]) -> str:
 
 
 def examples_for(language: str) -> list[dict[str, Any]]:
-    """The teardowns that have a scene as taste examples. No sound (always none for the model)."""
+    """The teardowns that have a scene as taste examples, with the sound only where it plays."""
     out: list[dict[str, Any]] = []
     for teardown in _teardowns():
         examples = teardown.get("examples") or {}
@@ -225,7 +241,8 @@ def examples_for(language: str) -> list[dict[str, Any]]:
                     key: scene[key]
                     for key in ("font_pair", "ink", "zone", "entrance", "stagger", "stack")
                     if key in scene
-                },
+                }
+                | scene_mod.IntroScene.model_validate(scene).moves(),
             }
         )
     return out
@@ -278,6 +295,8 @@ class IntroSceneDesignerAgent(Agent[IntroSceneInput, scene_mod.IntroScene]):
                 "entrance": input.entrances,
                 "stagger": input.staggers,
                 "stack": input.stacks,
+                "sound": input.sounds,
+                "sound_cue": input.sound_cues,
             },
             "footage": {"brightness": input.brightness},
             "untrusted": {"title_words": input.title_words, "footage_notes": input.footage_notes},
@@ -298,8 +317,6 @@ class IntroSceneDesignerAgent(Agent[IntroSceneInput, scene_mod.IntroScene]):
             raise SchemaError("intro scene returned invalid typed output") from exc
         if scene.decision == "decline":
             return scene
-        if scene.sound != "none":
-            raise SchemaError("intro scene may not choose a sound")
         if list(scene.voices) not in input.splits:
             raise SchemaError("intro scene split is not one the server issued")
         if reason := scene_mod.check_scene(scene, " ".join(input.title_words), input.menu()):

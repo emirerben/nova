@@ -771,6 +771,10 @@ three extra lanes on top of the unchanged speaker clip + captions:
   `test_ios_level_test_pins_the_server_duck_gain`. Device check: enable the
   flag on the local API, render a Talking edit whose SFX lands on a word and
   one in a pause, and listen on the iPhone dev build.
+  Rows the engine owns: `cmsfx-*` (a colour moment's edge, KRI-1350) and `introsfx-<line id>`
+  (an intro scene's own sound on its title line's entrance, KRI-1613, `INTRO_SCENE_SOUND_ENABLED`;
+  `docs/pipelines/intro-scene.md`). Every Save re-pins them and Range never moves them through
+  source time. Export proof: `IntroSceneSoundExportTests.swift` in KriaMediaEngine.
   Music under speech (KRI-1562): `TalkingMusicDuckLevelTests.swift` proves the
   engine duck on tones. `scripts/dev/kri1562-listening-check.sh [--takes DIR]`
   runs real talking takes (or `--synthetic` stand-ins) through the real compiler

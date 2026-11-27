@@ -489,6 +489,10 @@
       "source": "default",
       "value": false
     },
+    "intro_scene_sound_enabled": {
+      "source": "default",
+      "value": false
+    },
     "intro_scene_user_ids": {
       "source": "default",
       "value": []

@@ -64,6 +64,38 @@ that declaration, never stored as free numbers.
 * M10: the phone clips or reorders overlapping rows. Observed not to
   (`IntroRowMotionRenderTests`, on layers the compiler made).
 * M11: old pins, cassettes and goldens change. The defaults are today's look and add no key.
+
+KRI-1613 gives the scene its own sound: ``sound`` (a slug of the seeded creator library) and
+``sound_cue``, which says where it plays, through `SOUND_CUES`: ``none``, ``accent`` (once, as
+the accent lines enter) or ``each`` (once per entrance; lines that enter on the same frame share
+one). Rows declare both in their ``title_look`` param; `title_family.intro_sound_cues` derives
+every sound from that declaration: an ``introsfx-<line id>`` row at the line's ``start_s``, the
+entrance's first frame. The worker resolves the slug to the library row
+(`services.sfx_library`), an editor Save re-pins the rows to the lines and drops them with the
+declaration. Guards: tests/pipeline/test_intro_scene_sound.py, tests/tasks/
+test_intro_scene_sound_{worker,save,phone_fixture}.py, tests/services/test_sfx_library.py and
+the KriaMediaEngine export test `IntroSceneSoundExportTests`.
+
+* M12: a sound plays that nobody issued, or a cue with nothing to play. ``sound_cue`` is an id
+  of the menu like the others; a cue needs a sound (``sound_cue_needs_sound``) and a line it can
+  sit on (``sound_cue_has_no_line``: ``accent`` with no accent line). A slug without a cue is
+  silent, as every scene before KRI-1613 was (teardowns and intake replies carry slugs).
+* M13: a sound when a gate is closed: ``INTRO_SCENE_SOUND_ENABLED``, the Talking sound-effect
+  lane (`sfx_capability.subtitled_sfx_limit`), or her brief says "no sound effects". The worker
+  then compiles the scene silent, so its rows declare nothing and no row is written.
+* M14: the cue misses the entrance (a stagger, a retime, a Range cut, a speech cut). It is
+  derived from the line's own ``start_s`` on the cut timeline, after every lane was remapped,
+  and re-derived on every Save; `phone_talking_range` never moves it through source time.
+* M15: two sounds stacked on one entrance (louder, phasey). Lines that enter together share one
+  cue; a sound she named (or any lane sound) within `sfx_autoplace.MIN_SPACING_S` of a cue wins
+  and the cue is skipped.
+* M16: a library row that is missing, unpublished or unplayable fails the render. The cue is
+  skipped and the ``intro_scene_sound`` trace event says why.
+* M17: her edit loses. A Save never adds an intro sound; one she deleted stays deleted, one
+  whose line is gone or no longer declares it (another look, a whole-title rewrite) is dropped.
+  Sounds already saved stay when the switch is later turned off (the colour-moment precedent).
+* M18: old pins, cassettes and goldens change. ``sound_cue`` defaults to ``none`` and adds no
+  key; a silent scene's rows and dumps are byte for byte as before.
 """
 
 from __future__ import annotations
@@ -95,6 +127,7 @@ SoundId = Literal[
 ]
 StaggerId = Literal["together", "accent_after"]
 StackId = Literal["gap", "script_over_serif"]
+SoundCueId = Literal["none", "accent", "each"]
 
 _MAX_RUNS = 5
 _MIN_RUN_CHARS = 2
@@ -155,8 +188,9 @@ ENTRANCES: dict[str, tuple[str, str]] = {
     "pen": ("fade-in", "handwriting"),
 }
 # Slugs of the seeded creator sound library (`scripts/sfx_library/catalog.py`); "none" = silent.
+SILENT = "none"
 SOUNDS: tuple[str, ...] = (
-    "none",
+    SILENT,
     "accent-pop",
     "soft-pop",
     "click",
@@ -164,6 +198,12 @@ SOUNDS: tuple[str, ...] = (
     "whoosh-fast",
     "camera-shutter",
 )
+# Sound cue id -> the line styles (`title_look.style`) whose entrance it sounds on.
+SOUND_CUES: dict[str, frozenset[str]] = {
+    SILENT: frozenset(),
+    "accent": frozenset({"intro_accent"}),
+    "each": frozenset({"intro_solid", "intro_accent"}),
+}
 # Stagger id -> seconds the accent rows wait after the solid rows. 0.6 s is ref 1 on the approved
 # taste board (A1: the caps at 0.15 s, the handwritten accent at 0.75 s).
 TOGETHER = "together"
@@ -200,9 +240,11 @@ class IntroScene(BaseModel):
     zone: ZoneId | None = None
     entrance: EntranceId | None = None
     sound: SoundId | None = None
-    # KRI-1618. The defaults are today's look, so an answer or pin from before reads unchanged.
+    # KRI-1618 / KRI-1613. The defaults are today's look, so an answer or pin from before reads
+    # unchanged.
     stagger: StaggerId = TOGETHER
     stack: StackId = GAP
+    sound_cue: SoundCueId = SILENT
 
     @model_validator(mode="after")
     def _shape(self) -> IntroScene:
@@ -213,7 +255,7 @@ class IntroScene(BaseModel):
             if (
                 self.voices
                 or any(choice is not None for choice in choices)
-                or (self.stagger, self.stack) != (TOGETHER, GAP)
+                or (self.stagger, self.stack, self.sound_cue) != (TOGETHER, GAP, SILENT)
             ):
                 raise ValueError("a decline carries no choices")
             return self
@@ -227,13 +269,21 @@ class IntroScene(BaseModel):
     def _omit_todays_look(self, handler: Any) -> dict[str, Any]:
         # A scene from before KRI-1618 dumps byte for byte as it did (teardowns, pins, cassettes).
         data = handler(self)
-        return {k: v for k, v in data.items() if k not in ("stagger", "stack")} | self.moves()
+        return {
+            k: v for k, v in data.items() if k not in ("stagger", "stack", "sound_cue")
+        } | self.moves()
 
     def moves(self) -> dict[str, str]:
-        """The KRI-1618 moves this scene makes, as rows and pins store them (none: today's look)."""
+        """What this scene adds to today's look, as rows and pins store it: the KRI-1618 moves
+        and, when a cue plays it, the KRI-1613 sound. Empty for today's look."""
         return {
             **({"stagger": self.stagger} if self.stagger != TOGETHER else {}),
             **({"stack": self.stack} if self.stack != GAP else {}),
+            **(
+                {"sound": self.sound, "sound_cue": self.sound_cue}
+                if self.sound_cue != SILENT
+                else {}
+            ),
         }
 
 
@@ -285,6 +335,7 @@ class IntroMenu:
     sounds: tuple[str, ...]
     staggers: tuple[str, ...] = (TOGETHER,)
     stacks: tuple[str, ...] = (GAP,)
+    sound_cues: tuple[str, ...] = (SILENT,)
 
     def entrances_for(self, font_pair: str) -> tuple[str, ...]:
         """``pen`` draws Patrick Hand strokes, so only a pair whose accent face is Patrick Hand
@@ -311,6 +362,7 @@ def issue_menu(title: str) -> IntroMenu:
         sounds=SOUNDS,
         staggers=tuple(STAGGERS),
         stacks=tuple(STACKS),
+        sound_cues=tuple(SOUND_CUES),
     )
 
 
@@ -331,6 +383,7 @@ def check_scene(scene: IntroScene, title: str, menu: IntroMenu) -> str | None:
         or scene.sound not in menu.sounds
         or scene.stagger not in menu.staggers
         or scene.stack not in menu.stacks_for(scene.font_pair)
+        or scene.sound_cue not in menu.sound_cues
     ):
         return "option_not_issued"
     runs = _runs(words, scene.voices)
@@ -341,6 +394,11 @@ def check_scene(scene: IntroScene, title: str, menu: IntroMenu) -> str | None:
         for upper, lower in zip(runs, runs[1:], strict=False)
     ):
         return "stack_needs_script_above_serif"
+    if scene.sound_cue != SILENT:
+        if scene.sound == SILENT:
+            return "sound_cue_needs_sound"
+        if not any(f"intro_{run.voice}" in SOUND_CUES[scene.sound_cue] for run in runs):
+            return "sound_cue_has_no_line"
     return None
 
 

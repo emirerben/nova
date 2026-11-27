@@ -1724,10 +1724,13 @@ def _compile_subtitled_editor_commit(
         background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
     # KRI-1350: a colour moment's own sound always sits on its moment's edge, whatever moved.
+    # KRI-1613: an intro scene's sound sits on its title line's entrance in this Save's text.
     lanes = rebind_color_moment_sounds(lanes, variant.get("color_moments"))
+    lanes = rebind_intro_scene_sounds(lanes, variant.get("text_elements"))
     if isinstance(variant.get("sound_effects"), list):
-        variant["sound_effects"] = rebind_color_moment_sound_rows(
-            variant["sound_effects"], variant.get("color_moments")
+        variant["sound_effects"] = rebind_intro_scene_sound_rows(
+            rebind_color_moment_sound_rows(variant["sound_effects"], variant.get("color_moments")),
+            variant.get("text_elements"),
         )
 
     _require_card_edits_supported(previous_lanes, lanes)
@@ -2160,20 +2163,21 @@ def _color_moment_edges(stored: Any) -> dict[str, float]:
     return edges
 
 
-def rebind_color_moment_sounds(lanes: Any, stored: Any) -> Any:
-    """Pin every colour-moment sound in ``lanes`` to its moment's edge; drop one whose moment
-    is gone. Sounds the creator placed themselves are never touched (KRI-1350)."""
-    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
-
+def _pin_owned_sounds(
+    lanes: Any, prefix: str, positions_of: Callable[[], Mapping[str, float]]
+) -> Any:
+    """Every sound in ``lanes`` whose id starts with ``prefix`` moved to its position in
+    ``positions_of()``, or dropped when its id is not there. Every other sound is left as it
+    is; with no such sound, ``lanes`` comes back untouched and nothing is derived."""
     if lanes is None or not any(
-        effect.request.id.startswith(SOUND_ID_PREFIX) for effect in lanes.sound_effects
+        effect.request.id.startswith(prefix) for effect in lanes.sound_effects
     ):
         return lanes
-    edges = _color_moment_edges(stored)
+    positions = positions_of()
     effects = []
     for effect in lanes.sound_effects:
-        if effect.request.id.startswith(SOUND_ID_PREFIX):
-            at = edges.get(effect.request.id)
+        if effect.request.id.startswith(prefix):
+            at = positions.get(effect.request.id)
             if at is None:
                 continue
             if effect.request.at_s != at:
@@ -2183,25 +2187,61 @@ def rebind_color_moment_sounds(lanes: Any, stored: Any) -> Any:
     return lanes.model_copy(update={"sound_effects": effects})
 
 
-def rebind_color_moment_sound_rows(rows: list, stored: Any) -> list:
-    """`rebind_color_moment_sounds` for the variant's stored ``sound_effects`` editor rows."""
-    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
-
+def _pin_owned_sound_rows(
+    rows: list, prefix: str, positions_of: Callable[[], Mapping[str, float]]
+) -> list:
+    """`_pin_owned_sounds` for the variant's stored ``sound_effects`` editor rows."""
     if not any(
-        isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX)
-        for row in rows
+        isinstance(row, dict) and str(row.get("id") or "").startswith(prefix) for row in rows
     ):
         return rows
-    edges = _color_moment_edges(stored)
+    positions = positions_of()
     kept = []
     for row in rows:
-        if isinstance(row, dict) and str(row.get("id") or "").startswith(SOUND_ID_PREFIX):
-            at = edges.get(str(row["id"]))
+        if isinstance(row, dict) and str(row.get("id") or "").startswith(prefix):
+            at = positions.get(str(row["id"]))
             if at is None:
                 continue
             row = {**row, "at_s": at}
         kept.append(row)
     return kept
+
+
+def rebind_color_moment_sounds(lanes: Any, stored: Any) -> Any:
+    """Pin every colour-moment sound in ``lanes`` to its moment's edge; drop one whose moment
+    is gone. Sounds the creator placed themselves are never touched (KRI-1350)."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    return _pin_owned_sounds(lanes, SOUND_ID_PREFIX, lambda: _color_moment_edges(stored))
+
+
+def rebind_color_moment_sound_rows(rows: list, stored: Any) -> list:
+    """`rebind_color_moment_sounds` for the variant's stored ``sound_effects`` editor rows."""
+    from app.kria.portable_color_moments import SOUND_ID_PREFIX  # noqa: PLC0415
+
+    return _pin_owned_sound_rows(rows, SOUND_ID_PREFIX, lambda: _color_moment_edges(stored))
+
+
+def _intro_cue_times(text_rows: Any) -> dict[str, float]:
+    from app.pipeline.title_family import intro_sound_cues  # noqa: PLC0415
+
+    return {cue.id: cue.at_s for cue in intro_sound_cues(text_rows or [])}
+
+
+def rebind_intro_scene_sounds(lanes: Any, text_rows: Any) -> Any:
+    """KRI-1613: pin every intro-scene sound in ``lanes`` to the entrance its title line declares
+    now (`title_family.intro_sound_cues`); drop one whose line is gone or no longer declares it.
+    A Save never adds one, so a sound she deleted stays deleted."""
+    from app.pipeline.title_family import INTRO_SOUND_ID_PREFIX  # noqa: PLC0415
+
+    return _pin_owned_sounds(lanes, INTRO_SOUND_ID_PREFIX, lambda: _intro_cue_times(text_rows))
+
+
+def rebind_intro_scene_sound_rows(rows: list, text_rows: Any) -> list:
+    """`rebind_intro_scene_sounds` for the variant's stored ``sound_effects`` editor rows."""
+    from app.pipeline.title_family import INTRO_SOUND_ID_PREFIX  # noqa: PLC0415
+
+    return _pin_owned_sound_rows(rows, INTRO_SOUND_ID_PREFIX, lambda: _intro_cue_times(text_rows))
 
 
 def _restale_protected_text(

@@ -4,6 +4,7 @@ suggestion eval can read it without loading the renderer."""
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 # Talking, recorded-voiceover and guided/montage story titles. A stack's other lines carry
@@ -105,6 +106,51 @@ def retime_title_stacks(rows: Sequence[Any]) -> list[Any]:
         for index, row in zip(lines, retime_title_rows(stack, *title_window(stack)), strict=True):
             out[index] = row
     return out
+
+
+# KRI-1613: a sound-effect lane row an intro scene owns carries this prefix plus the id of the
+# line it sits on; it is moved with that line and dropped with its declaration.
+INTRO_SOUND_ID_PREFIX = "introsfx-"
+
+
+@dataclass(frozen=True)
+class IntroSoundCue:
+    id: str  # the lane row's id: ``introsfx-<line id>``
+    sound: str  # a slug of the seeded creator sound library
+    at_s: float  # the line's entrance (its ``start_s``)
+
+
+def intro_sound_cues(rows: Sequence[Any]) -> list[IntroSoundCue]:
+    """The sounds the intro scene lines in ``rows`` declare (`intro_scene.SOUND_CUES`), in time
+    order: one per entrance instant of the lines the cue sounds on, on the first of those lines
+    in line order. Lines that enter on the same frame are one entrance and share one sound."""
+    from app.pipeline.intro_scene import SILENT, SOUND_CUES, SOUNDS  # noqa: PLC0415
+
+    cues: dict[str, IntroSoundCue] = {}
+    for family in TITLE_FAMILY_IDS:
+        lines = sorted(
+            (
+                row
+                for row in rows
+                if isinstance(row, Mapping)
+                and not row.get("removed")
+                and title_family_of(row.get("id")) == family
+                and isinstance(row.get("start_s"), int | float)
+            ),
+            key=lambda row: int((_look_params(row) or {}).get("line") or 0),
+        )
+        instants: set[float] = set()
+        for row in lines:
+            look = _look_params(row) or {}
+            sound, cue = look.get("sound"), look.get("sound_cue")
+            if sound == SILENT or sound not in SOUNDS or cue not in SOUND_CUES:
+                continue
+            at = round(float(row["start_s"]), 3)
+            if look.get("style") in SOUND_CUES[cue] and at not in instants:
+                instants.add(at)
+                cue_id = f"{INTRO_SOUND_ID_PREFIX}{row['id']}"
+                cues[cue_id] = IntroSoundCue(id=cue_id, sound=str(sound), at_s=at)
+    return sorted(cues.values(), key=lambda cue: (cue.at_s, cue.id))
 
 
 def issued_delay(delay: float, *, tolerance_s: float) -> bool:

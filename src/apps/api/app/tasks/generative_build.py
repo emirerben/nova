@@ -6037,6 +6037,86 @@ def _no_sound_effects_asked(snapshot: Any) -> bool:
     return asks_no_sound_effects(brief)
 
 
+def _intro_scene_sound_open(snapshot: Any) -> bool:
+    """KRI-1613: may an intro scene's own sound play on this render? Its kill switch, the Talking
+    sound-effect lane the chooser writes to (`subtitled_sfx_limit`), and no live "no sound
+    effects" in her brief."""
+    from app.services.sfx_capability import subtitled_sfx_limit  # noqa: PLC0415
+
+    return bool(
+        settings.intro_scene_sound_enabled
+        and subtitled_sfx_limit() is None
+        and not _no_sound_effects_asked(snapshot)
+    )
+
+
+def _intro_sound_catalog_id(slug: str) -> str | None:
+    """The library row the seed script published for ``slug`` (`services.sfx_library`)."""
+    from app.services.sfx_library import library_effect_id  # noqa: PLC0415
+
+    with _sync_session() as db:
+        return library_effect_id(db, slug)
+
+
+def _with_intro_scene_sounds(lanes: Any, title_rows: list[dict], *, snapshot: Any) -> Any:
+    """KRI-1613: ``lanes`` plus the sounds the intro scene's title lines declare
+    (`title_family.intro_sound_cues`), each an ``introsfx-<line id>`` row on its line's entrance.
+    ``title_rows`` and ``lanes`` are on the cut timeline. A cue is skipped, never failing the
+    render, when a gate is closed, another lane sound sits within `MIN_SPACING_S` of it (hers
+    wins), or the library cannot serve it; the ``intro_scene_sound`` trace event says which."""
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        PhoneSubtitledLanes,
+        SubtitledSoundEffect,
+    )
+    from app.pipeline.title_family import intro_sound_cues  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+    from app.services.sfx_autoplace import MIN_SPACING_S  # noqa: PLC0415
+
+    cues = intro_sound_cues(title_rows)
+    if not cues:
+        return lanes
+    base = lanes if lanes is not None else PhoneSubtitledLanes()
+    taken = [float(row.request.at_s) for row in base.sound_effects]
+    sound_open = _intro_scene_sound_open(snapshot)
+    placed: list[Any] = []
+    receipt: list[dict] = []
+    for cue in cues:
+        reason: str | None = None
+        if not sound_open:
+            reason = "gate_closed"
+        elif any(abs(cue.at_s - at) < MIN_SPACING_S for at in taken):
+            reason = "taken"
+        else:
+            try:
+                catalog_id = _intro_sound_catalog_id(cue.sound)
+                if catalog_id is None:
+                    reason = "catalog_missing"
+                else:
+                    request = SubtitledSoundEffect(id=cue.id, catalog_id=catalog_id, at_s=cue.at_s)
+                    placed.append(_resolve_phone_sound_effect(request))
+            except OperationalError:
+                raise  # transient DB -> Celery autoretry, as every lane resolve
+            except Exception as exc:  # noqa: BLE001 - an intro sound never fails the render
+                reason = f"unplayable: {type(exc).__name__}"
+        receipt.append(
+            {"id": cue.id, "sound": cue.sound, "at_s": cue.at_s}
+            | ({"skipped": reason} if reason else {})
+        )
+    try:
+        record_pipeline_event("phone", "intro_scene_sound", {"cues": receipt})
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    if not placed:
+        return lanes
+    return base.model_copy(
+        update={
+            "sound_effects": sorted(
+                [*base.sound_effects, *placed], key=lambda row: row.request.at_s
+            )
+        }
+    )
+
+
 def _guided_sfx_ask_unserved_receipt(plan: Any, strategy: Any, snapshot: Any) -> dict | None:
     """KRI-1598: the receipt for a general sound-effect ask this guided plan does not serve.
 
@@ -13457,6 +13537,10 @@ def _run_phone_subtitled_job(
                                 reason="speech_cleanup_cut",
                             )
 
+                # KRI-1613: the intro scene's own sound sits on its title's entrances, which are
+                # cut-timeline times; before the chooser, so a chosen effect keeps clear of it.
+                lanes = _with_intro_scene_sounds(lanes, title_rows, snapshot=snapshot)
+
                 # KRI-1561: a general "add sound effects where they fit" ask. The chooser works
                 # on the CUT timeline, so it runs once the lanes above are final and sits beside
                 # any named cue's sound (a named cue always keeps its own slot).
@@ -16570,6 +16654,7 @@ def _intro_scene_title_rows(
             duration_s=duration_s,
             language=language_of(opening_title, spoken_language),
             place=place,
+            sound=_intro_scene_sound_open(title_look_plan),
         )
         info = {**info, **arm_info}
         try:

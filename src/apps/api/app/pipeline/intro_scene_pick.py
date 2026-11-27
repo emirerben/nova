@@ -368,10 +368,12 @@ def fit_intro_scene(
     duration_s: float | None,
     language: str | None,
     place: Place,
+    sound: bool = False,
 ) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None, dict[str, Any]]:
     """The first stamped candidate x zone that compiles and gets a clean REAL placement, as
     ``(placed rows, receipt, info)``; ``(None, None, info)`` means "use today's title". ``place``
-    is the real `place_title_look` call of this render. Never raises."""
+    is the real `place_title_look` call of this render. ``sound`` (KRI-1613): the candidate's
+    own sound may play on this render; otherwise the scene is compiled silent. Never raises."""
     info: dict[str, Any] = {"version": INTRO_SCENE_VERSION, "seed": ask.get("seed"), "tried": []}
     inks = [ink for ink in ask.get("inks") or [] if ink in scene_mod.INKS]
     if not inks:
@@ -386,6 +388,9 @@ def fit_intro_scene(
                     return None, None, info
                 attempts += 1
                 step = {"candidate": index, "font_pair": candidate.get("font_pair"), "zone": zone}
+                cue = candidate.get("sound_cue", scene_mod.SILENT)
+                if cue != scene_mod.SILENT and not sound:
+                    info["sound"] = "gate_closed"
                 try:
                     scene = scene_mod.IntroScene(
                         decision="compose",
@@ -394,7 +399,10 @@ def fit_intro_scene(
                         ink=inks[0],
                         zone=zone,
                         entrance=candidate["entrance"],
-                        sound="none",  # a sound is a suggestion, not an automatic add (project Q1)
+                        sound=candidate.get("sound", scene_mod.SILENT)
+                        if sound
+                        else scene_mod.SILENT,
+                        sound_cue=cue if sound else scene_mod.SILENT,
                         stagger=candidate.get("stagger", scene_mod.TOGETHER),
                         stack=candidate.get("stack", scene_mod.GAP),
                     )
@@ -522,7 +530,9 @@ def intro_ink_pass(
 #     zones, with the REAL placement; nothing fits: today's title rows.
 # A6: the model's ink is unreadable on the take. It leads the ink order and `intro_ink_pass` still
 #     takes the first ink that reads.
-# A7: a sound is added without a request. The agent's schema allows only ``none``.
+# A7: a sound plays where it should not. Emir's ruling (2026-11-27): a scene's own sound is
+#     automatic, for intro scenes only. It plays only with every gate open (`intro_scene` M13)
+#     and her brief not saying "no sound effects"; otherwise the scene is compiled silent.
 # A8: the model is asked for a scene that would not apply (a logo above the title, a pinned text
 #     rule). The caller passes ``applies`` and no call is made.
 
@@ -663,7 +673,7 @@ def ask_for_fit(ask: Mapping[str, Any]) -> tuple[Mapping[str, Any] | None, dict[
         return None, info
     try:
         scene = scene_mod.IntroScene.model_validate(
-            {"decision": "compose", **pick["scene"], "sound": "none"}
+            {"decision": "compose", "sound": scene_mod.SILENT, **pick["scene"]}
         )
     except Exception:  # noqa: BLE001 - a pin this build cannot read
         info["model_outcome"] = "unreadable"
