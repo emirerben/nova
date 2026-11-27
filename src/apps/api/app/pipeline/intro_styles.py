@@ -137,6 +137,10 @@ the real Save, only the storage download replaced) and `make verify-intro-styles
   were: nothing re-places the title with the cards in ``avoid`` after the Save. Her own drag in
   the editor is hers to judge.
 
+Pop cards (Emir's ruling 2026-11-27: cards may cover her face for a short time) continue the list
+as M47-M59 in `services/intro_props_layout`: `fit_card_looks` asks for them only for an
+arrangement none of whose clean tries laid its cards out, one of them for lack of room.
+
 Skia is imported lazily (no Skia at import).
 """
 

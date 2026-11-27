@@ -708,6 +708,27 @@ def test_render_check_draws_both_arrangements_in_both_languages(report):  # M22-
     assert {len(c["cards"]) for c in cards} == {2, 4}
 
 
+def test_render_check_draws_pop_cards_over_a_close_speaker(report):  # M47-M56
+    pop = [c for c in report["cases"] if c.get("name") == "KRI-1615 pop cards"]
+    cases = [c for c in pop if not c["control"]]
+    assert {(c["id"], c["language"]) for c in cases} == {
+        (f"{case_id}+pop", language)
+        for case_id in ("ref3+around_speaker", "ref5+grid_2x2")
+        for language in ("en", "tr")
+    }
+    assert all(c["verdict"] == "PASS" for c in cases), [c["reasons"] for c in cases]
+    controls = {c["control"]: c["verdict"] for c in pop if c["control"]}
+    assert controls == {
+        "pop_card_over_title": "FAIL",
+        "pop_card_on_captions": "FAIL",
+        "pop_card_bleeds_off_frame": "FAIL",
+        "pop_card_held_2s": "FAIL",
+    }
+    wiring = {w["name"]: w["ok"] for w in report["wiring"]}
+    assert wiring["a_close_speaker_leaves_clean_cards_no_room"]
+    assert wiring["cards_never_pop_over_the_stand_in_speaker"]
+
+
 def test_render_check_wires_the_card_declines(report):
     wiring = {w["name"]: w for w in report["wiring"]}
     for name in (

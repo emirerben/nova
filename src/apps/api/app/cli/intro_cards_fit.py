@@ -12,6 +12,11 @@ For every face it also writes the room stage A leaves (`room`): above the title,
 above the captions, and under the captions, against the smallest card a photo shape allows, so
 each decline names the row that has no room.
 
+Each fit names its card mode (``clean``, or ``pop``: cards that may cover her for a short time,
+asked only where no clean try laid its cards out); a pop fit also records how much of her eyes and
+mouth (`intro_props_layout.face_centre`) its cards cover at most and how long, in all, any card
+covers her face.
+
     python -m app.cli.intro_cards_fit --debug-dumps <dir of /admin/jobs/{id}/debug JSON>
     python -m app.cli.intro_cards_fit --fixtures faces.json --out .intro-cards-fit
 
@@ -131,9 +136,15 @@ def _title_rows(title: str, language: str) -> list[dict[str, Any]]:
 
 
 def _layout_reason(
-    title: st.Title, stage: Any, arrangement: str, aspect: float, seed: str, language: str
+    title: st.Title,
+    stage: Any,
+    arrangement: str,
+    aspect: float,
+    seed: str,
+    language: str,
+    mode: str = props.CLEAN,
 ) -> str:
-    """The stage A layout's own decline for the first candidate that compiles alone."""
+    """The layout's own decline in ``mode`` for the first candidate that compiles alone."""
     from app.pipeline import intro_scene_pick as pick  # noqa: PLC0415
 
     slots = scene_mod.ARRANGEMENTS[arrangement].slots
@@ -160,6 +171,7 @@ def _layout_reason(
                 stage=stage,
                 canvas=PORTRAIT,
                 position=alone.position,
+                mode=mode,
             )
             return getattr(layout, "reason", "layout_fits_but_compile_declined")
     return "no_title_compiles_alone"
@@ -204,6 +216,28 @@ def room(fixture: dict[str, Any], stage: Any, title: st.Title, language: str) ->
     }
 
 
+def pop_cover(look: st.CardLook, stage: Any) -> dict[str, float]:
+    """How much a pop look covers her: the largest share of her eyes and mouth one card covers,
+    and the seconds in which any card is on her face (the union of their windows)."""
+    from app.services.phone_card_layout import boxes_intersect  # noqa: PLC0415
+
+    centres = [props.face_centre(face) for face in stage.faces]
+    share = max(
+        sum(box.intersection_area(c) for c in centres) / sum(c.area for c in centres)
+        for box in look.boxes
+    )
+    spans = sorted(
+        (card.start_s, card.end_s)
+        for card, box in zip(look.cards, look.boxes, strict=True)
+        if any(boxes_intersect(box, face) for face in stage.faces)
+    )
+    covered, reach = 0.0, float("-inf")
+    for start, end in spans:
+        covered += max(0.0, end - max(start, reach))
+        reach = max(reach, end)
+    return {"max_centre_share": round(share, 3), "face_covered_s": round(covered, 3)}
+
+
 def min_card_height(aspect: float) -> float:
     """The shortest card a photo of ``aspect`` can be (its short side `MIN_WIDTH` of the width)."""
     from app.services.phone_card_layout import CANVAS_RATIO, MIN_WIDTH  # noqa: PLC0415
@@ -229,6 +263,7 @@ def run(fixtures: list[dict[str, Any]]) -> dict[str, Any]:
                 "room": room(fixture, stage, title, fixture["language"]) if stage else None,
                 "fits": {},
                 "declines": {},
+                "pop": {},
             }
             for shape, aspect in PHOTO_SHAPES.items():
                 photos = [
@@ -252,11 +287,19 @@ def run(fixtures: list[dict[str, Any]]) -> dict[str, Any]:
                     timeline_duration_s=30.0,
                     declines=declines,
                 )
-                fitted = {look.look.key.split("+")[1] for look in looks}
-                case["fits"][shape] = sorted(fitted)
+                fitted = {look.look.key.split("+")[1]: _mode(look) for look in looks}
+                case["fits"][shape] = fitted
+                case["pop"][shape] = {
+                    look.look.key.split("+")[1]: pop_cover(look, stage)
+                    for look in looks
+                    if _mode(look) == props.POP
+                }
                 case["declines"][shape] = {
-                    arrangement: _layout_reason(
-                        title, stage, arrangement, aspect, seed, fixture["language"]
+                    arrangement: " / pop: ".join(
+                        _layout_reason(
+                            title, stage, arrangement, aspect, seed, fixture["language"], mode
+                        )
+                        for mode in (props.CLEAN, props.POP)
                     )
                     for arrangement in ARRANGEMENTS
                     if arrangement not in fitted and stage is not None
@@ -264,6 +307,11 @@ def run(fixtures: list[dict[str, Any]]) -> dict[str, Any]:
             cases.append(case)
         seen.add(face_key)
     return {"cases": cases, "summary": summarize(cases)}
+
+
+def _mode(look: st.CardLook) -> str:
+    style = look.look.rows[0]["source_params"]["title_look"]["intro_style"]
+    return str(style.get("card_mode", props.CLEAN))
 
 
 def summarize(cases: list[dict[str, Any]]) -> dict[str, Any]:
@@ -280,6 +328,7 @@ def summarize(cases: list[dict[str, Any]]) -> dict[str, Any]:
                     "distinct_faces": sum(c["distinct_face"] for c in rows),
                     "captions_measured": sum(c["captions_measured"] for c in rows),
                     "fit": sum(arrangement in c["fits"][shape] for c in rows),
+                    "pop": sum(c["fits"][shape].get(arrangement) == props.POP for c in rows),
                     "declines": dict(reasons.most_common()),
                 }
     return out
@@ -304,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     print("smallest card height by photo shape:", report["min_card_height"])
     for key, item in report["summary"].items():
         print(
-            f"  {key}: {item['fit']}/{item['edits']} fit "
+            f"  {key}: {item['fit']}/{item['edits']} fit, {item['pop']} of them pop "
             f"({item['distinct_faces']} distinct faces, {item['captions_measured']} with "
             f"captions) declines {item['declines']}"
         )

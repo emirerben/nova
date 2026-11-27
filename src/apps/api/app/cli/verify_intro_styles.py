@@ -25,6 +25,12 @@ layers, the wordmark, the frame, each other and the title's drawn ink. Two more 
 fail: N9 the Save's own ``caption_clear`` mark stripped (the look must not be offered), N10 a card
 moved onto her face (the card check must catch it).
 
+Pop cards (Emir's ruling 2026-11-27): the same offer on a real close Talking framing
+(`CLOSE_FACE`), where no card fits off her face. Every card look there must be pop (its rows'
+``intro_style.card_mode``) and every card look on the roomy framing clean; pop cards may cover her
+face and are checked for everything else and their time (each at most 1.5 s inside the title's
+window, one after another after the title lands). N11 a pop card held 2 s must be caught.
+
 Six negative controls MUST fail (N1 the old `has_text_ask` blocks saved preferences, N2 her font ask
 for the title is honoured, N3 a look moved onto the face fails the clean check, N4 a face that
 cannot draw a dotted capital is never issued, N5 re-applying the option over her coloured line
@@ -40,6 +46,7 @@ Outputs ``report.json`` and ``montage.png`` (read the montage: it is the content
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import sys
@@ -318,6 +325,9 @@ def _run_case(route: str, lang: str, name: str, title: str, index: int) -> dict[
 # --- card looks (KRI-1615 stage B) -------------------------------------------------------------
 
 ROOMY_FACE = (0.32, 0.44, 0.68, 0.66)
+# A real close Talking take (a prod edit's saved face band): her head high and large.
+CLOSE_FACE = (0.24, 0.163, 0.816, 0.509)
+CARD_FRAMINGS = {"roomy": (ROOMY_FACE, "clean"), "close": (CLOSE_FACE, "pop")}
 CARD_ITEM = "intro-cards-verify"
 CARD_TITLES = {"en": fx.EN_TITLE, "tr": "şehir rehberi: lizbon, ilk gün"}
 CARD_SHAPES = (0.75, 1.333, 1.0, 0.75)
@@ -334,9 +344,14 @@ def card_photos() -> list[Any]:
 
 
 def card_problems(
-    boxes: list[NormalizedBox], face: NormalizedBox, captions: list[NormalizedBox], inks: list
+    boxes: list[NormalizedBox],
+    face: NormalizedBox,
+    captions: list[NormalizedBox],
+    inks: list,
+    card_mode: str = "clean",
 ) -> list[str]:
-    """Why these card boxes may not be drawn: measured here, not with the layout's own rule."""
+    """Why these card boxes may not be drawn: measured here, not with the layout's own rule. A
+    pop card may cover her face."""
     from app.services.phone_card_layout import WATERMARK_BOX, boxes_intersect  # noqa: PLC0415
 
     rows = [NormalizedBox(0.0, c.top, 1.0, c.bottom) for c in captions]  # the caption row
@@ -345,7 +360,7 @@ def card_problems(
         if min(box.left, box.top, 1 - box.right, 1 - box.bottom) < 0.02 - 1e-6:
             problems.append(f"card {n} leaves the frame")
         for what, others in (
-            ("face", [face]),
+            ("face", [] if card_mode == "pop" else [face]),
             ("caption row", rows),
             ("wordmark", [WATERMARK_BOX]),
             ("title ink", inks),
@@ -359,9 +374,11 @@ def card_problems(
     return problems
 
 
-def _card_offer(lang: str, index: int) -> tuple[Any, str, list[dict], dict]:
+def _card_offer(
+    lang: str, index: int, face: tuple = ROOMY_FACE
+) -> tuple[Any, str, list[dict], dict]:
     job, vid, rows = fx.talking_job(
-        CARD_TITLES[lang], face=ROOMY_FACE, job_id=uuid.UUID(int=_SEED_JOB.int + 500 + index)
+        CARD_TITLES[lang], face=face, job_id=uuid.UUID(int=_SEED_JOB.int + 500 + index)
     )
     arguments = {"user_id": fx.USER_ID, "plan_item_id": CARD_ITEM}
     offer = st.build_offer(
@@ -370,19 +387,28 @@ def _card_offer(lang: str, index: int) -> tuple[Any, str, list[dict], dict]:
     return job, vid, rows, offer
 
 
+def card_mode_of(option: dict[str, Any]) -> str:
+    """Which card mode the offer laid this look out in (server only, in its rows)."""
+    style = option["rows"][0]["source_params"]["title_look"]["intro_style"]
+    return str(style.get("card_mode", "clean"))
+
+
 def card_cases() -> list[dict[str, Any]]:
+    from app.cli.verify_intro_scenes import card_time_reasons  # noqa: PLC0415
     from app.services.intro_card_pool import card_box  # noqa: PLC0415
 
     cases = []
-    for index, lang in enumerate(CARD_TITLES):
-        job, vid, rows, offer = _card_offer(lang, index)
+    for (framing, (face_box, expected)), (index, lang) in itertools.product(
+        CARD_FRAMINGS.items(), enumerate(CARD_TITLES)
+    ):
+        job, vid, rows, offer = _card_offer(lang, index, face_box)
         probe = st.read_title_rows(rows, "talking")
         captions = caption_boxes(job.assembly_plan, vid, probe)
-        face = NormalizedBox(*ROOMY_FACE)
+        face = NormalizedBox(*face_box)
         case: dict[str, Any] = {
             "route": "talking",
             "language": lang,
-            "title_kind": "cards",
+            "title_kind": f"cards_{framing}",
             "title": CARD_TITLES[lang],
             "available": offer["available"],
             "reason": offer["reason"],
@@ -395,7 +421,7 @@ def card_cases() -> list[dict[str, Any]]:
         looks = [o for o in offer.get("options", []) if o.get("cards")]
         case["looks"] = len(looks)
         if not looks:
-            case["problems"].append("no card look on a roomy framing")
+            case["problems"].append(f"no card look on the {framing} framing")
         aspects = {photo.media_id: photo.aspect for photo in card_photos()}
         for option in looks:
             cards = [st.IntroCard.model_validate(c) for c in option["cards"]]
@@ -412,7 +438,12 @@ def card_cases() -> list[dict[str, Any]]:
             boxes = [card_box(c.x_frac, c.y_frac, c.scale, aspects[c.media_id]) for c in cards]
             preview = [p["box"] for p in (option.get("preview") or {}).get("cards") or []]
             inks, frame = _ink_boxes(option["rows"], face, boxes)
-            problems = card_problems(boxes, face, captions, inks)
+            mode = card_mode_of(option)
+            problems = card_problems(boxes, face, captions, inks, mode)
+            windows = [(c.start_s, c.end_s) for c in cards]
+            problems += card_time_reasons(windows, option["rows"], mode)
+            if mode != expected:
+                problems.append(f"a {mode} look on the {framing} framing (expected {expected})")
             if refusal:
                 problems.append(f"Save {refusal}")
             if [round(b["left"], 6) for b in preview] != [round(b.left, 6) for b in boxes]:
@@ -420,6 +451,7 @@ def card_cases() -> list[dict[str, Any]]:
             case["options"].append(
                 {
                     "key": option["key"],
+                    "card_mode": mode,
                     "cards": [c.model_dump(mode="json") for c in cards],
                     "save": refusal or "ok",
                     "card_problems": problems,
@@ -714,6 +746,24 @@ def controls() -> list[dict[str, Any]]:
     moved = [card_box(centre[0], centre[1], 0.2, 0.75)]
     caught = card_problems(moved, face, [], [])
     add("N10_a_card_on_her_face_is_caught", bool(caught), "; ".join(caught[:1]) or "clean")
+    # N11: a pop card held 2 s (Emir's short time is 1.5 s) is caught by the time check.
+    from app.cli.verify_intro_scenes import card_time_reasons  # noqa: PLC0415
+
+    pops = [o for o in _card_offer("en", 11, CLOSE_FACE)[3].get("options", []) if o.get("cards")]
+    if pops:
+        cards = pops[0]["cards"]
+        held = [(c["start_s"], c["start_s"] + 2.0) for c in cards]
+        late = card_time_reasons(held, pops[0]["rows"], card_mode_of(pops[0]))
+        on_time = card_time_reasons(
+            [(c["start_s"], c["end_s"]) for c in cards], pops[0]["rows"], card_mode_of(pops[0])
+        )
+        add(
+            "N11_a_pop_card_held_2s_is_caught",
+            bool(late) and not on_time,
+            f"held: {'; '.join(late[:1]) or 'clean'}; as offered: {on_time or 'clean'}",
+        )
+    else:
+        add("N11_a_pop_card_held_2s_is_caught", False, "no pop look on the close framing")
     return out
 
 
@@ -723,7 +773,7 @@ def controls() -> list[dict[str, Any]]:
 def build_montage(cases: list[dict[str, Any]], out_path: str) -> None:
     thumb_w, pad, label_h, cols = 220, 8, 44, 5
     thumb_h = int(thumb_w * PORTRAIT.height / PORTRAIT.width)
-    picked = [c for c in cases if c["title_kind"] == "cards"] + [
+    picked = [c for c in cases if c["title_kind"].startswith("cards")] + [
         c for c in cases if c["title_kind"] in ("long_first_line", "dotted_dotless", "two_words")
     ]
     tiles = [

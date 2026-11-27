@@ -408,8 +408,9 @@ phone.
   title `receipt`). Any failure is `props_do_not_fit` with `rows=None`: today's title, no card.
   The default stage is the typical close speaker, where the title alone fills the room above the
   head, so it always declines there; a caller with real evidence passes it as `stage`.
-* **Time.** The cards share the title's window. `shift_past_text_windows` keeps cards a chooser
-  placed off a title; it does not apply to cards laid out with the title.
+* **Time.** Clean cards share the title's window; pop cards show briefly (see "Short cards over
+  her" below). `shift_past_text_windows` keeps cards a chooser placed off a title; it does not
+  apply to cards laid out with the title.
 * **For stages B and C.** Boxes are fractions of the 1080x1920 canvas. A phone card has a width
   only (`SubtitledOverlayCard.scale`; its height is the photo's aspect), so the aspects passed must
   be the real photos'. A bottom-row card can sit below `CAPTION_BAND_TOP_FRAC` when the band was
@@ -500,7 +501,9 @@ her title rows carry it. A real offer on the verify fixture:
 ```
 
 Fractions are of the 1080x1920 canvas: `x_frac`/`y_frac` the card's centre, `scale` its width; the
-phone draws the photo at its own shape. The card shows with the title (`start_s`-`end_s`).
+phone draws the photo at its own shape. Each card shows for its own `start_s`-`end_s`: a clean
+card exactly the title's window, a pop card a shorter window inside it (see "Short cards over
+her"); the phone must honour each card's own times.
 `caption_clear` is informational: the Save decides it again from the same evidence (a
 `MediaOverlay` has no such field).
 
@@ -561,8 +564,8 @@ of the frame height (0.112 for a 3:4 photo). By framing (room from `room` in the
   the layout's bottom bands assume captions under the face.
 * The one fit: face 0.38-0.52 with captions estimated at 0.67-0.71.
 
-So on today's Talking framings the offer will almost never carry cards; it omits them, and nothing
-else changes. Proposals for the taste call (stage A rules, not changed here):
+So on today's Talking framings the clean layout will almost never fit (Emir's answer, 2026-11-27:
+short cards may cover her, next section). Proposals considered for the taste call:
 
 1. One-row arrangements: cards only above the title, or only under her. By the room numbers
    (estimated, not compiled), a row under her alone fits 3 framings (8 edits) and a row above the
@@ -589,3 +592,79 @@ were, M46), a request-time measure of the real photo bytes (the Save hashes them
 plain title over intro cards on a build below 62 (it never sees card looks, but a card look saved
 from another device keeps its cards under a plain look it applies), stickers (KRI-1616), and the
 phone (stage C).
+
+## Short cards over her (KRI-1615, pop)
+
+Emir's ruling (2026-11-27), after card looks on real close Talking stills: "it is okay for cards
+to cover the face sometimes if it is shown for a short time". For the creator: on a close selfie,
+where no card fits off her face, a card look now flashes her photos around the title for a moment
+instead of offering nothing. For the next engineer: a second card mode in the layout, asked only
+after the clean one has no room; the wire and the Save path are stage B's. Failure modes
+M47-M59 and their guards are in the `services/intro_props_layout.py` docstring.
+
+* **Data shape.** `intro_props_layout.CARD_MODES`, one `CardMode` per mode: `over_her` (may a card
+  cover her face and body), `max_width`, and the card's time (`lead_s`, `stagger_s`, `hold_s`).
+  `clean` is stage A exactly (no face, the title's whole window). `pop`: up to 0.45 of the frame
+  wide; the first card enters 0.25 s after the title, each next one 0.25 s later in slot order,
+  each shows at most `SHORT_CARD_S` (1.5 s, Emir's "short time") and never after the title
+  leaves; a card left under `MIN_CARD_S` (0.5 s, the shortest title) declines the look
+  (`title_too_brief`). `PropCard` carries `start_s`/`end_s`, `PropsLayout.mode` the mode used.
+* **Layout** (`layout_intro_props(..., mode="pop")`). The title is placed alone, exactly as without
+  cards (its rows and receipt are the alone placement, and the compile first runs the plain
+  look's preflight, so a pop title is one the plain look would show). Every card keeps every clean
+  rule except the face: off the title's block padded by `GAP`, the caption row, the watermark,
+  the frame edge (no bleed) and the other cards (`GAP` apart). One width for all cards of a look:
+  the widest step of `POP_WIDTHS` (0.45 down to the card minimum) at which every card finds a spot.
+  Each card, in slot order, takes the free spot covering the least of her eyes and mouth
+  (`face_centre`: the middle 60% across, 25-85% down, of the saved face box, checked by eye on the
+  real stills), then the least face, then the one nearest its slot's home (the arrangement's rows
+  against the frame's top and bottom edges). Candidates are the edges of the frame, the home and
+  every box, where coverage and clearance change; a brute force on a 0.005 grid agrees (tested).
+* **Which scenes.** The compile pops only when asked (`compile_intro_scene(card_mode="pop")`) and
+  never on the stand-in speaker. The offer (`fit_card_looks`) runs every clean try first, exactly
+  as stage B (a golden holds the clean card looks byte for byte); a pop pass, capped at
+  `MAX_POP_COMPILES` (4), runs for an arrangement only when none of its clean tries laid cards out
+  and one declined for `no_room_for_cards`. A clean layout the Save refused never falls to pop.
+* **Wire.** Unchanged: the same `IntroCard` keys, now with each card's own `start_s`/`end_s`
+  (absolute, from `CardMode.windows` over the title's window; clean cards keep the title's window
+  exactly). The key stays `<font_pair>+<arrangement>`; at most one look per arrangement, so a pop
+  and a clean look never share it. A pop look's rows carry `card_mode: "pop"` in
+  `title_look.intro_style`, which the phone carries untouched (server only: tools and the
+  verify read it).
+* **Save.** Stage B's path: the pin, `caption_clear` decided over each card's own window, and the
+  dry run now requires every card compiled where AND when it was offered (`card_moved`). The
+  e2e proves a pop card starting 0.25 s in and leaving before the title Saves and compiles at its
+  window, the title still passes the render contract's approval, and a photo that is not hers is
+  still refused.
+
+**Measured (2026-11-27, offline: real face bands, synthetic photos, no Save).**
+`app/cli/intro_cards_fit.py` over stage B's 13 prod Talking edits (portrait photos; square and
+landscape the same):
+
+| Captions from | Card look before | Card look now | Declines now |
+| --- | --- | --- | --- |
+| receipt boxes only | 0 of 13 | 12 of 13 (all pop) | `title_unclean` 1 |
+| receipt, else style estimate | 1 of 13 | 12 of 13 (11 pop, 1 clean) | `title_unclean` 1 |
+
+On those pop looks a single card covers at most 0-61% of her eyes and mouth (median 13%) for
+`around_speaker` and 0-20% (median 0-13%) for the grid with portrait photos; square photos cover
+more (up to 90% on one small face, where a 0.45-wide card cannot avoid it). Each card shows
+1.5 s, but some card is on her face for up to 1.75 s (`around_speaker`) or 2.25 s (the grid),
+because the cards enter 0.25 s apart. On the five real stills of the blind compare: 3 of the 4
+with a saved face now get both looks (0 before); the fourth's title cannot sit clean alone, the
+fifth has no saved face (M45).
+
+**Checks.** `tests/pipeline/test_intro_scene_props.py` (pop layout, windows, the brute force, the
+stand-in speaker, the plain preflight, EN and TR, the golden), `tests/routes/test_intro_cards_e2e.py`
+(a real close face band: offer, Save, recompiled windows, approval, the wrong-photo control),
+`make verify-intro-scenes` (pop cases on a close speaker drawn on the plate, the orange box is
+her eyes and mouth; four controls that must fail: a pop card on the title, on the caption row,
+past the frame edge, held 2 s; a pop sweep) and `make verify-intro-styles` (the offer on a real
+close face band: every card look pop, every roomy one clean; N11 a pop card held 2 s is caught).
+
+Not covered: whether 1.5 s per card, or 2.25 s of some card on her face, reads as "a short time"
+(Emir's call on the real-stills sheet); card styling (a border or shadow) and the phone (stage
+C); the preview frame is taken after the title's last entrance and draws every card even when a
+short title cuts the last ones before that moment. On a host (local Skia and fonts) the pop sweep
+lists two `grotesk_loop` titles the squeeze presses into each other on the close face, with or
+without cards (the plain offer's own placement measures the same); the prod image lists none.
