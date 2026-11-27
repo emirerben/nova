@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.4.0] - 2026-11-27
+
+### Changed
+- feat(ios): redesign clip reordering in chat (CA-3, KRI-1642) (#2537) <!-- release-pr: 2537 -->
+
 ## [0.91.3.0] - 2026-11-27
 
 ### Changed
