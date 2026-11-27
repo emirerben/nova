@@ -310,7 +310,7 @@ and a stagger with nothing to stagger.
 * **Menus.** The seeded pick draws both from their own random stream (a seed's other choices are
   unchanged) and only where `check_scene` allows; the agent is issued them in its menu and closed
   response schema (prompt_version moved). Ref 1 now expresses its late accent, ref 5 its tuck (still
-  `partial`: the 2+2 photo grid is KRI-1615).
+  `partial`: KRI-1615 lays out the 2+2 photo grid, not offered yet).
 * **Render check.** `make verify-intro-scenes` adds both moves in EN and TR (the late accent also as
   a still before it enters), tucks in the sweep, and four controls that must fail: a tuck drawn
   without its declaration, a declared tuck drawn as a gap, a late line at a delay nobody issued, a
@@ -373,3 +373,58 @@ Checks: `tests/pipeline/test_intro_scene_sound.py`, `tests/tasks/test_intro_scen
 (real worker, EN and TR, every gate closed), `tests/tasks/test_intro_scene_sound_save.py` (real
 worker then real Saves, Range), `tests/services/test_sfx_library.py` (real Postgres) and the free
 replay evals.
+
+## Photo cards (KRI-1615, stage A)
+
+Her own photos as cards in an intro scene, with the title laid out between them (the moodboard's
+Pinterest collage and 2 + 2 grid; refs 3 and 5). Stage A is the backend layout only and is dark:
+nothing calls it in production, there is no flag, and the seeded pick, the "Try intro styles"
+offer and the model arm are unchanged (they pass no photos, so they issue no arrangement). Stage B
+offers cards as a one-tap suggestion (never automatic); stage C draws them on the phone.
+
+* **Data shape.** `IntroScene.arrangement`: `none` | `around_speaker` | `grid_2x2`, mapped through
+  `ARRANGEMENTS` (card rows: `top`, above the title, or `bottom`, under the speaker; how many cards
+  side by side, their alignment and width share; a grid's rows share one height). The scene holds
+  no media id: slots `prop_1`..`prop_N` take the owned photos the caller issued, in that order,
+  row by row, left to right. `issue_menu(title, photo_count=n)` issues an arrangement only with a
+  photo for every slot (2 and 4); `check_scene` refuses the rest and a `mid_frame` title
+  (`arrangement_needs_a_top_zone`). Omitted from dumps while `none`; title rows never declare it.
+* **Layout** (`app/services/intro_props_layout.py`, no I/O): `layout_intro_props(arrangement,
+  aspects, rows, stage=Stage(faces, caption_band), canvas=, position=)`. The title alone first
+  (its size and height), then the card rows in the room left (the top row above the title, which
+  sits right above the face; the bottom row under the face, above or below the caption row), then
+  the title again with the card rows, full width and padded, in `avoid` (`place_title_look`
+  tolerates 5% coverage of an `avoid` box). It declines unless that receipt is clean, the title
+  keeps the size it had alone, no line box touches a card and the block sits between the rows.
+  Every box stays `EDGE_INSET` inside the frame (no bleed: KRI-1616), off every face, the caption
+  row (from `CAPTION_BAND_TOP_FRAC` down when the band was not measured) and the Kria watermark,
+  off the other cards (strict `boxes_intersect`), in its photo's own shape, no side under
+  `MIN_WIDTH`. A centred row that meets the watermark narrows on both sides, so a grid's columns
+  stay over each other. `phone_card_layout` is unchanged.
+* **Compile.** `compile_intro_scene(..., photo_aspects=, stage=)`: an arrangement scene runs the
+  layout instead of the typical-face preflight, then draws the placed rows and measures the ink
+  (off the faces, captions and safe zone, touching no card). Its rows come back already placed,
+  with `props` (`PropsLayout`: `cards`, each `slot`, `box`, `z` and `x_frac`/`y_frac`/`scale`; the
+  title `receipt`). Any failure is `props_do_not_fit` with `rows=None`: today's title, no card.
+  The default stage is the typical close speaker, where the title alone fills the room above the
+  head, so it always declines there; a caller with real evidence passes it as `stage`.
+* **Time.** The cards share the title's window. `shift_past_text_windows` keeps cards a chooser
+  placed off a title; it does not apply to cards laid out with the title.
+* **For stages B and C.** Boxes are fractions of the 1080x1920 canvas. A phone card has a width
+  only (`SubtitledOverlayCard.scale`; its height is the photo's aspect), so the aspects passed must
+  be the real photos'. A bottom-row card can sit below `CAPTION_BAND_TOP_FRAC` when the band was
+  measured: it then needs `caption_clear`, or the compile pulls its centre up onto the captions.
+  Anything that places the title again (the worker's caption re-placement, a chat move) must keep
+  the card rows in `avoid`. Removing one card leaves the others where they are; a layout for fewer
+  photos is not defined here.
+
+Checks: `tests/pipeline/test_intro_scene_props.py` (M19-M30 in the `intro_scene` docstring) and
+the props cases of `make verify-intro-scenes`: ref 3 with `around_speaker` and ref 5 with
+`grid_2x2`, EN and TR, on a speaker framed with room above and below (`ROOMY_FACE`), cards drawn
+as neutral plates under the real Skia title; four controls that must fail (a card on the title,
+on the face, past the frame edge, on the caption row); wiring checks (a close speaker declines, no
+grid from three photos, no arrangement without photos); and `sweep_props`.
+
+Not covered: five, overlapping or tilted cards (ref 3), bleed (KRI-1616), the offer and Save
+(stage B), drawing on the phone (stage C). Refs 3 and 5 stay `partial` until her photos can be
+offered.

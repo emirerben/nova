@@ -107,6 +107,7 @@ def test_a_scene_without_an_arrangement_dumps_and_declares_as_before():
 
 skia = pytest.importorskip("skia")
 
+from app.cli import verify_intro_scenes as check  # noqa: E402
 from app.pipeline.canvas import PORTRAIT  # noqa: E402
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC  # noqa: E402
 from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: E402
@@ -119,10 +120,10 @@ from app.services.phone_card_layout import (  # noqa: E402
 )
 
 # A speaker centred with room above and below (refs 3 and 5 on the taste board), her captions
-# measured under her.
-ROOMY_FACE = mod.NormalizedBox(0.32, 0.44, 0.68, 0.66)
-CAPTIONS = (0.81, 0.87)
-ROOMY = props.Stage((ROOMY_FACE,), CAPTIONS)
+# measured under her: the stage `make verify-intro-scenes` draws the cards on.
+ROOMY_FACE = check.ROOMY_FACE
+CAPTIONS = (check.CAPTION_BOX.top, check.CAPTION_BOX.bottom)
+ROOMY = check.ROOMY_STAGE
 PORTRAIT_PHOTOS = (0.75, 0.75, 0.75, 0.75)
 ASPECTS = {
     "portrait": PORTRAIT_PHOTOS,
@@ -267,7 +268,7 @@ def test_a_close_speaker_leaves_no_room_for_cards():
 def test_the_title_keeps_the_size_it_has_without_the_cards():
     rows, position = _title_rows(TITLE_EN, "en", stack="script_over_serif")
     alone, _receipt = mod.place_on_stage(
-        rows, position, PORTRAIT, faces=ROOMY.faces, avoid=[mod.NormalizedBox(0, *CAPTIONS, 1)]
+        rows, position, PORTRAIT, faces=ROOMY.faces, avoid=[ROOMY.caption_box]
     )
     layout = _layout("grid_2x2", PORTRAIT_PHOTOS, stack="script_over_serif")
     assert [row["size_px"] for row in layout.rows] == [row["size_px"] for row in alone]
@@ -338,13 +339,11 @@ def _compile(arrangement, photos=PORTRAIT_PHOTOS, language="en", *, stage=ROOMY,
 @pytest.mark.parametrize("language", ["en", "tr"])
 @pytest.mark.parametrize("arrangement", ["around_speaker", "grid_2x2"])
 def test_her_title_compiles_between_her_cards_and_still_reads_as_her_title(arrangement, language):
-    from app.cli.verify_intro_scenes import approval_matches
-
     out = _compile(arrangement, language=language, stack="script_over_serif")
     assert out.reason == "ok", out.reason
     assert out.props is not None and out.rows is out.props.rows
     _assert_drawable(out.props, PORTRAIT_PHOTOS)
-    [match] = approval_matches(out.rows, TITLES[language])
+    [match] = check.approval_matches(out.rows, TITLES[language])
     assert match["start_s"] == 0.0
 
 

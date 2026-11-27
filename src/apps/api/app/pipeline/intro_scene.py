@@ -218,8 +218,8 @@ INKS: dict[str, str] = {
     "white": "#FFFFFF",
 }
 # Zone id -> the `place_title_look` position it maps to (None = its default: the band above the
-# head, then below or above the face). Zones it cannot honour (under the chin, between cards)
-# are not offered: see `prompts/intro_teardowns.json`.
+# head, then below or above the face). Zones it cannot honour (under the chin) are not offered:
+# see `prompts/intro_teardowns.json`. A title between cards is an arrangement's (KRI-1615).
 ZONES: dict[str, str | None] = {"above_head": None, "top_left": "top_left", "mid_frame": "middle"}
 # Entrance id -> (solid-row effect, accent-row effect), TextElement effects both renderers draw.
 ENTRANCES: dict[str, tuple[str, str]] = {
@@ -791,7 +791,6 @@ def _compile_with_props(
         position=ZONES[scene.zone],
     )
     if isinstance(layout, PropsDecline):
-        log.info("intro_scene.props_declined", reason=layout.reason, arrangement=scene.arrangement)
         return IntroCompile(None, "props_do_not_fit")
     unsat = _ink_problem(
         layout.rows,
