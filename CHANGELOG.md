@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.13.0] - 2026-11-27
+
+### Fixed
+- fix(kria): a late-entering accent line stays in its intro title's group (KRI-1618) (#2545) <!-- release-pr: 2545 -->
+
 ## [0.91.12.0] - 2026-11-27
 
 ### Fixed
