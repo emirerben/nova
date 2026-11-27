@@ -35,6 +35,7 @@ other consumer of this module treats it as read-only derived state.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import ValidationError
@@ -338,6 +339,7 @@ def lanes_from_editor_sections(
     inspect: Any = None,
     background_touched: bool = False,
     background: SubtitledBackground | None = None,
+    caption_clear: Mapping[str, bool] | None = None,
 ) -> PhoneSubtitledLanes:
     """Rebuild the lanes to compile from a committed editor Save.
 
@@ -368,6 +370,10 @@ def lanes_from_editor_sections(
     (KRI-1117): ``background`` is then the new value (``None`` clears it). Untouched, the
     previous background carries over verbatim, like every other lane.
 
+    ``caption_clear`` (KRI-1615): the server's ``caption_clear`` mark for this Save's intro cards
+    by card id (`intro_card_pool.caption_clear_decisions`); every other card keeps the mark its
+    previous lanes gave it.
+
     Raises ``ValueError`` (never silently drops content) when: a committed
     sound effect doesn't reference the catalog, its audio format/path is
     unplayable/invalid, or its trim window is empty; a committed overlay
@@ -378,7 +384,9 @@ def lanes_from_editor_sections(
     that isn't already a video card while the KRI-183 video-PiP gate is off.
     """
     return PhoneSubtitledLanes(
-        overlays=_overlays_from_sections(media_overlays, previous=previous, visuals=visuals),
+        overlays=_overlays_from_sections(
+            media_overlays, previous=previous, visuals=visuals, caption_clear=caption_clear
+        ),
         sound_effects=_sound_effects_from_sections(
             sound_effects, previous=previous, inspect=inspect or inspect_library_asset
         ),
@@ -979,6 +987,7 @@ def _overlays_from_sections(
     *,
     previous: PhoneSubtitledLanes | None,
     visuals: tuple[PhoneVisualBinding, ...],
+    caption_clear: Mapping[str, bool] | None = None,
 ) -> list[SubtitledOverlayCard]:
     if media_overlays is None:
         return list(previous.overlays) if previous is not None else []
@@ -1065,12 +1074,14 @@ def _overlays_from_sections(
                 source_start_s=source_start_s,
                 **({"display_mode": "fullscreen"} if display_mode == "fullscreen" else {}),
                 # Qendresa item 15: the mark is the server's, never the client's -- it only
-                # survives on a pip card the previous lanes already marked.
+                # survives on a pip card the previous lanes already marked, or is decided for
+                # this Save's intro cards from server evidence (KRI-1615, `intro_card_pool`).
                 **(
                     {"caption_clear": True}
                     if display_mode == "pip"
-                    and previous_card is not None
-                    and previous_card.caption_clear
+                    and (caption_clear or {}).get(
+                        card_id, previous_card is not None and previous_card.caption_clear
+                    )
                     else {}
                 ),
             )
