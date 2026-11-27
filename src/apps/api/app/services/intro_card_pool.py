@@ -61,8 +61,11 @@ class CardPhoto:
     kind: str = PHOTO
 
 
-def card_id(index: int) -> str:
-    return f"{INTRO_CARD_ID_PREFIX}{index + 1}"
+def card_id(index: int, kind: str = PHOTO) -> str:
+    """``intro-card-<n>`` for a photo, ``intro-card-sticker-<n>`` for a sticker: both keep the
+    prefix every apply replaces, and a build before stickers drops a look holding the second (its
+    parser takes numeric ids with ``prop_<n>`` slots only)."""
+    return f"{INTRO_CARD_ID_PREFIX}{'sticker-' if kind == STICKER else ''}{index + 1}"
 
 
 def is_intro_card_id(value: object) -> bool:

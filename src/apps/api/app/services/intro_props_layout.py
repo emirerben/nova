@@ -63,6 +63,30 @@ tests/pipeline/test_intro_scene_props.py, tests/routes/test_intro_cards_e2e.py a
 * M58 the clean looks change. Clean cards keep the title's window exactly; a golden of stage B's
   card looks on a framing with room holds them byte for byte.
 * M59 a photo that is not hers on a pop card: the Save path is stage B's, so it is refused.
+
+Stickers and edge bleed (KRI-1616). A sticker arrangement (`intro_scene.Arrangement.stickers`)
+puts her transparent pictures at anchors beside the title instead of photo rows: the ``sticker``
+mode keeps them off her face for the title's whole window, ``sticker_pop`` (asked only when no
+spot off her face exists) lets them cover her for a pop card's window. With ``bleed`` (a build at
+`INTRO_EDGE_BLEED_PROTOCOL`) a ``pop`` or sticker card may hang past the side of the frame by up
+to its mode's `CardMode.bleed` of its width; a sticker's home hangs `BLEED_HOME` past. All of it
+is a preference of the offer: her own drag later is bounded only by the renderer
+(`portable_visual.EDGE_BLEED_KEEP_ON_CANVAS`). Continuing the list:
+
+* M60 bleed for a build that cannot draw or show it. ``bleed`` defaults off; the offer passes it
+  only for a bleed build, and the clean and pop looks without it are stage B's byte for byte.
+* M61 a card hangs further than its mode allows, or past the top or bottom. `card_problems`
+  checks each side edge against ``bleed`` x the card's width; the top and bottom keep
+  `EDGE_INSET` (the reach is centred well inside [0, 1], so every build draws it).
+* M62 a sticker over the title, the caption row, the watermark or another sticker: the same
+  keep-outs as a pop card, and the compile measures the drawn title ink against every sticker.
+* M63 a sticker over her face for the title's whole window. ``sticker`` keeps every face out;
+  only ``sticker_pop`` may cover her, and only for a pop card's short window.
+* M64 a sticker the size of a card. `STICKER_WIDTHS` (0.30 down to 0.18 of the frame): one width
+  for every sticker of a look, the widest at which each finds a spot.
+* M65 a sticker drawn under a photo card. Stickers take z from `STICKER_Z` up.
+* M66 a photo arrangement asked in a sticker mode, or the reverse: declined
+  (``mode_not_for_arrangement``).
 """
 
 from __future__ import annotations
@@ -102,6 +126,19 @@ SHORT_CARD_S = 1.5
 MIN_CARD_S = 0.5
 CLEAN = "clean"
 POP = "pop"
+STICKER = "sticker"
+STICKER_POP = "sticker_pop"
+STICKER_MODES = (STICKER, STICKER_POP)
+# Stickers are decoration (Emir, 2026-11-27): a share of the frame's width, never a card's size.
+STICKER_WIDTHS = (0.30, 0.26, 0.22, 0.18)
+# Stickers draw over any photo card (an intro card's z follows its slot from 0).
+STICKER_Z = 10
+# How far past the side of the frame a card hangs at most, and a sticker at home, as a share of
+# its own width (Emir: 20-35%).
+BLEED_MAX = 0.35
+BLEED_HOME = 0.25
+# Pop card widths tried, widest first; every card of a look takes the same one.
+POP_WIDTHS = (0.45, 0.40, 0.35, 0.30, 0.25, 0.20, MIN_WIDTH)
 
 
 @dataclass(frozen=True)
@@ -119,6 +156,11 @@ class CardMode:
     lead_s: float
     stagger_s: float
     hold_s: float | None
+    # Widths tried, widest first, for a card placed spot by spot (pop, stickers); empty: rows.
+    widths: tuple[float, ...] = ()
+    # How far past the side of the frame a card may hang where the build allows bleed, a share
+    # of its width (0: never).
+    bleed: float = 0.0
 
     def windows(self, count: int, start: float, end: float) -> list[tuple[float, float]] | None:
         """Each card's ``(start, end)`` while the title shows over ``[start, end]``, slot order;
@@ -140,10 +182,34 @@ CARD_MODES: dict[str, CardMode] = {
         over_her=False, max_width=1.0 - 2 * EDGE_INSET, lead_s=0.0, stagger_s=0.0, hold_s=None
     ),
     # A short moodboard flash: the title lands first, the cards follow a beat apart.
-    POP: CardMode(over_her=True, max_width=0.45, lead_s=0.25, stagger_s=0.25, hold_s=SHORT_CARD_S),
+    POP: CardMode(
+        over_her=True,
+        max_width=0.45,
+        lead_s=0.25,
+        stagger_s=0.25,
+        hold_s=SHORT_CARD_S,
+        widths=POP_WIDTHS,
+        bleed=BLEED_MAX,
+    ),
+    STICKER: CardMode(
+        over_her=False,
+        max_width=STICKER_WIDTHS[0],
+        lead_s=0.0,
+        stagger_s=0.0,
+        hold_s=None,
+        widths=STICKER_WIDTHS,
+        bleed=BLEED_MAX,
+    ),
+    STICKER_POP: CardMode(
+        over_her=True,
+        max_width=STICKER_WIDTHS[0],
+        lead_s=0.25,
+        stagger_s=0.25,
+        hold_s=SHORT_CARD_S,
+        widths=STICKER_WIDTHS,
+        bleed=BLEED_MAX,
+    ),
 }
-# Pop card widths tried, widest first; every card of a look takes the same one.
-POP_WIDTHS = (0.45, 0.40, 0.35, 0.30, 0.25, 0.20, MIN_WIDTH)
 # Her eyes and mouth inside a saved face box (a padded union of detector boxes), as fractions of
 # it: checked by eye on five real Talking stills (docs/pipelines/intro-scene.md).
 FACE_CENTRE = (0.20, 0.25, 0.80, 0.85)
@@ -219,8 +285,13 @@ class PropsDecline:
     reason: str
 
 
-def slot_name(index: int) -> str:
-    return f"prop_{index + 1}"
+def slot_name(index: int, kind: str = "photo") -> str:
+    return f"{'sticker' if kind == 'sticker' else 'prop'}_{index + 1}"
+
+
+def side_reach(mode: str, width: float, *, bleed: bool) -> float:
+    """How far past each side of the frame a card ``width`` wide may reach: negative is an inset."""
+    return CARD_MODES[mode].bleed * width if bleed and CARD_MODES[mode].bleed else -EDGE_INSET
 
 
 # --- the rules every box keeps ------------------------------------------------------------
@@ -233,6 +304,7 @@ def card_problems(
     stage: Stage,
     canvas: Any,
     mode: str = CLEAN,
+    bleed: bool = False,
 ) -> list[str]:
     """Why these card boxes (slot order, one aspect each) may not be drawn; empty when they may."""
     rules = CARD_MODES[mode]
@@ -240,10 +312,11 @@ def card_problems(
     problems: list[str] = []
     for index, (box, aspect) in enumerate(zip(boxes, aspects, strict=True)):
         slot = slot_name(index)
+        reach = side_reach(mode, box.width, bleed=bleed)
         if (
-            box.left < EDGE_INSET - _EPS
+            box.left < -reach - _EPS
             or box.top < EDGE_INSET - _EPS
-            or box.right > 1 - EDGE_INSET + _EPS
+            or box.right > 1 + reach + _EPS
             or box.bottom > 1 - EDGE_INSET + _EPS
         ):
             problems.append(f"{slot}: off the frame {box.as_dict()}")
@@ -388,16 +461,19 @@ def layout_intro_props(
     canvas: Any,
     position: str | None = None,
     mode: str = CLEAN,
+    bleed: bool = False,
 ) -> PropsLayout | PropsDecline:
-    """The cards of ``arrangement`` (``aspects``: width over height of each photo the caller
+    """The cards of ``arrangement`` (``aspects``: width over height of each picture the caller
     issued, slot order) and ``rows`` (the compiled title, unplaced) placed together on
-    ``stage``, by the rules of ``mode`` (`CARD_MODES`). Never raises a geometry problem: every
-    one is a `PropsDecline`."""
+    ``stage``, by the rules of ``mode`` (`CARD_MODES`), past the side of the frame only with
+    ``bleed``. Never raises a geometry problem: every one is a `PropsDecline`."""
     from app.pipeline.title_family import title_window  # noqa: PLC0415
 
     spec = ARRANGEMENTS.get(arrangement)
-    if spec is None or not spec.rows:
+    if spec is None or not spec.slots:
         return PropsDecline("no_arrangement")
+    if (spec.kind == "sticker") != (mode in STICKER_MODES):
+        return PropsDecline("mode_not_for_arrangement")  # M66
     aspects = [float(a) for a in aspects[: spec.slots]]
     if len(aspects) < spec.slots or any(not a > 0 for a in aspects):
         return PropsDecline("too_few_photos")
@@ -412,8 +488,10 @@ def layout_intro_props(
     if not placement_is_clean(alone):
         return PropsDecline("title_unclean")
     placed = (
-        _pop_layout(spec, aspects, alone_rows, alone, stage=stage, canvas=canvas)
-        if mode == POP
+        _spot_layout(
+            spec, aspects, alone_rows, alone, stage=stage, canvas=canvas, mode=mode, bleed=bleed
+        )
+        if CARD_MODES[mode].widths
         else _clean_layout(
             spec, aspects, rows, alone_rows, alone, stage=stage, canvas=canvas, position=position
         )
@@ -421,8 +499,9 @@ def layout_intro_props(
     if isinstance(placed, PropsDecline):
         return placed
     boxes, placed_rows, receipt = placed
+    z_from = STICKER_Z if spec.kind == "sticker" else 0
     cards = tuple(
-        PropCard(slot_name(i), box, i, *window)
+        PropCard(slot_name(i, spec.kind), box, z_from + i, *window)
         for i, (box, window) in enumerate(zip(boxes, windows, strict=True))
     )
     return PropsLayout(arrangement, cards, placed_rows, receipt, mode)
@@ -488,10 +567,12 @@ def _clean_layout(
     return boxes, placed, receipt
 
 
-# --- pop: short cards that may cover her ----------------------------------------------------
+# --- cards placed spot by spot: pop cards and stickers ---------------------------------------
+
+NO_SPOT = "no_spot_for_cards"
 
 
-def _pop_layout(
+def _spot_layout(
     spec: Arrangement,
     aspects: list[float],
     alone_rows: list[dict[str, Any]],
@@ -499,13 +580,17 @@ def _pop_layout(
     *,
     stage: Stage,
     canvas: Any,
+    mode: str,
+    bleed: bool,
 ) -> _Placed | PropsDecline:
-    """The title exactly as it sits alone (M54) and the cards around it (M48-M53)."""
+    """The title exactly as it sits alone (M54) and the cards around it (M48-M53, M60-M64)."""
     title, lines = _block(alone_rows, canvas)
-    boxes = _pop_boxes(spec, aspects, title=title, stage=stage, canvas=canvas)
+    boxes = _spot_boxes(
+        spec, aspects, title=title, stage=stage, canvas=canvas, mode=mode, bleed=bleed
+    )
     if boxes is None:
-        return PropsDecline("no_spot_for_cards")
-    if card_problems(boxes, aspects, stage=stage, canvas=canvas, mode=POP):
+        return PropsDecline(NO_SPOT)
+    if card_problems(boxes, aspects, stage=stage, canvas=canvas, mode=mode, bleed=bleed):
         return PropsDecline("card_off_limits")
     if any(boxes_intersect(line, box) for line in lines for box in boxes):
         return PropsDecline("title_touches_a_card")
@@ -530,28 +615,57 @@ def _homes(spec: Arrangement, width: float, heights: Sequence[float]) -> list[tu
     return homes
 
 
-def _pop_boxes(
+def _sticker_homes(
+    spec: Arrangement, width: float, heights: Sequence[float], title: NormalizedBox, reach: float
+) -> list[tuple[float, float]]:
+    """Each sticker's home centre: against its side of the frame (hanging `BLEED_HOME` of its
+    width past it when ``reach`` allows bleed), level with its corner of the title block."""
+    home_reach = min(reach, BLEED_HOME * width) if reach > 0 else reach
+    homes: list[tuple[float, float]] = []
+    for anchor, height in zip(spec.stickers, heights, strict=True):
+        x = 1.0 + home_reach - width / 2 if anchor.edge == "right" else width / 2 - home_reach
+        y = (
+            title.top - GAP - height / 2
+            if anchor.corner == "top"
+            else title.bottom + GAP + height / 2
+        )
+        homes.append((x, y))
+    return homes
+
+
+def _spot_boxes(
     spec: Arrangement,
     aspects: Sequence[float],
     *,
     title: NormalizedBox,
     stage: Stage,
     canvas: Any,
+    mode: str,
+    bleed: bool,
 ) -> list[NormalizedBox] | None:
-    """Every card at the widest `POP_WIDTHS` step where all of them find a spot, slot order."""
+    """Every card at the widest of its mode's widths where all of them find a spot, slot order."""
+    rules = CARD_MODES[mode]
     ratio = canvas.width / canvas.height
     fixed = [title.padded(GAP), stage.caption_box, WATERMARK_BOX]
-    for width in POP_WIDTHS:
+    if not rules.over_her:
+        fixed += list(stage.faces)
+    for width in rules.widths:
         heights = [width * ratio / aspect for aspect in aspects]
         if any(
             min(width, height / ratio) < MIN_WIDTH - _EPS or height > 1.0 - 2 * EDGE_INSET
             for height in heights
         ):
             continue
+        reach = side_reach(mode, width, bleed=bleed)
+        homes = (
+            _sticker_homes(spec, width, heights, title, reach)
+            if spec.kind == "sticker"
+            else _homes(spec, width, heights)
+        )
         boxes: list[NormalizedBox] = []
-        for home, height in zip(_homes(spec, width, heights), heights, strict=True):
+        for home, height in zip(homes, heights, strict=True):
             keep_out = [*fixed, *(box.padded(GAP) for box in boxes)]
-            box = _best_spot(width, height, home, keep_out, stage=stage, canvas=canvas)
+            box = _best_spot(width, height, home, keep_out, stage=stage, canvas=canvas, reach=reach)
             if box is None:
                 break
             boxes.append(box)
@@ -568,13 +682,15 @@ def _best_spot(
     *,
     stage: Stage,
     canvas: Any,
+    reach: float = -EDGE_INSET,
 ) -> NormalizedBox | None:
     """The free ``width`` x ``height`` spot covering least of her face centre, then least face,
-    then nearest ``home`` (M52). The candidates are the frame's, home's and every box's edges:
-    coverage and clearance only change there."""
+    then nearest ``home`` (M52), reaching ``reach`` past each side of the frame (`side_reach`).
+    The candidates are the frame's, home's and every box's edges: coverage and clearance only
+    change there."""
     centres = [face_centre(face) for face in stage.faces]
     edges = [*keep_out, *stage.faces, *centres]
-    low_x, high_x = EDGE_INSET, 1.0 - EDGE_INSET - width
+    low_x, high_x = -reach, 1.0 + reach - width
     low_y, high_y = EDGE_INSET, 1.0 - EDGE_INSET - height
     xs = sorted(
         x

@@ -170,7 +170,7 @@ SoundId = Literal[
 StaggerId = Literal["together", "accent_after"]
 StackId = Literal["gap", "script_over_serif"]
 SoundCueId = Literal["none", "accent", "each"]
-ArrangementId = Literal["none", "around_speaker", "grid_2x2"]
+ArrangementId = Literal["none", "around_speaker", "grid_2x2", "sticker_edge", "stickers_edge"]
 
 _MAX_RUNS = 5
 _MIN_RUN_CHARS = 2
@@ -279,13 +279,29 @@ class CardRow:
 
 
 @dataclass(frozen=True)
+class StickerAnchor:
+    """Where a sticker sits at home: level with the title block's top line (``top``, just above
+    it) or its last line (``bottom``, just under it), against one side of the frame, hanging past
+    it where the build allows bleed (KRI-1616)."""
+
+    corner: Literal["top", "bottom"]
+    edge: Literal["left", "right"]
+
+
+@dataclass(frozen=True)
 class Arrangement:
     rows: tuple[CardRow, ...]
     same_height: bool = False  # every row takes the shortest row's height (a grid)
+    # KRI-1616: her transparent pictures, one per anchor, instead of photo rows.
+    stickers: tuple[StickerAnchor, ...] = ()
 
     @property
     def slots(self) -> int:
-        return sum(row.cards for row in self.rows)
+        return sum(row.cards for row in self.rows) + len(self.stickers)
+
+    @property
+    def kind(self) -> Literal["photo", "sticker"]:
+        return "sticker" if self.stickers else "photo"
 
 
 # Arrangement id -> its card rows; `services.intro_props_layout` turns them into boxes. Slots are
@@ -299,6 +315,11 @@ ARRANGEMENTS: dict[str, Arrangement] = {
     "grid_2x2": Arrangement(
         (CardRow("top", 2, "center", 1.0), CardRow("bottom", 2, "center", 1.0)),
         same_height=True,
+    ),
+    # KRI-1616 (refs 2 and 4): one sticker off the title's top right, or two on either side.
+    "sticker_edge": Arrangement((), stickers=(StickerAnchor("top", "right"),)),
+    "stickers_edge": Arrangement(
+        (), stickers=(StickerAnchor("top", "left"), StickerAnchor("bottom", "right"))
     ),
 }
 
@@ -433,9 +454,10 @@ class IntroMenu:
         return tuple(s for s in self.stacks if font_pair in STACKS[s].pairs)
 
 
-def issue_menu(title: str, *, photo_count: int = 0) -> IntroMenu:
-    """``photo_count``: owned photos the caller can fill card slots with (KRI-1615). An
-    arrangement is issued only when there is a photo for every slot."""
+def issue_menu(title: str, *, photo_count: int = 0, sticker_count: int = 0) -> IntroMenu:
+    """``photo_count`` / ``sticker_count``: her opaque photos and transparent pictures the caller
+    can fill card slots with (KRI-1615, KRI-1616). An arrangement is issued only when there is a
+    picture of its kind for every slot."""
     text = " ".join(word.text for word in title_words(title))
     pairs = tuple(
         pair_id
@@ -451,7 +473,11 @@ def issue_menu(title: str, *, photo_count: int = 0) -> IntroMenu:
         staggers=tuple(STAGGERS),
         stacks=tuple(STACKS),
         sound_cues=tuple(SOUND_CUES),
-        arrangements=tuple(a for a, spec in ARRANGEMENTS.items() if spec.slots <= photo_count),
+        arrangements=tuple(
+            a
+            for a, spec in ARRANGEMENTS.items()
+            if spec.slots <= (sticker_count if spec.kind == "sticker" else photo_count)
+        ),
     )
 
 
@@ -784,8 +810,9 @@ def _compile_with_props(
     stage: Stage | None,
     canvas: Any,
     card_mode: str,
+    bleed: bool = False,
 ) -> IntroCompile:
-    """The title rows placed with the scene's cards (M22-M29, M47-M56), or
+    """The title rows placed with the scene's cards (M22-M29, M47-M56, S7-S15), or
     ``props_do_not_fit``."""
     from app.services import intro_props_layout as layout_mod  # noqa: PLC0415
 
@@ -805,6 +832,7 @@ def _compile_with_props(
         canvas=canvas,
         position=ZONES[scene.zone],
         mode=card_mode,
+        bleed=bleed,
     )
     if isinstance(layout, layout_mod.PropsDecline):
         return IntroCompile(None, "props_do_not_fit", card_layout=layout.reason)
@@ -839,6 +867,7 @@ def compile_intro_scene(
     photo_aspects: Sequence[float] = (),
     stage: Stage | None = None,
     card_mode: str = "clean",
+    bleed: bool = False,
 ) -> IntroCompile:
     """Today's title rows for ``scene`` over ``title``, or ``rows=None`` and the reason. Never
     raises: a decline, a bad scene, an unissued id or any error all mean "use today's title".
@@ -848,7 +877,8 @@ def compile_intro_scene(
     laid out with its cards on ``stage`` by the rules of ``card_mode``
     (`intro_props_layout.CARD_MODES`; default: the typical speaker, whose title fills the room
     above the head, so it declines there, and only for ``clean``); any failure is
-    ``props_do_not_fit``."""
+    ``props_do_not_fit``. ``bleed`` (KRI-1616, a build at `INTRO_EDGE_BLEED_PROTOCOL`): the
+    mode's cards may hang past the side of the frame by its `CardMode.bleed`."""
     from app.pipeline.phone_title_look import (  # noqa: PLC0415
         split_title_lines,
         title_look_text,
@@ -860,7 +890,9 @@ def compile_intro_scene(
                 scene = IntroScene.model_validate(scene)
             except ValidationError:
                 return IntroCompile(None, "invalid_scene")
-        issued = menu or issue_menu(title, photo_count=len(photo_aspects))
+        # The caller's pictures are of the kind the scene's arrangement takes.
+        count = len(photo_aspects)
+        issued = menu or issue_menu(title, photo_count=count, sticker_count=count)
         reason = check_scene(scene, title, issued)
         if reason:
             return IntroCompile(None, reason)
@@ -892,6 +924,7 @@ def compile_intro_scene(
                 stage=stage,
                 canvas=canvas,
                 card_mode=card_mode,
+                bleed=bleed,
             )
         unsat = preflight_rows(rows, ZONES[scene.zone], canvas)
         if unsat:

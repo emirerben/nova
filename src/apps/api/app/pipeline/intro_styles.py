@@ -796,6 +796,8 @@ MAX_CARD_COMPILES = 8
 # Pop tries per arrangement, after its clean tries all declined (M44, M47): the pop title is the
 # title alone, so a later try mostly differs by font pair only.
 MAX_POP_COMPILES = 4
+# Sticker tries per mode (KRI-1616); the sticker title is the title alone, as for pop.
+MAX_STICKER_COMPILES = 4
 # A card look's title sits between its card rows, so only the top-band zones are tried.
 _CARD_ZONES = ("above_head", "top_left")
 _PLACEMENT_EPS = 1e-6
@@ -861,6 +863,32 @@ def cards_allowed(protocol: int | None) -> bool:
         settings.intro_cards_enabled
         and protocol is not None
         and protocol >= settings.intro_cards_min_client_protocol
+    )
+
+
+@dataclass(frozen=True)
+class CardMoves:
+    """What a card look may do for this request beyond stage B's cards (KRI-1616, S1-S4)."""
+
+    stickers: bool = False  # her transparent pictures as a sticker look
+    bleed: bool = False  # cards hanging past the side of the frame
+
+
+def card_moves(protocol: int | None) -> CardMoves:
+    """The moves this build can show, each behind its own protocol (=999 turns it off).
+
+    Stickers also need the phone's overlay lane to keep alpha (``alphaOverlay`` verified): the
+    offer only reaches a phone render (`route_of`), and no code moves a device variant to the
+    cloud, whose card pass flattens a picture to JPEG unless ``MEDIA_OVERLAY_ALPHA_ENABLED``."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not cards_allowed(protocol):
+        return CardMoves()
+    assert protocol is not None
+    return CardMoves(
+        stickers=protocol >= settings.intro_stickers_min_client_protocol
+        and "alphaOverlay" in set(settings.phone_render_verified_features),
+        bleed=protocol >= settings.intro_edge_bleed_min_client_protocol,
     )
 
 
@@ -978,12 +1006,14 @@ def fit_card_looks(
     declines: dict[str, int],
     accept: Callable[[Look, list[IntroCard], Sequence[Any]], str | None] | None = None,
     restore: Sequence[Mapping[str, Any]] | None = None,
+    moves: CardMoves = CardMoves(),
 ) -> list[CardLook]:
     """At most one card look per arrangement her photos fill (``around_speaker`` from two,
-    ``grid_2x2`` from four), in `ARRANGEMENTS` order. Each candidate x top-band zone is compiled
-    with the arrangement on her real stage (`compile_intro_scene` lays the cards and the title out
-    together and declines anything that does not fit); the first that the dry-run Save accepts,
-    cards where they were placed, is the look. Never raises."""
+    ``grid_2x2`` from four), in `ARRANGEMENTS` order, then (``moves.stickers``) one sticker look:
+    the sticker arrangement with the most slots her transparent pictures fill. Each candidate x
+    top-band zone is compiled with the arrangement on her real stage (`compile_intro_scene` lays
+    the cards and the title out together and declines anything that does not fit); the first that
+    the dry-run Save accepts, cards where they were placed, is the look. Never raises."""
     from app.services import intro_card_pool as pool  # noqa: PLC0415
     from app.services import intro_props_layout as props_mod  # noqa: PLC0415
 
@@ -991,9 +1021,12 @@ def fit_card_looks(
         declines[f"cards:{reason}"] = declines.get(f"cards:{reason}", 0) + 1
         return []
 
+    stickers = [p for p in photos if p.kind == pool.STICKER] if moves.stickers else []
     photos = [photo for photo in photos if photo.kind == pool.PHOTO]
-    if route != "talking" or len(photos) < 2:
-        return decline("too_few_photos") if route == "talking" else []
+    if route != "talking":
+        return []
+    if len(photos) < 2 and not stickers:
+        return decline("too_few_photos")
     try:
         stage = card_stage(variant, assembly, title, evidence)
         in_the_way = stage is not None and cards_in_the_way(assembly, variant, title)
@@ -1004,7 +1037,7 @@ def fit_card_looks(
         return decline("no_face")
     if in_the_way:
         return decline("in_the_way")
-    menu = scene_mod.issue_menu(title.words, photo_count=len(photos))
+    menu = scene_mod.issue_menu(title.words, photo_count=len(photos), sticker_count=len(stickers))
     tries = [
         (candidate, zone)
         for candidate in pick.pick_candidates(
@@ -1047,6 +1080,7 @@ def fit_card_looks(
             photo_aspects=[photo.aspect for photo in chosen],
             stage=stage,
             card_mode=mode,
+            bleed=moves.bleed,
         )
         laid_out = out.card_layout == scene_mod.CARD_LAYOUT_FIT
         if out.rows is None or out.props is None:
@@ -1055,9 +1089,10 @@ def fit_card_looks(
         windows = props_mod.CARD_MODES[mode].windows(len(chosen), *title_window(rows))
         if windows is None:
             return "title_too_brief", True
+        kind = scene_mod.ARRANGEMENTS[arrangement].kind
         placed = [
             {
-                "id": pool.card_id(index),
+                "id": pool.card_id(index, kind),
                 "slot": card.slot,
                 "media_id": photo.media_id,
                 "gcs_path": photo.gcs_path,
@@ -1111,20 +1146,37 @@ def fit_card_looks(
             decline(f"{mode}:compile_budget")
         return declined
 
-    looks: list[CardLook] = []
-    for arrangement in menu.arrangements:
-        if arrangement == scene_mod.NO_ARRANGEMENT:
-            continue
-        chosen = list(photos[: scene_mod.ARRANGEMENTS[arrangement].slots])
-        result = first_fit(arrangement, chosen, props_mod.CLEAN, MAX_CARD_COMPILES)
-        if (
+    def second_mode(result: CardLook | list[tuple[str, bool]], reason: str) -> bool:
+        """No try laid its cards out and one ran out of room (M47): ask the mode that may
+        cover her."""
+        return (
             not isinstance(result, CardLook)
             and not any(laid_out for _reason, laid_out in result)
-            and any(reason == props_mod.NO_ROOM for reason, _laid_out in result)
-        ):
+            and any(declined == reason for declined, _laid_out in result)
+        )
+
+    looks: list[CardLook] = []
+    specs = scene_mod.ARRANGEMENTS
+    for arrangement in menu.arrangements:
+        if arrangement == scene_mod.NO_ARRANGEMENT or specs[arrangement].kind == "sticker":
+            continue
+        chosen = list(photos[: specs[arrangement].slots])
+        result = first_fit(arrangement, chosen, props_mod.CLEAN, MAX_CARD_COMPILES)
+        if second_mode(result, props_mod.NO_ROOM):
             result = first_fit(arrangement, chosen, props_mod.POP, MAX_POP_COMPILES)  # M47
         if isinstance(result, CardLook):
             looks.append(result)
+    sticker_arrangements = sorted(
+        (a for a in menu.arrangements if specs[a].kind == "sticker"), key=lambda a: -specs[a].slots
+    )
+    for arrangement in sticker_arrangements:
+        chosen = list(stickers[: specs[arrangement].slots])
+        result = first_fit(arrangement, chosen, props_mod.STICKER, MAX_STICKER_COMPILES)
+        if second_mode(result, props_mod.NO_SPOT):
+            result = first_fit(arrangement, chosen, props_mod.STICKER_POP, MAX_STICKER_COMPILES)
+        if isinstance(result, CardLook):
+            looks.append(result)
+            break
     return looks
 
 
@@ -1335,6 +1387,7 @@ def build_offer(
     *,
     save_arguments: Mapping[str, Any] | None = None,
     photos: Sequence[Any] = (),
+    moves: CardMoves = CardMoves(),
 ) -> dict[str, Any]:
     """The wire offer for one variant: up to `MAX_LOOKS` fitted looks plus "No intro style".
 
@@ -1343,7 +1396,8 @@ def build_offer(
 
     ``photos`` (KRI-1615, `intro_card_pool.CardPhoto`, oldest first) are her card photos, given
     only when the route resolved `cards_allowed`; with them, card looks follow the plain looks
-    (M31: without them the offer is today's)."""
+    (M31: without them the offer is today's). ``moves`` (KRI-1616, `card_moves`): what this build
+    can show beyond photo cards."""
     from app.pipeline.canvas import PORTRAIT  # noqa: PLC0415
 
     started = time.monotonic()
@@ -1449,6 +1503,7 @@ def build_offer(
             declines=declines,
             accept=accept_cards,
             restore=title.restore,
+            moves=moves,
         )
         if photos
         else []
