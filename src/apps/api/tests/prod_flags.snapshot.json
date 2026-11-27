@@ -665,6 +665,10 @@
       "source": "default",
       "value": true
     },
+    "kria_research_selection_enabled": {
+      "source": "default",
+      "value": false
+    },
     "kria_researched_look_after_render_enabled": {
       "source": "default",
       "value": true
@@ -1334,6 +1338,10 @@
     "research_correction_round_enabled": {
       "source": "default",
       "value": true
+    },
+    "research_selection_min_client_protocol": {
+      "source": "default",
+      "value": 60
     },
     "research_unmet_is_note_enabled": {
       "source": "default",

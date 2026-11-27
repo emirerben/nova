@@ -122,6 +122,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "pinned result and never reads the request for it",
         None,
     ),
+    "kria/research_selection.py": (
+        "carry",
+        "CA-5: rebuilds the approved binding's digest around the kept research and hands the "
+        "pinned request, unread, to the same readiness assessment decide_approval runs",
+        frozenset({"_mint", "_readiness"}),
+    ),
     "kria/runtime.py": (
         "carry",
         "approval decision forwards the request to the claim; the approve-time clip-order rebind "

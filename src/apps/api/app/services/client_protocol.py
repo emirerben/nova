@@ -136,6 +136,8 @@ CLIP_DIM_PROTOCOL = 58
 # build keeps one layout for the whole video and is told to update for a recipe that has more.
 SPEAKER_SECTIONS_PROTOCOL = 59
 
+RESEARCH_SELECTION_PROTOCOL = 60
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

@@ -170,6 +170,15 @@ class ClipOrderOpsIn(_StrictBody):
     confirm: bool = False
 
 
+class ResearchSelectionIn(_StrictBody):
+    """The sourced facts the creator keeps on a research draft (CA-5): ``selection_id`` and the
+    ``fact_id`` values of its ``research_preview``. An id the preview never showed is ignored;
+    an empty list continues without the facts."""
+
+    selection_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    kept_fact_ids: list[str] = Field(default_factory=list, max_length=24)
+
+
 class RequestOutcomeContext(_StrictBody):
     relation: Literal["original", "continuation", "retry", "revision", "recovery", "unclassified"]
     parent_turn_id: uuid.UUID | None = None
@@ -220,6 +229,9 @@ class SubmitTurnBody(_StrictBody):
     # only builds at `clip_order_card_min_client_protocol` send it. `message` is a placeholder the
     # server never plans.
     clip_order_ops: ClipOrderOpsIn | None = None
+    # CA-5 (KRIA_RESEARCH_SELECTION_ENABLED): the facts kept on a research draft; only builds at
+    # `research_selection_min_client_protocol` send it. `message` is a placeholder never planned.
+    research_selection: ResearchSelectionIn | None = None
 
     @model_validator(mode="after")
     def _manual_edits_well_formed(self) -> SubmitTurnBody:

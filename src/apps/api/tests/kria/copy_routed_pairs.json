@@ -3065,6 +3065,21 @@
    "app/kria/clip_ties.py",
    "More than one of your clips shows {shown}{more}. For each one, keep the clips to use ticked and untick the others.",
    "Şunlar birden fazla klibinde görünüyor: {shown}{more}. Her biri için kullanılacak klipleri işaretli bırak, diğerlerinin işaretini kaldır."
+  ],
+  [
+   "app/kria/brief_checks.py",
+   "You chose to continue without the sourced facts.",
+   "Kaynaklı bilgiler olmadan devam etmeyi seçtin."
+  ],
+  [
+   "app/kria/research_selection.py",
+   "Continuing without the sourced facts.",
+   "Kaynaklı bilgiler olmadan devam ediyorum."
+  ],
+  [
+   "app/kria/research_selection.py",
+   "Kept {kept} of {total} sourced facts.",
+   "{total} kaynaklı bilginin {kept} tanesini tuttum."
   ]
  ],
  "retired": [

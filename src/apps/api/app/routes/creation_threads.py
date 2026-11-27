@@ -483,6 +483,10 @@ class CreationCapabilitiesOut(BaseModel):
     # `clip_order_card_min_client_protocol` get the card; an older build is told the order as text.
     # False = the ledger flag is off or the kill switch (999) is on.
     clip_order_cards: bool = False
+    # CA-5: a research preview may carry `selection_id` and per-fact `fact_id`, and the app may
+    # send `research_selection` on a turn. Only builds at `research_selection_min_client_protocol`
+    # get the ids. False = KRIA_RESEARCH_SELECTION_ENABLED is off or the kill switch (999) is on.
+    research_selections: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -4413,6 +4417,10 @@ async def capabilities(
         "clip_order_cards": bool(
             settings.kria_clip_order_ledger_enabled
             and settings.clip_order_card_min_client_protocol < 999
+        ),
+        "research_selections": bool(
+            settings.kria_research_selection_enabled
+            and settings.research_selection_min_client_protocol < 999
         ),
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,

@@ -1370,6 +1370,11 @@ class Settings(BaseSettings):
     # text and can still reorder in chat. Kill switch: `fly secrets set
     # CLIP_ORDER_CARD_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
     clip_order_card_min_client_protocol: int = 54
+    # CA-5 (KRIA_RESEARCH_SELECTION_ENABLED): only app builds declaring `X-Kria-Client-Protocol`
+    # >= this see fact ids on a research preview or may send `research_selection`; an older
+    # build that sends it gets 426. Kill switch: `fly secrets set
+    # RESEARCH_SELECTION_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
+    research_selection_min_client_protocol: int = 60
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
@@ -1637,6 +1642,11 @@ class Settings(BaseSettings):
     # sourced wording + citations, and pin them to the approval (`app.kria.research_preview`).
     # false => the render researches after approval exactly as before. Restart api + worker.
     kria_research_preview_enabled: bool = True
+    # CA-5 (KRI-1644): the creator keeps or drops each sourced fact of a research draft before
+    # approving it (`app.kria.research_selection`): a new draft with only the kept facts pinned
+    # and a new approval card, no search, no model call. false = the preview carries no ids and
+    # `research_selection` is ignored, byte-identical. Apply: fly secret + restart api + worker.
+    kria_research_selection_enabled: bool = False
     # Prompt fidelity (disclosure): before approval, say what the route that will render the
     # draft does not read (unread strategy fields, asks like animated text, research after
     # approval), show the length the plan renders, and approve (with that disclosure) an ask

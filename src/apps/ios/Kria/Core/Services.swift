@@ -1466,7 +1466,7 @@ enum KriaClientProtocolContract {
     /// 59 (KRI-1558): draws the speaker's layout per section (`speaker_background.layout_windows`, needs `speakerSections`)
     /// and plays a take split with nothing removed as one shot: no declick at the join and the cut-out keeps its state
     /// across it. The server plans layouts per topic only for this protocol.
-    static let version = 59
+    static let version = 60
     static let header = "X-Kria-Client-Protocol"
     /// KRI-1558 (Tadic, #prs 2026-11-26): renderer features this build advertises in `X-Kria-Client-Features`. Another
     /// branch's build can take the same protocol number without the renderer, so the server offers these only to a build

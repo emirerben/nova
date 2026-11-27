@@ -49,7 +49,7 @@ import hashlib
 import json
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlsplit
@@ -655,25 +655,78 @@ def _source_label(source: Any) -> str:
     return host
 
 
-def _shown_texts(prepared: PreparedResearch) -> list[tuple[list[str], Any]]:
+@dataclass(frozen=True)
+class _Shown:
+    lines: list[str]
+    row: Any
+    members: tuple[int, ...]
+
+
+def _shown_texts(prepared: PreparedResearch) -> list[_Shown]:
     """Each explanation as the creator reads it on screen: a design's heading and its detail
     are one fact in one window (KRI-1582), listed once with both lines; anything else is one
-    row. Each entry is ``(lines, first_row)`` with the pair's sources merged on the row."""
-    shown: list[tuple[list[str], Any]] = []
+    row. ``row`` is the first row with the pair's sources merged; ``members`` index
+    ``prepared.texts``."""
+    shown: list[_Shown] = []
     pairs: dict[int, int] = {}
-    for row in prepared.texts:
+    for index, row in enumerate(prepared.texts):
         tag = row.design
         if tag is not None and tag.level in ("heading", "detail") and tag.pair is not None:
             at = pairs.get(tag.pair)
             if at is not None:
-                lines, first = shown[at]
-                merged = list({s.url: s for s in [*first.sources, *row.sources]}.values())
-                ordered = [*lines, row.text] if tag.level == "detail" else [row.text, *lines]
-                shown[at] = (ordered, first.model_copy(update={"sources": merged}))
+                first = shown[at]
+                merged = list({s.url: s for s in [*first.row.sources, *row.sources]}.values())
+                detail = tag.level == "detail"
+                shown[at] = _Shown(
+                    lines=[*first.lines, row.text] if detail else [row.text, *first.lines],
+                    row=first.row.model_copy(update={"sources": merged}),
+                    members=(*first.members, index) if detail else (index, *first.members),
+                )
                 continue
             pairs[tag.pair] = len(shown)
-        shown.append(([row.text], row))
+        shown.append(_Shown(lines=[row.text], row=row, members=(index,)))
     return shown
+
+
+def _fact_id(prepared: PreparedResearch, fact: _Shown) -> str:
+    # From the rows themselves, so a kept fact keeps its id in the narrowed draft.
+    rows = [prepared.texts[index].model_dump(mode="json") for index in fact.members]
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:16]
+
+
+def selectable(prepared: PreparedResearch) -> bool:
+    """Facts the creator can keep or drop: footage explanations, never text layers (a layer
+    answers an ask of its own, and a translation names its source layer by index)."""
+    return prepared.status == "ready" and bool(prepared.texts) and not prepared.layers
+
+
+def fact_ids(prepared: PreparedResearch) -> list[str]:
+    return [_fact_id(prepared, fact) for fact in _shown_texts(prepared)]
+
+
+def selection_id(prepared: PreparedResearch) -> str:
+    """The card a selection is made on: the research and the facts it shows. A narrowed draft
+    shows fewer facts, so its card has a new id and a late selection from an older card is
+    told apart from one made on the card the creator now sees."""
+    return hashlib.sha256(
+        json.dumps([prepared.basis_digest, fact_ids(prepared)]).encode()
+    ).hexdigest()
+
+
+def keep(prepared: PreparedResearch, kept_ids: Sequence[str]) -> PreparedResearch:
+    """``prepared`` with only the shown facts named in ``kept_ids``; an id it does not show is
+    ignored. None kept is the creator's waiver (``waived``)."""
+    wanted = set(kept_ids)
+    members = sorted(
+        index
+        for fact in _shown_texts(prepared)
+        if _fact_id(prepared, fact) in wanted
+        for index in fact.members
+    )
+    texts = [prepared.texts[index] for index in members]
+    return prepared.model_copy(update={"texts": texts, "waived": not texts})
 
 
 def preview_lines(prepared: PreparedResearch) -> str:
@@ -684,9 +737,10 @@ def preview_lines(prepared: PreparedResearch) -> str:
             tr="Kaynaklı ekran açıklamaları (yalnızca bu taslağı onaylarsan eklenir):",
         )
     ]
-    for texts, row in _shown_texts(prepared):
+    for fact in _shown_texts(prepared):
+        row = fact.row
         sources = ", ".join(dict.fromkeys(_source_label(source) for source in row.sources))
-        quoted = " / ".join(f"“{text}”" for text in texts)
+        quoted = " / ".join(f"“{text}”" for text in fact.lines)
         lines.append(
             f"- {_clock(row.start_s)}–{_clock(row.end_s)} · {quoted} · "
             + say(en="Source", tr="Kaynak")
@@ -703,22 +757,33 @@ def preview_lines(prepared: PreparedResearch) -> str:
     return "\n".join(lines)
 
 
-def preview_payload(prepared: PreparedResearch) -> dict[str, Any]:
-    """Structured preview for clients that draw a sources card."""
+def preview_payload(prepared: PreparedResearch, *, with_ids: bool = False) -> dict[str, Any]:
+    """Structured preview for clients that draw a sources card. ``with_ids`` (CA-5) names each
+    fact and the card showing them, for a client that sends ``research_selection``."""
     return {
         "version": 1,
         "retrieved_at": prepared.retrieved_at,
+        **({"selection_id": selection_id(prepared)} if with_ids else {}),
         "explanations": [
-            {
-                "text": "\n".join(texts),
-                "start_s": row.start_s,
-                "end_s": row.end_s,
-                "sources": [source.model_dump(mode="json") for source in row.sources],
-            }
-            for texts, row in [
-                *_shown_texts(prepared),
-                *(([layer.text], layer) for layer in prepared.layers),
-            ]
+            *(
+                {
+                    **({"fact_id": _fact_id(prepared, fact)} if with_ids else {}),
+                    "text": "\n".join(fact.lines),
+                    "start_s": fact.row.start_s,
+                    "end_s": fact.row.end_s,
+                    "sources": [source.model_dump(mode="json") for source in fact.row.sources],
+                }
+                for fact in _shown_texts(prepared)
+            ),
+            *(
+                {
+                    "text": layer.text,
+                    "start_s": layer.start_s,
+                    "end_s": layer.end_s,
+                    "sources": [source.model_dump(mode="json") for source in layer.sources],
+                }
+                for layer in prepared.layers
+            ),
         ],
     }
 
@@ -827,6 +892,52 @@ def for_draft(
         prepared=result.model_copy(update={"requirement_id": requirement.id}),
         requirement=requirement,
     )
+
+
+def selection_basis_sync(
+    db: Any,
+    *,
+    document: Any,
+    item: Any,
+    creator_id: object,
+    source_event: Any,
+    language: str | None,
+) -> str | None:
+    """The basis ``for_draft`` gives the saved draft's pinned research now, from what the draft
+    and its turn persist (CA-5), or ``None`` when that research cannot be selected.
+
+    The draft commit offers a selection only when this reproduces the pinned basis, and a
+    selection is applied only while it still does, so a moved Visual or slot window is stale.
+    """
+    from app.services.phone_montage_preflight import _ready_visuals  # noqa: PLC0415
+    from app.services.phone_rollout import stamped_client_protocol  # noqa: PLC0415
+    from app.tasks.kria_runtime import _full_creator_request_sync  # noqa: PLC0415
+
+    binding = document.brief_binding
+    if binding is None or binding.prepared_research is None or source_event is None:
+        return None
+    pinned = PreparedResearch.model_validate(binding.prepared_research)
+    if not selectable(pinned):
+        return None
+    strategy = document.strategy or {}
+    payload = source_event.payload if isinstance(source_event.payload, dict) else {}
+    request = _full_creator_request_sync(
+        db, thread_id=uuid.UUID(binding.thread_id), through_sequence=int(source_event.sequence)
+    )
+    draft = for_draft(
+        binding.prepared_research,
+        brief=binding.resolve(),
+        strategy=document.strategy,
+        media_snapshot=binding.media_snapshot,
+        terms={"creator_request": request or "", "language": language},
+        creator_id=creator_id,
+        edit_format=strategy.get("edit_format") or item.edit_format,
+        visuals=lambda: _ready_visuals(
+            db, item=item, user_id=_uuid(creator_id), strategy=document.strategy
+        ),
+        client_protocol=stamped_client_protocol(payload.get("client_protocol")),
+    )
+    return draft.prepared.basis_digest if draft is not None and draft.ready else None
 
 
 def load_inputs_sync(planned: Any, snapshot: Mapping[str, Any], *, turn_id: uuid.UUID):  # noqa: ANN201

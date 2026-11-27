@@ -41,6 +41,7 @@ _STRUCTURED_KEYS = (
     "song_order",
     "song_range",
     "clip_order_ops",  # the order card's drag is a card answer, not text
+    "research_selection",  # CA-5: the facts kept on a research card
     "scope",
     "protected_region",  # KRI-901: a mark answers the mark card
 )

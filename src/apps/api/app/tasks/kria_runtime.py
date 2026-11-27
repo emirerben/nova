@@ -4789,7 +4789,17 @@ def _complete_draft_turn(
                 ),
                 **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
                 **(
-                    {"research_preview": _research_preview_payload(draft_research)}
+                    {
+                        "research_preview": _research_preview_payload(
+                            db,
+                            draft_research,
+                            document=document,
+                            item=item,
+                            thread=thread,
+                            turn=turn,
+                            client_protocol=client_protocol,
+                        )
+                    }
                     if draft_research is not None and draft_research.ready
                     else {}
                 ),
@@ -4821,10 +4831,41 @@ def _complete_draft_turn(
         return _Completion(committed=True, publish_analysis_id=publish_analysis_id)
 
 
-def _research_preview_payload(draft_research: Any) -> dict[str, Any]:
+def _research_preview_payload(
+    db: Any,
+    draft_research: Any,
+    *,
+    document: Any,
+    item: Any,
+    thread: Any,
+    turn: Any,
+    client_protocol: int | None,
+) -> dict[str, Any]:
     from app.kria import research_preview  # noqa: PLC0415
 
-    return research_preview.preview_payload(draft_research.prepared)
+    prepared = draft_research.prepared
+    # CA-5: fact ids only where a selection would be applied, so an offered card never 409s.
+    with_ids = False
+    if (
+        settings.kria_research_selection_enabled
+        and client_protocol is not None
+        and client_protocol >= settings.research_selection_min_client_protocol
+    ):
+        try:
+            with_ids = (
+                research_preview.selection_basis_sync(
+                    db,
+                    document=document,
+                    item=item,
+                    creator_id=thread.creator_id,
+                    source_event=db.get(CreationThreadEvent, turn.source_event_id),
+                    language=thread_reply_language(thread),
+                )
+                == prepared.basis_digest
+            )
+        except Exception:  # noqa: BLE001 - ids are optional; the draft must still commit
+            log.exception("kria_research_selection_basis_failed", turn_id=str(turn.id))
+    return research_preview.preview_payload(prepared, with_ids=with_ids)
 
 
 @contextmanager

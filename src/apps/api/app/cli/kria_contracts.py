@@ -1293,10 +1293,10 @@ def _ts_type(schema: dict[str, Any]) -> str:
 # `suggestion` = KRI-756 chip taps; `steer` / `only_if_queued` = Steer now
 # (docs/pipelines/steer-now.md).
 _WEB_HIDDEN_FIELDS = {
-    "SubmitTurnBody": ("suggestion",),
+    "SubmitTurnBody": ("suggestion", "research_selection"),
     "TurnCancelBody": ("steer", "only_if_queued"),
 }
-_WEB_HIDDEN_DEFS = frozenset({"SuggestionTapIn"})
+_WEB_HIDDEN_DEFS = frozenset({"SuggestionTapIn", "ResearchSelectionIn"})
 
 
 def typescript_contract() -> str:

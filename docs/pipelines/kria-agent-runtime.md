@@ -930,6 +930,66 @@ exactly that wording on exactly those clips.
   runtime turn over scratch Postgres + real phone worker, recorded model I/O) writes
   `.dev/kri-881/report.json`.
 
+### Keeping some of the facts (CA-5, KRI-1644)
+
+The creator ticks the sourced facts to keep before approving. `app.kria.research_selection`
+saves the narrowed draft and asks for a new approval inside the request: no planner, search or
+model call.
+
+- **Preview.** With `KRIA_RESEARCH_SELECTION_ENABLED` on and a drafting build at
+  `research_selection_min_client_protocol` (60), `research_preview` carries `selection_id` and a
+  `fact_id` per explanation. A heading and its detail are one fact. The `fact_id` is a hash of
+  the fact's own rows, so a kept fact keeps its id in the narrowed draft. The `selection_id`
+  names the card: `research_preview.selection_id` hashes the pinned `basis_digest` with the shown
+  fact ids. Each narrowed draft shows fewer facts, so its card carries a new `selection_id`, and
+  the client sends the id of the latest card it shows. Text-layer research (word sequences,
+  translations) carries no ids. A layer answers an ask of its own, and a translation names its
+  source by index.
+- **Request.** `POST /creation-threads/{id}/turns` with `research_selection: {selection_id,
+  kept_fact_ids}`. `message` is a placeholder that is never planned or stored. A build below the
+  minimum gets 426 `client_update_required`. With the flag off the key is ignored and the
+  message runs as a normal turn.
+- **Stale.** 409 `research_selection_stale` when `selection_id` is not the card of the pending
+  approval's head draft (and the post is not that draft's own selection again, see Idempotent).
+  A late post from an older card is stale even where its ids overlap the newer card, so it never
+  narrows a draft the creator did not see. `expected_thread_revision` is not consulted, because
+  the card id is the freshness check. It is also stale when `research_preview.selection_basis_sync`
+  no longer reproduces the pinned basis. That function is `for_draft` over what the draft and its
+  researching turn persist, plus the item's ready Visuals now. The draft commit offers ids only
+  when the same function reproduces the pinned basis, so an offered card never reads as stale on
+  an unchanged draft. A Visual or slot window that moved since research is stale. So is an
+  approval already decided or expired, a draft row changed after it was read, a media stash or
+  staged tap on it, and a follow-up already queued (that last one is 409
+  `queued_successor_exists`).
+- **Write.** One transaction, locks in `decide_approval`'s order (Plan, PlanItem, Job key
+  share, Session, Turn, Draft, Approval, Execution, Thread). It cancels the old approval (an
+  `approval_cancelled` event names it), marks its execution `stale` and its turn `superseded`,
+  then saves revision N+1. That revision is the same document with the binding rebuilt around
+  the kept research, under a recomputed digest. A saved readiness is re-assessed on the kept
+  research, and the brief, media and capability digests must not move. The selection's own turn
+  awaits the new approval, so the fingerprint changes. Its user event is `inert` with no
+  content. The `draft_applied` reply lists the kept facts and carries `research_selection:
+  {selection_id, kept_fact_ids, waived}`.
+- **Idempotent.** Selections only narrow. On the current card an id it does not show is dropped,
+  and when nothing narrows (every shown id kept) nothing is written. The same `client_event_id`
+  and body replays its turn, checked again under the thread lock, so a duplicate still in flight
+  replays too, as does one sent after the new approval was decided. With a new
+  `client_event_id`, the selection that saved the head draft (its parent's card id, and the ids
+  that produced exactly the head's facts) replays the same way. That covers an empty list again
+  on a waived draft, which shows no card of its own. Each replay writes nothing and returns
+  `replayed: true` with the turn that already holds the result. Only a literal empty list waives, and ids that match no
+  shown fact are stale. Undo on the selection's reply restores the full research and closes its card, like any
+  draft's Undo.
+- **Waived.** Keeping none pins `PreparedResearch(status="ready", texts=[], waived=true)`. A
+  pin must stay: without one, the render's composer researches again.
+  `pinned_research_operations` replays nothing for it. `brief_checks._check_research` records
+  a checked `met` receipt whose reason names the creator's choice, so readiness still approves.
+  `waived` is omitted when false, so every existing binding keeps its digest.
+- **Capability.** `research_selections` on `GET /creation-threads/capabilities`.
+- **Proof.** `tests/kria/test_research_selection.py` covers the real draft turn, selection,
+  approval (readiness on and off) and phone worker pin on scratch Postgres. Its failure-mode
+  list is the module docstring.
+
 ## Render consent
 
 Every initial render and rerender requires a separate, expiring approval pinned

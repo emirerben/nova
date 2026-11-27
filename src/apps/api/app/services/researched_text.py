@@ -2182,8 +2182,11 @@ def pinned_research_operations(prepared: PreparedResearch, snapshot: dict) -> li
     Each approved explanation must still sit on the same consecutive clips, inside their
     render windows, and pass the same placement rules as fresh research. Anything else
     raises ``ResearchUnavailable`` naming the explanation, so the render fails visibly
-    instead of searching again or silently dropping the sourced text.
+    instead of searching again or silently dropping the sourced text. A waived result (the
+    creator kept none of the facts, CA-5) replays nothing.
     """
+    if prepared.status == "ready" and prepared.waived:
+        return []
     if prepared.status != "ready" or not prepared.texts:
         raise ResearchUnavailable("The approved research has no sourced explanation to show")
     slots = [slot for slot in _snapshot_slots(snapshot) if not slot.get("removed")]

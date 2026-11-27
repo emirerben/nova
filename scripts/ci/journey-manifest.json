@@ -1712,6 +1712,8 @@
         "src/apps/api/tests/evals/request_following/test_kri816_historical_journey.py",
         "src/apps/api/tests/fixtures/kri816_troya_historical_journey_turn.json",
         "src/apps/api/app/kria/research_preview.py",
+        "src/apps/api/app/kria/research_selection.py",
+        "src/apps/api/tests/kria/test_research_selection.py",
         "src/apps/api/tests/evals/request_following/test_kri881_research_before_approval.py",
         "src/apps/api/app/services/phone_subtitled_editor.py",
         "src/apps/ios/Kria/Core/ResearchCitation.swift",
