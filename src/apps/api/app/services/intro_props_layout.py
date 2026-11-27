@@ -28,9 +28,12 @@ cards to cover the face sometimes if it is shown for a short time". ``pop`` card
 face and body, each for at most `SHORT_CARD_S`, entering one after another; everything else
 keeps the clean rules. The title is placed alone, exactly as without cards, and the cards go
 around it. The offer (`intro_styles.fit_card_looks`) asks for ``pop`` only after every clean try
-of an arrangement declined and one of them for ``no_room_for_cards``. Failure modes, continuing
-M1-M46 (`intro_scene`, `intro_styles`); guards in tests/pipeline/test_intro_scene_props.py,
-tests/routes/test_intro_cards_e2e.py and ``make verify-intro-scenes`` / ``verify-intro-styles``:
+of an arrangement declined and one of them for ``no_room_for_cards``. These rules shape only what
+the offer lays out: a card she resizes, retimes or drags after the offer is never checked against
+them (Emir, 2026-11-27; the "her edits" tests in tests/routes/test_intro_cards_e2e.py). Failure
+modes, continuing M1-M46 (`intro_scene`, `intro_styles`); guards in
+tests/pipeline/test_intro_scene_props.py, tests/routes/test_intro_cards_e2e.py and
+``make verify-intro-scenes`` / ``verify-intro-styles``:
 
 * M47 pop where a clean layout exists. Every clean try runs first, as in stage B; a pop pass
   runs only for an arrangement no clean try fit, one of them for lack of room. The compile
