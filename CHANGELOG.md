@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.5.0] - 2026-11-27
+
+### Changed
+- feat(ios): redesign style selection (CA-4, KRI-1643) (#2536) <!-- release-pr: 2536 -->
+
 ## [0.91.4.0] - 2026-11-27
 
 ### Changed
