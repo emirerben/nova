@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.7.0] - 2026-11-27
+
+### Changed
+- feat(kria): overlay generation on the chat thread (overlay_set events, KRI-1646) (#2531) <!-- release-pr: 2531 -->
+
 ## [0.91.6.0] - 2026-11-27
 
 ### Changed
