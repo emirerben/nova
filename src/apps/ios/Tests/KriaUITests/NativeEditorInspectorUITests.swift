@@ -1296,6 +1296,28 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(clipDurations(app), ["1.000", "1.400", "1.200"], "one Undo restores the order")
     }
 
+    func testReorderSheetAppliesTheWholeOrderInOneUndoStep() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-reorder-clips"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let open = app.buttons["native-editor-reorder-clips"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        open.tap()
+        let sheet = app.descendants(matching: .any)["native-editor-reorder-list"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let before = sheet.value as? String ?? ""
+        let ids = before.split(separator: ",").map(String.init)
+        XCTAssertEqual(ids.count, 3)
+        guard ids.count == 3 else { return }
+        app.buttons["native-editor-reorder-down-\(ids[0])"].tap()
+        XCTAssertEqual(sheet.value as? String, [ids[1], ids[0], ids[2]].joined(separator: ","))
+        app.buttons["native-editor-reorder-use"].tap()
+        XCTAssertEqual(clipDurations(app), ["1.400", "1.000", "1.200"])
+        app.buttons["native-editor-undo"].tap()
+        XCTAssertEqual(clipDurations(app), ["1.000", "1.400", "1.200"])
+    }
+
     func testQuickSwipeAcrossAClipSeeksInsteadOfReordering() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-reorder-clips"]

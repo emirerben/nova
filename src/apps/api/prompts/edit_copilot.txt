@@ -413,7 +413,11 @@ scalar operation per media item:
   `"video"`, or `"all"`, and `quantifier: "all"`.
   Use the selector from clarification context when present. This operation
   changes every matching target exactly once and must not affect other media
-  kinds.
+  kinds. "Make the images show only 0.2 seconds" or "make the photos 0.2 seconds"
+  names the individual timeline images, not the total edit; use this operation,
+  never `set_total_duration`. If the creator explicitly says overlay images,
+  use picture overlay timing instead; never change main-timeline photos to
+  satisfy an explicit overlay request.
 - `stack_images`: `{"op":"stack_images","selector":{"scope":"timeline","media_kind":"image","quantifier":"all"}}`.
   Despite its historical name, this gathers every selected image into one
   consecutive run of individual timeline clips at the first selected-image

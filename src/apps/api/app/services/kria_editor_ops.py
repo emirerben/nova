@@ -3573,6 +3573,7 @@ def _op_add_unused_sources(state: _DraftState, op: dict[str, Any]) -> None:
                 "in_s": 0.0,
                 "duration_beats": None,
                 "duration_s": 3.0 if kind == "image" else min(3.0, durations.get(index, 3.0)),
+                "media_kind": kind,
                 "removed": False,
                 "transition_after": "cut",
                 "look_preset": "none",
@@ -3585,14 +3586,15 @@ def _op_set_media_duration(state: _DraftState, op: dict[str, Any]) -> None:
     name = str(op.get("op") or "")
     selector = op.get("selector") or {}
     wanted = str(selector.get("media_kind") or "image")
-    paths = list((state.job.all_candidates or {}).get("clip_paths") or [])
     selected = [
         index
         for index, row in enumerate(state.slots)
         if not row.get("removed")
-        and int(row.get("clip_index")) < len(paths)
-        and (wanted == "all" or _path_kind(paths[int(row.get("clip_index"))]) == wanted)
+        and row.get("media_kind") in {"image", "video"}
+        and (wanted == "all" or row["media_kind"] == wanted)
     ]
+    if not selected:
+        raise KriaEditorOpError("No matching media is on this timeline")
     if name == "set_media_duration":
         for index in selected:
             state.slots[index]["duration_beats"] = None

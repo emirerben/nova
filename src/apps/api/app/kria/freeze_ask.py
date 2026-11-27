@@ -166,6 +166,15 @@ def times_one_moment(req: BriefRequirement) -> bool:
     """
     if asks_freeze_frame(req) or asks_clip_speed(req):
         return True
+    seconds = req.facts.get("duration_s")
+    if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+        # Older briefs may have classified the photos' own hold as a global length.
+        # Use the existing creator-photo timing reader, not the model's scope alone.
+        from app.schemas.edit_proposal import recognize_mixed_media_timing  # noqa: PLC0415
+
+        photo_timing = recognize_mixed_media_timing(req.description or "")
+        if photo_timing and photo_timing.image_hold_s == seconds:
+            return True
     if getattr(req, "scope", None) == "title" and _title_hold_not_length():
         # Qendresa Q1 case 10: "Start with a big title ... for the first 3 seconds" filed as
         # `timing/title {"duration_s": 3}` is the title's hold, never a 3 s video. The typed

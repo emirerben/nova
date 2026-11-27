@@ -48,6 +48,10 @@ struct RecipeVideoLayer: @unchecked Sendable {
     /// KRI-1558: shared by the pieces of one take split with nothing removed (`ShotContinuity`), so the speaker's
     /// cut-out carries on across the split; nil keys the matte by `clipID` as before.
     var shotKey: String? = nil
+    func contains(_ seconds: Double) -> Bool {
+        let frame = RecipeInstructionTiming.time(seconds)
+        return frame >= RecipeInstructionTiming.time(start) && frame < RecipeInstructionTiming.time(end)
+    }
     func fadeAlpha(at time: Double) -> Double {
         fadeIn > 0 ? min(1, max(0, (time - (fadeStart ?? start)) / fadeIn)) : 1
     }
@@ -278,8 +282,8 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     func showsFramedSpeaker(at time: Double) -> Bool {
         speakerMatte != nil
             && !drawsOwnTake(at: time) && !hidesSpeaker(at: time)
-            && layers.contains { $0.speakerRole == .speaker && $0.effectiveSpeakerFrame(speakerFrame(at: time)) != nil && time >= $0.start && time < $0.end }
-            && layers.contains { $0.speakerRole == .background && time >= $0.start && time < $0.end }
+            && layers.contains { $0.speakerRole == .speaker && $0.effectiveSpeakerFrame(speakerFrame(at: time)) != nil && $0.contains(time) }
+            && layers.contains { $0.speakerRole == .background && $0.contains(time) }
     }
     /// More than one matte per frame (split panels, per-clip speaker frames): the frame draws alone, as the serial queue did.
     var drawsSpeakersOneFrameAtATime: Bool {
@@ -295,7 +299,7 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     func subjectOcclusion(activeText: [RecipeTextLayer], time: Double, scene: () throws -> CIImage) rethrows -> CIImage? {
         guard let subjectMatte, activeText.contains(where: { $0.portable?.behindSubject == true }) else { return nil }
         // Keyed by the primary clip(s) under this frame: a hard cut resets the temporal state (F6).
-        let key = layers.filter { $0.isPrimary && $0.trackID != nil && time >= $0.start && time < $0.end }
+        let key = layers.filter { $0.isPrimary && $0.trackID != nil && $0.contains(time) }
             .map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
         return subjectMatte.mask(for: try scene(), at: time, canvas: canvas, cutKey: key)
     }
@@ -401,7 +405,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             let time = request.compositionTime.seconds
             if let fault = Self.frameFault, let error = fault(time) { request.finish(with: error); return }
             let base = CIImage(color: instruction.transparentBackground ? .clear : .black).cropped(to: instruction.canvas)
-            let belowText = instruction.layers.filter { time >= $0.start && time < $0.end && !$0.overlayAboveText }
+            let belowText = instruction.layers.filter { $0.contains(time) && !$0.overlayAboveText }
             let answers = SpeakerAnswers()
             let composeStart = DispatchTime.now().uptimeNanoseconds
             var frame = base
@@ -448,7 +452,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             } catch { request.finish(with: error); return }
             do { frame = try Self.paintText(activeText, over: frame, canvas: instruction.canvas, time: time, occlusion: occlusion) }
             catch { request.finish(with: error); return }
-            for layer in instruction.layers where time >= layer.start && time < layer.end && layer.overlayAboveText {
+            for layer in instruction.layers where layer.contains(time) && layer.overlayAboveText {
                 do { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
                 catch { request.finish(with: error); return }
             }

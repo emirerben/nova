@@ -1307,6 +1307,12 @@ than 15 seconds", "up to 15 seconds", "15 seconds or less", "en fazla 15 saniye"
 geçmesin" all become {"duration_s": 15, "duration_bound": "at_most"}; every other length has no
 `duration_bound` (omitting it means exact), and a change to a timing requirement must restate
 `duration_bound` if it still applies.
+A length requested for each photo or image is not the total video length, even if "each" is
+omitted: "make the images show only 0.2 seconds" / "fotoğraflar 0,2 saniye kalsın" is
+`timing` with scope `per_clip` and facts {"photo_hold_s": 0.2}.
+An explicit overlay image request is different: record a `timing` requirement with scope
+`global` and facts {"photo_overlay_hold_s": 0.2}. Never write
+`duration_s` for either; preserve independently requested total video lengths separately.
 Seconds tied to ONE moment are never the video's length: an opening title "for the first 3 seconds"
 or ending words "for the last 3 seconds" record NO `timing` requirement and no `duration_s`; the
 seconds stay in the `description` of that moment's own requirement (the opening title is a `text`

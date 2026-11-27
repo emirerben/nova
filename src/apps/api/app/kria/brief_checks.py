@@ -678,6 +678,8 @@ class PlanFacts:
     # KRI-558: each clip's output length in screen order (removed clips left out). None =
     # unknown, which keeps a per-clip length ask unjudged (never a false failure).
     clip_output_durations: tuple[float, ...] | None = None
+    photo_clip_durations: tuple[float, ...] | None = None
+    photo_overlay_durations: tuple[float, ...] | None = None
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -3119,6 +3121,8 @@ def plan_facts_from_editor_payload(
             else None
         ),
         clip_output_durations=_editor_clip_durations(payload),
+        photo_clip_durations=_photo_clip_durations(payload),
+        photo_overlay_durations=_photo_overlay_durations(payload),
         closing_arrow=_has_closing_arrow(payload),
     )
 
@@ -3188,6 +3192,49 @@ def _has_closing_arrow(payload: Mapping[str, Any]) -> bool:
         if window and window[0] < closing[1] and closing[0] < window[1]:
             return True
     return False
+
+
+def _photo_clip_durations(payload: Mapping[str, Any]) -> tuple[float, ...] | None:
+    slots = payload.get("timeline_slots")
+    if not isinstance(slots, list):
+        revision = payload.get("guided_edit_revision")
+        if not isinstance(revision, Mapping):
+            return None
+        kinds = {
+            row.get("media_id"): row.get("kind")
+            for row in revision.get("sources") or []
+            if isinstance(row, Mapping)
+        }
+        slots = [
+            {**row, "media_kind": kinds.get(row.get("media_id"))}
+            for row in revision.get("segments") or []
+            if isinstance(row, Mapping)
+        ]
+    values = []
+    for row in slots:
+        if not isinstance(row, Mapping) or row.get("removed"):
+            continue
+        if row.get("media_kind") == "image":
+            duration = _finite_number(row.get("duration_s"))
+            if duration is None or duration <= 0:
+                return None
+            values.append(duration)
+    return tuple(values) or None
+
+
+def _photo_overlay_durations(payload: Mapping[str, Any]) -> tuple[float, ...] | None:
+    rows = payload.get("media_overlays")
+    if not isinstance(rows, list):
+        return None
+    values = []
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("kind") != "image":
+            continue
+        start, end = _finite_number(row.get("start_s")), _finite_number(row.get("end_s"))
+        if start is None or end is None or end <= start:
+            return None
+        values.append(end - start)
+    return tuple(values) or None
 
 
 def _editor_clip_durations(payload: Mapping[str, Any]) -> tuple[float, ...] | None:
@@ -14244,6 +14291,37 @@ def _check_asset_hold(req: BriefRequirement, row: Mapping[str, Any]) -> Requirem
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    photo_target = req.facts.get("photo_hold_s")
+    overlay_target = req.facts.get("photo_overlay_hold_s")
+    if photo_target is None and overlay_target is None and _has_duration_target(req):
+        from app.schemas.edit_proposal import recognize_mixed_media_timing  # noqa: PLC0415
+
+        timing = recognize_mixed_media_timing(req.description or "")
+        if timing and timing.image_hold_s == req.facts["duration_s"]:
+            if "overlay" in (req.description or "").casefold():
+                overlay_target = timing.image_hold_s
+            else:
+                photo_target = timing.image_hold_s
+    target = overlay_target if overlay_target is not None else photo_target
+    if isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0:
+        durations = (
+            facts.photo_overlay_durations
+            if overlay_target is not None
+            else facts.photo_clip_durations
+        )
+        if durations is None and overlay_target is None:
+            from app.pipeline.unified_montage import GROUP_STILL_HOLD_ID  # noqa: PLC0415
+
+            group_holds = [
+                _finite_number(row.get("rendered_s"))
+                for row in facts.asset_holds or ()
+                if row.get("requirement_id") == GROUP_STILL_HOLD_ID
+            ]
+            if group_holds and all(value is not None for value in group_holds):
+                durations = tuple(value for value in group_holds if value is not None)
+        if durations and all(abs(duration - target) <= 1e-6 for duration in durations):
+            return _receipt(req, "met", None)
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
     hold_row = _hold_row(req, facts)
     if hold_row is not None:
         # A creator-stamped photo length the plan applied (KRI-824). Any other clip-scoped

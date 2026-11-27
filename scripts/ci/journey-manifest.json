@@ -2,6 +2,36 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-1651-montage-photo-timeline",
+      "needs_native": true,
+      "api_tests": "tests/services/test_photo_timeline_duration.py tests/services/test_kria_editor_ops.py tests/services/test_kria_editor_guided_timeline.py",
+      "xctests": [
+        "KriaTests/NativeSplitScreenRowsTests/testSerialReorderMovesClipLocalLanesButKeepsSongAndSpanningOverlay",
+        "KriaUITests/NativeEditorInspectorUITests/testReorderSheetAppliesTheWholeOrderInOneUndoStep",
+        "KriaTests/RenderedOriginalClockTests/testMixedMontagePhotoQuickCutReordersReopensAndExportsSixFrames"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/edit_copilot.py",
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/freeze_ask.py",
+        "src/apps/api/app/kria/copy/de.json",
+        "src/apps/api/app/services/kria_editor_ops.py",
+        "src/apps/api/prompts/edit_copilot.txt",
+        "src/apps/api/tests/services/test_photo_timeline_duration.py",
+        "src/apps/ios/Kria/Core/NativeSplitTimelineRebase.swift",
+        "src/apps/ios/Kria/Features/ClipOrderCardView.swift",
+        "src/apps/ios/Kria/Features/CreationAttachments.swift",
+        "src/apps/ios/Kria/Features/NativeEditorMediaViews.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Resources/Localizable.xcstrings",
+        "src/apps/ios/Tests/KriaTests/NativeSplitScreenRowsTests.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift",
+        "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/RecipeVideoCompositor.swift"
+      ]
+    },
+    {
       "id": "kri-1052-prompt-interval-inspection",
       "needs_native": false,
       "api_tests": "tests/services/test_prompt_moment_inspection.py tests/integration/test_prompt_moment_inspection.py tests/kria/test_prompt_moment_inspection_gate.py tests/kria/test_cabildo_named_moment_gate.py tests/kria/test_kri723_moment_authority_m2.py tests/integration/test_media_collections.py",

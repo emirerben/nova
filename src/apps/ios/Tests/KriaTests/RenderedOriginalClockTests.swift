@@ -13,6 +13,69 @@ import KriaMediaEngine
         try await verifyWindow(video: true)
     }
 
+    func testMixedMontagePhotoQuickCutReordersReopensAndExportsSixFrames() async throws {
+        let fixture = try await makeFixture(video: true, duration: 1.9)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        fixture.session.setClipTiming(clipID: "first", durationS: 0.2)
+        let opening = fixture.session.clipOrderItems.map(\.id)
+        XCTAssertEqual(opening.count, 2)
+        guard opening.count == 2 else { return }
+        XCTAssertTrue(fixture.session.applyClipOrder(Array(opening.reversed()), opening: opening))
+        let snapshot = DraftSnapshot(draftID: "quick-cut", itemID: "fixture", variantKey: "guided_story",
+            draftRevision: 1, snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: fixture.session.document.encodeSnapshot(), canUndo: false, createdAt: .now)
+        let reopened = NativeEditorSession(draft: snapshot.editorDraft(projectID: UUID()))
+        let saved = Fixture(directory: fixture.directory, session: reopened, sources: fixture.sources)
+        XCTAssertEqual(reopened.document.clips.map(\.id), ["second", "first"])
+        XCTAssertEqual(try XCTUnwrap(reopened.document.clips[0].durationS), 1.9, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(reopened.document.clips[1].durationS), 0.2, accuracy: 1e-9)
+        let program = try compile(saved)
+        let cuts = try XCTUnwrap(program.recipe.tracks.first?.clips)
+        XCTAssertEqual(cuts.map(\.sourceAssetID), ["source-1", "source-0"])
+        XCTAssertEqual(cuts.last?.duration ?? 0, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(TimelineMath.totalDuration(of: program.recipe), 2.1, accuracy: 1e-9)
+        let output = fixture.directory.appendingPathComponent("quick-cut.mp4")
+        _ = try await AVFoundationLocalExporter(
+            stateStore: FileExportStateStore(directory: fixture.directory.appendingPathComponent("export-state")), branding: .none
+        ).export(recipe: program.recipe, assetURLs: program.assetURLs, outputURL: output)
+        let asset = AVURLAsset(url: output)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 2.1, accuracy: 1e-3)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        generator.maximumSize = CGSize(width: 32, height: 32)
+        for frame in 56...62 {
+            let result = try await generator.image(at: CMTime(value: Int64(frame), timescale: 30))
+            let color = try pixel(result.image)
+            if frame == 56 { XCTAssertGreaterThan(Int(color[2]), Int(color[0]) + 100, "video immediately before photo") }
+            else { XCTAssertGreaterThan(Int(color[0]), Int(color[2]) + 100, "photo frame \(frame - 56) of six") }
+        }
+        let preview = try await LivePreviewComposition(recipe: program.recipe, assetURLs: program.assetURLs)
+        let previewGenerator = AVAssetImageGenerator(asset: preview.preview.playerItem.asset)
+        previewGenerator.videoComposition = preview.preview.playerItem.videoComposition
+        previewGenerator.requestedTimeToleranceBefore = .zero
+        previewGenerator.requestedTimeToleranceAfter = .zero
+        let photo = try await previewGenerator.image(at: CMTime(value: 60, timescale: 30))
+        let color = try pixel(photo.image)
+        XCTAssertGreaterThan(Int(color[0]), Int(color[2]) + 100)
+        let attachment = XCTAttachment(contentsOfFile: output)
+        attachment.name = "mixed-montage-six-frame-photo.mp4"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func pixel(_ image: CGImage) throws -> [UInt8] {
+        var rgba = [UInt8](repeating: 0, count: 4)
+        try rgba.withUnsafeMutableBytes { bytes in
+            let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return rgba
+    }
+
     func testProxyRoundedVideoUsesOnlyBoundedFinalFrameHold() async throws {
         let duration = 1.933333
         let fixture = try await makeFixture(video: true, duration: duration)
