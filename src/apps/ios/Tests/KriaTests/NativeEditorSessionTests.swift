@@ -2191,6 +2191,65 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.previewSkippedMediaCount, 2)
     }
 
+    /// KRI-1615: the server's card look, from the iOS fixture the backend writes.
+    private static func introCardLook() throws -> (IntroStylesOffer, IntroStylesOffer.Option) {
+        let name = "KRI1633IntroStyles"
+        let url = Bundle(for: NativeEditorSessionTests.self).url(forResource: name, withExtension: "json")
+            ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/\(name).json")
+        let fixture = try XCTUnwrap(JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url)).objectValue)
+        guard case .offer(let offer) = IntroStylesOffer.parse(try XCTUnwrap(fixture["offer_talking_cards"])) else { throw XCTSkip("no card offer") }
+        return (offer, try XCTUnwrap(offer.options.first { $0.cards.count == 2 }))
+    }
+
+    private static func showIntroCards(_ session: NativeEditorSession, offer: IntroStylesOffer) {
+        session.introStylesState = .ready(offer)
+        session.introStylesOfferContext = session.introStylesContext()
+    }
+
+    /// A card a look just added has no source-pool entry: its photo is her own Visuals photo, read by storage path. One
+    /// that cannot be fetched is skipped, never fatal; it stays in the edit.
+    func testAnIntroCardPhotoComesFromHerVisualsAndOneThatCannotLoadIsSkipped() async throws {
+        let (offer, look) = try Self.introCardLook()
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, title: true, introStyles: true,
+            visualPhotos: [(look.cards[0].gcsPath, true), (look.cards[1].gcsPath, false)])
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        Self.showIntroCards(session, offer: offer)
+        XCTAssertTrue(session.applyIntroStyle(look))
+        await session.prepareSourcePreview()
+
+        XCTAssertEqual(session.sourcePreviewState, .ready, "one unreadable photo never takes the live preview down")
+        XCTAssertEqual(session.document.mediaOverlays.map(\.id), look.cards.map(\.id), "the edit keeps both cards")
+        let drawn = session.displayedSourcePreviewRecipe?.tracks.first { $0.kind == .overlay }?.clips.map(\.id)
+        XCTAssertEqual(drawn, ["overlay:" + look.cards[0].id], "the card whose photo is on this iPhone is drawn")
+        XCTAssertEqual(session.previewSkippedMediaCount, 1)
+    }
+
+    /// A Save the server refuses (`intro_card_unavailable`: her photo's bytes are gone) keeps the look on screen and
+    /// unsaved, and Save can be tapped again; the cards went out in the contract's shape.
+    func testAnIntroCardSaveRefusalKeepsTheLookAndSaveCanRetry() async throws {
+        let (offer, look) = try Self.introCardLook()
+        let (session, fake) = try await Self.phoneTalkingSession(lanesEditable: true, title: true, introStyles: true,
+            visualPhotos: look.cards.map { ($0.gcsPath, true) })
+        Self.showIntroCards(session, offer: offer)
+        XCTAssertTrue(session.applyIntroStyle(look))
+        let applied = session.document
+        fake.commitThrow = APIError.requestFailed(status: 422, detail: RequestFailureDetail(nil, object: ["code": .string("intro_card_unavailable")]))
+
+        await session.save()
+        guard case .failed = session.saveState else { return XCTFail("the refusal is shown: \(session.saveState)") }
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document, applied, "the look stays as she picked it")
+        let posted = try XCTUnwrap(fake.lastRequest?.mediaOverlays).compactMap(\.objectValue)
+        XCTAssertEqual(posted.map { $0["id"]?.stringValue }, look.cards.map(\.id))
+        XCTAssertTrue(posted.allSatisfy { Set($0.keys) == ["id", "kind", "src_gcs_path", "display_mode", "position", "x_frac", "y_frac",
+                                                           "scale", "start_s", "end_s", "z"] })
+
+        fake.commitThrow = nil
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 2, "Save is retryable")
+        XCTAssertEqual(try XCTUnwrap(fake.lastRequest?.mediaOverlays).compactMap { $0.objectValue?["id"]?.stringValue }, look.cards.map(\.id))
+    }
+
     func testConcurrentPlaybackFailureReportsPreserveEveryEventAndDraftCall() async throws {
         let jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
@@ -2593,12 +2652,35 @@ final class NativeEditorSessionTests: XCTestCase {
 
     /// `talkingCutaways`: KRI-719 receipt `cutaways` rows; the footage clip "street" (istanbul.mp4) joins the pool
     /// as clip 1 and the variant carries a `phone_talking_multi_clip` receipt with "source" as the one speaker.
+    /// `visualPhotos` (KRI-1615): her Visuals library, one ready photo per storage path; a `true` photo's bytes are on
+    /// this iPhone, a `false` one cannot be fetched. `introStyles` opens the intro styles capability.
     private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true, title: Bool = false,
                                             unloadableCards: Bool = false, withholdPool: Bool = false,
                                             talkingCutaways: [JSONValue]? = nil,
-                                            insertedClips: [JSONValue]? = nil) async throws -> (NativeEditorSession, EditorCommitSpy) {
+                                            insertedClips: [JSONValue]? = nil,
+                                            introStyles: Bool = false,
+                                            visualPhotos: [(path: String, readable: Bool)] = []) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        var visuals: [CreationVisual] = []
+        for (index, photo) in visualPhotos.enumerated() {
+            let id = "photo-\(index)"
+            let remote = try XCTUnwrap(URL(string: (photo.readable ? "https" : "http") + "://storage.example/\(id).jpg"))
+            if photo.readable {
+                let cache = NativePreviewAssetCache(project: project, jobID: jobID)
+                let download = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+                try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 75, height: 100)).image { context in
+                    UIColor.systemTeal.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 75, height: 100))
+                }.pngData()).write(to: download)
+                var image = try await NativeDownloadedMedia.importAsset(from: download, sourceURL: remote,
+                    response: URLResponse(url: remote, mimeType: "image/png", expectedContentLength: -1, textEncodingName: nil), project: cache.project)
+                image.naturalSize = MediaSize(width: 75, height: 100)
+                try cache.store(image, for: "media:7:\(id)")
+            }
+            visuals.append(CreationVisual(id: id, kind: "image", status: "ready", sourceFilename: nil, displayURL: nil, previewURL: nil,
+                                          retryable: nil, sourceGeneration: "7", gcsPath: photo.path, sourceURL: remote))
+        }
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
         try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: input)
         defer { try? FileManager.default.removeItem(at: input) }
@@ -2632,7 +2714,7 @@ final class NativeEditorSessionTests: XCTestCase {
             "resolved_archetype": .string("subtitled"),
             "output_url": .string("file:///tmp/kria-editor-test.mp4"),
             "editor_capabilities": .object(["timeline": .bool(false), "text_elements": .bool(title), "mix": .bool(false),
-                "overlays": .bool(lanesEditable), "sfx": .bool(lanesEditable)]),
+                "overlays": .bool(lanesEditable), "sfx": .bool(lanesEditable)].merging(introStyles ? ["intro_styles": .bool(true)] : [:]) { $1 }),
             "caption_cues": .array([.object(["text": .string("Number three"), "start_s": .number(0.2), "end_s": .number(0.9)])]),
         ]
         if title {
@@ -2703,6 +2785,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.deviceRenderResponse = DeviceRenderStatusResponse(
             phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1"
         )
+        if !visualPhotos.isEmpty { fake.visualPool = visuals }
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
         return (session, fake)

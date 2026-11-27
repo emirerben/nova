@@ -528,4 +528,151 @@ final class IntroStylesOfferTests: XCTestCase {
         XCTAssertEqual(parsed.options.first { $0.key == target }?.cards, try offer("offer_talking_cards").options.first { $0.key == target }?.cards,
                        "the look itself is still offered")
     }
+
+    // MARK: Card looks applied (C3-C8)
+
+    private func cardSession(overlaysEditable: Bool = true) throws -> (NativeEditorSession, IntroStylesOffer) {
+        var variant = try editorVariant("editor_talking_cards")
+        if !overlaysEditable, var caps = variant["editor_capabilities"]?.objectValue {
+            caps["overlays"] = .bool(false)
+            variant["editor_capabilities"] = .object(caps)
+        }
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: variant), operations: LocalEditorOperations())
+        let offer = try offer("offer_talking_cards")
+        session.introStylesState = .ready(offer)
+        session.introStylesOfferContext = session.introStylesContext()
+        return (session, offer)
+    }
+
+    private func cardLooks(_ offer: IntroStylesOffer) throws -> (around: IntroStylesOffer.Option, grid: IntroStylesOffer.Option) {
+        let looks = offer.options.filter(\.isCardLook)
+        return (try XCTUnwrap(looks.first { $0.cards.count == 2 }), try XCTUnwrap(looks.first { $0.cards.count == 4 }))
+    }
+
+    private func overlayIDs(_ session: NativeEditorSession) -> [String] { session.document.mediaOverlays.map(\.id) }
+
+    func testACardLookAddsHerPhotosAfterHerOwnCardInOneUndoStep() throws {
+        let (session, offer) = try cardSession()
+        let original = session.document
+        let look = try cardLooks(offer).around
+        XCTAssertEqual(overlayIDs(session), ["her-card"])
+
+        XCTAssertTrue(session.applyIntroStyle(look))
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id), "her card stays first, in place")
+        XCTAssertEqual(session.document.mediaOverlays.first, original.mediaOverlays.first)
+        XCTAssertEqual(titleLane(session), look.rows)
+        XCTAssertEqual(session.introStyleSelectedKey(in: offer), look.key)
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        session.undo()
+        XCTAssertEqual(session.document, original, "one undo restores the title and the cards together")
+        session.redo()
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
+        XCTAssertEqual(titleLane(session), look.rows)
+    }
+
+    func testPickingTheSameCardLookTwiceOrAnotherOneNeverStacksCards() throws {
+        let (session, offer) = try cardSession()
+        let (around, grid) = try cardLooks(offer)
+        XCTAssertTrue(session.applyIntroStyle(around))
+        let first = session.document
+        XCTAssertTrue(session.applyIntroStyle(grid))
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + grid.cards.map(\.id))
+        XCTAssertTrue(session.applyIntroStyle(around))
+        XCTAssertEqual(session.document, first, "the same look twice is the same document")
+    }
+
+    func testAPlainLookOrNoneAfterACardLookTakesItsCardsAwayAndKeepsHers() throws {
+        for plain in [try offer("offer_talking_cards").options.first { !$0.isCardLook && !$0.isNone },
+                      try offer("offer_talking_cards").options.last] {
+            let (session, offer) = try cardSession()
+            let option = try XCTUnwrap(plain)
+            XCTAssertTrue(session.applyIntroStyle(try cardLooks(offer).grid))
+            XCTAssertTrue(session.applyIntroStyle(option))
+            XCTAssertEqual(overlayIDs(session), ["her-card"], "\(option.key): the look's title was placed without cards")
+            XCTAssertEqual(titleLane(session), option.rows)
+            XCTAssertEqual(session.introStyleSelectedKey(in: offer), option.key)
+        }
+    }
+
+    func testSaveSendsTheContractCardRowsAfterHersWithoutTheCaptionMark() throws {
+        let (session, offer) = try cardSession()
+        let expected = try XCTUnwrap(try fixture()["save_body_cards_expected"]?.objectValue)
+        let look = try XCTUnwrap(offer.options.first { $0.key == expected["picked_key"]?.stringValue })
+        XCTAssertTrue(session.applyIntroStyle(look))
+        let lanes = try XCTUnwrap(session.exportEditorState()).lanes
+        XCTAssertEqual(lanes.mediaOverlays, expected["media_overlays"]?.arrayValue,
+                       "her card, then each card in the contract's shape: the server pins the photo and decides caption_clear")
+        XCTAssertEqual(lanes.textElements, expected["text_elements"]?.arrayValue)
+        XCTAssertEqual(session.document.mediaOverlays.dropFirst().map { $0.raw["caption_clear"] }, look.cards.map { _ in .bool(true) },
+                       "the editor keeps the server's mark so the preview draws each card where it exports")
+    }
+
+    func testTheLivePreviewDrawsACaptionClearCardWhereTheExportWill() throws {
+        let (session, offer) = try cardSession()
+        let look = try cardLooks(offer).around
+        XCTAssertTrue(session.applyIntroStyle(look))
+        let bottom = try XCTUnwrap(look.cards.max { $0.y < $1.y })
+        XCTAssertGreaterThan(bottom.y, NativeEditorRenderCompiler.deviceCardMaxYFraction, "the fixture's second card sits under her captions")
+        let fingerprint = AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 10)
+        func source(_ id: String) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: 0, mediaID: id, asset: MediaAsset(id: id, relativePath: "\(id).jpg", fingerprint: fingerprint,
+                                                                           naturalSize: MediaSize(width: 300, height: 400)),
+                                 url: URL(fileURLWithPath: "/fixture/\(id).jpg"))
+        }
+        let footage = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100), duration: 6),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        let clips = session.timelineClips.map { clip -> EditorClip in var clip = clip; clip.sourceClipIndex = 0; return clip }
+        let media = Dictionary(uniqueKeysWithValues: session.document.mediaOverlays.map { ("overlay:" + $0.id, source($0.id)) })
+        let recipe = try compiler().compile(document: session.document, clips: clips, items: session.timelineItems,
+                                            sources: [0: footage], mediaSources: media, deviceCaptions: true).recipe
+        let drawn = try XCTUnwrap(recipe.tracks.first { $0.kind == .overlay }?.clips.first { $0.id == "overlay:" + bottom.id })
+        XCTAssertEqual(drawn.transform.positionY, (bottom.y * 1920).rounded(.toNearestOrEven) - 960, accuracy: 0.5,
+                       "drawn at its own y, not lifted onto her face at 0.62")
+    }
+
+    func testDeletingOneCardKeepsTheRestAndNoTileClaimsTheLook() throws {
+        let (session, offer) = try cardSession()
+        let look = try cardLooks(offer).grid
+        XCTAssertTrue(session.applyIntroStyle(look))
+        let deleted = look.cards[0].id
+        session.removeMediaOverlay(id: deleted)
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.dropFirst().map(\.id))
+        XCTAssertNil(session.introStyleSelectedKey(in: offer), "the look without one of its cards is hers now")
+        let sent = try XCTUnwrap(session.exportEditorState()).lanes.mediaOverlays?.compactMap { $0.objectValue?["id"]?.stringValue }
+        XCTAssertEqual(sent, ["her-card"] + look.cards.dropFirst().map(\.id), "Save keeps every other card")
+        XCTAssertTrue(session.applyIntroStyle(look), "tapping the look again brings the card back")
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
+    }
+
+    func testARePickedCardClearsItsPendingDeletion() throws {
+        // As after a Save: the look's cards are her saved cards, the offer is the one fetched for that edit.
+        let (fresh, offer) = try cardSession()
+        let look = try cardLooks(offer).around
+        XCTAssertTrue(fresh.applyIntroStyle(look))
+        var variant = try editorVariant("editor_talking_cards")
+        variant["text_elements"] = .array(look.rows)
+        variant["media_overlays"] = .array(fresh.document.mediaOverlays.map { .object($0.raw) })
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: variant), operations: LocalEditorOperations())
+        session.introStylesState = .ready(offer)
+        session.introStylesOfferContext = session.introStylesContext()
+        XCTAssertEqual(session.introStyleSelectedKey(in: offer), look.key, "a saved card look reads as that look")
+
+        session.removeMediaOverlay(id: look.cards[0].id)
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "media_overlay", id: look.cards[0].id)])
+        XCTAssertTrue(session.applyIntroStyle(look))
+        XCTAssertTrue(session.document.deletions.isEmpty, "the deletion would make Save drop the card the look puts back")
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
+    }
+
+    func testACardLookIsRefusedWhereTheOverlayLaneIsLocked() throws {
+        let (session, offer) = try cardSession(overlaysEditable: false)
+        let before = session.document
+        XCTAssertFalse(session.applyIntroStyle(try cardLooks(offer).around), "she could neither move nor delete its cards")
+        XCTAssertEqual(session.document, before)
+        let plain = try XCTUnwrap(offer.options.first { !$0.isCardLook && !$0.isNone })
+        XCTAssertTrue(session.applyIntroStyle(plain), "a plain look touches no card")
+        XCTAssertEqual(overlayIDs(session), ["her-card"])
+    }
 }

@@ -1470,6 +1470,8 @@ enum KriaClientProtocolContract {
     /// 59 (KRI-1558): draws the speaker's layout per section (`speaker_background.layout_windows`, needs `speakerSections`)
     /// and plays a take split with nothing removed as one shot: no declick at the join and the cut-out keeps its state
     /// across it. The server plans layouts per topic only for this protocol.
+    /// 62 (KRI-1615): reads an intro-styles option's `cards` and applies a card look as her photos on the media-overlay
+    /// lane with its title rows. The server sends card looks only to this protocol (`INTRO_CARDS_PROTOCOL`).
     static let version = 62
     static let header = "X-Kria-Client-Protocol"
     /// KRI-1558 (Tadic, #prs 2026-11-26): renderer features this build advertises in `X-Kria-Client-Features`. Another

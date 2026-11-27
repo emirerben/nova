@@ -109,6 +109,21 @@ struct IntroStyleCard: Equatable, Sendable {
                               startS: start, endS: end)
     }
 
+    /// True when `overlay` is this card where the look put it: one she moved, resized or retimed is hers.
+    func isPlaced(as overlay: EditorTimedEffect) -> Bool {
+        func same(_ key: String, _ value: Double) -> Bool { overlay.raw[key]?.numberValue.map { abs($0 - value) < 1e-6 } ?? false }
+        return overlay.id == id && overlay.raw["src_gcs_path"]?.stringValue == gcsPath && same("x_frac", x) && same("y_frac", y)
+            && same("scale", scale) && same("z", Double(z)) && abs(overlay.startS - startS) < 1e-6 && abs(overlay.endS - endS) < 1e-6
+    }
+
+    /// A media-overlay row as the Save sends it. An intro card goes without `caption_clear`: the server decides it again
+    /// from its own evidence on every Save (`intro_card_pool.caption_clear_decisions`).
+    static func committed(_ row: JSONValue) -> JSONValue {
+        guard var fields = row.objectValue, let id = fields["id"]?.stringValue, isCardID(id) else { return row }
+        fields.removeValue(forKey: "caption_clear")
+        return .object(fields)
+    }
+
     /// Her card on the editor's media-overlay lane, in the shape the stage C contract names. `caption_clear` is kept on
     /// the row (as the server's own projection of a marked card does) so the live preview draws the card where the
     /// export will; the Save leaves it out (`committed`), because the server decides it again.
