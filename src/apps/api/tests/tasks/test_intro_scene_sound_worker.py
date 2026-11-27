@@ -249,3 +249,74 @@ def test_her_own_sound_keeps_its_slot(monkeypatch, route):
     recipe = _run(job)
     assert [(clip.id, clip.timeline_start) for clip in _sfx(recipe)] == [("sfx-hers", 1.0)]
     assert events[-1]["cues"][0]["skipped"] == "taken"
+
+
+def test_a_speech_cut_before_the_accent_keeps_the_cue_on_its_entrance(monkeypatch, route):
+    """M14: a filler cut out before 0.6 s. The title lines are on the cut clock, so the cue must
+    be too; read as a source time and remapped, it would land early."""
+    from app.pipeline import intro_scene_pick as pick
+    from app.pipeline.transcribe import Word
+    from tests.tasks import test_phone_subtitled_narrated_dispatch as dispatch
+    from tests.tasks.test_phone_subtitled_title_worker import _faces
+
+    words = [
+        Word(text="um,", start_s=0.2, end_s=0.45, confidence=1.0),
+        Word(text="so", start_s=0.6, end_s=0.8, confidence=1.0),
+        Word(text="today", start_s=1.5, end_s=1.9, confidence=1.0),
+        Word(text="we", start_s=2.0, end_s=2.2, confidence=1.0),
+        Word(text="built", start_s=2.4, end_s=2.7, confidence=1.0),
+        Word(text="the", start_s=2.8, end_s=3.0, confidence=1.0),
+        Word(text="thing.", start_s=3.1, end_s=3.6, confidence=1.0),
+    ]
+    monkeypatch.setattr(dispatch, "_cut_words", lambda: words)
+    monkeypatch.setattr(dispatch, "SILENCES", [])
+    _faces(monkeypatch)
+    monkeypatch.setattr(gb.settings, "title_look_enabled", True)
+    job, _snapshot, _session, binding = dispatch._setup_subtitled(
+        monkeypatch, duration_s=dispatch.DURATION, transcript_words=words
+    )
+    job.all_candidates["creator_strategy"] = {"opening_title": EN}
+    job.assembly_plan = {
+        **job.assembly_plan,
+        "speech_cleanup_contract": "required_v1",
+        "_speech_cleanup_internal": {
+            "preflight_snapshot": dispatch._raw_preflight_snapshot(storage_path=binding.proxy_path)
+        },
+        pick.INTRO_SCENE_ASK_FIELD: {
+            "version": pick.INTRO_SCENE_VERSION,
+            "seed": "w",
+            "inks": list(scene_mod.INKS),
+            "candidates": [
+                {
+                    "voices": VOICES[EN],
+                    "font_pair": "serif_italic",
+                    "entrance": "pop",
+                    "zones": ["above_head", "top_left", "mid_frame"],
+                }
+            ],
+            pick.MODEL_ASK_FIELD: {"version": pick.MODEL_VERSION},
+        },
+    }
+    route(
+        json.dumps(
+            {
+                **COMPOSE,
+                "voices": VOICES[EN],
+                "entrance": "pop",
+                "stagger": "accent_after",
+                "sound": "accent-pop",
+                "sound_cue": "accent",
+            }
+        )
+    )
+    _open_gates(monkeypatch)
+    recipe = _run(job)
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["silence_cut_outcome"] == "applied"
+    speaker = next(t for t in recipe.tracks if t.id == "subtitled")
+    # The take's head (with the filler) is cut: output 0.6 s plays source 0.6 s + that head.
+    assert speaker.clips[0].timeline_start == 0.0 and speaker.clips[0].source_start > 0.3
+    [clip] = _sfx(recipe)
+    assert clip.timeline_start == pytest.approx(_entrance(recipe, _accent_row(job)), abs=1e-6)
+    assert clip.timeline_start == pytest.approx(LATE, abs=1e-6)

@@ -73,7 +73,8 @@ every sound from that declaration: an ``introsfx-<line id>`` row at the line's `
 entrance's first frame. The worker resolves the slug to the library row
 (`services.sfx_library`), an editor Save re-pins the rows to the lines and drops them with the
 declaration. Guards: tests/pipeline/test_intro_scene_sound.py, tests/tasks/
-test_intro_scene_sound_worker.py, tests/services/test_intro_scene_sound_save.py.
+test_intro_scene_sound_{worker,save,phone_fixture}.py, tests/services/test_sfx_library.py and
+the KriaMediaEngine export test `IntroSceneSoundExportTests`.
 
 * M12: a sound plays that nobody issued, or a cue with nothing to play. ``sound_cue`` is an id
   of the menu like the others; a cue needs a sound (``sound_cue_needs_sound``) and a line it can
