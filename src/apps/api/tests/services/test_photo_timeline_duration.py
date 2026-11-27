@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
-from app.agents._runtime import ModelClient
+from app.agents._runtime import ModelClient, ModelInvocation
 from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
 from app.kria.brief import BriefRequirement, CreativeBrief
-from app.services.kria_editor_ops import build_editor_snapshot, compile_editor_ops
+from app.services.kria_editor_ops import (
+    build_editor_snapshot,
+    compile_editor_ops,
+    editor_compile_check,
+)
 from app.services.length_policy import creator_duration_s
 from tests.services._guided_timeline_fixtures import arm_guided, guided_job, guided_revision
 
@@ -19,6 +24,9 @@ from tests.services._guided_timeline_fixtures import arm_guided, guided_job, gui
         "Make the images show only 0.2 seconds",
         "Make the overlay images 0.2 seconds",
         "Make the photos 0.2 seconds",
+        "Set each photo to 0.2 seconds",
+        "Show each photo for 0.2 seconds",
+        "Her fotoğraf 0,2 saniye olsun",
     ],
 )
 def test_photo_seconds_are_not_the_total(message):
@@ -39,10 +47,9 @@ def test_total_seconds_still_own_the_video():
     assert creator_duration_s(brief=CreativeBrief(requirements=[requirement])) == 20
 
 
-@pytest.mark.parametrize("misread", [False, True])
-def test_guided_photo_duration_compiles_and_saves_native_segment_windows(monkeypatch, misread):
+@pytest.fixture
+def mixed_guided_photos(monkeypatch):
     from app.config import settings
-    from app.services.guided_timeline import build_guided_segments
 
     job_id = str(uuid.uuid4())
     revision = guided_revision(job_id)
@@ -54,54 +61,148 @@ def test_guided_photo_duration_compiles_and_saves_native_segment_windows(monkeyp
     job.all_candidates["clip_paths"] = [revision["sources"][i]["gcs_path"] for i in [0, 2]]
     arm_guided(monkeypatch, revision)
     monkeypatch.setattr(settings, "kria_guided_timeline_ops", True)
-    snapshot = build_editor_snapshot(job, variant)
+    return job, variant, revision
+
+
+async def _photo_chat_turn(monkeypatch, mixed, message, model_ops, *, snapshot=None):
+    from app.routes import _copilot
+
+    job, variant, _ = mixed
     raw = json.dumps(
-        {
-            "intent": "edit",
-            "ops": [
-                {
-                    "op": "set_media_duration",
-                    "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
-                    "duration_s": 0.2,
-                }
-            ],
-            "confidence": 0.99,
-            "reply": "The photos are 0.2 seconds.",
-        }
+        {"intent": "edit", "ops": model_ops, "confidence": 0.99, "reply": "Prepared the change."}
     )
-    if misread:
-        raw = json.dumps(
-            {
-                "intent": "edit",
-                "ops": [{"op": "set_total_duration", "target_s": 0.2, "strategy": "proportional"}],
-                "confidence": 0.99,
-                "reply": "Shortened the video.",
-            }
-        )
-    output = EditCopilotAgent(ModelClient()).parse(
-        raw,
-        EditCopilotInput(
-            utterance="Make the images show only 0.2 seconds"
-            if misread
-            else "Set the duration of the stills in this timeline to 0.2 seconds each",
-            variant_snapshot=snapshot,
+    provider = SimpleNamespace(invoke=lambda **_: ModelInvocation(raw_text=raw))
+    monkeypatch.setattr(_copilot, "default_client", lambda: provider)
+    return await _copilot.run_copilot_turn(
+        _copilot.CopilotTurnBody(
+            message=message,
+            snapshot=snapshot if snapshot is not None else build_editor_snapshot(job, variant),
+            client_contract_version=2,
         ),
+        job_id=job.id,
+        compile_check=editor_compile_check(job, variant),
     )
-    assert output.outcome == "proposed"
-    compiled = compile_editor_ops(job, variant, output.ops)
-    segments = build_guided_segments(
-        revision,
-        compiled.payload.timeline_slots,
-        transitions_enabled=True,
-        max_slots=120,
-        max_total_s=120,
+
+
+def _photo_chat_segments(mixed, ops):
+    from app.services.guided_timeline import build_guided_segments
+
+    job, variant, revision = mixed
+    compiled = compile_editor_ops(job, variant, ops)
+    return [
+        (row["media_id"], row["duration_s"])
+        for row in build_guided_segments(
+            revision,
+            compiled.payload.timeline_slots,
+            transitions_enabled=True,
+            max_slots=120,
+            max_total_s=120,
+        )
+    ]
+
+
+_WRONG_TOTAL = {"op": "set_total_duration", "target_s": 0.2, "strategy": "proportional"}
+_PHOTO_HOLD = {
+    "op": "set_media_duration",
+    "selector": {"scope": "timeline", "media_kind": "image", "quantifier": "all"},
+    "duration_s": 0.2,
+}
+
+
+@pytest.mark.parametrize(
+    ("message", "misread"),
+    [
+        ("Make the images show only 0.2 seconds", True),
+        ("Set the duration of the stills in this timeline to 0.2 seconds each", False),
+        ("Set each photo to 0.2 seconds", True),
+        ("Show each photo for 0.2 seconds", True),
+        ("Her fotoğraf 0,2 saniye olsun", True),
+        ("Set every picture to 0.2 seconds", True),
+        ("Her görseli 0,2 saniye yap", True),
+    ],
+)
+async def test_guided_photo_duration_compiles_and_saves_native_segment_windows(
+    monkeypatch, mixed_guided_photos, message, misread
+):
+    response = await _photo_chat_turn(
+        monkeypatch, mixed_guided_photos, message, [_WRONG_TOTAL if misread else _PHOTO_HOLD]
     )
-    assert [(row["media_id"], row["duration_s"]) for row in segments] == [
+    assert response.outcome == "proposed"
+    assert _photo_chat_segments(mixed_guided_photos, response.ops) == [
         ("m0", 2.0),
         ("m1", 0.2),
         ("m2", 2.0),
         ("m3", 0.2),
     ]
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Set this photo to 0.2 seconds", "Set the photo to 0.2 seconds"],
+)
+async def test_selected_photo_stays_selected(monkeypatch, mixed_guided_photos, message):
+    response = await _photo_chat_turn(
+        monkeypatch,
+        mixed_guided_photos,
+        message,
+        [{"op": "set_clip_duration", "slot_index": 1, "duration_s": 0.2}],
+    )
+    assert response.outcome == "proposed"
+    assert _photo_chat_segments(mixed_guided_photos, response.ops) == [
+        ("m0", 2.0),
+        ("m1", 0.2),
+        ("m2", 2.0),
+        ("m3", 2.0),
+    ]
+
+
+async def test_mixed_photo_and_video_edit_preserves_both_ops(monkeypatch, mixed_guided_photos):
+    response = await _photo_chat_turn(
+        monkeypatch,
+        mixed_guided_photos,
+        "Set each photo to 0.2 seconds and set the first video to 1 second",
+        [_PHOTO_HOLD, {"op": "set_clip_duration", "slot_index": 0, "duration_s": 1.0}],
+    )
+    assert response.outcome == "proposed"
+    assert _photo_chat_segments(mixed_guided_photos, response.ops) == [
+        ("m0", 1.0),
+        ("m1", 0.2),
+        ("m2", 2.0),
+        ("m3", 0.2),
+    ]
+
+
+async def test_whole_video_length_request_stays_a_whole_video_edit(
+    monkeypatch, mixed_guided_photos
+):
+    response = await _photo_chat_turn(
+        monkeypatch,
+        mixed_guided_photos,
+        "Make the whole video 6 seconds",
+        [{"op": "set_total_duration", "target_s": 6.0, "strategy": "proportional"}],
+    )
+    assert response.outcome == "proposed"
+    assert sum(
+        duration for _, duration in _photo_chat_segments(mixed_guided_photos, response.ops)
+    ) == pytest.approx(6.0)
+
+
+@pytest.mark.parametrize(
+    "message", ["Make the overlay photos 0.2 seconds", "Set each overlay photo to 0.2 seconds"]
+)
+async def test_fullscreen_overlay_floor_still_refuses_quick_cut(
+    monkeypatch, mixed_guided_photos, message
+):
+    job, variant, _ = mixed_guided_photos
+    snapshot = build_editor_snapshot(job, variant)
+    snapshot["overlays"] = {
+        "cards": [{"kind": "image", "index": 0, "start_s": 0.0, "display_mode": "fullscreen"}]
+    }
+    response = await _photo_chat_turn(
+        monkeypatch, mixed_guided_photos, message, [_WRONG_TOTAL], snapshot=snapshot
+    )
+    assert not response.ops
+    assert "at least 0.3 seconds" in response.reply
 
 
 @pytest.mark.parametrize("message", ["Make the overlay images 0.2 seconds"])
@@ -162,6 +263,9 @@ def test_receipt_rejects_wrong_photo_even_with_correct_video_duration():
         ("Make the images show only 0.2 seconds", False),
         ("Make the overlay images 0.2 seconds", True),
         ("fotoğraflar 0,2 saniye kalsın", False),
+        ("Set each photo to 0.2 seconds", False),
+        ("Show each photo for 0.2 seconds", False),
+        ("Her fotoğraf 0,2 saniye olsun", False),
         ("overlay görselleri 0,2 saniye yap", True),
     ],
 )
