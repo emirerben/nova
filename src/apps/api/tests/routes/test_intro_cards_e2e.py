@@ -699,8 +699,8 @@ def test_saved_cards_survive_the_switch_turned_off(make, monkeypatch):
 #    a chat retime) fails, or drops or resets her cards;
 # P6 a copy of an intro card under her own id is refused;
 # P7 a card she dragged low lands on her captions, or on her face, against today's rule;
-# P8 the offer stops following its preferences (the offer tests above) or a
-#    photo that is not hers is accepted (the wrong-content control below).
+# P8 the offer stops following its preferences (the offer tests above) or her edit puts a card
+#    on a photo of another item (the wrong-content control below).
 
 # The speaker clip of the fixture runs 10 s; the title 0-2.5 s.
 VIDEO_S = 10.0
@@ -895,15 +895,17 @@ def test_a_card_she_drags_low_follows_the_caption_rule_every_card_has(make):
     assert drawn[cards[1]["id"]] == pytest.approx((0.5, 0.62, 0.5))
 
 
-def test_her_edit_on_a_photo_that_is_not_hers_is_still_refused(make):
-    """The wrong-content control (P8): her freedom is over where and when, never whose photo."""
+def test_her_edit_onto_another_items_photo_is_still_refused(make):
+    """The wrong-content control (P8): her freedom is over where and when, never which photo."""
     seeded, client, look = _pop_look_saved(make)
-    other = seeded.add_photo(
-        created_at=datetime(2026, 10, 1, tzinfo=UTC),
-        analysis={"dims_upright": True, "has_alpha": True},
-    )
+    other_item = uuid.uuid4()
+    with sync_session() as db:
+        db.add(PlanItem(id=other_item, content_plan_id=seeded.plan_id, position=2, idea="other"))
+        db.commit()
+    foreign = seeded.add_photo(created_at=datetime(2026, 10, 1, tzinfo=UTC), item_id=other_item)
+    drawn = seeded.drawn_cards()
     hers = _hers(look)
-    hers[0]["src_gcs_path"] = seeded.path(other)
+    hers[0]["src_gcs_path"] = seeded.path(foreign)
     response = save(client, seeded, look["rows"], hers)
     assert response.status_code == 422, response.text
-    assert "isn't a photo Kria pinned" in response.json()["detail"]["reason"]
+    assert seeded.drawn_cards() == drawn
