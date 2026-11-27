@@ -30,6 +30,19 @@ import XCTest
 ///   round trip so the server saves plain rows: the Save lane equals `option.rows` raw.
 /// - F24 the entry shows in the cloud or web editor, a slide post, or a variant without a title row.
 /// - F25 chrome breaks the design rules (Fraunces, borders, helper copy): labels are the closed set below, Inter only.
+///
+/// KRI-1615 stage C, her photos as cards (`offer_talking_cards`, the stage B wire):
+/// - C1 an offer without cards (every build below 62, the switch off) changes: its options parse exactly as before.
+/// - C2 a malformed card (bad slot, no media id, scale outside (0, 1], more than four, a repeated id, an id without the
+///   `intro-card-` prefix, an empty window) is shown, or its rows are applied as a plain look (the title placed between
+///   cards with no cards): that one look is dropped, the plain looks and "none" stay.
+/// - C3 a look's cards and rows land in two undo steps, or undo restores one lane only: one transaction over both.
+/// - C4 a second pick stacks cards, or a plain look or "none" after a card look leaves its cards: every `intro-card-*` is
+///   replaced, her own cards are kept in place and first.
+/// - C5 Save sends a card in another shape, or with `caption_clear` (the server decides it): exactly the contract's keys.
+/// - C6 a card she deleted comes back, or a pending deletion drops a card a later pick puts back.
+/// - C7 a card look applied where the overlay lane is locked (she could not move or delete its cards): refused whole.
+/// - C8 a tile claims a look whose card she moved or deleted.
 @MainActor
 final class IntroStylesOfferTests: XCTestCase {
     private func fixture() throws -> [String: JSONValue] {
@@ -410,5 +423,304 @@ final class IntroStylesOfferTests: XCTestCase {
         let first = try XCTUnwrap(session.introStyleTitleRows.first)
         session.updateTextContent(id: first.id, content: "trendi")
         XCTAssertTrue(try drawnText().contains { $0.contains("TRENDİ") }, "a Turkish caps line draws the dotted capital")
+    }
+
+    // MARK: Card looks (KRI-1615, C1-C2)
+
+    /// The server's card looks, raw, in wire order.
+    private func rawCardLooks() throws -> [[String: JSONValue]] {
+        let options = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue?["options"]?.arrayValue)
+        return options.compactMap(\.objectValue).filter { $0["cards"] != nil }
+    }
+
+    func testCardLooksParseWithHerPhotosAfterThePlainLooksAndNoneLast() throws {
+        let offer = try offer("offer_talking_cards")
+        let raw = try rawCardLooks()
+        XCTAssertGreaterThanOrEqual(raw.count, 1)
+        XCTAssertEqual(offer.options.filter(\.isCardLook).map(\.key), raw.compactMap { $0["key"]?.stringValue }, "every card look the server sent")
+        let kinds = offer.options.dropLast().map(\.isCardLook)
+        XCTAssertEqual(kinds, kinds.sorted { !$0 && $1 }, "plain looks first, then card looks")
+        XCTAssertEqual(offer.options.last?.key, "none")
+        XCTAssertTrue(offer.hasPreviews)
+        for (option, wire) in zip(offer.options.filter(\.isCardLook), raw) {
+            let cards = try XCTUnwrap(wire["cards"]?.arrayValue).compactMap(\.objectValue)
+            XCTAssertEqual(option.cards.map(\.id), cards.compactMap { $0["id"]?.stringValue })
+            XCTAssertEqual(option.cards.map(\.gcsPath), cards.compactMap { $0["gcs_path"]?.stringValue })
+            XCTAssertEqual(option.cards.map(\.x), cards.compactMap { $0["x_frac"]?.numberValue })
+            XCTAssertEqual(option.cards.map(\.y), cards.compactMap { $0["y_frac"]?.numberValue })
+            XCTAssertEqual(option.cards.map(\.scale), cards.compactMap { $0["scale"]?.numberValue })
+            XCTAssertEqual(option.cards.map(\.captionClear), cards.compactMap { $0["caption_clear"]?.boolValue })
+            XCTAssertEqual(option.previewCards.map(\.mediaID), cards.compactMap { $0["media_id"]?.stringValue },
+                           "the preview draws her photos in slot order")
+            let box = try XCTUnwrap(wire["preview"]?.objectValue?["cards"]?.arrayValue?.first?.objectValue?["box"]?.objectValue)
+            let drawn = try XCTUnwrap(option.previewCards.first?.box)
+            XCTAssertEqual(Double(drawn.minX), try XCTUnwrap(box["left"]?.numberValue), accuracy: 1e-9)
+            XCTAssertEqual(Double(drawn.maxY), try XCTUnwrap(box["bottom"]?.numberValue), accuracy: 1e-9)
+        }
+        XCTAssertTrue(offer.options.filter { !$0.isCardLook }.allSatisfy { $0.cards.isEmpty && $0.previewCards.isEmpty })
+    }
+
+    func testAnOfferWithoutCardsParsesExactlyAsBefore() throws {
+        for key in ["offer_talking_en", "offer_montage_tr", "offer_narrated_en"] {
+            let offer = try offer(key)
+            XCTAssertTrue(offer.options.allSatisfy { $0.cards.isEmpty && $0.previewCards.isEmpty }, key)
+        }
+        // The card offer minus its card looks is a plain offer: the same plain options, rows and previews.
+        var plain = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue)
+        plain["options"] = .array(try XCTUnwrap(plain["options"]?.arrayValue).filter { $0.objectValue?["cards"] == nil })
+        guard case .offer(let parsed) = IntroStylesOffer.parse(.object(plain)) else { return XCTFail("still an offer") }
+        XCTAssertEqual(parsed.options, try offer("offer_talking_cards").options.filter { !$0.isCardLook })
+    }
+
+    func testAMalformedCardDropsOnlyItsLookAndThePlainLooksStay() throws {
+        let good = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue)
+        let expected = try offer("offer_talking_cards")
+        let target = try XCTUnwrap(try rawCardLooks().first?["key"]?.stringValue)
+        func parse(_ edit: (inout [[String: JSONValue]]) -> Void) -> IntroStylesOffer.Parsed {
+            var copy = good
+            copy["options"] = .array((good["options"]?.arrayValue ?? []).map { entry in
+                guard var option = entry.objectValue, option["key"] == .string(target),
+                      var cards = option["cards"]?.arrayValue?.compactMap(\.objectValue) else { return entry }
+                edit(&cards)
+                option["cards"] = .array(cards.map(JSONValue.object))
+                return .object(option)
+            })
+            return IntroStylesOffer.parse(.object(copy))
+        }
+        let malformed: [(String, (inout [[String: JSONValue]]) -> Void)] = [
+            ("a slot that is not the id's", { $0[0]["slot"] = .string("prop_7") }),
+            ("no media id", { $0[0].removeValue(forKey: "media_id") }),
+            ("an empty storage path", { $0[0]["gcs_path"] = .string("") }),
+            ("no generation", { $0[0].removeValue(forKey: "generation") }),
+            ("scale 0", { $0[0]["scale"] = .number(0) }),
+            ("scale over 1", { $0[0]["scale"] = .number(1.2) }),
+            ("a centre off the canvas", { $0[0]["x_frac"] = .number(-0.1) }),
+            ("more than four cards", { cards in
+                cards = (1...5).map { n in var card = cards[0]; card["id"] = .string("intro-card-\(n)"); card["slot"] = .string("prop_\(n)"); return card }
+            }),
+            ("a repeated id", { $0[1]["id"] = $0[0]["id"]; $0[1]["slot"] = $0[0]["slot"] }),
+            ("an id outside the intro-card family", { $0[0]["id"] = .string("her-card"); $0[0]["slot"] = .string("prop_1") }),
+            ("an empty window", { $0[0]["end_s"] = $0[0]["start_s"] }),
+            ("a fractional z", { $0[0]["z"] = .number(0.5) }),
+            ("no caption mark", { $0[0].removeValue(forKey: "caption_clear") }),
+            ("no cards at all", { $0 = [] }),
+        ]
+        for (name, edit) in malformed {
+            guard case .offer(let parsed) = parse(edit) else { XCTFail("\(name): the plain looks are still offered"); continue }
+            XCTAssertNil(parsed.options.first { $0.key == target }, "\(name): the card look is dropped, never shown as a plain look")
+            XCTAssertEqual(parsed.options, expected.options.filter { $0.key != target }, "\(name): every other option stays as it was")
+        }
+    }
+
+    func testACardLookWhosePreviewCannotDrawItsCardsTurnsEveryTileIntoALabelTile() throws {
+        var broken = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue)
+        let target = try XCTUnwrap(try rawCardLooks().first?["key"]?.stringValue)
+        broken["options"] = .array(try XCTUnwrap(broken["options"]?.arrayValue).map { entry in
+            guard var option = entry.objectValue, option["key"] == .string(target),
+                  var preview = option["preview"]?.objectValue else { return entry }
+            preview["cards"] = .array(Array(preview["cards"]?.arrayValue?.dropLast() ?? []))
+            option["preview"] = .object(preview)
+            return .object(option)
+        })
+        guard case .offer(let parsed) = IntroStylesOffer.parse(.object(broken)) else { return XCTFail("still an offer") }
+        XCTAssertFalse(parsed.hasPreviews, "a card look drawn without one of its photos would not be what she gets")
+        XCTAssertTrue(parsed.options.allSatisfy { $0.previewCards.isEmpty })
+        XCTAssertEqual(parsed.options.first { $0.key == target }?.cards, try offer("offer_talking_cards").options.first { $0.key == target }?.cards,
+                       "the look itself is still offered")
+    }
+
+    // MARK: Card looks applied (C3-C8)
+
+    private func cardSession(overlaysEditable: Bool = true) throws -> (NativeEditorSession, IntroStylesOffer) {
+        var variant = try editorVariant("editor_talking_cards")
+        if !overlaysEditable, var caps = variant["editor_capabilities"]?.objectValue {
+            caps["overlays"] = .bool(false)
+            variant["editor_capabilities"] = .object(caps)
+        }
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: variant), operations: LocalEditorOperations())
+        let offer = try offer("offer_talking_cards")
+        session.introStylesState = .ready(offer)
+        session.introStylesOfferContext = session.introStylesContext()
+        return (session, offer)
+    }
+
+    private func cardLooks(_ offer: IntroStylesOffer) throws -> (around: IntroStylesOffer.Option, grid: IntroStylesOffer.Option) {
+        let looks = offer.options.filter(\.isCardLook)
+        return (try XCTUnwrap(looks.first { $0.cards.count == 2 }), try XCTUnwrap(looks.first { $0.cards.count == 4 }))
+    }
+
+    private func overlayIDs(_ session: NativeEditorSession) -> [String] { session.document.mediaOverlays.map(\.id) }
+
+    func testACardLookAddsHerPhotosAfterHerOwnCardInOneUndoStep() throws {
+        let (session, offer) = try cardSession()
+        let original = session.document
+        let look = try cardLooks(offer).around
+        XCTAssertEqual(overlayIDs(session), ["her-card"])
+
+        XCTAssertTrue(session.applyIntroStyle(look))
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id), "her card stays first, in place")
+        XCTAssertEqual(session.document.mediaOverlays.first, original.mediaOverlays.first)
+        XCTAssertEqual(titleLane(session), look.rows)
+        XCTAssertEqual(session.introStyleSelectedKey(in: offer), look.key)
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        session.undo()
+        XCTAssertEqual(session.document, original, "one undo restores the title and the cards together")
+        session.redo()
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
+        XCTAssertEqual(titleLane(session), look.rows)
+    }
+
+    func testPickingTheSameCardLookTwiceOrAnotherOneNeverStacksCards() throws {
+        let (session, offer) = try cardSession()
+        let (around, grid) = try cardLooks(offer)
+        XCTAssertTrue(session.applyIntroStyle(around))
+        let first = session.document
+        XCTAssertTrue(session.applyIntroStyle(grid))
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + grid.cards.map(\.id))
+        XCTAssertTrue(session.applyIntroStyle(around))
+        XCTAssertEqual(session.document, first, "the same look twice is the same document")
+    }
+
+    func testAPlainLookOrNoneAfterACardLookTakesItsCardsAwayAndKeepsHers() throws {
+        for plain in [try offer("offer_talking_cards").options.first { !$0.isCardLook && !$0.isNone },
+                      try offer("offer_talking_cards").options.last] {
+            let (session, offer) = try cardSession()
+            let option = try XCTUnwrap(plain)
+            XCTAssertTrue(session.applyIntroStyle(try cardLooks(offer).grid))
+            XCTAssertTrue(session.applyIntroStyle(option))
+            XCTAssertEqual(overlayIDs(session), ["her-card"], "\(option.key): the look's title was placed without cards")
+            XCTAssertEqual(titleLane(session), option.rows)
+            XCTAssertEqual(session.introStyleSelectedKey(in: offer), option.key)
+        }
+    }
+
+    func testSaveSendsTheContractCardRowsAfterHersWithoutTheCaptionMark() throws {
+        let (session, offer) = try cardSession()
+        let expected = try XCTUnwrap(try fixture()["save_body_cards_expected"]?.objectValue)
+        let look = try XCTUnwrap(offer.options.first { $0.key == expected["picked_key"]?.stringValue })
+        XCTAssertTrue(session.applyIntroStyle(look))
+        let lanes = try XCTUnwrap(session.exportEditorState()).lanes
+        XCTAssertEqual(lanes.mediaOverlays, expected["media_overlays"]?.arrayValue,
+                       "her card, then each card in the contract's shape: the server pins the photo and decides caption_clear")
+        XCTAssertEqual(lanes.textElements, expected["text_elements"]?.arrayValue)
+        XCTAssertEqual(session.document.mediaOverlays.dropFirst().map { $0.raw["caption_clear"] }, look.cards.map { _ in .bool(true) },
+                       "the editor keeps the server's mark so the preview draws each card where it exports")
+    }
+
+    func testTheLivePreviewDrawsACaptionClearCardWhereTheExportWill() throws {
+        let (session, offer) = try cardSession()
+        let look = try cardLooks(offer).around
+        XCTAssertTrue(session.applyIntroStyle(look))
+        let bottom = try XCTUnwrap(look.cards.max { $0.y < $1.y })
+        XCTAssertGreaterThan(bottom.y, NativeEditorRenderCompiler.deviceCardMaxYFraction, "the fixture's second card sits under her captions")
+        let fingerprint = AssetFingerprint(hex: String(repeating: "b", count: 64), byteCount: 10)
+        func source(_ id: String) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: 0, mediaID: id, asset: MediaAsset(id: id, relativePath: "\(id).jpg", fingerprint: fingerprint,
+                                                                           naturalSize: MediaSize(width: 300, height: 400)),
+                                 url: URL(fileURLWithPath: "/fixture/\(id).jpg"))
+        }
+        let footage = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100), duration: 6),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        let clips = session.timelineClips.map { clip -> EditorClip in var clip = clip; clip.sourceClipIndex = 0; return clip }
+        let media = Dictionary(uniqueKeysWithValues: session.document.mediaOverlays.map { ("overlay:" + $0.id, source($0.id)) })
+        let recipe = try compiler().compile(document: session.document, clips: clips, items: session.timelineItems,
+                                            sources: [0: footage], mediaSources: media, deviceCaptions: true).recipe
+        let drawn = try XCTUnwrap(recipe.tracks.first { $0.kind == .overlay }?.clips.first { $0.id == "overlay:" + bottom.id })
+        XCTAssertEqual(drawn.transform.positionY, (bottom.y * 1920).rounded(.toNearestOrEven) - 960, accuracy: 0.5,
+                       "drawn at its own y, not lifted onto her face at 0.62")
+    }
+
+    func testDeletingOneCardKeepsTheRestAndNoTileClaimsTheLook() throws {
+        let (session, offer) = try cardSession()
+        let look = try cardLooks(offer).grid
+        XCTAssertTrue(session.applyIntroStyle(look))
+        let deleted = look.cards[0].id
+        session.removeMediaOverlay(id: deleted)
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.dropFirst().map(\.id))
+        XCTAssertNil(session.introStyleSelectedKey(in: offer), "the look without one of its cards is hers now")
+        let sent = try XCTUnwrap(session.exportEditorState()).lanes.mediaOverlays?.compactMap { $0.objectValue?["id"]?.stringValue }
+        XCTAssertEqual(sent, ["her-card"] + look.cards.dropFirst().map(\.id), "Save keeps every other card")
+        XCTAssertTrue(session.applyIntroStyle(look), "tapping the look again brings the card back")
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
+    }
+
+    func testARePickedCardClearsItsPendingDeletion() throws {
+        // As after a Save: the look's cards are her saved cards, the offer is the one fetched for that edit.
+        let (fresh, offer) = try cardSession()
+        let look = try cardLooks(offer).around
+        XCTAssertTrue(fresh.applyIntroStyle(look))
+        var variant = try editorVariant("editor_talking_cards")
+        variant["text_elements"] = .array(look.rows)
+        variant["media_overlays"] = .array(fresh.document.mediaOverlays.map { .object($0.raw) })
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: variant), operations: LocalEditorOperations())
+        session.introStylesState = .ready(offer)
+        session.introStylesOfferContext = session.introStylesContext()
+        XCTAssertEqual(session.introStyleSelectedKey(in: offer), look.key, "a saved card look reads as that look")
+
+        session.removeMediaOverlay(id: look.cards[0].id)
+        XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "media_overlay", id: look.cards[0].id)])
+        XCTAssertTrue(session.applyIntroStyle(look))
+        XCTAssertTrue(session.document.deletions.isEmpty, "the deletion would make Save drop the card the look puts back")
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
+    }
+
+    func testACardTileDrawsHerCachedPhotoInItsBoxAndAPlateWhereThisIPhoneHasNone() async throws {
+        let look = try cardLooks(try offer("offer_talking_cards")).grid
+        let cached = look.previewCards[0], missing = look.previewCards[1]
+        let thumbnail = CreationMediaPreview.url(mediaID: cached.mediaID)
+        try FileManager.default.createDirectory(at: thumbnail.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 30, height: 40)).image { context in
+            UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 30, height: 40))
+        }.jpegData(compressionQuality: 1)).write(to: thumbnail)
+        defer { try? FileManager.default.removeItem(at: thumbnail) }
+        try? FileManager.default.removeItem(at: CreationMediaPreview.url(mediaID: missing.mediaID))
+
+        let drawn = await DesignPreviewRenderer.withCards(look.previewCards, over: nil, projectID: nil)
+        let image = try XCTUnwrap(drawn)
+        func pixel(at fraction: CGPoint) -> [UInt8] {
+            var rgba = [UInt8](repeating: 0, count: 4)
+            let context = CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(image, in: CGRect(x: -fraction.x * CGFloat(image.width), y: -(1 - fraction.y) * CGFloat(image.height),
+                                           width: CGFloat(image.width), height: CGFloat(image.height)))
+            return Array(rgba.prefix(3))
+        }
+        let photo = pixel(at: CGPoint(x: cached.box.midX, y: cached.box.midY))
+        XCTAssertGreaterThan(photo[0], 200, "her photo fills its box: \(photo)")
+        XCTAssertLessThan(photo[1], 60)
+        let plate = pixel(at: CGPoint(x: missing.box.midX, y: missing.box.midY))
+        XCTAssertTrue(plate.allSatisfy { $0 > 220 }, "a neutral plate where the photo is not on this iPhone: \(plate)")
+        XCTAssertEqual(pixel(at: CGPoint(x: 0.5, y: 0.5)), [0, 0, 0], "no clip: the canvas stays as the text pass draws it")
+    }
+
+    func testCardLookNamesSayTheirFontsAndPhotos() {
+        XCTAssertEqual(IntroStyleLabels.name(forKey: "young_serif+around_speaker", position: 5), "Soft serif + photos")
+        XCTAssertEqual(IntroStyleLabels.name(forKey: "grotesk_pen+grid_2x2", position: 6), "Bold + marker + photo grid")
+        XCTAssertEqual(IntroStyleLabels.name(forKey: "grotesk_pen+ring", position: 7), "Style 7", "an arrangement this build has no name for")
+        XCTAssertEqual(IntroStyleLabels.photoCardLook, "photo card look")
+    }
+
+    func testAPlainPickOnAnEditWithoutCardsSendsOnlyItsTitle() throws {
+        for (editor, block) in [("editor_talking_en", "offer_talking_en"), ("editor_montage_tr", "offer_montage_tr"),
+                                ("editor_narrated_en", "offer_narrated_en")] {
+            let (session, offer) = try session(editor: editor, offer: block)
+            XCTAssertTrue(session.applyIntroStyle(offer.options[0]), block)
+            XCTAssertEqual(session.dirtySections, [.text], "\(block): only the title lane changed")
+            let lanes = try XCTUnwrap(session.exportEditorState()).lanes
+            XCTAssertNil(lanes.mediaOverlays, "\(block): no card lane goes out")
+            XCTAssertEqual(lanes.textElements, offer.options[0].rows)
+        }
+    }
+
+    func testACardLookIsRefusedWhereTheOverlayLaneIsLocked() throws {
+        let (session, offer) = try cardSession(overlaysEditable: false)
+        let before = session.document
+        XCTAssertFalse(session.applyIntroStyle(try cardLooks(offer).around), "she could neither move nor delete its cards")
+        XCTAssertEqual(session.document, before)
+        let plain = try XCTUnwrap(offer.options.first { !$0.isCardLook && !$0.isNone })
+        XCTAssertTrue(session.applyIntroStyle(plain), "a plain look touches no card")
+        XCTAssertEqual(overlayIDs(session), ["her-card"])
     }
 }

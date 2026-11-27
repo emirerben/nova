@@ -9,9 +9,11 @@ import KriaMediaEngine
 // Wire shape (`POST plan-items/{item_id}/variants/{variant_id}/intro-styles`):
 //   request  `{version: 1, base_generation, title_rows: [TextElement JSON]}`
 //   response `{version: 1, available, reason, offer_id, route, title_family, language, replace_ids,
-//              options: [{key, recommended, current, rows: [TextElement JSON], preview}]}`
+//              options: [{key, recommended, current, rows: [TextElement JSON], preview, cards?}]}`
 // `rows` are kept as `[JSONValue]` and decoded into the document by the same decoder a loaded edit uses, so
 // `source_params` (`title_look.intro_style`), `text_case`, `line_spacing` and `text_language` reach Save untouched.
+// KRI-1615 (protocol 62): a card look (`<font_pair>+<arrangement>`, after the plain looks) also carries `cards`, her own
+// photos laid out with the title, and its `preview.cards` boxes. Contract: intro-scene.md ("Photo cards in the offer").
 
 /// The three title families a Save can carry: a Talking edit's `opening-title`, a Voiceover edit's `narrated-title`
 /// and a montage's `guided-title`, each optionally followed by `-line-N` for the later lines of an intro stack.
@@ -58,6 +60,84 @@ struct IntroStylesResponse: Decodable, Equatable, Sendable {
     init(json: JSONValue) { self.json = json }
 }
 
+/// KRI-1615: one of her own Visuals photos laid out with the title, as a card look's `cards` entry carries it
+/// (`IntroCard` in `app/pipeline/intro_styles.py`). Canvas fractions of 1080x1920: `x`/`y` the centre, `scale` the width;
+/// the photo keeps its own shape. The id is the slot's (`intro-card-N` for `prop_N`), so applying a look twice converges.
+struct IntroStyleCard: Equatable, Sendable {
+    static let idPrefix = "intro-card-"
+    static let maxPerLook = 4
+
+    let id: String
+    let gcsPath: String
+    let x: Double
+    let y: Double
+    let scale: Double
+    /// The server's mark that this card sits clear of her captions (`intro_card_pool.caption_clear_decisions`).
+    let captionClear: Bool
+    let z: Int
+    let startS: Double
+    let endS: Double
+
+    static func isCardID(_ id: String) -> Bool { id.hasPrefix(idPrefix) }
+
+    /// A look's cards, or nil when any card is one this build cannot place exactly.
+    static func look(_ value: JSONValue) -> [IntroStyleCard]? {
+        guard let entries = value.arrayValue, (1...maxPerLook).contains(entries.count) else { return nil }
+        let cards = entries.compactMap(card)
+        guard cards.count == entries.count, Set(cards.map(\.id)).count == cards.count else { return nil }
+        return cards
+    }
+
+    private static func card(_ value: JSONValue) -> IntroStyleCard? {
+        guard let fields = value.objectValue, let id = fields["id"]?.stringValue, id.hasPrefix(idPrefix) else { return nil }
+        let slot = id.dropFirst(idPrefix.count)
+        func number(_ key: String, in range: ClosedRange<Double>) -> Double? {
+            guard let value = fields[key]?.numberValue, value.isFinite, range.contains(value) else { return nil }
+            return value
+        }
+        guard !slot.isEmpty, slot.allSatisfy({ $0.isASCII && $0.isNumber }), let n = Int(slot), n > 0,
+              fields["slot"]?.stringValue == "prop_\(n)",
+              fields["media_id"]?.stringValue?.isEmpty == false, fields["generation"]?.stringValue?.isEmpty == false,
+              let path = fields["gcs_path"]?.stringValue, !path.isEmpty,
+              let x = number("x_frac", in: 0...1), let y = number("y_frac", in: 0...1),
+              let scale = number("scale", in: 0...1), scale > 0,
+              let captionClear = fields["caption_clear"]?.boolValue,
+              let z = number("z", in: 0...Double(Int32.max)), z == z.rounded(),
+              let start = number("start_s", in: 0...Double.greatestFiniteMagnitude),
+              let end = number("end_s", in: 0...Double.greatestFiniteMagnitude), end > start else { return nil }
+        return IntroStyleCard(id: id, gcsPath: path, x: x, y: y, scale: scale, captionClear: captionClear, z: Int(z),
+                              startS: start, endS: end)
+    }
+
+    /// True when `overlay` is this card where the look put it: one she moved, resized or retimed is hers.
+    func isPlaced(as overlay: EditorTimedEffect) -> Bool {
+        func same(_ key: String, _ value: Double) -> Bool { overlay.raw[key]?.numberValue.map { abs($0 - value) < 1e-6 } ?? false }
+        return overlay.id == id && overlay.raw["src_gcs_path"]?.stringValue == gcsPath && same("x_frac", x) && same("y_frac", y)
+            && same("scale", scale) && same("z", Double(z)) && abs(overlay.startS - startS) < 1e-6 && abs(overlay.endS - endS) < 1e-6
+    }
+
+    /// A media-overlay row as the Save sends it. An intro card goes without `caption_clear`: the server decides it again
+    /// from its own evidence on every Save (`intro_card_pool.caption_clear_decisions`).
+    static func committed(_ row: JSONValue) -> JSONValue {
+        guard var fields = row.objectValue, let id = fields["id"]?.stringValue, isCardID(id) else { return row }
+        fields.removeValue(forKey: "caption_clear")
+        return .object(fields)
+    }
+
+    /// Her card on the editor's media-overlay lane, in the shape the stage C contract names. `caption_clear` is kept on
+    /// the row (as the server's own projection of a marked card does) so the live preview draws the card where the
+    /// export will; the Save leaves it out (`committed`), because the server decides it again.
+    var overlay: EditorTimedEffect {
+        var raw: [String: JSONValue] = [
+            "id": .string(id), "kind": .string("image"), "src_gcs_path": .string(gcsPath), "display_mode": .string("pip"),
+            "position": .string("custom"), "x_frac": .number(x), "y_frac": .number(y), "scale": .number(scale),
+            "start_s": .number(startS), "end_s": .number(endS), "z": .number(Double(z)),
+        ]
+        if captionClear { raw["caption_clear"] = .bool(true) }
+        return EditorTimedEffect(id: id, startS: startS, endS: endS, kind: "image", raw: raw)
+    }
+}
+
 struct IntroStylesOffer: Equatable, Sendable {
     struct Option: Equatable, Sendable, Identifiable {
         let key: String
@@ -68,8 +148,20 @@ struct IntroStylesOffer: Equatable, Sendable {
         let rows: [JSONValue]
         /// What the option looks like over her own clip, drawn on this iPhone. All options have one or none do.
         let preview: ChoiceQuestion.Preview?
+        /// KRI-1615: her photos this look lays out with its rows; empty for a plain look and "none".
+        var cards: [IntroStyleCard] = []
+        /// Where the preview draws each card's photo, slot order (present exactly when `preview` and `cards` are).
+        var previewCards: [PreviewCard] = []
         var id: String { key }
         var isNone: Bool { key == IntroStylesOffer.noneKey }
+        var isCardLook: Bool { !cards.isEmpty }
+    }
+
+    /// A card's photo in a card look's preview: `box` in canvas fractions, drawn in `z` order under the title.
+    struct PreviewCard: Equatable, Sendable {
+        let mediaID: String
+        let box: CGRect
+        let z: Int
     }
 
     static let noneKey = "none"
@@ -119,9 +211,24 @@ struct IntroStylesOffer: Equatable, Sendable {
                 guard let id = row.objectValue?["id"]?.stringValue, IntroStyleFamily.family(of: id) == family,
                       row.objectValue?["text"]?.stringValue != nil else { return .unavailable(reason: nil) }
             }
+            // A card look's rows place the title between its cards: without every card it is not offered at all.
+            var cards: [IntroStyleCard] = []
+            if let wire = object["cards"], wire != .null {
+                guard let look = IntroStyleCard.look(wire) else { continue }
+                cards = look
+            }
+            var preview = ChoiceQuestion.Preview.parse(object["preview"])
+            var previewCards: [PreviewCard] = []
+            if !cards.isEmpty, preview != nil {
+                if let drawn = PreviewCard.look(object["preview"]?.objectValue?["cards"]), drawn.count == cards.count {
+                    previewCards = drawn
+                } else {
+                    preview = nil
+                }
+            }
             options.append(Option(key: key, recommended: object["recommended"]?.boolValue ?? false,
                                   current: object["current"]?.boolValue ?? false, rows: rows,
-                                  preview: ChoiceQuestion.Preview.parse(object["preview"])))
+                                  preview: preview, cards: cards, previewCards: previewCards))
         }
         // At least one look and "none", which is last: a menu without a way back is not offered.
         guard options.count >= 2, options.last?.key == noneKey, options.filter(\.isNone).count == 1 else {
@@ -130,9 +237,26 @@ struct IntroStylesOffer: Equatable, Sendable {
         // Previews are all or nothing, as on the wire: one that did not parse turns every tile into a label tile.
         let previewed = options.allSatisfy { $0.preview != nil }
             ? options
-            : options.map { Option(key: $0.key, recommended: $0.recommended, current: $0.current, rows: $0.rows, preview: nil) }
+            : options.map { Option(key: $0.key, recommended: $0.recommended, current: $0.current, rows: $0.rows, preview: nil,
+                                   cards: $0.cards) }
         return .offer(IntroStylesOffer(offerID: offerID, route: route, titleFamily: family,
                                        language: fields["language"]?.stringValue, replaceIDs: replace, options: previewed))
+    }
+}
+
+extension IntroStylesOffer.PreviewCard {
+    /// `preview.cards`, or nil when one box is not a box inside the canvas.
+    static func look(_ value: JSONValue?) -> [Self]? {
+        guard let entries = value?.arrayValue, !entries.isEmpty else { return nil }
+        let cards = entries.compactMap { entry -> Self? in
+            guard let fields = entry.objectValue, let mediaID = fields["media_id"]?.stringValue, !mediaID.isEmpty,
+                  let box = fields["box"]?.objectValue, let z = fields["z"]?.numberValue, z.isFinite, z >= 0 else { return nil }
+            let edges = ["left", "top", "right", "bottom"].compactMap { box[$0]?.numberValue }.filter { $0.isFinite && (0...1).contains($0) }
+            guard edges.count == 4, edges[0] < edges[2], edges[1] < edges[3] else { return nil }
+            return Self(mediaID: mediaID, box: CGRect(x: edges[0], y: edges[1], width: edges[2] - edges[0], height: edges[3] - edges[1]),
+                        z: Int(z))
+        }
+        return cards.count == entries.count ? cards : nil
     }
 }
 
@@ -169,7 +293,15 @@ enum IntroStylesFailure: Equatable, Sendable {
 /// The words on screen. Look names are a closed set of keys; anything else reads "Style N".
 enum IntroStyleLabels {
     static func name(forKey key: String, position: Int) -> String {
-        switch key {
+        if let plus = key.firstIndex(of: "+") {
+            let pair = name(forKey: String(key[..<plus]), position: position)
+            switch key[key.index(after: plus)...] {
+            case "around_speaker": return String(localized: "\(pair) + photos", comment: "Intro style name: the look's fonts (the argument) with two of her photos around her")
+            case "grid_2x2": return String(localized: "\(pair) + photo grid", comment: "Intro style name: the look's fonts (the argument) with four of her photos, two above and two below")
+            default: return String(localized: "Style \(position)", comment: "Intro style name for a look this build has no name for; the number is its place in the list")
+            }
+        }
+        return switch key {
         case "none": String(localized: "No intro style", comment: "Intro styles: the option that restores the plain title")
         case "grotesk_hand": String(localized: "Bold + handwritten", comment: "Intro style name: a bold sans with a handwritten accent")
         case "serif_italic": String(localized: "Serif + italic", comment: "Intro style name: a serif with an italic accent")
@@ -187,6 +319,10 @@ enum IntroStyleLabels {
         case "title_too_short": String(localized: "Intro styles need a title of two or more words.", comment: "Intro styles: the title is one word")
         default: String(localized: "Intro styles aren't available for this video.", comment: "Intro styles: not offered for this video")
         }
+    }
+
+    static var photoCardLook: String {
+        String(localized: "photo card look", comment: "VoiceOver: this intro style lays her own photos out as cards with the title")
     }
 
     static var failureLine: String {

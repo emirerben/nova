@@ -110,20 +110,26 @@ extension NativeEditorSession {
         return offer
     }
 
-    /// The option whose rows are the title right now (a pick, or the title as it was when no pick has happened):
-    /// compared on the decoded rows, so her edit to any line leaves nothing selected.
+    /// The option whose rows are the title right now (a pick, or the title as it was when no pick has happened), and
+    /// whose cards are the intro cards on screen: her edit to any line, or a card she moved or deleted, leaves nothing
+    /// selected.
     func introStyleSelectedKey(in offer: IntroStylesOffer) -> String? {
         let now = introStyleTitleRows
-        return offer.options.first { EditorDocument.textElements(fromRows: $0.rows) == now }?.key
+        let cards = document.mediaOverlays.filter { IntroStyleCard.isCardID($0.id) }
+        return offer.options.first { option in
+            EditorDocument.textElements(fromRows: option.rows) == now && cards.count == option.cards.count
+                && option.cards.allSatisfy { card in cards.contains { card.isPlaced(as: $0) } }
+        }?.key
     }
 
     // MARK: Apply
 
-    /// Puts `option.rows` in the title's place as ONE undoable change, raw: no `source_params` key is dropped on the
-    /// way. Removes every row of the offer's title family that is in the document now (the stack on screen, whether it
-    /// is the title as loaded or an earlier pick, even one made before the panel was closed and opened again), never a
-    /// protected row, and clears any pending deletion of an id the look puts back (Save would drop that line from the
-    /// lane). Returns false, changing nothing, when the offer no longer fits the document.
+    /// Puts `option.rows` in the title's place and `option.cards` in place of every intro card as ONE undoable change,
+    /// raw: no `source_params` key is dropped on the way. Removes every row of the offer's title family that is in the
+    /// document now (the stack on screen, whether it is the title as loaded or an earlier pick, even one made before the
+    /// panel was closed and opened again), never a protected row, and clears any pending deletion of an id the look puts
+    /// back (Save would drop that line or card). Her own cards keep their place, before the look's. Returns false,
+    /// changing nothing, when the offer no longer fits the document or the cards would land in a locked lane.
     @discardableResult
     func applyIntroStyle(_ option: IntroStylesOffer.Option) -> Bool {
         guard canOfferIntroStyles, let offer = introStylesCurrentOffer, offer.options.contains(option) else { return false }
@@ -136,12 +142,20 @@ extension NativeEditorSession {
             .filter { IntroStyleFamily.family(of: $0) == offer.titleFamily }
         // A protected title row cannot be replaced: refuse the whole change rather than half apply it.
         if document.textElements.contains(where: { removable.contains($0.id) && $0.isReadOnly }) { return false }
-        let applied = transactDocument(sections: [.text]) { doc in
+        let cards = option.cards.map(\.overlay)
+        let cardIDs = Set(cards.map(\.id))
+        let touchesCards = !cards.isEmpty || document.mediaOverlays.contains { IntroStyleCard.isCardID($0.id) }
+        if touchesCards, !canEdit(.mediaOverlays) { return false }
+        let applied = transactDocument(sections: [.text, .mediaOverlays]) { doc in
             let first = doc.textElements.firstIndex { removable.contains($0.id) }
             let position = first.map { doc.textElements[..<$0].filter { !removable.contains($0.id) }.count } ?? doc.textElements.count
             doc.textElements.removeAll { removable.contains($0.id) }
             doc.textElements.insert(contentsOf: incoming, at: min(position, doc.textElements.count))
-            doc.deletions.removeAll { $0.kind == "text" && incomingIDs.contains($0.id) }
+            doc.mediaOverlays.removeAll { IntroStyleCard.isCardID($0.id) }
+            doc.mediaOverlays.append(contentsOf: cards)
+            doc.deletions.removeAll {
+                ($0.kind == "text" && incomingIDs.contains($0.id)) || ($0.kind == "media_overlay" && cardIDs.contains($0.id))
+            }
         }
         guard applied else { return false }
         introStylesOfferContext = introStylesContext()

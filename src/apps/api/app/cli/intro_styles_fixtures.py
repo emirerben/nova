@@ -54,6 +54,11 @@ CUES = [
 ]
 # A speaker standing a little left of centre, head high: the saved Talking face band.
 FACE = (0.30, 0.30, 0.62, 0.62)
+# KRI-1615: a speaker framed with room above her head and under her chin, and four photos of mixed
+# shapes in her item's pool: what a card look needs (`FACE` leaves no room for cards).
+ROOMY_FACE = (0.32, 0.44, 0.68, 0.66)
+CARD_ITEM = "intro-cards-verify"
+CARD_SHAPES = (0.75, 1.333, 1.0, 0.75)
 # The job id seeds which looks are offered. A test that asserts on the looks sets this so a failure
 # repeats; the route tests leave it unset, because their jobs are database rows and need unique ids.
 DEFAULT_JOB_ID: uuid.UUID | None = None
@@ -76,6 +81,16 @@ def flag_overrides() -> dict[str, Any]:
         "intro_scene_user_ids": [USER_ID],
         "phone_render_verified_features": list(VERIFIED_FEATURES),
     }
+
+
+def card_photos() -> list[Any]:
+    from app.services.intro_card_pool import CardPhoto  # noqa: PLC0415
+
+    prefix = f"users/{USER_ID}/plan/{CARD_ITEM}/pool"
+    return [
+        CardPhoto(str(uuid.UUID(int=n + 1)), f"{prefix}/{n}.jpg", "7", aspect)
+        for n, aspect in enumerate(CARD_SHAPES)
+    ]
 
 
 def binding(media_id: str, *, duration_s: float = 12.0) -> PhoneSourceBinding:

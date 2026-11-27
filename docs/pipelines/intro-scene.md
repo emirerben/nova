@@ -516,6 +516,23 @@ so applying the same look twice converges. Her normal editor-commit Save posts t
 `media_overlays` section (her other cards first). The preview's `cards` are the boxes to draw her
 photos in (or a neutral plate until the photo loads).
 
+**The iPhone (stage C, `Core/IntroStyles.swift`, `NativeEditorSession+IntroStyles.swift`).**
+`IntroStylesOffer.parse` reads `cards` into `IntroStyleCard`. A card it cannot place exactly (a
+slot that is not the id's, no `media_id` or `generation`, `scale` outside (0, 1], more than four,
+a repeated id, an id without the prefix, an empty window) drops that one look; the plain looks and
+`none` stay, so a card look's rows never go out without its cards. Applying is one undo step over
+the text and overlay lanes, refused whole where the `overlays` lane is locked (she could not move
+or delete the cards), and the strip hides card looks there. Her own delete removes one card; Save
+sends the rest. The row keeps the offer's `caption_clear` mark so the live preview draws a card
+under her captions where it exports (the device clamp otherwise lifts it to 0.62); the commit body
+drops it from every `intro-card-*` row. The preview reads a new card's photo from her Visuals
+library by `src_gcs_path` (`GET plan-items/{id}/assets`: its `id` is the card's `media_id`, with a
+short-lived signed `source_url` and the `generation`), or from the source pool once the card is
+saved; a photo it cannot read leaves that card undrawn, never the preview failed. Tiles draw the
+`preview.cards` boxes under the title from cached thumbnails or as neutral plates, never fetching.
+No wire field was added. Guards: `IntroStylesOfferTests` (C1-C8),
+`NativeEditorSessionTests.testAnIntroCard*`, `IntroStylesUITests` (the commit body on the fixture).
+
 **Save.** `pin_background_for_commit` (the HTTP Save, the copilot edit and the approval task) now
 also calls `intro_card_pool.pin_intro_cards_for_commit`: with the switch on, for every posted
 `intro-card-*` card on one of her card photos that the job has not pinned, it binds the photo

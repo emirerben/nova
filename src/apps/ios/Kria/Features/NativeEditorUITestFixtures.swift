@@ -768,13 +768,15 @@ enum NativeEditorUITestFixtures {
     }
 
     /// `-ui-testing-editor-intro-styles` (KRI-1633): a phone edit whose server opens `editor_capabilities.intro_styles`, with the
-    /// plain title rows of the fixture's `editor_<block>` variant.
+    /// plain title rows of the fixture's `editor_<block>` variant (and, for the card looks of KRI-1615, her own cards).
     static func introStyles(variant: [String: JSONValue]) -> EditorDraft {
         let clips = [clip(901, start: 0, duration: 6)]
-        return draft(clips: clips, text: [], captions: false, music: false, sections: [
+        var sections: [String: JSONValue] = [
             "timeline_slots": slots(for: clips),
             "text_elements": variant["text_elements"] ?? .array([]),
-        ], rootExtras: [
+        ]
+        if let overlays = variant["media_overlays"] { sections["media_overlays"] = overlays }
+        return draft(clips: clips, text: [], captions: false, music: false, sections: sections, rootExtras: [
             "render_destination": .string("device"),
             "editor_capabilities": variant["editor_capabilities"] ?? .object([:]),
         ])

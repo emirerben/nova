@@ -1009,6 +1009,10 @@ enum EditorOpenIntent { case warm, open }
     /// `overlay:<id>` cards whose photo or video could not be loaded for the live preview. They stay in the
     /// document; the preview just doesn't draw them. Cleared whenever the sources are re-resolved from scratch.
     private var skippedPreviewMedia: Set<String> = []
+    /// KRI-1615: intro-card photos by storage path. A card id is a slot, so a later look (or undo) can put another of
+    /// her photos behind the same id; keying by id would draw the old photo.
+    private var introCardMedia: [String: ResolvedEditorSource] = [:]
+    private var introCardMediaUnreadable: Set<String> = []
     /// How many of the edit's cards the live preview is not drawing (a non-blocking note, never an error).
     @Published private(set) var previewSkippedMediaCount = 0
     /// Cards loaded for the preview at once. Each file keeps its own request/resource timeouts.
@@ -4522,6 +4526,7 @@ enum EditorOpenIntent { case warm, open }
         deviceNarrationPresence = nil
         resolvedMedia = [:]
         skippedPreviewMedia = []
+        introCardMedia = [:]; introCardMediaUnreadable = []
         previewSkippedMediaCount = 0
         do {
             #if DEBUG
@@ -4738,6 +4743,7 @@ enum EditorOpenIntent { case warm, open }
         deviceNarrationPresence = nil
         resolvedMedia.removeAll()
         skippedPreviewMedia = []
+        introCardMedia = [:]; introCardMediaUnreadable = []
         previewSkippedMediaCount = 0
         sourcePreview = nil
         liveSongVolumeActive = false; previewBuiltDocument = nil
@@ -4962,14 +4968,71 @@ enum EditorOpenIntent { case warm, open }
         return resolvedAudio
     }
 
+    /// KRI-1615: the photo behind each intro card, by its storage path. A saved card reads from the source pool like any
+    /// card; one a look just added is one of her Visuals photos, read from her library (the speaker-background
+    /// precedent). A photo that cannot be read leaves its card undrawn, never the preview failed: the card stays in the
+    /// edit and in its Save.
+    private func prepareIntroCardMedia(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
+        let cards = document.mediaOverlays.filter { IntroStyleCard.isCardID($0.id) }
+        func path(_ card: EditorTimedEffect) -> String { card.raw["src_gcs_path"]?.stringValue ?? "" }
+        func pooled(_ card: EditorTimedEffect) -> NativeEditorAsset? {
+            // The pool lists the saved edit's cards by id; it is this card's photo only while the path is the saved one.
+            guard cleanDocument.mediaOverlays.first(where: { $0.id == card.id }).map(path) == path(card) else { return nil }
+            return sourcePool?.nativeAssets.first { $0.kind == "media_overlay" && $0.id == card.id }
+        }
+        func photo(at path: String) -> CreationVisual? {
+            visualLibrary.first { $0.gcsPath == path && $0.kind == "image" && $0.status == "ready" }
+        }
+        if let resolver = sourceResolver {
+            let pending = cards.filter { !path($0).isEmpty && introCardMedia[path($0)] == nil && !introCardMediaUnreadable.contains(path($0)) }
+            if pending.contains(where: { pooled($0) == nil && photo(at: path($0)) == nil }) { await refreshVisualLibrary() }
+            for card in pending where introCardMedia[path(card)] == nil {
+                sourcePreviewState = .preparing
+                do {
+                    if let asset = pooled(card) {
+                        var resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
+                        resolved.preserveAlpha = asset.preserveAlpha == true
+                        introCardMedia[path(card)] = resolved
+                    } else if let visual = photo(at: path(card)), let url = visual.originalMediaURL {
+                        introCardMedia[path(card)] = try await resolver.resolveMedia(id: visual.id, url: url,
+                            generation: visual.sourceGeneration ?? document.revision.baseGeneration)
+                    } else {
+                        introCardMediaUnreadable.insert(path(card))
+                    }
+                } catch {
+                    guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+                    introCardMediaUnreadable.insert(path(card))
+                }
+                guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+                if introCardMedia[path(card)] == nil {
+                    NativePreviewDiagnostics.record("preview-media-skipped", fields: ["reason": "intro-card-photo"])
+                }
+            }
+        }
+        var media: [String: ResolvedEditorSource] = [:]
+        for card in cards {
+            let key = "overlay:" + card.id
+            if let source = introCardMedia[path(card)] {
+                media[key] = source
+                skippedPreviewMedia.remove(key)
+            } else {
+                skippedPreviewMedia.insert(key)
+            }
+        }
+        return media
+    }
+
     private func preparePreviewMedia(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
-        guard let resolver = sourceResolver else { return resolvedMedia.merging(authoredVisualSources) { _, authored in authored } }
+        let introCards = try await prepareIntroCardMedia(document: document, sequence: sequence)
+        guard let resolver = sourceResolver else {
+            return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }.merging(introCards) { _, card in card }
+        }
         // One unloadable card must not drop the whole live preview (a 33-card edit once fell back to the
         // finished video over a single bad file): it is skipped, kept in the document, and noted. Cards load
         // a few at a time rather than one after another.
         let generation = document.revision.baseGeneration
         var wanted: [(key: String, asset: NativeEditorAsset)] = []
-        for overlay in document.mediaOverlays {
+        for overlay in document.mediaOverlays where !IntroStyleCard.isCardID(overlay.id) {
             let key = "overlay:" + overlay.id
             guard resolvedMedia[key] == nil, authoredVisualSources[key] == nil, !skippedPreviewMedia.contains(key) else { continue }
             guard let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "media_overlay" && $0.id == overlay.id }) else {
@@ -5040,7 +5103,7 @@ enum EditorOpenIntent { case warm, open }
             guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
             if let resolved { resolvedMedia[key] = resolved }
         }
-        return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
+        return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }.merging(introCards) { _, card in card }
     }
 
     /// Runs `work` for every item with at most `limit` in flight. A failing item is returned as a failure and
@@ -10164,7 +10227,9 @@ enum EditorOpenIntent { case warm, open }
             guard let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }) else { return nil }
             source = clip.sourceClipIndex.flatMap { resolvedSources?[$0] }
             time = clip.trimIn
-        case .mediaOverlay: source = resolvedMedia["overlay:" + selection.id]
+        case .mediaOverlay:
+            source = resolvedMedia["overlay:" + selection.id] ?? document.mediaOverlays.first { $0.id == selection.id }?
+                .raw["src_gcs_path"]?.stringValue.flatMap { introCardMedia[$0] }
         case .visualBlock: source = resolvedMedia["visual:" + selection.id] ?? authoredVisualSources["visual:" + selection.id]
         default: source = nil
         }
@@ -10872,7 +10937,10 @@ enum EditorOpenIntent { case warm, open }
             orientation: submittedSections.contains(.orientation) ? value["orientation"]?.stringValue : nil,
             landscapeFit: submittedSections.contains(.landscapeFit) ? value["landscape_fit"]?.stringValue : nil,
             soundEffects: array("sound_effects", .soundEffects),
-            mediaOverlays: array("media_overlays", .mediaOverlays),
+            // A card lane the edit opened without is encoded only while it holds cards: emptied after a Save that added
+            // some, it must still go out, or the server keeps the cards it is not told to drop.
+            mediaOverlays: submittedSections.contains(.mediaOverlays)
+                ? (Self.array(value["media_overlays"]) ?? []).map(IntroStyleCard.committed) : nil,
             visualBlocks: array("visual_blocks", .visualBlocks),
             motionScenes: array("motion_scenes", .motionScenes),
             motionRuntimeHash: submittedSections.contains(.motionScenes) ? document.motionRuntimeHash : nil,

@@ -324,23 +324,13 @@ def _run_case(route: str, lang: str, name: str, title: str, index: int) -> dict[
 
 # --- card looks (KRI-1615 stage B) -------------------------------------------------------------
 
-ROOMY_FACE = (0.32, 0.44, 0.68, 0.66)
+ROOMY_FACE = fx.ROOMY_FACE
 # A real close Talking take (a prod edit's saved face band): her head high and large.
 CLOSE_FACE = (0.24, 0.163, 0.816, 0.509)
 CARD_FRAMINGS = {"roomy": (ROOMY_FACE, "clean"), "close": (CLOSE_FACE, "pop")}
-CARD_ITEM = "intro-cards-verify"
+CARD_ITEM = fx.CARD_ITEM
 CARD_TITLES = {"en": fx.EN_TITLE, "tr": "şehir rehberi: lizbon, ilk gün"}
-CARD_SHAPES = (0.75, 1.333, 1.0, 0.75)
-
-
-def card_photos() -> list[Any]:
-    from app.services.intro_card_pool import CardPhoto  # noqa: PLC0415
-
-    prefix = f"users/{fx.USER_ID}/plan/{CARD_ITEM}/pool"
-    return [
-        CardPhoto(str(uuid.UUID(int=n + 1)), f"{prefix}/{n}.jpg", "7", aspect)
-        for n, aspect in enumerate(CARD_SHAPES)
-    ]
+card_photos = fx.card_photos
 
 
 def card_problems(

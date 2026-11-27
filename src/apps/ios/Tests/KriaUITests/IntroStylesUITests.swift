@@ -158,4 +158,62 @@ final class IntroStylesUITests: XCTestCase {
         attach(turkish, "Intro styles panel (Turkish)")
         turkish.terminate()
     }
+
+    /// KRI-1615: a card look on a Talking edit that already has a card of hers. The pick's Save carries the look's title
+    /// rows and its cards after hers in the contract's shape; she deletes one card with the editor's own delete and the
+    /// next Save keeps the rest; "No intro style" then takes the look's cards away and leaves hers.
+    func testACardLookSavesHerPhotosAfterHerCardAndADeletedCardStaysGone() throws {
+        executionTimeAllowance = 300
+        let capture = FileManager.default.temporaryDirectory.appendingPathComponent("kri1615-commits-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: capture) }
+        let expected = try XCTUnwrap(fixture()["save_body_cards_expected"] as? [String: Any])
+        let key = try XCTUnwrap(expected["picked_key"] as? String)
+        let cards = try XCTUnwrap(expected["media_overlays"] as? [[String: Any]]).compactMap { $0["id"] as? String }
+        let app = launch(["-ui-testing-editor-intro-styles-cards"], capture: capture)
+        XCTAssertTrue(element(app, "native-editor-preview").waitForExistence(timeout: 30))
+
+        openPanel(app)
+        let look = app.buttons["intro-style-option-\(key)"]
+        XCTAssertTrue(look.waitForExistence(timeout: 15), "the offer shows the card look")
+        XCTAssertTrue(look.label.hasSuffix("photo card look"), "VoiceOver says it lays out her photos; reads \(look.label)")
+        XCTAssertTrue(waitFor(look, "value == %@", "Preview drawn over your clip", timeout: 20),
+                      "the tile is drawn over her clip with her photos; reads \(look.value ?? "nil")")
+        for _ in 0..<4 where !look.isHittable { element(app, "intro-styles-strip").swipeLeft() }
+        attach(app, "Intro styles panel with a card look")
+        look.tap()
+        XCTAssertTrue(waitFor(look, "selected == true", timeout: 10), "the tapped card look is marked")
+        app.buttons["native-editor-intro-styles-done"].tap()
+        save(app)
+        var sent = try XCTUnwrap(commits(capture).last)
+        let rows = try XCTUnwrap(expected["text_elements"] as? [Any])
+        XCTAssertTrue(NSArray(array: sent["text_elements"] as? [Any] ?? []).isEqual(to: rows), "the look's title rows, raw")
+        XCTAssertTrue(NSArray(array: sent["media_overlays"] as? [Any] ?? []).isEqual(to: expected["media_overlays"] as? [Any] ?? []),
+                      "her card first, then each card in the contract's shape: \(sent["media_overlays"] ?? "nil")")
+        attach(app, "Editor after saving a card look")
+
+        let gone = cards[1]
+        let card = element(app, "native-editor-timeline-media_overlay-\(gone)")
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "the card is on the timeline")
+        card.tap()
+        let remove = app.buttons["native-editor-remove-visual"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.tap()
+        let closeVisuals = app.buttons["native-editor-visuals-done"]
+        if closeVisuals.waitForExistence(timeout: 5) { closeVisuals.tap() }
+        save(app)
+        sent = try XCTUnwrap(commits(capture).last)
+        let kept = (sent["media_overlays"] as? [[String: Any]])?.compactMap { $0["id"] as? String }
+        XCTAssertEqual(kept, cards.filter { $0 != gone }, "Save keeps her card and the other intro card")
+
+        openPanel(app)
+        let none = app.buttons["intro-style-option-none"]
+        XCTAssertTrue(none.waitForExistence(timeout: 15))
+        none.tap()
+        app.buttons["native-editor-intro-styles-done"].tap()
+        save(app)
+        sent = try XCTUnwrap(commits(capture).last)
+        XCTAssertEqual((sent["media_overlays"] as? [[String: Any]])?.compactMap { $0["id"] as? String }, [cards[0]],
+                       "No intro style takes the look's cards away and keeps hers")
+        app.terminate()
+    }
 }
