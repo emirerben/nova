@@ -338,6 +338,14 @@ def test_a_card_look_is_offered_saved_and_drawn_exactly_where_it_was_offered(mak
     assert all((c["start_s"], c["end_s"]) == (title_start, title_end) for c in cards)
     if lang == "tr":
         assert {r.get("text_language") for r in look["rows"]} == {"tr"}  # M40
+    # the preview shows the same cards (M43)
+    preview_cards = look["preview"]["cards"]
+    assert [p["media_id"] for p in preview_cards] == [c["media_id"] for c in cards]
+    for p, c in zip(preview_cards, cards, strict=True):
+        box = p["box"]
+        assert (box["left"] + box["right"]) / 2 == pytest.approx(c["x_frac"])
+        assert (box["top"] + box["bottom"]) / 2 == pytest.approx(c["y_frac"])
+        assert box["right"] - box["left"] == pytest.approx(c["scale"])
 
     saved = save(client, seeded, look["rows"], as_overlays(cards))
     assert saved.status_code == 200, saved.text

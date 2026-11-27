@@ -1440,7 +1440,13 @@ def build_offer(
             "preview": None,
         }
     )
-    _attach_previews(options, assembly, variant_id, canvas)
+    _attach_previews(
+        options,
+        assembly,
+        variant_id,
+        canvas,
+        cards={look.look.key: preview_cards(look) for look in card_looks},
+    )
     if photos:
         log_fields["card_looks"] = len(card_looks)
     log.info(
@@ -1515,14 +1521,40 @@ def _none_rows(
         return None
 
 
+def preview_cards(card_look: CardLook) -> list[dict[str, Any]]:
+    """A card look's cards as its preview draws them (M43): her photo in each box, slot order,
+    ``box`` in canvas fractions (the phone draws the photo there, or a plate until it loads)."""
+    return [
+        {
+            "media_id": card.media_id,
+            "media_kind": "image",
+            "box": {"left": box.left, "top": box.top, "right": box.right, "bottom": box.bottom},
+            "z": card.z,
+        }
+        for card, box in zip(card_look.cards, card_look.boxes, strict=True)
+    ]
+
+
 def _attach_previews(
-    options: list[dict[str, Any]], assembly: Mapping[str, Any], variant_id: str, canvas: Any
+    options: list[dict[str, Any]],
+    assembly: Mapping[str, Any],
+    variant_id: str,
+    canvas: Any,
+    *,
+    cards: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> None:
     """Previews are all or nothing: one that cannot be drawn, or a payload past the cap, leaves
-    every option without one and the app shows label tiles (F17)."""
+    every option without one and the app shows label tiles (F17). A card look's preview also
+    carries its ``cards`` (KRI-1615)."""
     previews = [
         preview_for(option["rows"], frame_source=assembly, variant_id=variant_id, canvas=canvas)
         for option in options
+    ]
+    previews = [
+        {**preview, "cards": (cards or {})[option["key"]]}
+        if preview is not None and option.get("cards")
+        else preview
+        for option, preview in zip(options, previews, strict=True)
     ]
     if any(p is None for p in previews):
         return
