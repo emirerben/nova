@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.2.0] - 2026-11-27
+
+### Changed
+- feat(ios): give every chat ask one lifecycle and one sequence (CA-1, KRI-1640) (#2532) <!-- release-pr: 2532 -->
+
 ## [0.91.1.0] - 2026-11-27
 
 ### Changed
