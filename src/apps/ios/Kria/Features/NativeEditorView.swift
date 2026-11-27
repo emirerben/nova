@@ -1154,14 +1154,7 @@ struct NativeEditorView: View {
     }
 
     private func saveAndExit() async {
-        await session.save()
-        guard !session.hasUnsavedChanges else { return }
-        switch session.saveState {
-        case .loadFailed, .failed, .renderRetryNeeded, .deviceRenderRetryNeeded:
-            return
-        default:
-            leave()
-        }
+        if await session.saveForExit() { leave() }
     }
 }
 

@@ -4981,6 +4981,37 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.3), "a newer chat edit still arrives")
     }
 
+    /// KRI-1617: "Save and exit" tapped while the editor still prepares keeps the Save for the end of the load. The exit
+    /// follows that Save: the editor closes once it lands, and stays open, edit intact, when it fails.
+    func testSaveAndExitTappedWhileTheEditorPreparesLeavesOnceTheKeptSaveLands() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        let exit = Task { @MainActor in await held.session.saveForExit() }
+        let kept = await waitUntil(timeout: .seconds(5)) { held.session.showsSavingIndicator }
+        XCTAssertTrue(kept, "setup: the Save is kept for the end of the load")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let mayLeave = await exit.value
+        XCTAssertEqual(held.spy.commitCount, 1)
+        XCTAssertFalse(held.session.hasUnsavedChanges)
+        XCTAssertTrue(mayLeave, "the edit is saved, so the editor closes")
+    }
+
+    func testSaveAndExitTappedWhileTheEditorPreparesStaysWhenTheKeptSaveFails() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitThrow = URLError(.notConnectedToInternet)
+        held.session.addText(content: "Typed while the preview prepares")
+        let exit = Task { @MainActor in await held.session.saveForExit() }
+        let kept = await waitUntil(timeout: .seconds(5)) { held.session.showsSavingIndicator }
+        XCTAssertTrue(kept, "setup: the Save is kept for the end of the load")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let mayLeave = await exit.value
+        XCTAssertFalse(mayLeave, "the save failed, so the creator stays with her edit")
+        XCTAssertTrue(held.session.hasUnsavedChanges)
+    }
+
     /// A Save in flight has sent the document already and its answer lands on it. Discarding then would turn the saved
     /// edit into an unsaved revert, so the prompt does not offer it and the call refuses.
     func testDiscardIsRefusedWhileASaveIsInFlight() async throws {

@@ -9468,6 +9468,16 @@ enum EditorOpenIntent { case warm, open }
         await save(retrying: [])
     }
 
+    /// "Save and exit": true when the edit is saved and the editor may close.
+    func saveForExit() async -> Bool {
+        await save()
+        guard !hasUnsavedChanges else { return false }
+        switch saveState {
+        case .loadFailed, .failed, .renderRetryNeeded, .deviceRenderRetryNeeded: return false
+        default: return true
+        }
+    }
+
     private func save(retrying retrySections: Set<EditorSection>) async {
         if isLoadingEditor, retrySections.isEmpty, hasUnsavedChanges { saveRequestedDuringLoad = true; return }
         guard !isSaving, activeSaveAttemptID == nil, finishingUploadCount == 0 else { return }
