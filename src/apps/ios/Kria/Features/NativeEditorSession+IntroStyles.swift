@@ -126,7 +126,7 @@ extension NativeEditorSession {
     /// lane). Returns false, changing nothing, when the offer no longer fits the document.
     @discardableResult
     func applyIntroStyle(_ option: IntroStylesOffer.Option) -> Bool {
-        guard canOfferIntroStyles, let offer = introStylesCurrentOffer, offer.options.contains(option) else { return false }
+        guard canOfferIntroStyles, let offer = introStylesCurrentOffer, offer.options.contains(option), !option.isCardLook else { return false }
         let incoming = EditorDocument.textElements(fromRows: option.rows)
         guard incoming.count == option.rows.count, !incoming.isEmpty,
               incoming.allSatisfy({ IntroStyleFamily.family(of: $0.id) == offer.titleFamily }) else { return false }

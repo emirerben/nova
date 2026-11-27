@@ -30,6 +30,19 @@ import XCTest
 ///   round trip so the server saves plain rows: the Save lane equals `option.rows` raw.
 /// - F24 the entry shows in the cloud or web editor, a slide post, or a variant without a title row.
 /// - F25 chrome breaks the design rules (Fraunces, borders, helper copy): labels are the closed set below, Inter only.
+///
+/// KRI-1615 stage C, her photos as cards (`offer_talking_cards`, the stage B wire):
+/// - C1 an offer without cards (every build below 62, the switch off) changes: its options parse exactly as before.
+/// - C2 a malformed card (bad slot, no media id, scale outside (0, 1], more than four, a repeated id, an id without the
+///   `intro-card-` prefix, an empty window) is shown, or its rows are applied as a plain look (the title placed between
+///   cards with no cards): that one look is dropped, the plain looks and "none" stay.
+/// - C3 a look's cards and rows land in two undo steps, or undo restores one lane only: one transaction over both.
+/// - C4 a second pick stacks cards, or a plain look or "none" after a card look leaves its cards: every `intro-card-*` is
+///   replaced, her own cards are kept in place and first.
+/// - C5 Save sends a card in another shape, or with `caption_clear` (the server decides it): exactly the contract's keys.
+/// - C6 a card she deleted comes back, or a pending deletion drops a card a later pick puts back.
+/// - C7 a card look applied where the overlay lane is locked (she could not move or delete its cards): refused whole.
+/// - C8 a tile claims a look whose card she moved or deleted.
 @MainActor
 final class IntroStylesOfferTests: XCTestCase {
     private func fixture() throws -> [String: JSONValue] {
@@ -410,5 +423,109 @@ final class IntroStylesOfferTests: XCTestCase {
         let first = try XCTUnwrap(session.introStyleTitleRows.first)
         session.updateTextContent(id: first.id, content: "trendi")
         XCTAssertTrue(try drawnText().contains { $0.contains("TRENDİ") }, "a Turkish caps line draws the dotted capital")
+    }
+
+    // MARK: Card looks (KRI-1615, C1-C2)
+
+    /// The server's card looks, raw, in wire order.
+    private func rawCardLooks() throws -> [[String: JSONValue]] {
+        let options = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue?["options"]?.arrayValue)
+        return options.compactMap(\.objectValue).filter { $0["cards"] != nil }
+    }
+
+    func testCardLooksParseWithHerPhotosAfterThePlainLooksAndNoneLast() throws {
+        let offer = try offer("offer_talking_cards")
+        let raw = try rawCardLooks()
+        XCTAssertGreaterThanOrEqual(raw.count, 1)
+        XCTAssertEqual(offer.options.filter(\.isCardLook).map(\.key), raw.compactMap { $0["key"]?.stringValue }, "every card look the server sent")
+        let kinds = offer.options.dropLast().map(\.isCardLook)
+        XCTAssertEqual(kinds, kinds.sorted { !$0 && $1 }, "plain looks first, then card looks")
+        XCTAssertEqual(offer.options.last?.key, "none")
+        XCTAssertTrue(offer.hasPreviews)
+        for (option, wire) in zip(offer.options.filter(\.isCardLook), raw) {
+            let cards = try XCTUnwrap(wire["cards"]?.arrayValue).compactMap(\.objectValue)
+            XCTAssertEqual(option.cards.map(\.id), cards.compactMap { $0["id"]?.stringValue })
+            XCTAssertEqual(option.cards.map(\.gcsPath), cards.compactMap { $0["gcs_path"]?.stringValue })
+            XCTAssertEqual(option.cards.map(\.x), cards.compactMap { $0["x_frac"]?.numberValue })
+            XCTAssertEqual(option.cards.map(\.y), cards.compactMap { $0["y_frac"]?.numberValue })
+            XCTAssertEqual(option.cards.map(\.scale), cards.compactMap { $0["scale"]?.numberValue })
+            XCTAssertEqual(option.cards.map(\.captionClear), cards.compactMap { $0["caption_clear"]?.boolValue })
+            XCTAssertEqual(option.previewCards.map(\.mediaID), cards.compactMap { $0["media_id"]?.stringValue },
+                           "the preview draws her photos in slot order")
+            let box = try XCTUnwrap(wire["preview"]?.objectValue?["cards"]?.arrayValue?.first?.objectValue?["box"]?.objectValue)
+            let drawn = try XCTUnwrap(option.previewCards.first?.box)
+            XCTAssertEqual(Double(drawn.minX), try XCTUnwrap(box["left"]?.numberValue), accuracy: 1e-9)
+            XCTAssertEqual(Double(drawn.maxY), try XCTUnwrap(box["bottom"]?.numberValue), accuracy: 1e-9)
+        }
+        XCTAssertTrue(offer.options.filter { !$0.isCardLook }.allSatisfy { $0.cards.isEmpty && $0.previewCards.isEmpty })
+    }
+
+    func testAnOfferWithoutCardsParsesExactlyAsBefore() throws {
+        for key in ["offer_talking_en", "offer_montage_tr", "offer_narrated_en"] {
+            let offer = try offer(key)
+            XCTAssertTrue(offer.options.allSatisfy { $0.cards.isEmpty && $0.previewCards.isEmpty }, key)
+        }
+        // The card offer minus its card looks is a plain offer: the same plain options, rows and previews.
+        var plain = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue)
+        plain["options"] = .array(try XCTUnwrap(plain["options"]?.arrayValue).filter { $0.objectValue?["cards"] == nil })
+        guard case .offer(let parsed) = IntroStylesOffer.parse(.object(plain)) else { return XCTFail("still an offer") }
+        XCTAssertEqual(parsed.options, try offer("offer_talking_cards").options.filter { !$0.isCardLook })
+    }
+
+    func testAMalformedCardDropsOnlyItsLookAndThePlainLooksStay() throws {
+        let good = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue)
+        let expected = try offer("offer_talking_cards")
+        let target = try XCTUnwrap(try rawCardLooks().first?["key"]?.stringValue)
+        func parse(_ edit: (inout [[String: JSONValue]]) -> Void) -> IntroStylesOffer.Parsed {
+            var copy = good
+            copy["options"] = .array((good["options"]?.arrayValue ?? []).map { entry in
+                guard var option = entry.objectValue, option["key"] == .string(target),
+                      var cards = option["cards"]?.arrayValue?.compactMap(\.objectValue) else { return entry }
+                edit(&cards)
+                option["cards"] = .array(cards.map(JSONValue.object))
+                return .object(option)
+            })
+            return IntroStylesOffer.parse(.object(copy))
+        }
+        let malformed: [(String, (inout [[String: JSONValue]]) -> Void)] = [
+            ("a slot that is not the id's", { $0[0]["slot"] = .string("prop_7") }),
+            ("no media id", { $0[0].removeValue(forKey: "media_id") }),
+            ("an empty storage path", { $0[0]["gcs_path"] = .string("") }),
+            ("no generation", { $0[0].removeValue(forKey: "generation") }),
+            ("scale 0", { $0[0]["scale"] = .number(0) }),
+            ("scale over 1", { $0[0]["scale"] = .number(1.2) }),
+            ("a centre off the canvas", { $0[0]["x_frac"] = .number(-0.1) }),
+            ("more than four cards", { cards in
+                cards = (1...5).map { n in var card = cards[0]; card["id"] = .string("intro-card-\(n)"); card["slot"] = .string("prop_\(n)"); return card }
+            }),
+            ("a repeated id", { $0[1]["id"] = $0[0]["id"]; $0[1]["slot"] = $0[0]["slot"] }),
+            ("an id outside the intro-card family", { $0[0]["id"] = .string("her-card"); $0[0]["slot"] = .string("prop_1") }),
+            ("an empty window", { $0[0]["end_s"] = $0[0]["start_s"] }),
+            ("a fractional z", { $0[0]["z"] = .number(0.5) }),
+            ("no caption mark", { $0[0].removeValue(forKey: "caption_clear") }),
+            ("no cards at all", { $0 = [] }),
+        ]
+        for (name, edit) in malformed {
+            guard case .offer(let parsed) = parse(edit) else { XCTFail("\(name): the plain looks are still offered"); continue }
+            XCTAssertNil(parsed.options.first { $0.key == target }, "\(name): the card look is dropped, never shown as a plain look")
+            XCTAssertEqual(parsed.options, expected.options.filter { $0.key != target }, "\(name): every other option stays as it was")
+        }
+    }
+
+    func testACardLookWhosePreviewCannotDrawItsCardsTurnsEveryTileIntoALabelTile() throws {
+        var broken = try XCTUnwrap(try fixture()["offer_talking_cards"]?.objectValue)
+        let target = try XCTUnwrap(try rawCardLooks().first?["key"]?.stringValue)
+        broken["options"] = .array(try XCTUnwrap(broken["options"]?.arrayValue).map { entry in
+            guard var option = entry.objectValue, option["key"] == .string(target),
+                  var preview = option["preview"]?.objectValue else { return entry }
+            preview["cards"] = .array(Array(preview["cards"]?.arrayValue?.dropLast() ?? []))
+            option["preview"] = .object(preview)
+            return .object(option)
+        })
+        guard case .offer(let parsed) = IntroStylesOffer.parse(.object(broken)) else { return XCTFail("still an offer") }
+        XCTAssertFalse(parsed.hasPreviews, "a card look drawn without one of its photos would not be what she gets")
+        XCTAssertTrue(parsed.options.allSatisfy { $0.previewCards.isEmpty })
+        XCTAssertEqual(parsed.options.first { $0.key == target }?.cards, try offer("offer_talking_cards").options.first { $0.key == target }?.cards,
+                       "the look itself is still offered")
     }
 }
