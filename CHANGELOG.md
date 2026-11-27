@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.14.0] - 2026-11-27
+
+### Added
+- feat(intro): the scene plays its own sound on its title entrances (KRI-1613) (#2543) <!-- release-pr: 2543 -->
+
 ## [0.91.13.0] - 2026-11-27
 
 ### Fixed
