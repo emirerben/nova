@@ -66,6 +66,7 @@ async def intro_styles_item(
     from app.routes import plan_items as items  # noqa: PLC0415
     from app.routes.generative_jobs import variant_render_baseline  # noqa: PLC0415
     from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.intro_card_pool import load_card_photos  # noqa: PLC0415
     from app.services.talking_music import UploadedSongRead, uploaded_song  # noqa: PLC0415
 
     if not settings.intro_scene_for(user.id):
@@ -105,6 +106,13 @@ async def intro_styles_item(
         "uploaded_song": UploadedSongRead(uploaded_song(item)),
         "phone_sfx_catalog_paths": await items._phone_subtitled_sfx_paths(db, job, variant),
     }
+    # KRI-1615: her card photos, only for a build that parses cards with the switch on (M31).
+    photos = (
+        await load_card_photos(db, item.id, user.id)
+        if styles.cards_allowed(current_client_protocol())
+        and variant.get("resolved_archetype") == "subtitled"
+        else []
+    )
     detached = styles.detach(job)
     await db.rollback()  # release the connection before the CPU work
     try:
@@ -115,6 +123,7 @@ async def intro_styles_item(
             body.title_rows,
             body.base_generation,
             save_arguments=save_arguments,
+            photos=photos,
         )
     except styles.TitleRowsInvalid as exc:
         log.info("intro_styles.rows_invalid", reason=str(exc))
