@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.16.0] - 2026-11-27
+
+### Added
+- feat(ios): Try intro styles applies photo card looks, one undo step (KRI-1615) (#2547) <!-- release-pr: 2547 -->
+
 ## [0.91.15.0] - 2026-11-27
 
 ### Added
