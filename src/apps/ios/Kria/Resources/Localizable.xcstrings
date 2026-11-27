@@ -2329,18 +2329,18 @@
         }
       }
     },
-    "%lld more clips" : {
+    "%lld moved" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%lld weitere Clips"
+            "value" : "%lld verschoben"
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%lld klip daha"
+            "value" : "%lld taşındı"
           }
         }
       }
@@ -9107,22 +9107,6 @@
         }
       }
     },
-    "Change order" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Reihenfolge ändern"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sırayı değiştir"
-          }
-        }
-      }
-    },
     "Change the post size" : {
       "localizations" : {
         "de" : {
@@ -10810,14 +10794,14 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clip %lld von %lld"
+            "state" : "needs_review",
+            "value" : "Clip %1$lld von %2$lld"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Klip %lld / %lld"
+            "state" : "needs_review",
+            "value" : "Klip %1$lld / %2$lld"
           }
         }
       }
@@ -10898,6 +10882,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Klip %lld, tepside"
+          }
+        }
+      }
+    },
+    "Clip %lld, open preview" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clip %lld, Vorschau öffnen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klip %lld, önizlemeyi aç"
           }
         }
       }
@@ -11010,6 +11010,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Klip düzenlemeleri bu oluşturma için kilitli."
+          }
+        }
+      }
+    },
+    "Clip order" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reihenfolge der Clips"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klip sırası"
           }
         }
       }
@@ -15082,6 +15098,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Açılış yazısını düzenle"
+          }
+        }
+      }
+    },
+    "Edit order" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reihenfolge bearbeiten"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sırayı düzenle"
           }
         }
       }
@@ -23414,22 +23446,6 @@
         }
       }
     },
-    "Moved" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Verschoben"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Taşındı"
-          }
-        }
-      }
-    },
     "Music" : {
       "comment" : "Tab title in an editor panel",
       "extractionState" : "manual",
@@ -25880,22 +25896,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sıra sorusu kapatıldı"
-          }
-        }
-      }
-    },
-    "Order · %lld clips" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Reihenfolge · %lld Clips"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Sıra · %lld klip"
           }
         }
       }
@@ -31484,13 +31484,13 @@
       "localizations" : {
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Clips neu anordnen"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Klipleri yeniden sırala"
           }
         }
@@ -34009,6 +34009,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mesaj gönderiliyor"
+          }
+        }
+      }
+    },
+    "Sending order" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reihenfolge wird gesendet"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sıra gönderiliyor"
           }
         }
       }
@@ -39792,6 +39808,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Yeni çekim sürdürülemedi. Tekrar kaydet. %@"
+          }
+        }
+      }
+    },
+    "The order changed while you were editing. Your move was applied on top." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Reihenfolge hat sich geändert, während du sie bearbeitet hast. Deine Änderung wurde darauf angewendet."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sen düzenlerken sıra değişti. Yaptığın değişiklik üstüne uygulandı."
           }
         }
       }
@@ -50959,6 +50991,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "bekliyor"
+          }
+        }
+      }
+    },
+    "was %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "war %@"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "önceki sıra: %@"
           }
         }
       }

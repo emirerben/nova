@@ -2486,7 +2486,7 @@ enum ClipOrderFixture {
     static let labels = ["the map video", "the beach", "the sunset", "the dinner"]
 
     static func ids(mode: String, media: [[String: Any]]) -> [String] {
-        let count = mode == "many19" ? 19 : mode == "many40" ? 40 : 0
+        let count = ["many7": 7, "many12": 12, "many19": 19, "many40": 40][mode] ?? 0
         if count > 0 { return (1...count).map { "clip-\($0)" } }
         _ = media
         return ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"]

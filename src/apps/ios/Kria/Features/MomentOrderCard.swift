@@ -207,7 +207,7 @@ private struct MomentOrderActiveCard: View {
                 .padding(.leading, 44)
         }
         .padding(.top, 4).padding(.trailing, 12).padding(.bottom, 12)
-        .background(KriaColor.paper, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(overlaps ? KriaColor.failureSoft : KriaColor.paper, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[key] = $0 }
         .offset(y: dragging ? dragOffset : neighbourShift(of: key))
         .zIndex(dragging ? 1 : 0)

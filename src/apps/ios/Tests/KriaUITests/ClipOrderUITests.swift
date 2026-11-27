@@ -3,7 +3,7 @@ import XCTest
 /// KRI-1591: the clip-order card. Under the draft message Kria shows the order the clips will play in as a numbered
 /// strip; "Change order" opens a sheet to reorder them, "Use this order" sends the whole order as ONE turn.
 /// KRIA_CHAT_CLIP_ORDER picks the server: "1" (4 clips), "many19" / "many40", "hidden" (the card is not shown),
-/// "locked" (a video exists: read-only), "unknown" (a newer server: unknown source, missing and extra keys), "two"
+/// "locked" (a video exists: read-only), "many7" / "many12" (a strip that scrolls), "unknown" (a newer server: unknown source, missing and extra keys), "two"
 /// (an older draft carries a card too), "rebase" (the first drag is not applied as sent), "error" (the confirm closes
 /// the approval with an `assistant_error` that carries the card), "lost" (the first confirm never gets an answer),
 /// "caps-off" (the switch is off). KRIA_CHAT_CLIP_ORDER_ECHO=1 makes the server say what a turn carried, as other
@@ -120,8 +120,10 @@ final class ClipOrderUITests: XCTestCase {
         waitForStrip(app, count: 4)
         let ids = ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"]
         XCTAssertEqual(order(app), ids, "the decided order, in play order")
-        XCTAssertEqual(element(app, "clip-order-header").label, "Order · 4 clips")
-        XCTAssertEqual(element(app, "clip-order-label-fixture-clip").label, "the map video, position 1 of 4")
+        XCTAssertEqual(element(app, "clip-order-header").label, "Clip order")
+        XCTAssertEqual(element(app, "clip-order-count").label, "4 clips")
+        XCTAssertEqual(element(app, "clip-order-tile-fixture-clip").label, "Clip 1, open preview")
+        XCTAssertEqual(element(app, "clip-order-tile-fixture-clip").value as? String, "the map video", "the server's words are spoken, never shown")
         XCTAssertFalse(element(app, "clip-order-moved-fixture-clip").exists, "nothing moved yet")
         XCTAssertTrue(app.buttons["clip-order-change"].exists)
         XCTAssertTrue(app.buttons["clip-order-use"].exists)
@@ -149,7 +151,9 @@ final class ClipOrderUITests: XCTestCase {
         XCTAssertTrue(sent.label.contains("ids=" + reordered.joined(separator: "+")), "the whole order the creator saw: \(sent.label)")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "turn=2")).firstMatch.exists == false, "one turn")
         let movedTags = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'clip-order-moved-'"))
-        XCTAssertGreaterThan(movedTags.count, 0, "the clips that moved say so, from the server's card")
+        XCTAssertGreaterThan(movedTags.count, 0, "the clips that moved say where they were, from the server's card")
+        XCTAssertTrue(movedTags.firstMatch.label.hasPrefix("was "), movedTags.firstMatch.label)
+        XCTAssertTrue(element(app, "clip-order-count").label.hasSuffix("moved"), "the header counts what moved")
         XCTAssertEqual(assistantMessages(app), before + 1, "only the fixture's echo is new: the drag adds no message of its own")
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'clip_order_ops'")).count, 0, "the placeholder never shows")
         XCTAssertTrue(element(app, "direction-stage").exists, "the approval card is still there for \"Create\"")
@@ -163,9 +167,9 @@ final class ClipOrderUITests: XCTestCase {
         let sent = echo(app)
         XCTAssertTrue(sent.waitForExistence(timeout: 10))
         XCTAssertTrue(sent.label.contains("turn=1 confirm=true retry=false ids=fixture-clip+fixture-clip-2+fixture-clip-3+fixture-clip-4"), sent.label)
-        let use = app.buttons["clip-order-use"]
-        XCTAssertTrue(wait("label == 'Order confirmed'", on: use, timeout: 10))
-        XCTAssertFalse(use.isEnabled)
+        XCTAssertTrue(wait("label == 'Order confirmed'", on: element(app, "clip-order-receipt"), timeout: 10), "the confirm button becomes a receipt")
+        XCTAssertFalse(app.buttons["clip-order-use"].exists)
+        XCTAssertTrue(app.buttons["clip-order-change"].exists, "the order can still be edited")
     }
 
     func testClosingTheSheetWithoutConfirmingSendsNothing() {
@@ -209,14 +213,79 @@ final class ClipOrderUITests: XCTestCase {
         XCTAssertTrue(element(app, "clip-order-sheet").exists)
     }
 
+    func testTappingAClipInTheStripOpensItLargeAndCloseLeavesTheStripAlone() {
+        let app = launch(mode: "1", echo: true)
+        waitForStrip(app, count: 4)
+        let tile = app.buttons["Clip 3, open preview"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 10), "each clip reads its position and says it opens a preview")
+        bringIntoView(tile, in: app)
+        tile.tap()
+        XCTAssertTrue(element(app, "clip-order-preview").waitForExistence(timeout: 10))
+        XCTAssertEqual(element(app, "clip-order-preview-caption").label, "Clip 3 of 4")
+        XCTAssertTrue(element(app, "clip-preview-player-fixture-clip-3").exists || element(app, "clip-preview-not-on-device").waitForExistence(timeout: 10))
+        attach(app, "Enlarged clip")
+        app.buttons["clip-order-preview-close"].tap()
+        XCTAssertTrue(wait("exists == false", on: element(app, "clip-order-preview"), timeout: 10))
+        XCTAssertEqual(order(app), ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"], "looking at a clip changes nothing")
+        XCTAssertFalse(echo(app).exists, "and sends nothing")
+        XCTAssertTrue(app.buttons["clip-order-use"].exists)
+    }
+
+    func testAMovedClipSaysWhereItWasInTheStripAndInItsPreview() {
+        let app = launch(mode: "1", echo: true)
+        waitForStrip(app, count: 4)
+        openSheet(app)
+        drag(app, row: "fixture-clip", by: 2)
+        let dragged = order(app, "clip-order-sheet-list")
+        XCTAssertTrue(element(app, "clip-order-sheet-was-fixture-clip").exists, "the sheet names the place the dragged clip left")
+        app.buttons["clip-order-sheet-use"].tap()
+        waitForOrder(app, dragged)
+        let was = element(app, "clip-order-moved-fixture-clip")
+        XCTAssertTrue(was.waitForExistence(timeout: 10))
+        XCTAssertEqual(was.label, "was 1st")
+        XCTAssertLessThanOrEqual(was.frame.maxY, element(app, "clip-order-tiles").frame.maxY + 1, "the caption sits inside the scroller, not clipped below it")
+        let tile = element(app, "clip-order-tile-fixture-clip")
+        bringIntoView(tile, in: app)
+        tile.tap()
+        XCTAssertTrue(element(app, "clip-order-preview").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "clip-order-preview-caption").label.hasSuffix("was 1st"), element(app, "clip-order-preview-caption").label)
+    }
+
     // MARK: sizes
+
+    func testTwelveClipsScrollWithTheNextOnePeekingAndCloseKeepsTheScrollPlace() {
+        let app = launch(mode: "many12")
+        waitForStrip(app, count: 12)
+        let strip = element(app, "clip-order-tiles")
+        bringIntoView(strip, in: app)
+        let fifth = element(app, "clip-order-tile-clip-5")
+        XCTAssertTrue(fifth.waitForExistence(timeout: 10))
+        XCTAssertLessThan(fifth.frame.minX, strip.frame.maxX, "the fifth clip starts inside the strip")
+        XCTAssertGreaterThan(fifth.frame.maxX, strip.frame.maxX, "and runs past its edge: the next clip peeks")
+        attach(app, "Strip with the next clip peeking")
+        let last = element(app, "clip-order-tile-clip-12")
+        for _ in 0..<12 where !last.isHittable { strip.swipeLeft() }
+        XCTAssertTrue(last.isHittable, "the twelfth clip is reachable")
+        XCTAssertFalse(element(app, "clip-order-tile-clip-1").isHittable, "the strip really scrolled")
+        attach(app, "Strip scrolled to the end")
+        let before = last.frame.minX
+        XCTAssertEqual(last.label, "Clip 12, open preview")
+        last.tap()
+        XCTAssertEqual(element(app, "clip-order-preview-caption").label, "Clip 12 of 12")
+        app.buttons["clip-order-preview-close"].tap()
+        XCTAssertTrue(wait("exists == false", on: element(app, "clip-order-preview"), timeout: 10))
+        XCTAssertEqual(last.frame.minX, before, accuracy: 1, "the strip is where it was")
+    }
 
     func testNineteenClipsScrollInTheStripAndTheSheet() {
         let app = launch(mode: "many19", echo: true)
         waitForStrip(app, count: 19)
-        XCTAssertEqual(element(app, "clip-order-header").label, "Order · 19 clips")
-        XCTAssertTrue(element(app, "clip-order-overflow").exists, "more than fit are summarised as +N")
-        XCTAssertEqual(element(app, "clip-order-overflow").label, "13 more clips")
+        XCTAssertEqual(element(app, "clip-order-count").label, "19 clips")
+        XCTAssertFalse(element(app, "clip-order-overflow").exists, "every clip is in the scroller, none is summarised")
+        let strip = element(app, "clip-order-tiles")
+        let lastTile = element(app, "clip-order-tile-clip-19")
+        for _ in 0..<12 where !lastTile.isHittable { strip.swipeLeft() }
+        XCTAssertTrue(lastTile.isHittable, "the last of 19 clips is reachable by scrolling the strip")
         openSheet(app)
         XCTAssertEqual(element(app, "clip-order-sheet-count").label, "19 clips")
         let list = element(app, "clip-order-sheet-list")
@@ -233,7 +302,7 @@ final class ClipOrderUITests: XCTestCase {
     func testFortyClipsAtTheLargestTextKeepTheStripAndSheetUsable() {
         let app = launch(mode: "many40", echo: true, extra: ["UI_TEST_DYNAMIC_TYPE_SIZE": "accessibility5"])
         waitForStrip(app, count: 40)
-        XCTAssertEqual(element(app, "clip-order-header").label, "Order · 40 clips")
+        XCTAssertEqual(element(app, "clip-order-count").label, "40 clips")
         XCTAssertTrue(app.buttons["clip-order-use"].exists)
         openSheet(app)
         XCTAssertEqual(element(app, "clip-order-sheet-count").label, "40 clips")
@@ -261,6 +330,11 @@ final class ClipOrderUITests: XCTestCase {
         XCTAssertTrue(echo(app).waitForExistence(timeout: 10))
         waitForOrder(app, ids, timeout: 15, "the server did not apply the list as sent: its card is the truth")
         XCTAssertFalse(element(app, "clip-order-failed").exists, "a rebase is not an error")
+        let notice = element(app, "clip-order-notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: 10), "it is a slate notice that nothing broke")
+        XCTAssertEqual(notice.label, "The order changed while you were editing. Your move was applied on top.")
+        XCTAssertTrue(app.buttons["clip-order-use"].exists, "the creator can still confirm what they now see")
+        attach(app, "Order moved notice")
     }
 
     func testALostConfirmKeepsTheLocalOrderAndRetriesTheSameRequest() {
@@ -273,6 +347,7 @@ final class ClipOrderUITests: XCTestCase {
         XCTAssertTrue(element(app, "clip-order-failed").waitForExistence(timeout: 15), "the creator is told, with the way to retry")
         XCTAssertEqual(order(app), dragged, "the local order stays")
         XCTAssertFalse(echo(app).exists)
+        attach(app, "Send failed")
         let retry = app.buttons["clip-order-use"]
         XCTAssertEqual(retry.label, "Try again")
         retry.tap()
@@ -343,7 +418,8 @@ final class ClipOrderUITests: XCTestCase {
             }
         }
         assertNoIdentifiers()
-        XCTAssertEqual(element(app, "clip-order-label-fixture-clip-3").label, "the sunset, position 3 of 4")
+        XCTAssertEqual(element(app, "clip-order-tile-fixture-clip-3").label, "Clip 3, open preview")
+        XCTAssertEqual(element(app, "clip-order-tile-fixture-clip-3").value as? String, "the sunset")
         openSheet(app)
         XCTAssertTrue(element(app, "clip-order-row-fixture-clip-3").label.hasPrefix("the sunset, position 3 of 4"))
         assertNoIdentifiers()
