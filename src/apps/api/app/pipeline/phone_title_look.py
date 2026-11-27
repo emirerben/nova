@@ -562,24 +562,32 @@ def _tuck_gaps(rows: Sequence[Mapping[str, Any]], canvas: _Canvas) -> list[float
     declaring the same ``stack``: the script baseline sits ``tuck_caps`` serif cap heights above
     the serif baseline. A line box spans first baseline - ascent to last baseline + descent
     (`text_overlay_skia._measure_block`), so this holds for a wrapped line too."""
-    from app.pipeline.intro_scene import STACKS  # noqa: PLC0415
-
     gaps: list[float | None] = []
     for upper, lower in zip(rows, rows[1:], strict=False):
-        above, below = _look_params(upper) or {}, _look_params(lower) or {}
-        stack = STACKS.get(str(above.get("stack")))
-        if (
-            stack is None
-            or stack.tuck_caps is None
-            or below.get("stack") != above.get("stack")
-            or (above.get("style"), below.get("style")) != ("intro_accent", "intro_solid")
-        ):
+        caps = tuck_of(upper, lower)
+        if caps is None:
             gaps.append(None)
             continue
         _ascent, descent_above, _cap = _row_metrics(upper, canvas)
         ascent_below, _descent, cap_below = _row_metrics(lower, canvas)
-        gaps.append((stack.tuck_caps * cap_below - ascent_below - descent_above) / canvas.height)
+        gaps.append((caps * cap_below - ascent_below - descent_above) / canvas.height)
     return gaps
+
+
+def tuck_of(upper: Mapping[str, Any], lower: Mapping[str, Any]) -> float | None:
+    """The ``tuck_caps`` of the tuck two adjacent lines declare (a script accent line directly
+    above a serif solid line, the same ``stack`` on both), else ``None``."""
+    from app.pipeline.intro_scene import STACKS  # noqa: PLC0415
+
+    above, below = _look_params(upper) or {}, _look_params(lower) or {}
+    stack = STACKS.get(str(above.get("stack")))
+    if (
+        stack is None
+        or below.get("stack") != above.get("stack")
+        or (above.get("style"), below.get("style")) != ("intro_accent", "intro_solid")
+    ):
+        return None
+    return stack.tuck_caps
 
 
 def _line_gaps(rows: Sequence[Mapping[str, Any]], canvas: _Canvas) -> list[float]:

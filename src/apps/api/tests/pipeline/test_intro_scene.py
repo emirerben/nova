@@ -481,7 +481,17 @@ def test_render_check_lists_what_it_could_not_render(report):
 
 
 @pytest.mark.parametrize(
-    "control", ["two_inks", "title_on_face", "face_swapped_font", "ink_unreadable"]
+    "control",
+    [
+        "two_inks",
+        "title_on_face",
+        "face_swapped_font",
+        "ink_unreadable",
+        "undeclared_overlap",
+        "declared_tuck_not_drawn",
+        "unissued_delay",
+        "solid_line_waits",
+    ],
 )
 def test_render_check_negative_controls_must_fail(report, control):
     case = next(c for c in report["cases"] if c["control"] == control)
@@ -627,3 +637,15 @@ def test_a_scene_without_the_moves_compiles_to_todays_rows():
     for row in default.rows:
         assert row["start_s"] == 0.0
         assert set(row["source_params"]["title_look"]) == {"line", "lines", "style"}
+
+
+def test_render_check_draws_each_move_in_both_languages(report):  # KRI-1618 M8-M10
+    moves = [c for c in report["cases"] if str(c.get("name")).startswith("KRI-1618")]
+    moves = [c for c in moves if not c["control"]]
+    assert {(c["id"], c["language"]) for c in moves} == {
+        (case_id, language)
+        for base in ("late-accent", "script-tuck")
+        for case_id in (base, f"{base}@0.3s")
+        for language in ("en", "tr")
+    }
+    assert all(c["verdict"] == "PASS" for c in moves), [c["reasons"] for c in moves]
