@@ -666,6 +666,42 @@ final class IntroStylesOfferTests: XCTestCase {
         XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
     }
 
+    func testACardTileDrawsHerCachedPhotoInItsBoxAndAPlateWhereThisIPhoneHasNone() async throws {
+        let look = try cardLooks(try offer("offer_talking_cards")).grid
+        let cached = look.previewCards[0], missing = look.previewCards[1]
+        let thumbnail = CreationMediaPreview.url(mediaID: cached.mediaID)
+        try FileManager.default.createDirectory(at: thumbnail.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 30, height: 40)).image { context in
+            UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 30, height: 40))
+        }.jpegData(compressionQuality: 1)).write(to: thumbnail)
+        defer { try? FileManager.default.removeItem(at: thumbnail) }
+        try? FileManager.default.removeItem(at: CreationMediaPreview.url(mediaID: missing.mediaID))
+
+        let drawn = await DesignPreviewRenderer.withCards(look.previewCards, over: nil, projectID: nil)
+        let image = try XCTUnwrap(drawn)
+        func pixel(at fraction: CGPoint) -> [UInt8] {
+            var rgba = [UInt8](repeating: 0, count: 4)
+            let context = CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(image, in: CGRect(x: -fraction.x * CGFloat(image.width), y: -(1 - fraction.y) * CGFloat(image.height),
+                                           width: CGFloat(image.width), height: CGFloat(image.height)))
+            return Array(rgba.prefix(3))
+        }
+        let photo = pixel(at: CGPoint(x: cached.box.midX, y: cached.box.midY))
+        XCTAssertGreaterThan(photo[0], 200, "her photo fills its box: \(photo)")
+        XCTAssertLessThan(photo[1], 60)
+        let plate = pixel(at: CGPoint(x: missing.box.midX, y: missing.box.midY))
+        XCTAssertTrue(plate.allSatisfy { $0 > 220 }, "a neutral plate where the photo is not on this iPhone: \(plate)")
+        XCTAssertEqual(pixel(at: CGPoint(x: 0.5, y: 0.5)), [0, 0, 0], "no clip: the canvas stays as the text pass draws it")
+    }
+
+    func testCardLookNamesSayTheirFontsAndPhotos() {
+        XCTAssertEqual(IntroStyleLabels.name(forKey: "young_serif+around_speaker", position: 5), "Soft serif + photos")
+        XCTAssertEqual(IntroStyleLabels.name(forKey: "grotesk_pen+grid_2x2", position: 6), "Bold + marker + photo grid")
+        XCTAssertEqual(IntroStyleLabels.name(forKey: "grotesk_pen+ring", position: 7), "Style 7", "an arrangement this build has no name for")
+        XCTAssertEqual(IntroStyleLabels.photoCardLook, "photo card look")
+    }
+
     func testACardLookIsRefusedWhereTheOverlayLaneIsLocked() throws {
         let (session, offer) = try cardSession(overlaysEditable: false)
         let before = session.document

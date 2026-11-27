@@ -26,8 +26,10 @@ enum DesignPreviewRenderer {
 
     static let pixelWidth = 540
 
+    /// `cards` (KRI-1615): her photos in an intro card look, drawn under the text the way the export draws them.
     @MainActor
-    static func render(_ preview: ChoiceQuestion.Preview, projectID: UUID?) async -> Rendered? {
+    static func render(_ preview: ChoiceQuestion.Preview, projectID: UUID?,
+                       cards: [IntroStylesOffer.PreviewCard] = []) async -> Rendered? {
         guard let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) else { return nil }
         let fontURLs = preview.fonts.mapValues { fonts.appendingPathComponent($0) }
         var backdrop = Backdrop.plain
@@ -40,12 +42,51 @@ enum DesignPreviewRenderer {
             picture = poster
             backdrop = .poster
         }
+        if !cards.isEmpty { picture = await withCards(cards, over: picture, projectID: projectID) }
         let layers = preview.layers, time = preview.timeSeconds, drawnOver = picture
         let image = await Task.detached(priority: .userInitiated) {
             try? TextLayerStill.render(layers: layers, fontURLs: fontURLs, over: drawnOver, canvas: .vertical1080,
                                        time: time, width: pixelWidth)
         }.value
         return image.map { Rendered(image: $0, backdrop: backdrop) }
+    }
+
+    /// The canvas with `picture` filled into it (as `TextLayerStill` would) and each card's photo in its box, in z order:
+    /// the thumbnail this iPhone already has, else a neutral plate. A tile never downloads.
+    @MainActor
+    static func withCards(_ cards: [IntroStylesOffer.PreviewCard], over picture: CGImage?, projectID: UUID?) async -> CGImage? {
+        var photos: [String: UIImage] = [:]
+        for card in cards where photos[card.mediaID] == nil {
+            photos[card.mediaID] = await CreationMediaPreview.image(mediaID: card.mediaID, projectID: projectID)
+        }
+        let canvas = CGSize(width: 1080, height: 1920)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        func fill(_ size: CGSize, into box: CGRect) -> CGRect {
+            let scale = max(box.width / size.width, box.height / size.height)
+            return CGRect(x: box.midX - size.width * scale / 2, y: box.midY - size.height * scale / 2,
+                          width: size.width * scale, height: size.height * scale)
+        }
+        return UIGraphicsImageRenderer(size: canvas, format: format).image { context in
+            UIColor.black.setFill()
+            context.fill(CGRect(origin: .zero, size: canvas))
+            if let picture {
+                UIImage(cgImage: picture).draw(in: fill(CGSize(width: picture.width, height: picture.height), into: CGRect(origin: .zero, size: canvas)))
+            }
+            for card in cards.sorted(by: { $0.z < $1.z }) {
+                let box = CGRect(x: card.box.minX * canvas.width, y: card.box.minY * canvas.height,
+                                 width: card.box.width * canvas.width, height: card.box.height * canvas.height)
+                if let photo = photos[card.mediaID], photo.size.width > 0, photo.size.height > 0 {
+                    context.cgContext.saveGState()
+                    context.cgContext.clip(to: box)
+                    photo.draw(in: fill(photo.size, into: box))
+                    context.cgContext.restoreGState()
+                } else {
+                    UIColor(KriaColor.fill).setFill()
+                    context.fill(box)
+                }
+            }
+        }.cgImage
     }
 
     private static func frame(of url: URL, at seconds: Double, isPhoto: Bool) async -> CGImage? {

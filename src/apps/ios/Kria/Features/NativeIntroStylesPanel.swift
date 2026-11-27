@@ -94,9 +94,11 @@ struct NativeIntroStylesPanel: View {
     private func strip(_ offer: IntroStylesOffer) -> some View {
         let selected = session.introStyleSelectedKey(in: offer)
         let enabled = session.canEdit(.text)
+        // A card look only where she can move and delete its cards (`applyIntroStyle` refuses it otherwise).
+        let options = offer.options.filter { !$0.isCardLook || session.canEdit(.mediaOverlays) }
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 10) {
-                ForEach(Array(offer.options.enumerated()), id: \.element.key) { index, option in
+                ForEach(Array(options.enumerated()), id: \.element.key) { index, option in
                     IntroStyleTile(option: option, name: IntroStyleLabels.name(forKey: option.key, position: index + 1),
                                    selected: selected == option.key, projectID: projectID) {
                         session.applyIntroStyle(option)
@@ -111,7 +113,7 @@ struct NativeIntroStylesPanel: View {
 }
 
 /// One look: a 9:16 still of her clip in that look (or a plain label tile when no still was drawn), its name under
-/// it. The selected tile is marked with the ink fill, never a border.
+/// it. A card look's still has her photos in it. The selected tile is marked with the ink fill, never a border.
 private struct IntroStyleTile: View {
     let option: IntroStylesOffer.Option
     let name: String
@@ -148,13 +150,14 @@ private struct IntroStyleTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel([name, option.recommended ? String(localized: "recommended") : nil].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([name, option.recommended ? String(localized: "recommended") : nil,
+                             option.isCardLook ? IntroStyleLabels.photoCardLook : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityValue(value)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("intro-style-option-\(option.key)")
         .task(id: option.key) {
             guard let preview = option.preview else { finished = true; return }
-            rendered = await DesignPreviewRenderer.render(preview, projectID: projectID)
+            rendered = await DesignPreviewRenderer.render(preview, projectID: projectID, cards: option.previewCards)
             finished = true
         }
     }

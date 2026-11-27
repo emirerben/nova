@@ -293,7 +293,15 @@ enum IntroStylesFailure: Equatable, Sendable {
 /// The words on screen. Look names are a closed set of keys; anything else reads "Style N".
 enum IntroStyleLabels {
     static func name(forKey key: String, position: Int) -> String {
-        switch key {
+        if let plus = key.firstIndex(of: "+") {
+            let pair = name(forKey: String(key[..<plus]), position: position)
+            switch key[key.index(after: plus)...] {
+            case "around_speaker": return String(localized: "\(pair) + photos", comment: "Intro style name: the look's fonts (the argument) with two of her photos around her")
+            case "grid_2x2": return String(localized: "\(pair) + photo grid", comment: "Intro style name: the look's fonts (the argument) with four of her photos, two above and two below")
+            default: return String(localized: "Style \(position)", comment: "Intro style name for a look this build has no name for; the number is its place in the list")
+            }
+        }
+        return switch key {
         case "none": String(localized: "No intro style", comment: "Intro styles: the option that restores the plain title")
         case "grotesk_hand": String(localized: "Bold + handwritten", comment: "Intro style name: a bold sans with a handwritten accent")
         case "serif_italic": String(localized: "Serif + italic", comment: "Intro style name: a serif with an italic accent")
@@ -311,6 +319,10 @@ enum IntroStyleLabels {
         case "title_too_short": String(localized: "Intro styles need a title of two or more words.", comment: "Intro styles: the title is one word")
         default: String(localized: "Intro styles aren't available for this video.", comment: "Intro styles: not offered for this video")
         }
+    }
+
+    static var photoCardLook: String {
+        String(localized: "photo card look", comment: "VoiceOver: this intro style lays her own photos out as cards with the title")
     }
 
     static var failureLine: String {

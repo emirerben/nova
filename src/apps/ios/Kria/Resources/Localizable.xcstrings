@@ -180,6 +180,40 @@
         }
       }
     },
+    "%@ + photo grid" : {
+      "comment" : "Intro style name: the look's fonts (the argument) with four of her photos, two above and two below",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ + Fotoraster"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ + fotoğraf ızgarası"
+          }
+        }
+      }
+    },
+    "%@ + photos" : {
+      "comment" : "Intro style name: the look's fonts (the argument) with two of her photos around her",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ + Fotos"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ + fotoğraflar"
+          }
+        }
+      }
+    },
     "%@ / %@" : {
       "localizations" : {
         "de" : {
@@ -51244,6 +51278,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "katman"
+          }
+        }
+      }
+    },
+    "photo card look" : {
+      "comment" : "VoiceOver: this intro style lays her own photos out as cards with the title",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Look mit Fotokarten"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "fotoğraf kartlı görünüm"
           }
         }
       }
