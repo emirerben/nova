@@ -975,10 +975,15 @@ def fit_card_looks(
 
     if route != "talking" or len(photos) < 2:
         return decline("too_few_photos") if route == "talking" else []
-    stage = card_stage(variant, assembly, title, evidence)
+    try:
+        stage = card_stage(variant, assembly, title, evidence)
+        in_the_way = stage is not None and cards_in_the_way(assembly, variant, title)
+    except Exception as exc:  # noqa: BLE001 - unreadable lanes or recipe: no card look
+        log.warning("intro_styles.card_stage_failed", error=str(exc)[:200])
+        return decline("fit_error")
     if stage is None:
         return decline("no_face")
-    if cards_in_the_way(assembly, variant, title):
+    if in_the_way:
         return decline("in_the_way")
     menu = scene_mod.issue_menu(title.words, photo_count=len(photos))
     tries = [
