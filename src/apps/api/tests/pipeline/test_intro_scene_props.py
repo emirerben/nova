@@ -118,6 +118,8 @@ from app.pipeline.phone_title_look import title_block_box  # noqa: E402
 from app.services import intro_props_layout as props  # noqa: E402
 from app.services.phone_card_layout import (  # noqa: E402
     EDGE_INSET,
+    GAP,
+    MIN_WIDTH,
     WATERMARK_BOX,
     boxes_intersect,
 )
@@ -327,7 +329,9 @@ def test_what_the_layout_cannot_use_is_declined(arrangement, aspects, stage, rea
 # --- the compile: a scene with an arrangement, end to end through the approval check ---------
 
 
-def _compile(arrangement, photos=PORTRAIT_PHOTOS, language="en", *, stage=ROOMY, **over):
+def _compile(
+    arrangement, photos=PORTRAIT_PHOTOS, language="en", *, stage=ROOMY, card_mode="clean", **over
+):
     return mod.compile_intro_scene(
         _scene(arrangement=arrangement, **over),
         TITLES[language],
@@ -336,6 +340,7 @@ def _compile(arrangement, photos=PORTRAIT_PHOTOS, language="en", *, stage=ROOMY,
         language=language,
         photo_aspects=photos,
         stage=stage,
+        card_mode=card_mode,
     )
 
 
@@ -379,7 +384,7 @@ def test_the_drawn_ink_of_the_title_never_touches_a_card(monkeypatch):
     def card_on_the_title(*args, **kwargs):
         layout = real(*args, **kwargs)
         block = title_block_box(layout.rows, canvas=PORTRAIT)
-        card = props.PropCard("prop_1", block, 0)
+        card = dataclasses.replace(layout.cards[0], box=block)
         return dataclasses.replace(layout, cards=(card, *layout.cards[1:]))
 
     monkeypatch.setattr(props, "layout_intro_props", card_on_the_title)
@@ -392,6 +397,235 @@ def test_a_layout_error_never_breaks_the_compile(monkeypatch):
 
     monkeypatch.setattr(props, "layout_intro_props", boom)
     assert _compile("grid_2x2").reason == "compile_error"
+
+
+# --- pop: short cards that may cover her (M47-M59 in intro_props_layout) ----------------------
+
+# A close selfie like the real Talking edits (the face box measured on a real take): the title
+# alone fills the room above her head and her chin reaches the caption row.
+CLOSE_FACE = mod.NormalizedBox(0.19, 0.38, 0.83, 0.77)
+CLOSE = props.Stage((CLOSE_FACE,), CAPTIONS)
+SHORT_S = 1.5  # Emir's "short time" (2026-11-27)
+STAGGER_S = 0.25
+
+
+def _pop(arrangement, aspects, language="en", *, stage=CLOSE, title=None, **over):
+    rows, position = _title_rows(title or TITLES[language], language, **over)
+    return props.layout_intro_props(
+        arrangement, aspects, rows, stage=stage, canvas=PORTRAIT, position=position, mode="pop"
+    )
+
+
+def _assert_pop_drawable(layout, aspects, *, stage=CLOSE, window=(0.0, 3.0)):
+    """The pop contract, from the ruling: on the frame, off the caption row, the watermark, the
+    title's lines and each other (GAP apart), each the shape of its photo and between the card
+    minimum and 0.45 wide; the title exactly where it sits alone; each card shown at most 1.5 s
+    inside the title's window, entering one stagger after the previous one, title first."""
+    assert isinstance(layout, props.PropsLayout), layout
+    assert layout.mode == "pop"
+    top, bottom = stage.caption_band or (CAPTION_BAND_TOP_FRAC, 1.0)
+    captions = mod.NormalizedBox(0.0, top, 1.0, bottom)
+    boxes = [card.box for card in layout.cards]
+    assert [card.slot for card in layout.cards] == [f"prop_{n}" for n in range(1, len(boxes) + 1)]
+    assert len({round(box.width, 9) for box in boxes}) == 1  # M53: one width per look
+    for box, aspect in zip(boxes, aspects, strict=False):
+        assert EDGE_INSET - 1e-6 <= box.left and box.right <= 1 - EDGE_INSET + 1e-6, box
+        assert EDGE_INSET - 1e-6 <= box.top and box.bottom <= 1 - EDGE_INSET + 1e-6, box
+        assert not boxes_intersect(box, captions), box
+        assert not boxes_intersect(box, WATERMARK_BOX), box
+        assert _drawn_shape(box) == pytest.approx(aspect, rel=1e-3)
+        assert MIN_WIDTH - 1e-6 <= min(box.width, box.height * PORTRAIT.height / PORTRAIT.width)
+        assert box.width <= 0.45 + 1e-9
+    for a, b in itertools.combinations(boxes, 2):
+        assert not boxes_intersect(a.padded(GAP - 1e-6), b), (a, b)
+    lines = [_measure_title_box(dict(row), canvas=PORTRAIT) for row in layout.rows]
+    assert not any(boxes_intersect(line, box) for line in lines for box in boxes)
+    starts = [card.start_s for card in layout.cards]
+    assert starts[0] > window[0]  # the title lands first
+    assert starts == pytest.approx([starts[0] + n * STAGGER_S for n in range(len(starts))])
+    for card in layout.cards:
+        assert window[0] < card.start_s < card.end_s <= window[1] + 1e-9
+        assert card.end_s - card.start_s <= SHORT_S + 1e-9
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("aspects", sorted(ASPECTS), ids=str)
+@pytest.mark.parametrize("arrangement", ["around_speaker", "grid_2x2"])
+def test_on_a_close_speaker_cards_pop_over_her_briefly_around_the_title(
+    arrangement, aspects, language
+):
+    photos = ASPECTS[aspects]
+    rows, position = _title_rows(TITLES[language], language)
+    window = (min(r["start_s"] for r in rows), max(r["end_s"] for r in rows))
+    layout = _pop(arrangement, photos, language)
+    _assert_pop_drawable(layout, photos, window=window)
+    alone, receipt = mod.place_on_stage(
+        rows, position, PORTRAIT, faces=CLOSE.faces, avoid=[CLOSE.caption_box]
+    )
+    assert (layout.rows, layout.receipt) == (alone, receipt)  # M54
+
+
+def test_a_longer_turkish_title_keeps_its_block_and_the_cards_go_around_it():
+    longer = "şehir rehberi: lizbon, birinci gün, bütün gün"
+    rows, position = _title_rows(longer, "tr", voices=VOICES + ["solid"] * 2)
+    layout = _pop("grid_2x2", PORTRAIT_PHOTOS, "tr", title=longer, voices=VOICES + ["solid"] * 2)
+    _assert_pop_drawable(layout, PORTRAIT_PHOTOS)
+    block = title_block_box(layout.rows, canvas=PORTRAIT)
+    assert not any(boxes_intersect(card.box, block) for card in layout.cards)  # M56
+
+
+def test_where_cards_fit_off_her_the_layout_stays_clean():
+    clean = _layout("grid_2x2", PORTRAIT_PHOTOS)
+    assert clean.mode == "clean"  # M47: the default mode, unchanged where there is room
+    window = (min(c.start_s for c in clean.cards), max(c.end_s for c in clean.cards))
+    rows, _ = _title_rows(TITLE_EN, "en")
+    assert all((c.start_s, c.end_s) == window for c in clean.cards)
+    assert window == (min(r["start_s"] for r in rows), max(r["end_s"] for r in rows))
+
+
+def _cover(box, faces) -> tuple[float, float]:
+    centre = sum(box.intersection_area(props.face_centre(face)) for face in faces)
+    return centre, sum(box.intersection_area(face) for face in faces)
+
+
+# A real close take with her captions ABOVE her face (measured on a prod Talking edit).
+CAPTIONS_ABOVE = props.Stage((mod.NormalizedBox(0.21, 0.434, 0.867, 0.813),), (0.15, 0.25))
+
+
+@pytest.mark.parametrize(
+    ("arrangement", "aspects", "stage"),
+    [
+        ("around_speaker", "portrait", CLOSE),
+        ("grid_2x2", "portrait", CLOSE),
+        ("grid_2x2", "mixed", CLOSE),
+        ("around_speaker", "portrait", CAPTIONS_ABOVE),
+        ("grid_2x2", "portrait", CAPTIONS_ABOVE),
+    ],
+)
+def test_each_pop_card_takes_the_free_spot_that_covers_least_of_her_eyes_and_mouth(
+    arrangement, aspects, stage
+):
+    """M52, against a brute force: for each card in slot order, every spot of its size on a
+    0.005 grid that keeps the rules (the cards before it in place). None covers less of her face
+    centre than the one the layout chose, and of those that cover as little, none covers less of
+    her face."""
+    layout = _pop(arrangement, ASPECTS[aspects], stage=stage)
+    block = title_block_box(layout.rows, canvas=PORTRAIT).padded(GAP)
+    steps = [EDGE_INSET + n * 0.005 for n in range(200)]
+    tie = 0.001
+    placed: list = []
+    for card in layout.cards:
+        size = card.box
+        keep_out = (block, stage.caption_box, WATERMARK_BOX, *(b.padded(GAP) for b in placed))
+        free = []
+        for x, y in itertools.product(steps, steps):
+            box = mod.NormalizedBox(x, y, x + size.width, y + size.height)
+            if box.right > 1 - EDGE_INSET or box.bottom > 1 - EDGE_INSET:
+                continue
+            if not any(boxes_intersect(box, other) for other in keep_out):
+                free.append(_cover(box, stage.faces))
+        assert free, card.slot
+        chosen = _cover(size, stage.faces)
+        assert chosen[0] <= min(c for c, _f in free) + tie, card.slot
+        as_little = [f for c, f in free if c <= chosen[0] + tie]  # the grid may miss its spot
+        assert not as_little or chosen[1] <= min(as_little) + tie, card.slot
+        placed.append(size)
+
+
+def test_the_face_centre_is_her_eyes_and_mouth_inside_the_saved_face_box():
+    centre = props.face_centre(CLOSE_FACE)
+    assert CLOSE_FACE.left < centre.left < centre.right < CLOSE_FACE.right
+    assert CLOSE_FACE.top < centre.top < centre.bottom < CLOSE_FACE.bottom
+    # the eyes sit about half way down a face box, the mouth about three quarters
+    for down in (0.5, 0.75):
+        assert centre.top < CLOSE_FACE.top + down * CLOSE_FACE.height < centre.bottom
+
+
+def test_pop_is_the_same_twice():
+    first = _pop("grid_2x2", ASPECTS["mixed"], "tr")
+    assert _pop("grid_2x2", ASPECTS["mixed"], "tr") == first  # M55
+
+
+def test_pop_cards_show_one_after_another_and_never_past_the_title():
+    pop = props.CARD_MODES["pop"]
+    assert pop.windows(4, 0.0, 2.5) == [(0.25, 1.75), (0.5, 2.0), (0.75, 2.25), (1.0, 2.5)]
+    assert pop.windows(2, 4.0, 5.6) == [(4.25, 5.6), (4.5, 5.6)]  # cut at the title's end
+    assert pop.windows(4, 0.0, 1.2) is None  # the fourth card would flash for 0.2 s
+    assert pop.windows(2, 0.0, 1.2) == [(0.25, 1.2), (0.5, 1.2)]
+    clean = props.CARD_MODES["clean"]
+    assert clean.windows(2, 0.1, 2.6337) == [(0.1, 2.6337), (0.1, 2.6337)]  # exactly the title
+
+
+def test_a_title_too_brief_for_every_card_declines_the_pop():
+    rows, position = _title_rows(TITLE_EN, "en")
+    brief = [{**row, "end_s": 1.2} for row in rows]
+    layout = props.layout_intro_props(
+        "grid_2x2",
+        PORTRAIT_PHOTOS,
+        brief,
+        stage=CLOSE,
+        canvas=PORTRAIT,
+        position=position,
+        mode="pop",
+    )
+    assert layout == props.PropsDecline("title_too_brief")
+
+
+def test_a_pop_title_is_one_the_plain_look_would_show():
+    """M54: the plain look's preflight declines this loopy stack (it cannot sit clear); with pop
+    cards the same title is declined the same way, never squeezed onto her stage instead."""
+    title = "how am i / really loving this"
+    scene = _scene(
+        voices=["solid"] * 3 + ["accent"] * 3, font_pair="grotesk_loop", arrangement="grid_2x2"
+    )
+
+    def compile_on(arrangement, card_mode):
+        return mod.compile_intro_scene(
+            scene.model_copy(update={"arrangement": arrangement}),
+            title,
+            canvas=PORTRAIT,
+            timeline_duration_s=30.0,
+            language="en",
+            photo_aspects=PORTRAIT_PHOTOS,
+            stage=CLOSE,
+            card_mode=card_mode,
+        )
+
+    plain = compile_on("none", "clean")
+    assert (plain.rows, plain.reason) == (None, "placement_unclean")
+    assert compile_on("grid_2x2", "pop").reason == "placement_unclean"
+
+
+def test_pop_never_assumes_the_stand_in_speaker():
+    out = _compile("grid_2x2", stage=None, card_mode="pop")
+    assert (out.rows, out.reason, out.card_layout) == (None, "props_do_not_fit", "no_stage")
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("arrangement", ["around_speaker", "grid_2x2"])
+def test_her_title_compiles_with_pop_cards_and_still_reads_as_her_title(arrangement, language):
+    out = _compile(arrangement, language=language, stage=CLOSE, card_mode="pop")
+    assert out.reason == "ok", (out.reason, out.card_layout)
+    assert out.props is not None and out.props.mode == "pop"
+    _assert_pop_drawable(out.props, PORTRAIT_PHOTOS)
+    [match] = check.approval_matches(out.rows, TITLES[language])
+    assert match["start_s"] == 0.0
+    clean = _compile(arrangement, language=language, stage=CLOSE)
+    assert (clean.rows, clean.card_layout) == (None, "no_room_for_cards")
+
+
+def test_the_drawn_ink_of_the_title_never_touches_a_pop_card(monkeypatch):
+    real = props.layout_intro_props
+
+    def card_on_the_title(*args, **kwargs):
+        layout = real(*args, **kwargs)
+        block = title_block_box(layout.rows, canvas=PORTRAIT)
+        moved = dataclasses.replace(layout.cards[0], box=block)
+        return dataclasses.replace(layout, cards=(moved, *layout.cards[1:]))
+
+    monkeypatch.setattr(props, "layout_intro_props", card_on_the_title)
+    out = _compile("grid_2x2", stage=CLOSE, card_mode="pop")
+    assert (out.rows, out.reason) == (None, "props_do_not_fit")  # M48
 
 
 # --- the offer's card looks on a framing with room (stage B, byte for byte) -------------------

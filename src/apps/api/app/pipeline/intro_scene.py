@@ -103,9 +103,10 @@ title, one under the speaker; ``grid_2x2``: two and two). The scene holds no med
 fills the ordinal slots ``prop_1`` .. ``prop_N`` with the owned photos the caller issued, in that
 order. `services.intro_props_layout` lays the cards and the title out together (the title between
 the card rows) around the speaker and her captions it is given; `compile_intro_scene` returns
-those rows already placed, with the card boxes on ``IntroCompile.props``. The cards share the
-title's time. Guards: tests/pipeline/test_intro_scene_props.py and the props cases of
-``make verify-intro-scenes``.
+those rows already placed, with the card boxes on ``IntroCompile.props``. Clean cards share the
+title's time; ``card_mode="pop"`` cards may cover her briefly (M47-M59 in
+`services.intro_props_layout`). Guards: tests/pipeline/test_intro_scene_props.py and the props
+cases of ``make verify-intro-scenes``.
 
 * M19: an arrangement nobody issued, or one with fewer photos than slots (a grid from three).
   `issue_menu` issues an arrangement only for ``photo_count`` >= its slots; `check_scene`
@@ -660,9 +661,15 @@ class IntroCompile:
     typed_title: str = ""  # her words with " / " between rows, what `stacked_title_matches` reads
     sound: str = "none"
     position: str | None = None  # for `place_title_look(position=...)`
-    # KRI-1615: a scene with an arrangement. ``rows`` are then already placed between the cards
-    # on the stage the compile was given; placing them again without the cards would undo that.
+    # KRI-1615: a scene with an arrangement. ``rows`` are then already placed with the cards on
+    # the stage the compile was given; placing them again without the cards would undo that.
     props: PropsLayout | None = None
+    # The card layout's outcome: `CARD_LAYOUT_FIT`, or why it declined (``props_do_not_fit``);
+    # ``None`` when no layout ran. "fit" with ``rows=None``: the cards fit, the drawn title did not.
+    card_layout: str | None = None
+
+
+CARD_LAYOUT_FIT = "fit"
 
 
 class _Decline(Exception):
@@ -776,22 +783,31 @@ def _compile_with_props(
     photo_aspects: Sequence[float],
     stage: Stage | None,
     canvas: Any,
+    card_mode: str,
 ) -> IntroCompile:
-    """The title rows placed with the scene's cards (M22-M29), or ``props_do_not_fit``."""
-    from app.services.intro_props_layout import PropsDecline, layout_intro_props  # noqa: PLC0415
+    """The title rows placed with the scene's cards (M22-M29, M47-M56), or
+    ``props_do_not_fit``."""
+    from app.services import intro_props_layout as layout_mod  # noqa: PLC0415
 
     assert scene.zone and scene.sound
+    if stage is None and card_mode != layout_mod.CLEAN:
+        return IntroCompile(None, "props_do_not_fit", card_layout="no_stage")  # M47
+    if card_mode != layout_mod.CLEAN:
+        unsat = preflight_rows(rows, ZONES[scene.zone], canvas)  # M54: a plain look's title
+        if unsat:
+            return IntroCompile(None, unsat)
     stage = stage or typical_stage()
-    layout = layout_intro_props(
+    layout = layout_mod.layout_intro_props(
         scene.arrangement,
         photo_aspects,
         rows,
         stage=stage,
         canvas=canvas,
         position=ZONES[scene.zone],
+        mode=card_mode,
     )
-    if isinstance(layout, PropsDecline):
-        return IntroCompile(None, "props_do_not_fit")
+    if isinstance(layout, layout_mod.PropsDecline):
+        return IntroCompile(None, "props_do_not_fit", card_layout=layout.reason)
     unsat = _ink_problem(
         layout.rows,
         faces=stage.faces,
@@ -799,7 +815,7 @@ def _compile_with_props(
         cards=[card.box for card in layout.cards],
     )
     if unsat:
-        return IntroCompile(None, unsat)
+        return IntroCompile(None, unsat, card_layout=CARD_LAYOUT_FIT)
     return IntroCompile(
         layout.rows,
         "ok",
@@ -807,6 +823,7 @@ def _compile_with_props(
         sound=scene.sound,
         position=ZONES[scene.zone],
         props=layout,
+        card_layout=CARD_LAYOUT_FIT,
     )
 
 
@@ -821,14 +838,17 @@ def compile_intro_scene(
     menu: IntroMenu | None = None,
     photo_aspects: Sequence[float] = (),
     stage: Stage | None = None,
+    card_mode: str = "clean",
 ) -> IntroCompile:
     """Today's title rows for ``scene`` over ``title``, or ``rows=None`` and the reason. Never
     raises: a decline, a bad scene, an unissued id or any error all mean "use today's title".
 
     KRI-1615: ``photo_aspects`` (width over height of each owned photo the caller issued, in
     slot order) issue the arrangements they fill when no ``menu`` is given. A scene with one is
-    laid out with its cards on ``stage`` (default: the typical speaker, whose title fills the
-    room above the head, so it declines there); any failure is ``props_do_not_fit``."""
+    laid out with its cards on ``stage`` by the rules of ``card_mode``
+    (`intro_props_layout.CARD_MODES`; default: the typical speaker, whose title fills the room
+    above the head, so it declines there, and only for ``clean``); any failure is
+    ``props_do_not_fit``."""
     from app.pipeline.phone_title_look import (  # noqa: PLC0415
         split_title_lines,
         title_look_text,
@@ -865,7 +885,13 @@ def compile_intro_scene(
         assert scene.zone and scene.sound
         if scene.arrangement != NO_ARRANGEMENT:
             return _compile_with_props(
-                scene, rows, typed, photo_aspects=photo_aspects, stage=stage, canvas=canvas
+                scene,
+                rows,
+                typed,
+                photo_aspects=photo_aspects,
+                stage=stage,
+                canvas=canvas,
+                card_mode=card_mode,
             )
         unsat = preflight_rows(rows, ZONES[scene.zone], canvas)
         if unsat:
