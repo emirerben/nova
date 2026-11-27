@@ -481,6 +481,14 @@
       "source": "default",
       "value": false
     },
+    "intro_cards_enabled": {
+      "source": "default",
+      "value": false
+    },
+    "intro_cards_min_client_protocol": {
+      "source": "default",
+      "value": 62
+    },
     "intro_scene_enabled": {
       "source": "default",
       "value": false
