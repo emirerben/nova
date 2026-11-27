@@ -2245,9 +2245,20 @@ final class NativeEditorSessionTests: XCTestCase {
                                                            "scale", "start_s", "end_s", "z"] })
 
         fake.commitThrow = nil
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false, mediaOverlays: true),
+            revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
         await session.save()
         XCTAssertEqual(fake.commitCount, 2, "Save is retryable")
         XCTAssertEqual(try XCTUnwrap(fake.lastRequest?.mediaOverlays).compactMap { $0.objectValue?["id"]?.stringValue }, look.cards.map(\.id))
+
+        // This edit had no card lane when it opened: taking the look's cards away must still reach the server.
+        XCTAssertFalse(session.hasUnsavedChanges)
+        Self.showIntroCards(session, offer: offer)
+        XCTAssertTrue(session.applyIntroStyle(try XCTUnwrap(offer.options.last)))
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 3)
+        XCTAssertEqual(fake.lastRequest?.mediaOverlays, [], "an empty lane, not an omitted one: the server keeps cards it is not told to drop")
     }
 
     func testConcurrentPlaybackFailureReportsPreserveEveryEventAndDraftCall() async throws {

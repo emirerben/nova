@@ -702,6 +702,18 @@ final class IntroStylesOfferTests: XCTestCase {
         XCTAssertEqual(IntroStyleLabels.photoCardLook, "photo card look")
     }
 
+    func testAPlainPickOnAnEditWithoutCardsSendsOnlyItsTitle() throws {
+        for (editor, block) in [("editor_talking_en", "offer_talking_en"), ("editor_montage_tr", "offer_montage_tr"),
+                                ("editor_narrated_en", "offer_narrated_en")] {
+            let (session, offer) = try session(editor: editor, offer: block)
+            XCTAssertTrue(session.applyIntroStyle(offer.options[0]), block)
+            XCTAssertEqual(session.dirtySections, [.text], "\(block): only the title lane changed")
+            let lanes = try XCTUnwrap(session.exportEditorState()).lanes
+            XCTAssertNil(lanes.mediaOverlays, "\(block): no card lane goes out")
+            XCTAssertEqual(lanes.textElements, offer.options[0].rows)
+        }
+    }
+
     func testACardLookIsRefusedWhereTheOverlayLaneIsLocked() throws {
         let (session, offer) = try cardSession(overlaysEditable: false)
         let before = session.document

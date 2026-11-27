@@ -10937,7 +10937,10 @@ enum EditorOpenIntent { case warm, open }
             orientation: submittedSections.contains(.orientation) ? value["orientation"]?.stringValue : nil,
             landscapeFit: submittedSections.contains(.landscapeFit) ? value["landscape_fit"]?.stringValue : nil,
             soundEffects: array("sound_effects", .soundEffects),
-            mediaOverlays: array("media_overlays", .mediaOverlays)?.map(IntroStyleCard.committed),
+            // A card lane the edit opened without is encoded only while it holds cards: emptied after a Save that added
+            // some, it must still go out, or the server keeps the cards it is not told to drop.
+            mediaOverlays: submittedSections.contains(.mediaOverlays)
+                ? (Self.array(value["media_overlays"]) ?? []).map(IntroStyleCard.committed) : nil,
             visualBlocks: array("visual_blocks", .visualBlocks),
             motionScenes: array("motion_scenes", .motionScenes),
             motionRuntimeHash: submittedSections.contains(.motionScenes) ? document.motionRuntimeHash : nil,
