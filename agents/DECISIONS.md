@@ -4102,6 +4102,14 @@ CLAUDE.md was already 77 bytes over its 38,000 budget on main when KRI-1562 need
 
 - `TIKTOK_DEEP_ANALYSIS_ENABLED` — default `true`; `false` ⇒ no TikTok analysis in persona/plan/hook prompts (byte-identical). Apply: fly secret + restart.
 
+## [2026-11-27] CLAUDE.md flag detail moved out for `INTRO_CARDS_ENABLED` (KRI-1615)
+
+CLAUDE.md was at its 38,000 budget when KRI-1615 stage B needed its flag line, so the intro-scene line took the new flag and lost its description; its full original text, preserved verbatim:
+
+- `INTRO_SCENE_ENABLED` / `_USER_IDS` / `_MODEL_ENABLED` / `_SOUND_ENABLED` — off / `[]` / off / off (KRI-1611/12/13): Talking intro scene, stamped at dispatch; MODEL picks it; SOUND plays its own sound. `docs/pipelines/intro-scene.md`.
+
+`INTRO_CARDS_ENABLED` (default off) is the kill switch for photo cards in "Try intro styles" and for the Save pinning their photos; keep it off until the iPhone build that applies cards (stage C) ships. Detail: `docs/pipelines/intro-scene.md` ("Photo cards in the offer").
+
 ## [2026-11-21] A typed music ask on a phone Talking edit picks a library song (KRI-1562 PR3)
 
 **Decision:** with `TALKING_MUSIC_ENABLED` on, "talking video with some chill music" / "arkada sakin bir müzik olsun" is a typed `audio_intent: music` (+ `music_mood`) on the brief. The Talking worker reads it from the approved brief and, with no song stored on the variant, ranks the library with `music_matcher` (the mood as the creator's ask) and plays the winner's rank-1 section. Chat's `swap_music` adds or swaps and `remove_music` removes the song through the Talking Save's `background_music` section. One owner: `app/services/talking_music.py` (eligibility, treatment, chat rows, "does the recipe play a song"). The receipt reads the pinned recipe, never the stored treatment.

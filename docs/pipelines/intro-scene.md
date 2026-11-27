@@ -377,10 +377,10 @@ replay evals.
 ## Photo cards (KRI-1615, stage A)
 
 Her own photos as cards in an intro scene, with the title laid out between them (the moodboard's
-Pinterest collage and 2 + 2 grid; refs 3 and 5). Stage A is the backend layout only and is dark:
-nothing calls it in production, there is no flag, and the seeded pick, the "Try intro styles"
-offer and the model arm are unchanged (they pass no photos, so they issue no arrangement). Stage B
-offers cards as a one-tap suggestion (never automatic); stage C draws them on the phone.
+Pinterest collage and 2 + 2 grid; refs 3 and 5). Stage A is the backend layout only: the seeded
+pick and the model arm pass no photos, so they issue no arrangement. Stage B (next section) offers
+cards in "Try intro styles" as a one-tap suggestion (never automatic); stage C draws them on the
+phone.
 
 * **Data shape.** `IntroScene.arrangement`: `none` | `around_speaker` | `grid_2x2`, mapped through
   `ARRANGEMENTS` (card rows: `top`, above the title, or `bottom`, under the speaker; how many cards
@@ -427,6 +427,165 @@ as neutral plates under the real Skia title; four controls that must fail (a car
 on the face, past the frame edge, on the caption row); wiring checks (a close speaker declines, no
 grid from three photos, no arrangement without photos); and `sweep_props`.
 
-Not covered: five, overlapping or tilted cards (ref 3), bleed (KRI-1616), the offer and Save
-(stage B), drawing on the phone (stage C). Refs 3 and 5 stay `partial` until her photos can be
-offered.
+Not covered: five, overlapping or tilted cards (ref 3), bleed (KRI-1616), drawing on the phone
+(stage C). Refs 3 and 5 stay `partial` until her photos can be offered.
+
+## Photo cards in the offer (KRI-1615, stage B)
+
+For the creator: on a Talking edit, "Try intro styles" may add one or two looks that lay two or
+four of her own Visuals photos out with the title. She taps one, Save keeps it, and she can drag
+or delete a card like any other. Nothing is automatic. For the next engineer: the offer still
+stores nothing; the Save pins the photos; the failure modes M31-M45 and their guards are in the
+`app/pipeline/intro_styles.py` docstring.
+
+**Gates.** `INTRO_CARDS_ENABLED` (default off, the kill switch) and a build at
+`INTRO_CARDS_PROTOCOL` = 62 (`intro_cards_min_client_protocol`, set by
+`scripts/bump-protocol.py intro_cards`). The route resolves both (`intro_styles.cards_allowed`) and
+only then reads her photos; otherwise the offer is today's byte for byte, and a new build's offer
+minus its card looks equals it (tested). Keep the switch off until the stage C build ships: a
+protocol-62 build without the card parser would apply the title placed between cards and no
+cards.
+
+**Which photos.** `intro_card_pool.card_photo`, one rule for the offer's query and the Save's pin:
+her own `PlanItemAsset` rows of this plan item, `kind` image, `status` and `media_status` ready,
+in `users/{user}/plan/{item}/pool/`, with a generation, not deduplicated, not library-backed,
+under the bind's 25 MB cap when its size is known, a browser-safe preview when HEIC, an upright shape
+(`analysis.dims_upright` and `aspect`), and `analysis.has_alpha` false (a transparent PNG is a
+sticker, KRI-1616). Oldest first (`created_at`, `id`); the slots take them in that order, as many
+as the arrangement has (two for `around_speaker`, four for `grid_2x2`). Under two: no card look.
+
+**Where.** Talking only, and only with her face saved (`opening_title_placement.face_band`; a
+typical face is never assumed for cards). Her captions come from `intro_card_pool.caption_band`:
+the union of the title receipt's measured `caption_boxes` and the pinned recipe's `caption*`
+layers shown with the title (estimated from font size, padded 0.01). The same function feeds the
+layout stage, the Save's mark and the measurement below. Another card (the worker's or hers) or a
+text line that is not hers or a caption on screen with the title: no card look (`in_the_way`);
+her content stays. Each arrangement her photos fill gets at most one look, after the plain looks:
+the seeded candidates x the two top-band zones, `MAX_CARD_COMPILES` (8) per arrangement, each
+compiled with the arrangement on her real stage; the first one the dry-run Save accepts with
+every card compiled exactly where it was placed is the look (`card_moved` otherwise).
+
+**The wire** (an option of `POST .../intro-styles`; stage C parses `cards`, `IntroCard` in
+`intro_styles.py`). Options are the plain looks, then the card looks, then `none` last. A card
+look's `key` is `<font_pair>+<arrangement>`, which no plain look uses, and it is `current` when
+her title rows carry it. A real offer on the verify fixture:
+
+```json
+{
+  "key": "grotesk_pen+around_speaker",
+  "recommended": false,
+  "current": false,
+  "rows": ["... the title rows, placed between the cards, as for every look ..."],
+  "cards": [
+    {"id": "intro-card-1", "slot": "prop_1",
+     "media_id": "00000000-0000-0000-0000-000000000001",
+     "gcs_path": "users/<user>/plan/<item>/pool/0.jpg", "generation": "7",
+     "x_frac": 0.1254, "y_frac": 0.099, "scale": 0.2107, "caption_clear": true, "z": 0,
+     "start_s": 0.0, "end_s": 2.5},
+    {"id": "intro-card-2", "slot": "prop_2",
+     "media_id": "00000000-0000-0000-0000-000000000002",
+     "gcs_path": "users/<user>/plan/<item>/pool/1.jpg", "generation": "7",
+     "x_frac": 0.8278, "y_frac": 0.9158, "scale": 0.3045, "caption_clear": true, "z": 1,
+     "start_s": 0.0, "end_s": 2.5}
+  ],
+  "preview": {"media_id": "...", "media_kind": "...", "at_s": "...", "time_s": "...",
+    "text_layers": ["..."], "fonts": "...",
+    "cards": [
+      {"media_id": "00000000-0000-0000-0000-000000000001", "media_kind": "image",
+       "box": {"left": 0.02, "top": 0.02, "right": 0.2307, "bottom": 0.1781}, "z": 0},
+      {"media_id": "00000000-0000-0000-0000-000000000002", "media_kind": "image",
+       "box": {"left": 0.6755, "top": 0.8515, "right": 0.98, "bottom": 0.98}, "z": 1}
+    ]}
+}
+```
+
+Fractions are of the 1080x1920 canvas: `x_frac`/`y_frac` the card's centre, `scale` its width; the
+phone draws the photo at its own shape. The card shows with the title (`start_s`-`end_s`).
+`caption_clear` is informational: the Save decides it again from the same evidence (a
+`MediaOverlay` has no such field).
+
+**Applying it (the stage C contract).** Applying ANY option, plain looks and `none` included:
+replace the `replace_ids` title rows with `rows` (as today), remove every media overlay whose id
+starts with `intro-card-`, and add one per card: `{id, kind: "image", src_gcs_path: gcs_path,
+display_mode: "pip", position: "custom", x_frac, y_frac, scale, start_s, end_s, z}`. A plain look
+or `none` therefore takes the cards away (its title was placed without them). Ids are the slots',
+so applying the same look twice converges. Her normal editor-commit Save posts the full
+`media_overlays` section (her other cards first). The preview's `cards` are the boxes to draw her
+photos in (or a neutral plate until the photo loads).
+
+**Save.** `pin_background_for_commit` (the HTTP Save, the copilot edit and the approval task) now
+also calls `intro_card_pool.pin_intro_cards_for_commit`: with the switch on, for every posted
+`intro-card-*` card on one of her card photos that the job has not pinned, it binds the photo
+through `bind_phone_visual_assets` (owner, item, path and generation rechecked, bytes hashed) and
+appends the receipt to `_phone_visuals_v1`, the KRI-1117 / KRI-1253 precedent. A card on any other
+photo is not pinned, so `_overlays_from_sections` refuses it with today's "isn't a photo Kria
+pinned" error; unreadable bytes are a 422 `intro_card_unavailable`. The pin also decides each intro
+card's `caption_clear` (the card's box, from its place and the photo's `aspect`, clear of
+`caption_band`) and hands it to the lane rebuild for this request only
+(`intro_card_pool.CAPTION_CLEAR_ATTR`, the `NEW_BACKGROUND_COLUMNS_ATTR` pattern); every other card
+keeps today's rule. Without the mark the phone compile lifts a card centred under 0.62 up to 0.62,
+onto her face. Deleting a card is an ordinary Save without it: it leaves the lanes and the recipe,
+the other card keeps its place, and the photo's receipt stays (append-only, like every pool pin).
+The dry run at offer time pins provisional receipts and reads no bytes, so it proves less than the
+Save (M42). Cost: a Save that adds a grid downloads and hashes up to four photos one after another
+in the request (each at most 25 MB), plus a text-column measure while the background-focus or
+card-strip switch is on; later Saves reuse the receipts.
+
+**Cloud.** No new code: the Save persists the cards on `variant.media_overlays`, and
+`pipeline/media_overlay.py` places a card at its `x_frac`/`y_frac` centre, `scale` wide, with no
+caption clamp (read, not rendered here).
+
+**Real footage (measured 2026-11-27).** `python -m app.cli.intro_cards_fit --debug-dumps <dir>`
+runs the offer's own stage and fit (no Save, no "in the way" check) over saved
+`/admin/jobs/{id}/debug` answers (read only; they hold titles, so they stay out of git). Prod, 236
+recent jobs: 75 Talking variants, 23 with an intro title, 13 portrait phone edits with a saved face
+band (8 distinct framings; one take accounts for 5). The debug view carries no pinned recipe, so
+the caption band is the receipt's `caption_boxes` (4 edits, all that one take) or, second column,
+an estimate from the caption style's anchor and size (two lines; 11 edits). On that take the
+estimate (0.748-0.832) brackets the measured boxes (0.768-0.812) by 0.02 a side. Four synthetic
+photos per shape.
+
+| Captions from | Card look (either arrangement) | Declines (stage A layout) |
+| --- | --- | --- |
+| receipt boxes only | 0 of 13 | `no_room_for_cards` 12, `title_unclean` 1 |
+| receipt, else style estimate | 1 of 13 (1 framing) | `no_room_for_cards` 11, `title_unclean` 1 |
+
+The same in every photo shape (3:4, square, 4:3): the rows either have room or clearly do not.
+Both arrangements need a row above the title AND a row under her, and the smallest card is 0.084
+of the frame height (0.112 for a 3:4 photo). By framing (room from `room` in the report):
+
+* No room above the title: 4 framings, 9 edits (face tops at 0.07-0.26 leave -0.13 to 0.04 once
+  the title, 0.12-0.22 tall, sits over the head).
+* No room under her: 4 framings (chins at 0.77-0.81, or captions unmeasured so the band stops at
+  0.62), 2 of them with her captions at the TOP of the frame (anchored at 0.13 and 0.20), where
+  the layout's bottom bands assume captions under the face.
+* The one fit: face 0.38-0.52 with captions estimated at 0.67-0.71.
+
+So on today's Talking framings the offer will almost never carry cards; it omits them, and nothing
+else changes. Proposals for the taste call (stage A rules, not changed here):
+
+1. One-row arrangements: cards only above the title, or only under her. By the room numbers
+   (estimated, not compiled), a row under her alone fits 3 framings (8 edits) and a row above the
+   title alone 2 framings (2 edits, one shared): 9 of 13 edits together.
+2. Captions above her face: let the bottom row run from under the chin to the frame bottom (0.17
+   and 0.19 of room on the 2 framings with top captions; 2 more edits with proposal 1).
+3. Let the title shrink with cards (`cards_shrink_the_title` today): helps only the edge cases
+   (0.04 of room above the title needs a title about 0.05 shorter).
+
+**Checks.** `tests/routes/test_intro_cards_e2e.py` (real PostgreSQL, the real routes, offer, Save
+pin, phone recompile and the phone's asset grant, EN and TR, a card of hers later in the video, a
+row in her namespace that is not hers, the switch turned off after a Save; only auth and the
+storage download replaced), and the card
+section of `make verify-intro-styles` (EN and TR on a roomy framing, cards as neutral plates under
+the real Skia title, measured against her face, her recipe's caption layers, the wordmark, the
+frame and the title ink; controls N9 a look without the Save's mark is not offered, N10 a card on
+her face is caught).
+
+**Rollback.** `INTRO_CARDS_ENABLED=false` (Fly secret, api restart): offers lose their card looks
+and a Save refuses a new card photo as before; saved cards stay (their photos are pinned).
+
+Not covered: a chat move or retime of a card look's title (its cards stay where and when they
+were, M46), a request-time measure of the real photo bytes (the Save hashes them), a look for a
+plain title over intro cards on a build below 62 (it never sees card looks, but a card look saved
+from another device keeps its cards under a plain look it applies), stickers (KRI-1616), and the
+phone (stage C).

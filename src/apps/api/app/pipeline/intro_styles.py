@@ -133,6 +133,9 @@ the real Save, only the storage download replaced) and `make verify-intro-styles
   looks.
 * M45 a card look outside a Talking edit with her face saved. Narrated and montage have no face
   evidence and no card lane; a typical face is never assumed for cards.
+* M46 (open) a chat move or retime of a card look's title leaves its cards where and when they
+  were: nothing re-places the title with the cards in ``avoid`` after the Save. Her own drag in
+  the editor is hers to judge.
 
 Skia is imported lazily (no Skia at import).
 """
