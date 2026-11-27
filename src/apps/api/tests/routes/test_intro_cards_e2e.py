@@ -676,3 +676,234 @@ def test_saved_cards_survive_the_switch_turned_off(make, monkeypatch):
     response = save(client, seeded, look["rows"], as_overlays(look["cards"]))
     assert response.status_code == 200, response.text  # their photos are already pinned
     assert seeded.drawn_cards() == drawn
+
+
+# --- her edits: every rule is a preference of the offer ------------------------------------
+#
+# Emir (2026-11-27): "make sure that these are only preferences from the AI. If the user changes it
+# or asks different they should all be allowed. These should never be prevented or cause failure."
+# The offer keeps its taste (a pop card at most `SHORT_CARD_S` long and `max_width` wide, off the
+# title ink, sparing her face; a clean card off her face and the captions). Once the cards are in
+# the edit, her drag, resize, retime, duplicate and delete, her chat asks and a new title Save and
+# draw exactly what she set. Only the phone's own limits stay (scale 0.05-1, a centre inside the
+# frame, a window inside the video, a photo the job pinned), and the caption row line every card
+# has always had: a card centred under 0.62 that the server does not see clear of her captions is
+# drawn at 0.62.
+#
+# Ways it could fail (written before the tests ran):
+# P1 a card she resized past the pop width (0.8) is refused, shrunk or lifted;
+# P2 a card she retimed past 1.5 s, or past the title, is refused or cut back;
+# P3 a card dragged over the title, over her face or half off the frame is refused or moved;
+# P4 a chat ask (bigger, longer, into the corner) on an intro card is refused or clamped;
+# P5 a title change after she moved the cards (a Save without the cards, with them, a chat rewrite,
+#    a chat retime) fails, or drops or resets her cards;
+# P6 a copy of an intro card under her own id is refused;
+# P7 a card she dragged low lands on her captions, or on her face, against today's rule;
+# P8 the offer stops following its preferences (the offer tests above) or a
+#    photo that is not hers is accepted (the wrong-content control below).
+
+# The speaker clip of the fixture runs 10 s; the title 0-2.5 s.
+VIDEO_S = 10.0
+
+
+def _commit(client, seeded, body: dict):
+    return client.post(
+        f"{seeded.url}/editor-commit",
+        json={"base_generation": seeded.baseline(), **body},
+        headers=CARDS,
+    )
+
+
+def _rendered(seeded) -> None:
+    """The edit as the phone leaves it once rendered: chat offers picture-card ops only then."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    with sync_session() as db:
+        job = db.get(Job, seeded.job_id)
+        plan = copy.deepcopy(job.assembly_plan)
+        for variant in plan["variants"]:
+            if variant["variant_id"] == seeded.variant_id:
+                variant["output_url"] = "https://storage.example/out.mp4"
+        job.assembly_plan = plan
+        flag_modified(job, "assembly_plan")
+        db.commit()
+
+
+def _pop_look_saved(make, lang="en"):
+    seeded, client = make(lang, face=CLOSE_FACE)
+    look = card_options(offer(client, seeded))[0]
+    assert look["cards"][0]["start_s"] > 0, "a close speaker gets a pop look"
+    saved = save(client, seeded, look["rows"], as_overlays(look["cards"]))
+    assert saved.status_code == 200, saved.text
+    return seeded, client, look
+
+
+def _hers(look) -> list[dict]:
+    """Her edit of a pop look: card 1 made big over the title and her face for 6 s, card 2 pushed
+    half off the top-right corner and held to the end of the video."""
+    cards = as_overlays(look["cards"])
+    cards[0].update(x_frac=0.5, y_frac=0.3, scale=0.8, start_s=0.0, end_s=6.0)
+    cards[1].update(x_frac=0.98, y_frac=0.03, scale=0.45, start_s=0.5, end_s=VIDEO_S)
+    return cards
+
+
+@pytest.mark.parametrize("lang", ["en", "tr"])
+def test_her_big_long_card_over_the_title_and_face_saves_where_she_put_it(make, lang):
+    from app.pipeline.render_geometry import NormalizedBox
+    from app.services.intro_card_pool import card_box
+    from app.services.phone_card_layout import boxes_intersect
+
+    seeded, client, look = _pop_look_saved(make, lang)
+    hers = _hers(look)
+    big = card_box(0.5, 0.3, 0.8, PORTRAIT_PHOTO)
+    assert boxes_intersect(big, NormalizedBox(*CLOSE_FACE)), "P3: over her face"
+    title_top = min(r["y_frac"] for r in look["rows"])
+    assert big.top < title_top < big.bottom, "P3: over the title"
+
+    response = save(client, seeded, look["rows"], hers)
+    assert response.status_code == 200, response.text  # P1, P2, P3
+    drawn, windows = seeded.drawn_cards(), seeded.drawn_windows()
+    assert drawn["intro-card-1"] == pytest.approx((0.5, 0.3, 0.8))
+    assert windows["intro-card-1"] == pytest.approx((0.0, 6.0))
+    assert drawn["intro-card-2"] == pytest.approx((0.98, 0.03, 0.45))
+    assert windows["intro-card-2"] == pytest.approx((0.5, VIDEO_S))
+    # her other cards of the look, untouched, keep the offer's place and beat
+    for card in look["cards"][2:]:
+        assert drawn[card["id"]] == pytest.approx((card["x_frac"], card["y_frac"], card["scale"]))
+        assert windows[card["id"]] == pytest.approx((card["start_s"], card["end_s"]))
+    # a card over the title never costs her the title the render contract approves
+    assert stacked_title_matches(seeded.title_evidence(), TITLES[lang], tolerance_s=0.05)
+
+
+def test_a_copy_of_an_intro_card_and_a_card_past_the_video_save(make):
+    seeded, client, look = _pop_look_saved(make)
+    cards = as_overlays(look["cards"])
+    copy_ = {**cards[0], "id": "her-copy", "x_frac": 0.3, "y_frac": 0.45, "scale": 0.6}
+    copy_.update(start_s=3.0, end_s=VIDEO_S + 5.0)
+    response = save(client, seeded, look["rows"], [*cards, copy_])
+    assert response.status_code == 200, response.text  # P6
+    drawn, windows = seeded.drawn_cards(), seeded.drawn_windows()
+    assert drawn["her-copy"] == pytest.approx((0.3, 0.45, 0.6))
+    # the phone's limit: a card never shows past the end of the video
+    assert windows["her-copy"] == pytest.approx((3.0, VIDEO_S))
+
+
+def test_chat_makes_an_intro_card_bigger_longer_and_moves_it_into_the_corner(make):
+    from app.kria.plan_review import parse_ops_without_model
+    from app.services.kria_editor_ops import (
+        build_editor_snapshot,
+        compile_editor_ops,
+        project_editor_draft,
+    )
+
+    seeded, client, look = _pop_look_saved(make)
+    _rendered(seeded)
+    asks = [
+        ("make the first photo bigger", {"scale": 0.8}),
+        ("keep it for 4 seconds", {"start_s": 0.0, "end_s": 4.0}),
+        ("move it to the top corner, off the edge", {"x_frac": 0.97, "y_frac": 0.04}),
+    ]
+    for message, patch in asks:
+        job = seeded.job()
+        base = project_editor_draft(seeded.variant(), {}, job)
+        snapshot = build_editor_snapshot(job, base)
+        assert "overlay" in snapshot["allowed_op_families"]
+        [index] = [c["index"] for c in snapshot["overlays"]["cards"] if c["id"] == "intro-card-1"]
+        raw = [{"op": "patch_overlay", "overlay_index": index, "patch": patch}]
+        ops, rejection = parse_ops_without_model(raw, snapshot, message)
+        assert ops, rejection  # P4: the ask is not refused
+        compiled = compile_editor_ops(job, base, ops)
+        body = compiled.payload.model_dump(exclude_unset=True, exclude={"base_generation"})
+        response = _commit(client, seeded, body)
+        assert response.status_code == 200, (message, response.text)
+    assert seeded.drawn_cards()["intro-card-1"] == pytest.approx((0.97, 0.04, 0.8))
+    assert seeded.drawn_windows()["intro-card-1"] == pytest.approx((0.0, 4.0))
+
+
+def _her_cards_saved(make):
+    seeded, client, look = _pop_look_saved(make)
+    assert save(client, seeded, look["rows"], _hers(look)).status_code == 200
+    return seeded, client, look, seeded.drawn_cards(), seeded.drawn_windows()
+
+
+def test_a_title_retime_saved_with_or_without_her_cards_keeps_them(make):
+    seeded, client, look, drawn, windows = _her_cards_saved(make)
+    later = [{**row, "end_s": row["end_s"] + 1.0} for row in look["rows"]]
+    response = _commit(client, seeded, {"text_elements": later})
+    assert response.status_code == 200, response.text  # P5: no cards in the Save
+    assert (seeded.drawn_cards(), seeded.drawn_windows()) == (drawn, windows)
+    earlier = [{**row, "end_s": row["end_s"] - 0.5} for row in look["rows"]]
+    response = save(client, seeded, earlier, _hers(look))
+    assert response.status_code == 200, response.text  # P5: the editor posts them again
+    assert seeded.drawn_cards() == pytest.approx(drawn)
+    assert seeded.drawn_windows() == pytest.approx(windows)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [{"op": "rewrite_text", "selector": {"group": "title"}, "text": "my morning coffee"}],
+        [{"op": "set_text_timing", "bar_index": 0, "start_s": 0.2, "end_s": 3.5}],
+    ],
+    ids=["rewrite", "retime"],
+)
+def test_a_chat_title_change_keeps_her_cards(make, raw):
+    from app.kria.plan_review import parse_ops_without_model
+    from app.services.kria_editor_ops import (
+        build_editor_snapshot,
+        compile_editor_ops,
+        project_editor_draft,
+    )
+
+    seeded, client, _look, drawn, windows = _her_cards_saved(make)
+    _rendered(seeded)
+    job = seeded.job()
+    base = project_editor_draft(seeded.variant(), {}, job)
+    snapshot = build_editor_snapshot(job, base)
+    ops, rejection = parse_ops_without_model(raw, snapshot, "change the title")
+    assert ops, rejection
+    compiled = compile_editor_ops(job, base, ops)
+    body = compiled.payload.model_dump(exclude_unset=True, exclude={"base_generation"})
+    titles_before = seeded.title_evidence()
+    response = _commit(client, seeded, body)
+    assert response.status_code == 200, response.text  # P5
+    assert seeded.title_evidence() != titles_before, "the title changed"
+    assert seeded.drawn_cards() == pytest.approx(drawn)
+    assert seeded.drawn_windows() == pytest.approx(windows)
+
+
+def test_a_card_she_drags_low_follows_the_caption_rule_every_card_has(make):
+    """P7, today's rule for every card (not an intro preference): a card centred under 0.62
+    keeps its place only when the server sees it clear of her captions; on them it is drawn at
+    0.62. The server decides, from her captions and the photo's shape, on every Save."""
+    from app.services.intro_card_pool import caption_band, card_box
+
+    seeded, client = make(face=ROOMY_FACE)
+    look = card_options(offer(client, seeded))[0]
+    band = caption_band(seeded.variant(), seeded.job().assembly_plan, (0.0, 2.5))
+    assert band is not None
+    cards = as_overlays(look["cards"])
+    under = 1.0 - card_box(0.5, 0.5, 0.2, PORTRAIT_PHOTO).height / 2 - 0.005
+    assert card_box(0.5, under, 0.2, PORTRAIT_PHOTO).top > band[1], "clear of her captions"
+    cards[0].update(x_frac=0.5, y_frac=under, scale=0.2)
+    on = (band[0] + band[1]) / 2
+    cards[1].update(x_frac=0.5, y_frac=on, scale=0.5)
+    response = save(client, seeded, look["rows"], cards)
+    assert response.status_code == 200, response.text
+    drawn = seeded.drawn_cards()
+    assert drawn[cards[0]["id"]] == pytest.approx((0.5, under, 0.2))
+    assert drawn[cards[1]["id"]] == pytest.approx((0.5, 0.62, 0.5))
+
+
+def test_her_edit_on_a_photo_that_is_not_hers_is_still_refused(make):
+    """The wrong-content control (P8): her freedom is over where and when, never whose photo."""
+    seeded, client, look = _pop_look_saved(make)
+    other = seeded.add_photo(
+        created_at=datetime(2026, 10, 1, tzinfo=UTC),
+        analysis={"dims_upright": True, "has_alpha": True},
+    )
+    hers = _hers(look)
+    hers[0]["src_gcs_path"] = seeded.path(other)
+    response = save(client, seeded, look["rows"], hers)
+    assert response.status_code == 422, response.text
+    assert "isn't a photo Kria pinned" in response.json()["detail"]["reason"]
