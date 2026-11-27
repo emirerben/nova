@@ -1,10 +1,14 @@
 {
-  "version": "2026-11-24-kri-1610-1",
+  "version": "2026-11-27-kri-1618-1",
   "_note": "footage_plate names the synthetic footage the render check draws the reference on (light_wall or dark_room), chosen to match footage_fit. Five creator intros, torn down as data (KRI-1609 / KRI-1610). Not a template list: a reference is evidence of taste, and each scene is the closest IntroScene today's engine can compile. The example titles are fixtures for the render check (make verify-intro-scenes) and are never used as on-screen text at runtime. Scenes are option ids and one voice per title word, nothing else. Source of the look: the approved taste board https://claude.ai/artifact/QjPSuSE4RGWZDq681BXqiT (2026-11-24).",
   "engine_limits": [
     {
-      "piece": "staggered entrance (the accent word lands after the solid rows)",
-      "move": "rows need their own start time; stacked_title_matches requires every row to start together within one frame, so the approval check must read a per-row delay first"
+      "piece": "an entrance time per line (ref 5's serif lands 0.2 s after its script)",
+      "move": "only accent lines can wait, by the one issued delay (stagger accent_after, 0.6 s); a solid line never waits and no other delay is issued"
+    },
+    {
+      "piece": "lines overlapping other than a script tucked onto the serif under it",
+      "move": "stack script_over_serif is the only overlap: script_serif only, script above serif, at the taste board's B2 geometry; every other pair of lines keeps its gap"
     },
     {
       "piece": "flash cover (about 0.1 s) and moment sounds timed to each element",
@@ -29,12 +33,6 @@
       "footage_plate": "light_wall",
       "why_it_works": "Bold caps plus one handwritten word, both in the same red, placed in the space above the head.",
       "missing_moves": [],
-      "approximations": [
-        {
-          "piece": "handwritten accent enters after the title",
-          "move": "staggered entrance (see engine_limits); here both rows enter together, the accent with the ink wipe"
-        }
-      ],
       "examples": {
         "en": {
           "title": "the biggest design trend right now",
@@ -45,7 +43,8 @@
             "ink": "oxblood",
             "zone": "above_head",
             "entrance": "ink",
-            "sound": "accent-pop"
+            "sound": "accent-pop",
+            "stagger": "accent_after"
           }
         },
         "tr": {
@@ -57,7 +56,8 @@
             "ink": "oxblood",
             "zone": "above_head",
             "entrance": "ink",
-            "sound": "accent-pop"
+            "sound": "accent-pop",
+            "stagger": "accent_after"
           }
         }
       }
@@ -190,10 +190,6 @@
       "why_it_works": "A script label overlapping a serif subject, two photos above and two below.",
       "missing_moves": [
         {
-          "piece": "script label overlapping the serif subject",
-          "move": "row overlap: title rows always stack with a gap, they never overlap"
-        },
-        {
           "piece": "2 + 2 photo grid",
           "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
         }
@@ -208,7 +204,8 @@
             "ink": "white",
             "zone": "above_head",
             "entrance": "fade",
-            "sound": "whoosh-fast"
+            "sound": "whoosh-fast",
+            "stack": "script_over_serif"
           }
         },
         "tr": {
@@ -220,7 +217,8 @@
             "ink": "white",
             "zone": "above_head",
             "entrance": "fade",
-            "sound": "whoosh-fast"
+            "sound": "whoosh-fast",
+            "stack": "script_over_serif"
           }
         }
       }

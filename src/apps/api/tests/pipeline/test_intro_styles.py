@@ -568,7 +568,29 @@ def test_every_preview_is_drawn_from_its_own_rows_or_none_is(route):
     for option, preview in zip(offer["options"], previews, strict=True):
         assert len(preview["text_layers"]) == len(option["rows"])
         assert preview["media_kind"] in ("video", "image") and preview["media_id"]
-        assert preview["time_s"] > min(r["start_s"] for r in option["rows"])
+        assert preview["time_s"] > max(r["start_s"] for r in option["rows"])  # every line is up
+
+
+def test_a_late_accent_look_keeps_its_delay_inside_the_title_window():  # KRI-1618 M5
+    from app.pipeline.intro_scene import STAGGERS
+    from app.pipeline.title_family import title_window
+
+    late = 0
+    for route in ROUTES:
+        for lang in ("en", "tr"):
+            _job, _vid, sent, offer = offer_for(route, lang)
+            start, end = title_window(sent)
+            for option in offer["options"]:
+                looks = [
+                    (r.get("source_params") or {}).get("title_look") or {} for r in option["rows"]
+                ]
+                if not any(look.get("stagger") for look in looks):
+                    continue
+                late += 1
+                for row, look in zip(option["rows"], looks, strict=True):
+                    delay = STAGGERS[look["stagger"]] if look["style"] == "intro_accent" else 0.0
+                    assert (row["start_s"], row["end_s"]) == (pytest.approx(start + delay), end)
+    assert late, "the seeded offers include a late accent look"
 
 
 def test_previews_are_all_or_nothing(monkeypatch):

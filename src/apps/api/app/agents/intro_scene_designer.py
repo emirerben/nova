@@ -2,8 +2,9 @@
 from the options the server issued, or declines.
 
 **The agent picks, the engine builds.** Its only WRITE is an ``IntroScene`` (KRI-1610): a decision,
-one voice per word of her approved title, and an option id each for font pair, ink, zone and
-entrance (sound is always ``none``: an automatic sound is an open question on the project). The
+one voice per word of her approved title, and an option id each for font pair, ink, zone,
+entrance, stagger and stack (KRI-1618: the accent landing late, a script tucked onto the serif;
+sound is always ``none``: an automatic sound is an open question on the project). The
 schema has no field that reaches the screen as text and none that holds a coordinate, size or
 time (``tests/pipeline/test_intro_scene_schema.py`` walks it), and the response schema sent with
 the call is closed over THIS call's issued ids, so even a provider that ignores it cannot widen
@@ -64,6 +65,8 @@ _CATALOGUE = json.dumps(
         "inks": list(scene_mod.INKS),
         "zones": list(scene_mod.ZONES),
         "entrances": list(scene_mod.ENTRANCES),
+        "staggers": scene_mod.STAGGERS,
+        "stacks": {k: [v.pairs, v.tuck_caps] for k, v in scene_mod.STACKS.items()},
     },
     sort_keys=True,
 )
@@ -82,6 +85,14 @@ class IntroSceneInput(BaseModel):
     inks: list[str] = Field(min_length=1, max_length=len(scene_mod.INKS))
     zones: list[str] = Field(min_length=1, max_length=len(scene_mod.ZONES))
     entrances: list[str] = Field(min_length=1, max_length=len(scene_mod.ENTRANCES))
+    staggers: list[str] = Field(
+        default_factory=lambda: [scene_mod.TOGETHER],
+        min_length=1,
+        max_length=len(scene_mod.STAGGERS),
+    )
+    stacks: list[str] = Field(
+        default_factory=lambda: [scene_mod.GAP], min_length=1, max_length=len(scene_mod.STACKS)
+    )
     # Measured by the server from the real take frames: a trusted category, never model text.
     brightness: Brightness = "unknown"
     # UNTRUSTED: her title words (the voices line up with them) and what Gemini wrote about the
@@ -96,6 +107,8 @@ class IntroSceneInput(BaseModel):
             zones=tuple(self.zones),
             entrances=tuple(self.entrances),
             sounds=("none",),  # an automatic sound is an open question on the project
+            staggers=tuple(self.staggers),
+            stacks=tuple(self.stacks),
         )
 
 
@@ -126,6 +139,8 @@ def build_input(
             # check cannot find her words in the drawn rows (KRI-1612 found it through the real
             # worker). It is not issued to the model until the check reads it.
             entrances=[entrance for entrance in menu.entrances if entrance != "pen"],
+            staggers=list(menu.staggers),
+            stacks=list(menu.stacks),
             brightness=brightness if brightness in ("light", "mid", "dark") else "unknown",
             title_words=[word[:40] for word in words],
             footage_notes=" ".join(footage_notes.split())[:MAX_NOTES_CHARS],
@@ -154,6 +169,8 @@ def response_schema_for(input: IntroSceneInput) -> dict[str, Any]:  # noqa: A002
             "ink": {"type": "string", "enum": list(input.inks)},
             "zone": {"type": "string", "enum": list(input.zones)},
             "entrance": {"type": "string", "enum": list(input.entrances)},
+            "stagger": {"type": "string", "enum": list(input.staggers)},
+            "stack": {"type": "string", "enum": list(input.stacks)},
             "sound": {"type": "string", "enum": ["none"]},
         },
         "required": ["decision"],
@@ -206,7 +223,7 @@ def examples_for(language: str) -> list[dict[str, Any]]:
                 "title": _marked_title(example["title"], scene["voices"]),
                 "choice": {
                     key: scene[key]
-                    for key in ("font_pair", "ink", "zone", "entrance")
+                    for key in ("font_pair", "ink", "zone", "entrance", "stagger", "stack")
                     if key in scene
                 },
             }
@@ -259,6 +276,8 @@ class IntroSceneDesignerAgent(Agent[IntroSceneInput, scene_mod.IntroScene]):
                 "ink": input.inks,
                 "zone": input.zones,
                 "entrance": input.entrances,
+                "stagger": input.staggers,
+                "stack": input.stacks,
             },
             "footage": {"brightness": input.brightness},
             "untrusted": {"title_words": input.title_words, "footage_notes": input.footage_notes},

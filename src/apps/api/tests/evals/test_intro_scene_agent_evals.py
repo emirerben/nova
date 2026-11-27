@@ -80,6 +80,9 @@ def test_both_languages_and_a_decline_are_covered() -> None:
     assert {m["language"] for m in metas} == {"en", "tr"}
     assert {"compose", "decline"} <= {m["expect"] for m in metas}
     assert any(load_fixture(p).output.get("font_pair") == "grotesk_pen" for p in FIXTURES)
+    outputs = [load_fixture(p).output for p in FIXTURES]  # KRI-1618: both moves are answered
+    assert any(o.get("stack") == "script_over_serif" for o in outputs)
+    assert any(o.get("stagger") == "accent_after" for o in outputs)
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
@@ -93,6 +96,8 @@ def test_the_call_sends_a_schema_closed_over_the_issued_ids(path: Path) -> None:
     props = schema["properties"]
     assert props["font_pair"]["enum"] == fixture.input["font_pairs"]
     assert props["sound"]["enum"] == ["none"]
+    model = designer.IntroSceneInput.model_validate(fixture.input)
+    assert (props["stagger"]["enum"], props["stack"]["enum"]) == (model.staggers, model.stacks)
     count = len(fixture.input["title_words"])
     assert props["voices"]["minItems"] == props["voices"]["maxItems"] == count
 
@@ -162,6 +167,14 @@ _REDUCED = {  # a menu with one face fewer and no pen pair: what a title it cann
         ("half_a_compose", {"decision": "compose", "font_pair": "grotesk_hand"}, {}),
         ("compose_with_a_reason", _good(decline_reason="no_good_fit"), {}),
         ("unknown_decline_reason", {"decision": "decline", "decline_reason": "dislike"}, {}),
+        ("tuck_without_a_script_face", _good(stack="script_over_serif"), {}),
+        ("unknown_stack", _good(stack="overlap"), {}),
+        ("stagger_not_issued", _good(stagger="accent_after"), {"staggers": ["together"]}),
+        (
+            "decline_with_a_move",
+            {"decision": "decline", "decline_reason": "no_good_fit", "stagger": "accent_after"},
+            {},
+        ),
     ],
 )
 def test_a_void_answer_is_refused(

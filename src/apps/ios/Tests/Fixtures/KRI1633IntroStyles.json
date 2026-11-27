@@ -490,7 +490,7 @@
     "current": false,
     "key": "grotesk_loop",
     "preview": {
-     "at_s": 3.2,
+     "at_s": 3.56,
      "fonts": {
       "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
       "font-OvertheRainbow-Regular.ttf": "OvertheRainbow-Regular.ttf"
@@ -718,10 +718,10 @@
          "x": 253.37890625
         }
        ],
-       "start": 0.0
+       "start": 0.6
       }
      ],
-     "time_s": 1.2
+     "time_s": 1.56
     },
     "recommended": false,
     "rows": [
@@ -799,6 +799,7 @@
         },
         "line": 1,
         "lines": 2,
+        "stagger": "accent_after",
         "style": "intro_solid"
        }
       },
@@ -837,10 +838,11 @@
         },
         "line": 2,
         "lines": 2,
+        "stagger": "accent_after",
         "style": "intro_accent"
        }
       },
-      "start_s": 0.0,
+      "start_s": 0.6,
       "text": "şu an",
       "text_language": "tr",
       "x_frac": 0.5,
@@ -1308,7 +1310,7 @@
     "current": false,
     "key": "grotesk_pen",
     "preview": {
-     "at_s": 3.2,
+     "at_s": 3.56,
      "fonts": {
       "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
       "font-PatrickHand-Regular.ttf": "PatrickHand-Regular.ttf"
@@ -1521,7 +1523,7 @@
          "x": 498.7874984741211
         }
        ],
-       "start": 0.0
+       "start": 0.6
       },
       {
        "anchor_x": 540.0,
@@ -1595,7 +1597,7 @@
        "start": 0.0
       }
      ],
-     "time_s": 1.2
+     "time_s": 1.56
     },
     "recommended": false,
     "rows": [
@@ -1673,6 +1675,7 @@
         },
         "line": 1,
         "lines": 3,
+        "stagger": "accent_after",
         "style": "intro_solid"
        }
       },
@@ -1711,10 +1714,11 @@
         },
         "line": 2,
         "lines": 3,
+        "stagger": "accent_after",
         "style": "intro_accent"
        }
       },
-      "start_s": 0.0,
+      "start_s": 0.6,
       "text": "şu",
       "text_language": "tr",
       "x_frac": 0.5,
@@ -1749,6 +1753,7 @@
         },
         "line": 3,
         "lines": 3,
+        "stagger": "accent_after",
         "style": "intro_solid"
        }
       },
@@ -3758,14 +3763,14 @@
       },
       {
        "anchor_x": 64.8,
-       "anchor_y": 826.9440000000001,
+       "anchor_y": 744.0,
        "effect": "slide-up",
        "end": 2.5,
        "id": "preview-2",
        "rotation_degrees": 0.0,
        "runs": [
         {
-         "baseline_y": 859.8440854492188,
+         "baseline_y": 776.9000854492188,
          "blur_layers": [
           {
            "alpha_power": 1,
@@ -3889,6 +3894,7 @@
         },
         "line": 1,
         "lines": 3,
+        "stack": "script_over_serif",
         "style": "intro_solid"
        }
       },
@@ -3927,6 +3933,7 @@
         },
         "line": 2,
         "lines": 3,
+        "stack": "script_over_serif",
         "style": "intro_accent"
        }
       },
@@ -3965,13 +3972,14 @@
         },
         "line": 3,
         "lines": 3,
+        "stack": "script_over_serif",
         "style": "intro_solid"
        }
       },
       "start_s": 0.0,
       "text": "now",
       "x_frac": 0.06,
-      "y_frac": 0.4307
+      "y_frac": 0.3875
      }
     ]
    },
@@ -5829,7 +5837,7 @@
     "current": false,
     "key": "serif_italic",
     "preview": {
-     "at_s": 1.2,
+     "at_s": 1.74,
      "fonts": {
       "font-InstrumentSerif-Italic.ttf": "InstrumentSerif-Italic.ttf",
       "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf"
@@ -6102,7 +6110,7 @@
          "x": 87.65997314453125
         }
        ],
-       "start": 0.0
+       "start": 0.6
       },
       {
        "anchor_x": 540.0,
@@ -6181,7 +6189,7 @@
        "start": 0.0
       }
      ],
-     "time_s": 1.2
+     "time_s": 1.74
     },
     "recommended": false,
     "rows": [
@@ -6237,6 +6245,7 @@
         },
         "line": 1,
         "lines": 3,
+        "stagger": "accent_after",
         "style": "intro_solid"
        }
       },
@@ -6275,10 +6284,11 @@
         },
         "line": 2,
         "lines": 3,
+        "stagger": "accent_after",
         "style": "intro_accent"
        }
       },
-      "start_s": 0.0,
+      "start_s": 0.6,
       "text": "design trend right",
       "x_frac": 0.5,
       "y_frac": 0.1768
@@ -6313,6 +6323,7 @@
         },
         "line": 3,
         "lines": 3,
+        "stagger": "accent_after",
         "style": "intro_solid"
        }
       },

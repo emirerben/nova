@@ -637,6 +637,8 @@ def fit_looks(
                     zone=zone,
                     entrance=entrance,
                     sound="none",
+                    stagger=candidate.get("stagger", scene_mod.TOGETHER),
+                    stack=candidate.get("stack", scene_mod.GAP),
                 )
                 out = scene_mod.compile_intro_scene(
                     scene,

@@ -739,3 +739,42 @@ def test_a_kri1611_stamped_job_renders_byte_identical_rows():
     rows, receipt = _title_rows(golden["plan"])
     assert rows == golden["rows"]
     assert {k: receipt[k] for k in golden["receipt"]} == golden["receipt"]
+
+
+# --- KRI-1618: the late accent and the tuck in the seeded pick --------------------------------
+
+_MOVE_TITLES = (EN, "city guide: lisbon, day one", "şehir rehberi: lizbon, ilk gün")
+
+
+def test_the_moves_never_shift_a_seeds_other_choices(monkeypatch):
+    with_moves = {
+        (title, seed): pick.pick_candidates(title, seed=seed)
+        for title in _MOVE_TITLES
+        for seed in ("a", "b", "c", "d")
+    }
+    monkeypatch.setattr(pick, "_moves", lambda *_args: {})
+    for (title, seed), picked in with_moves.items():
+        stripped = [{k: v for k, v in c.items() if k not in ("stagger", "stack")} for c in picked]
+        assert stripped == pick.pick_candidates(title, seed=seed), (title, seed)
+
+
+def test_the_pick_offers_each_move_only_where_it_applies():
+    seen: set[tuple[str, str]] = set()
+    for title in _MOVE_TITLES:
+        menu = scene_mod.issue_menu(title)
+        for seed in map(str, range(40)):
+            for candidate in pick.pick_candidates(title, seed=seed):
+                scene = scene_mod.IntroScene(
+                    decision="compose",
+                    voices=tuple(candidate["voices"]),
+                    font_pair=candidate["font_pair"],
+                    ink="white",
+                    zone=candidate["zones"][0],
+                    entrance=candidate["entrance"],
+                    sound="none",
+                    stagger=candidate.get("stagger", "together"),
+                    stack=candidate.get("stack", "gap"),
+                )
+                assert scene_mod.check_scene(scene, title, menu) is None, candidate
+                seen.update(scene.moves().items())
+    assert seen == {("stagger", "accent_after"), ("stack", "script_over_serif")}

@@ -73,7 +73,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_serializer, model_validator
 
 if TYPE_CHECKING:
     from app.pipeline.render_geometry import NormalizedBox
@@ -222,6 +222,19 @@ class IntroScene(BaseModel):
         if not self.voices or any(choice is None for choice in choices):
             raise ValueError("a compose needs voices and one option id for every choice")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_todays_look(self, handler: Any) -> dict[str, Any]:
+        # A scene from before KRI-1618 dumps byte for byte as it did (teardowns, pins, cassettes).
+        data = handler(self)
+        return {k: v for k, v in data.items() if k not in ("stagger", "stack")} | self.moves()
+
+    def moves(self) -> dict[str, str]:
+        """The KRI-1618 moves this scene makes, as rows and pins store them (none: today's look)."""
+        return {
+            **({"stagger": self.stagger} if self.stagger != TOGETHER else {}),
+            **({"stack": self.stack} if self.stack != GAP else {}),
+        }
 
 
 # --- her words ----------------------------------------------------------------------------
@@ -516,10 +529,6 @@ def _build_rows(
     end_s = round(min(hold, float(timeline_duration_s)), 3)
     if end_s - STAGGERS[scene.stagger] < MIN_LINE_S:
         raise _Decline("hold_too_short")
-    motion = {
-        **({"stagger": scene.stagger} if scene.stagger != TOGETHER else {}),
-        **({"stack": scene.stack} if scene.stack != GAP else {}),
-    }
     left = scene.zone == "top_left"
     rows: list[dict[str, Any]] = []
     for index, run in enumerate(runs):
@@ -557,7 +566,7 @@ def _build_rows(
                     "line": index + 1,
                     "lines": len(runs),
                     "style": f"intro_{run.voice}",
-                    **motion,
+                    **scene.moves(),
                 },
             },
         )
