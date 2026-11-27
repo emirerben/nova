@@ -68,6 +68,7 @@ def sync_talking_source_lanes(
         speech_basis_entry,
         sync_speech_basis,
     )
+    from app.pipeline.title_family import retime_title_stacks
     from app.services.editor_deletions import canonical_caption_rows
 
     new_sections = (variant.get("user_timeline") or {}).get("split_screen_sections") or []
@@ -187,6 +188,8 @@ def sync_talking_source_lanes(
                 captions=field == "caption_cues",
                 canvas_slots=new_canvas,
             )
+            if field == "text_elements":
+                variant[field] = retime_title_stacks(variant[field])
     variant["speech_timing_basis"] = basis
     return payload, unresolved
 

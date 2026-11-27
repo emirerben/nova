@@ -72,7 +72,8 @@ Check: `tests/pipeline/test_intro_scene_pick.py` and the picks / wiring section 
 `make verify-intro-scenes` (EN and TR, light and dark plates, an unreadable-ink control).
 
 Not covered: a lower-third zone, ref 2's folder sticker and refs 3, 4, 5's extras (KRI-1613, 1615,
-1616, 1618), phone-build font support and per-footage ink (KRI-1619). The realized pick is not
+1616), phone-build font support and per-footage ink (KRI-1619). The late accent and ref 5's tuck
+are KRI-1618 (below). The realized pick is not
 written back, so "recent looks" are the first stamped candidate of each earlier job.
 
 ## Review round 2 (KRI-1611)
@@ -268,3 +269,53 @@ and the generated iOS fixture `src/apps/ios/Tests/Fixtures/KRI1633IntroStyles.js
 
 **Rollback:** `INTRO_SCENE_ENABLED=false` or `INTRO_STYLES_MIN_CLIENT_PROTOCOL=999` removes the
 key and the route answers 404/426; looks she already saved stay as her rows.
+
+## The late accent and the tucked script (KRI-1618)
+
+Two more option ids on `IntroScene`, each mapped through an engine table, so no time or distance is
+ever written by the pick or the model:
+
+* `stagger`: `together` | `accent_after` (`STAGGERS`, 0.6 s, ref 1 on the taste board: the caps at
+  0.15 s, the handwritten accent at 0.75 s). The accent lines wait, the solid lines enter at the
+  title's start, every line leaves together.
+* `stack`: `gap` | `script_over_serif` (`STACKS`, `script_serif` only). A script accent line
+  directly above a serif solid line tucks onto it: its baseline sits `tuck_caps` (1.28) serif cap
+  heights above the serif baseline, the taste board's B2, so only the script's descenders cross.
+  Every other pair keeps its gap. The serif draws on top (line order, as B2 asks).
+
+Both default to today's look and are omitted from dumps then, so old pins, cassettes, teardowns and
+goldens read byte for byte. `check_scene` refuses a tuck without a script line above a serif line,
+and a stagger with nothing to stagger.
+
+* **Rows declare, times are derived.** The compiler writes `stagger` / `stack` into each row's
+  `title_look` param; `title_family.retime_title_rows(rows, start, end)` derives every line's
+  entrance from that declaration (a window too short for the wait shows the lines together). It is
+  the only retime: the offer's window, its restored title, a chat `set_text_timing` on a stack, and
+  a Range save's projected text lane (`retime_title_stacks`: each text row is re-anchored through
+  source time on its own, so a cut inside the first 0.6 s would bend the delay).
+* **Windows.** `title_family.title_window(rows)` (first entrance, last exit) in the worker's caption
+  avoidance, resolved-caption re-check and caption move; the offer's preview frame is taken after the
+  LAST entrance.
+* **Placement.** `place_title_look` reads the declaration (`tuck_of`) and sets the tuck from font
+  metrics at the size the renderer draws (`_tuck_gaps`), in the normal stack and in the squeeze.
+* **Approval.** `stacked_title_matches` accepts lines that enter apart only at an issued delay
+  (`title_family.issued_delay`), still requires them to leave together, and reads the title's start
+  as its first entrance (so ref 5's leading accent still opens the video). A line 2.0 s late is
+  refused, as before.
+* **Phone.** No client protocol number: observed on the export's own text pass (the editor preview
+  shares it) that overlapping layers are each drawn whole, the later recipe layer on top, and a late
+  layer draws nothing before its start. `IntroRowMotionRenderTests` (KriaMediaEngine) reads
+  `tests/fixtures/intro-row-motion-parity/`, generated from the real compile by
+  `tests/pipeline/test_intro_row_motion_parity.py` (`KRI1618_REGENERATE=1`).
+* **Menus.** The seeded pick draws both from their own random stream (a seed's other choices are
+  unchanged) and only where `check_scene` allows; the agent is issued them in its menu and closed
+  response schema (prompt_version moved). Ref 1 now expresses its late accent, ref 5 its tuck (still
+  `partial`: the 2+2 photo grid is KRI-1615).
+* **Render check.** `make verify-intro-scenes` adds both moves in EN and TR (the late accent also as
+  a still before it enters), tucks in the sweep, and four controls that must fail: a tuck drawn
+  without its declaration, a declared tuck drawn as a gap, a late line at a delay nobody issued, a
+  solid line waiting instead of the accent. Rows are checked against the placement policy by their
+  line boxes, because no pixel measure tells a tuck from a loopy plain stack.
+
+Not covered: a per-line entrance time (B2's serif lands 0.2 s after its script) and any other
+overlap (`engine_limits`).

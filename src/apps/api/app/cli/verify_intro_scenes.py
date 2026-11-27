@@ -10,12 +10,19 @@ rows, places them with `place_title_look` against a stub face, draws every row w
 * one ink: every row is drawn in the scene's single ink;
 * the right faces: the renderer resolved each row's own face, no tofu, no silent glyph swap;
 * off the captions, and the ink reads on the footage (3:1 against the plate behind it);
-* rows do not overlap each other; the placement receipt is not `error` or `best_effort`.
+* rows do not overlap each other, unless they declare the script-over-serif tuck, which must then
+  be drawn (KRI-1618); each row enters when it declares (a late accent at its issued delay);
+* the placement receipt is not `error` or `best_effort`.
 
 References today's engine cannot express are listed with the missing move and drawn as a labelled
 blank tile. Four negative controls MUST fail (two inks, a title moved onto the face, a face
 swapped for one that cannot draw Turkish, white ink on a light wall); a control that passes means
 the check is blind and exits 1.
+
+KRI-1618 adds the two moves (`move_cases`): a late accent and a script tucked onto the serif, in
+English and Turkish, the late accent also as a still before it enters, tucks in the sweep, and four
+more controls that MUST fail (a tuck without its declaration, a declared tuck drawn as a gap, an
+unissued delay, a solid line waiting instead of the accent).
 
 KRI-1612 adds the model arm (`verify_intro_scene_model`): the real agent, parser and fit with the
 provider call replayed, drawn and measured the same way (see that module).
@@ -40,6 +47,7 @@ person's photo is committed. Exit code 0 when every case PASSes and every contro
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import sys
@@ -68,6 +76,13 @@ FACE_BOX = scene_mod.TYPICAL_FACE
 CAPTION_BOX = scene_mod.TYPICAL_CAPTIONS
 _FONTS = Path(__file__).resolve().parents[2] / "assets" / "fonts"
 _OVERLAP_MAX = 0.02
+# KRI-1618: no pixel measure tells a tuck from a plain stack. A tuck's crossing ink touches under
+# 0.2% of a row, less than a plain grotesk_pen stack (0.64%), and a loopy face's plain stack
+# shares up to 0.22 of its ink height with the row above (ref 3 in Turkish). So the rows' line
+# boxes (the renderer's own measure) are checked against the policy: a declared tuck sits at its
+# gap, any other pair no closer than the tightest plain stack (ink `_TIGHT_GAP_PX` apart).
+_LINE_GAP_SLACK_PX = 2.0
+_FRAME_S = 1 / 30
 _VERDICT_COLOR = {
     "PASS": (46, 160, 67),
     "FAIL": (218, 54, 51),
@@ -159,9 +174,23 @@ def verify_rows(
     footage: str = "light_wall",
 ) -> tuple[str, list[str], Image.Image]:
     """Draw ``rows`` over the plate and measure them. Returns (verdict, reasons, the frame)."""
+    from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
     from app.pipeline import text_overlay_skia as tos  # noqa: PLC0415
+    from app.pipeline.phone_title_look import (  # noqa: PLC0415
+        _TIGHT_GAP_PX,
+        _ink_insets,
+        _tuck_gaps,
+    )
+    from app.pipeline.title_family import retime_title_rows, title_window  # noqa: PLC0415
 
     reasons: list[str] = []
+    for index, (row, declared) in enumerate(
+        zip(rows, retime_title_rows(rows, *title_window(rows)), strict=True), start=1
+    ):
+        if abs(float(row["start_s"]) - declared["start_s"]) > _FRAME_S:
+            reasons.append(
+                f"row {index}: enters at {row['start_s']} s, it declares {declared['start_s']} s"
+            )
     pair = scene_mod.FONT_PAIRS[scene.font_pair or ""]
     ink_hex = scene_mod.INKS[scene.ink or ""]
     if not scene_mod.placement_is_clean(receipt):
@@ -178,8 +207,9 @@ def verify_rows(
     backdrop = plate(footage)
     frame = backdrop.copy()
     inks: list[NormalizedBox] = []
-    masks: list[Image.Image] = []
+    drawn: list[tuple[Image.Image, tuple[int, int, int, int]] | None] = []
     for index, row in enumerate(rows, start=1):
+        drawn.append(None)
         overlay = _overlay_for(row)
         # Face and glyph checks first: a swapped face also clips, and the swap is the cause.
         missing = ov.missing_rendered_glyphs(overlay)
@@ -203,7 +233,7 @@ def verify_rows(
             continue
         box = _norm(bbox)
         inks.append(box)
-        masks.append(bare.getchannel("A").point(lambda p: 255 if p > 64 else 0))
+        drawn[-1] = (bare.getchannel("A").point(lambda p: 255 if p > 64 else 0), bbox)
         behind = backdrop.crop(bbox).convert("RGB").resize((1, 1), Image.BOX).getpixel((0, 0))
         lum_a, lum_b = _luminance(behind), _luminance(_rgb(scene_mod.INKS[scene.ink or ""]))
         ratio = (max(lum_a, lum_b) + 0.05) / (min(lum_a, lum_b) + 0.05)
@@ -213,12 +243,29 @@ def verify_rows(
             f"row {index}: {problem}"
             for problem in scene_mod.ink_box_problems(box, face=face, captions=CAPTION_BOX)
         )
-    for a, b in zip(masks, masks[1:], strict=False):
+    for index, (upper, lower) in enumerate(zip(drawn, drawn[1:], strict=False)):
+        if upper is None or lower is None:
+            continue
+        (a, _top_box), (b, _bottom_box) = upper, lower
         # Real ink on ink (loopy ascenders may share a box with the row above without touching).
         touching = ImageChops.darker(a, b).histogram()[255]
         smaller = min(a.histogram()[255], b.histogram()[255]) or 1
         if touching / smaller > _OVERLAP_MAX:
             reasons.append("two rows overlap each other")
+        pair = rows[index : index + 2]
+        above, below = (title_mod._measure_title_box(row, canvas=PORTRAIT) for row in pair)
+        height = PORTRAIT.height
+        line_gap = (below.top - above.bottom) * height
+        [tuck] = _tuck_gaps(pair, PORTRAIT)
+        lines = f"rows {index + 1}-{index + 2} (line gap {line_gap:.0f} px"
+        if tuck is not None:
+            if abs(line_gap - tuck * height) > _LINE_GAP_SLACK_PX:
+                reasons.append(f"{lines}, the tuck is {tuck * height:.0f}): tuck not drawn")
+            continue
+        insets = _ink_insets(pair[0], PORTRAIT)[1] + _ink_insets(pair[1], PORTRAIT)[0]
+        tightest = _TIGHT_GAP_PX - insets * height
+        if line_gap < tightest - _LINE_GAP_SLACK_PX:
+            reasons.append(f"{lines}, plain stacks keep {tightest:.0f}): rows overlap undeclared")
     return ("FAIL" if reasons else "PASS"), reasons, frame
 
 
@@ -383,7 +430,9 @@ def sweep_issued_menu(*, thorough: bool = True) -> dict[str, Any]:
         words = len(scene_mod.title_words(title))
         for pair in menu.font_pairs:
             for zone in menu.zones:
-                for voices in _sweep_voices(words, thorough=thorough):
+                for voices, moves in itertools.product(
+                    _sweep_voices(words, thorough=thorough), ({}, {"stack": "script_over_serif"})
+                ):
                     scene = scene_mod.IntroScene(
                         decision="compose",
                         voices=voices,
@@ -392,7 +441,10 @@ def sweep_issued_menu(*, thorough: bool = True) -> dict[str, Any]:
                         zone=zone,
                         entrance="fade",
                         sound="none",
+                        **moves,
                     )
+                    if moves and scene_mod.check_scene(scene, title, menu):
+                        continue  # KRI-1618: the tuck is not issued for this pair or split
                     out = scene_mod.compile_intro_scene(
                         scene, title, canvas=PORTRAIT, timeline_duration_s=30.0, language=language
                     )
@@ -411,6 +463,7 @@ def sweep_issued_menu(*, thorough: bool = True) -> dict[str, Any]:
                                 "font_pair": pair,
                                 "zone": zone,
                                 "voices": "".join(v[0] for v in voices),
+                                **moves,
                                 "reasons": reasons,
                             }
                         )
@@ -645,6 +698,212 @@ def wiring_controls() -> list[dict[str, Any]]:
     return out
 
 
+# --- KRI-1618: the late accent and the script tucked onto the serif ---------------------------
+
+_LATE = {"stagger": "accent_after"}
+_TUCK = {
+    "font_pair": "script_serif",
+    "ink": "white",
+    "entrance": "fade",
+    "stack": "script_over_serif",
+}
+MOVE_CASES = (
+    # (id, language, title, voices, choices, plate)
+    ("late-accent", "en", PICK_TITLES[0][1], ("solid",) * 4 + ("accent",) * 2, _LATE, "light_wall"),
+    ("late-accent", "tr", PICK_TITLES[1][1], ("solid",) * 6 + ("accent",) * 2, _LATE, "light_wall"),
+    (
+        "script-tuck",
+        "en",
+        "city guide: lisbon, day one",
+        ("accent",) * 2 + ("solid",) * 3,
+        {**_TUCK, **_LATE},
+        "dark_room",
+    ),
+    (
+        "script-tuck",
+        "tr",
+        "şehir rehberi: lizbon, ilk gün",
+        ("accent",) * 2 + ("solid",) * 3,
+        {**_TUCK, **_LATE},
+        "dark_room",
+    ),
+)
+
+
+def _move_scene(voices: tuple[str, ...], choices: dict[str, str]) -> scene_mod.IntroScene:
+    base = {"font_pair": "grotesk_hand", "ink": "oxblood", "zone": "above_head", "entrance": "ink"}
+    return scene_mod.IntroScene(
+        decision="compose", voices=voices, sound="none", **{**base, **choices}
+    )
+
+
+def _layer_starts(rows: list[dict[str, Any]]) -> list[float]:
+    """When the phone is told to draw each row (the Talking text lane)."""
+    from app.pipeline.phone_subtitled_plan import _compile_text_lane  # noqa: PLC0415
+
+    return [
+        layer.start
+        for layer in _compile_text_lane(rows, user_edited=False, timeline_duration_s=30.0)
+    ]
+
+
+def _still_at(rows: list[dict[str, Any]], at_s: float, footage: str) -> Image.Image:
+    frame = plate(footage)
+    for row in rows:
+        if float(row["start_s"]) <= at_s < float(row["end_s"]):
+            frame = Image.alpha_composite(frame, ov.render_overlay_frame(_overlay_for(row)))
+    return frame
+
+
+def _move_case(
+    case_id: str,
+    language: str,
+    title: str,
+    scene: scene_mod.IntroScene,
+    rows: list[dict[str, Any]],
+    receipt: dict[str, Any],
+    footage: str,
+    *,
+    control: str | None = None,
+) -> dict[str, Any]:
+    verdict, reasons, frame = verify_rows(
+        rows, receipt, face=FACE_BOX, scene=scene, footage=footage
+    )
+    if not approval_matches(rows, title):
+        reasons = [*reasons, "the approval check does not find her title in the drawn layers"]
+    starts = _layer_starts(rows)
+    if [round(s, 3) for s in starts] != [round(float(r["start_s"]), 3) for r in rows]:
+        reasons = [*reasons, f"the phone is told other entrances: {starts}"]
+    base = {
+        "id": case_id,
+        "name": "KRI-1618 move",
+        "language": language,
+        "control": control,
+        "expressible": "yes",
+        "missing_moves": [],
+        "title": title,
+        "rendered": True,
+        "scene": scene.model_dump(mode="json", exclude_none=True),
+        "rows": _row_summary(rows),
+        "entrances": starts,
+    }
+    return _case({**base, "verdict": "FAIL" if reasons else "PASS", "reasons": reasons}, frame)
+
+
+def move_cases() -> list[dict[str, Any]]:
+    """Each move in English and Turkish, compiled, placed, drawn and approved; the late accent
+    also as a still before it enters (only the solid rows are up). Then controls that MUST fail:
+    a tuck drawn without its declaration, a declared tuck drawn as a gap, a late line at a delay
+    nobody issued, and a solid line waiting instead of the accent."""
+    cases: list[dict[str, Any]] = []
+    placed_by: dict[tuple[str, str], tuple] = {}
+    for case_id, language, title, voices, choices, footage in MOVE_CASES:
+        scene = _move_scene(voices, choices)
+        out = scene_mod.compile_intro_scene(
+            scene, title, canvas=PORTRAIT, timeline_duration_s=30.0, language=language
+        )
+        if out.rows is None:
+            cases.append(
+                _case(
+                    {
+                        "id": case_id,
+                        "name": "KRI-1618 move",
+                        "language": language,
+                        "control": None,
+                        "expressible": "yes",
+                        "missing_moves": [],
+                        "title": title,
+                        "rendered": True,
+                        "verdict": "FAIL",
+                        "reasons": [f"compile declined: {out.reason}"],
+                    },
+                    None,
+                )
+            )
+            continue
+        rows, receipt = _place(out.rows, out.position)
+        placed_by[(case_id, language)] = (title, scene, rows, receipt, footage, out)
+        cases.append(_move_case(case_id, language, title, scene, rows, receipt, footage))
+        early = scene_mod.STAGGERS[scene.stagger] / 2
+        if early:
+            up = [r for r in rows if float(r["start_s"]) <= early]
+            styles = {r["source_params"]["title_look"]["style"] for r in up}
+            reasons = [] if styles == {"intro_solid"} else [f"up at {early} s: {sorted(styles)}"]
+            cases.append(
+                _case(
+                    {
+                        "id": f"{case_id}@{early:.1f}s",
+                        "name": "KRI-1618 move, before the accent enters",
+                        "language": language,
+                        "control": None,
+                        "expressible": "yes",
+                        "missing_moves": [],
+                        "title": title,
+                        "rendered": True,
+                        "verdict": "FAIL" if reasons else "PASS",
+                        "reasons": reasons,
+                    },
+                    _still_at(rows, early, footage),
+                )
+            )
+
+    def stripped(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+        out = json.loads(json.dumps(rows))
+        for row in out:
+            row["source_params"]["title_look"].pop(key, None)
+        return out
+
+    title, scene, rows, receipt, footage, out = placed_by[("script-tuck", "en")]
+    undeclared = stripped(rows, "stack")
+    cases.append(
+        _move_case(
+            "script-tuck",
+            "en",
+            title,
+            scene,
+            undeclared,
+            receipt,
+            footage,
+            control="undeclared_overlap",
+        )
+    )
+    gap_rows, gap_receipt = _place(stripped(out.rows, "stack"), out.position)
+    redeclared = [
+        {**row, "source_params": src["source_params"]}
+        for row, src in zip(gap_rows, rows, strict=True)
+    ]
+    cases.append(
+        _move_case(
+            "script-tuck",
+            "en",
+            title,
+            scene,
+            redeclared,
+            gap_receipt,
+            footage,
+            control="declared_tuck_not_drawn",
+        )
+    )
+    title, scene, rows, receipt, footage, _out = placed_by[("late-accent", "en")]
+    late = scene_mod.STAGGERS["accent_after"]
+    shifted = [
+        {**r, "start_s": float(r["start_s"]) + 0.3} if float(r["start_s"]) >= late else r
+        for r in rows
+    ]
+    cases.append(
+        _move_case(
+            "late-accent", "en", title, scene, shifted, receipt, footage, control="unissued_delay"
+        )
+    )
+    swapped = [{**r, "start_s": late - float(r["start_s"])} for r in rows]
+    cases.append(
+        _move_case(
+            "late-accent", "en", title, scene, swapped, receipt, footage, control="solid_line_waits"
+        )
+    )
+    return cases
+
+
 def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     data = json.loads(_TEARDOWNS.read_text())
     teardowns = {t["id"]: t for t in data["teardowns"]}
@@ -707,6 +966,7 @@ def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 )
             )
     cases.extend(_controls(teardowns))
+    cases.extend(move_cases())
     cases.extend(pick_cases())
     from app.cli.verify_intro_scene_model import model_cases  # noqa: PLC0415
 

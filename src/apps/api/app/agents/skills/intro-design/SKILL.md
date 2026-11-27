@@ -46,6 +46,11 @@ the way. The accent is a span of her words, never new words.
    for a speaker framed low.
 6. The entrance. ink wipes the accent in and suits the handwritten faces. pop is playful.
    fade is calm and editorial. rise is neutral. Use only the entrances the menu lists.
+7. The stagger. accent_after lands the accent words a beat after the rest, so the title
+   reads, then pays off (the bold-caps-plus-handwritten-word look). together otherwise.
+8. The stack. script_over_serif tucks a script accent onto the serif line under it, like a
+   series label over its subject ("[city guide:] lisbon, day one"). Only with script_serif
+   and only when the accent words come before solid words. gap otherwise.
 
 ## Sound
 
@@ -55,5 +60,5 @@ There is no sound choice. Always answer sound "none".
 
 Only the JSON object of the response schema. For a scene: decision "compose", the
 voices array copied exactly from one issued split, and one id for each of font_pair,
-ink, zone, entrance, and sound "none". To decline: decision "decline" and a decline_reason.
+ink, zone, entrance, stagger, stack, and sound "none". To decline: decision "decline" and a decline_reason.
 No other field, no text, no number.

@@ -33,7 +33,7 @@ EN = "the biggest design trend right now"
 TR = "bu yılın en büyük tasarım trendi şu an"
 
 
-def _scene_job(monkeypatch, title: str, font_pair: str, language: str):
+def _scene_job(monkeypatch, title: str, font_pair: str, language: str, **candidate):
     _faces(monkeypatch)
     monkeypatch.setattr(gb.settings, "title_look_enabled", True)
     job, *_ = _setup_subtitled(monkeypatch)
@@ -53,6 +53,7 @@ def _scene_job(monkeypatch, title: str, font_pair: str, language: str):
                     "font_pair": font_pair,
                     "entrance": menu.entrances_for(font_pair)[0],
                     "zones": ["above_head", "top_left", "mid_frame"],
+                    **candidate,
                 }
             ],
         },
@@ -109,3 +110,51 @@ def test_a_caps_pair_still_refuses_a_different_title(monkeypatch, font_pair, tit
     ):
         with pytest.raises(Exception):  # noqa: B017 - the typed decline
             _check(job, wrong)
+
+
+# KRI-1618: a late accent tucked onto the serif under it (ref 5), drawn by the real worker.
+# M3 a leading accent fails the opening check; M6 a window read from line 1 only; M2 the
+# approval check accepts the late line only at the issued delay.
+REF5 = {"en": "city guide: lisbon, day one", "tr": "şehir rehberi: lizbon, ilk gün"}
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_a_late_tucked_accent_draws_through_the_real_worker_and_is_approved(monkeypatch, language):
+    title = REF5[language]
+    job = _scene_job(
+        monkeypatch,
+        title,
+        "script_serif",
+        language,
+        voices=["accent", "accent", "solid", "solid", "solid"],
+        stagger="accent_after",
+        stack="script_over_serif",
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device", job.error_detail
+    rows = _title_rows(job)
+    looks = [row["source_params"]["title_look"] for row in rows]
+    assert [(look["style"], look["stagger"], look["stack"]) for look in looks] == [
+        ("intro_accent", "accent_after", "script_over_serif"),
+        ("intro_solid", "accent_after", "script_over_serif"),
+    ]
+    assert rows[0]["start_s"] - rows[1]["start_s"] == pytest.approx(
+        scene_mod.STAGGERS["accent_after"]
+    )
+    assert rows[0]["end_s"] == rows[1]["end_s"]
+    _check(job, title)
+    recipe = device_status(job, "subtitled").request.recipe
+    [accent] = [
+        layer
+        for layer in recipe.text_layers
+        if "".join(run.text for run in layer.runs).replace(" ", "")
+        == rows[0]["text"].replace(" ", "")
+    ]
+    accent.start += 0.3  # a delay the engine never issues
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="opening", text=title),)
+    )
+    with pytest.raises(Exception):  # noqa: B017 - the typed decline
+        verify_phone_recipe(contract, recipe)

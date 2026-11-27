@@ -101,6 +101,7 @@ import structlog
 
 from app.pipeline import intro_scene as scene_mod
 from app.pipeline import intro_scene_pick as pick
+from app.pipeline.title_family import retime_title_rows, title_window
 
 log = structlog.get_logger(__name__)
 
@@ -636,6 +637,8 @@ def fit_looks(
                     zone=zone,
                     entrance=entrance,
                     sound="none",
+                    stagger=candidate.get("stagger", scene_mod.TOGETHER),
+                    stack=candidate.get("stack", scene_mod.GAP),
                 )
                 out = scene_mod.compile_intro_scene(
                     scene,
@@ -648,7 +651,7 @@ def fit_looks(
                 if out.rows is None:
                     declines[out.reason] = declines.get(out.reason, 0) + 1
                     continue
-                rows = [{**row, "start_s": title.start_s, "end_s": title.end_s} for row in out.rows]
+                rows = retime_title_rows(out.rows, title.start_s, title.end_s)
                 placed, receipt = place(rows, out.position)
                 if not scene_mod.placement_is_clean(receipt):
                     declines["placement_unclean"] = declines.get("placement_unclean", 0) + 1
@@ -861,9 +864,12 @@ def preview_for(
     from app.pipeline.portable_text_layout import compile_text_overlay  # noqa: PLC0415
 
     try:
-        start = min(float(r["start_s"]) for r in rows)
-        end = max(float(r["end_s"]) for r in rows)
-        time_s = round(start + min(_PREVIEW_AFTER_ENTRANCE_S, _PREVIEW_SHARE * (end - start)), 3)
+        _start, end = title_window(rows)
+        last_entrance = max(float(r["start_s"]) for r in rows)  # KRI-1618: a late accent line
+        time_s = round(
+            last_entrance + min(_PREVIEW_AFTER_ENTRANCE_S, _PREVIEW_SHARE * (end - last_entrance)),
+            3,
+        )
         frame = _frame_under(frame_source, variant_id, time_s)
         if frame is None:
             return None
@@ -1055,8 +1061,7 @@ def _restored_title(title: Title, route: str) -> list[dict[str, Any]] | None:
         return None
     rows = [copy.deepcopy(dict(row)) for row in original.rows]
     if abs(original.start_s - title.start_s) > 0.01 or abs(original.end_s - title.end_s) > 0.01:
-        for row in rows:
-            row["start_s"], row["end_s"] = title.start_s, title.end_s
+        rows = retime_title_rows(rows, title.start_s, title.end_s)
     return rows
 
 

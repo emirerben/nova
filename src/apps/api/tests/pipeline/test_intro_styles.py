@@ -568,7 +568,29 @@ def test_every_preview_is_drawn_from_its_own_rows_or_none_is(route):
     for option, preview in zip(offer["options"], previews, strict=True):
         assert len(preview["text_layers"]) == len(option["rows"])
         assert preview["media_kind"] in ("video", "image") and preview["media_id"]
-        assert preview["time_s"] > min(r["start_s"] for r in option["rows"])
+        assert preview["time_s"] > max(r["start_s"] for r in option["rows"])  # every line is up
+
+
+def test_a_late_accent_look_keeps_its_delay_inside_the_title_window():  # KRI-1618 M5
+    from app.pipeline.intro_scene import STAGGERS
+    from app.pipeline.title_family import title_window
+
+    late = 0
+    for route in ROUTES:
+        for lang in ("en", "tr"):
+            _job, _vid, sent, offer = offer_for(route, lang)
+            start, end = title_window(sent)
+            for option in offer["options"]:
+                looks = [
+                    (r.get("source_params") or {}).get("title_look") or {} for r in option["rows"]
+                ]
+                if not any(look.get("stagger") for look in looks):
+                    continue
+                late += 1
+                for row, look in zip(option["rows"], looks, strict=True):
+                    delay = STAGGERS[look["stagger"]] if look["style"] == "intro_accent" else 0.0
+                    assert (row["start_s"], row["end_s"]) == (pytest.approx(start + delay), end)
+    assert late, "the seeded offers include a late accent look"
 
 
 def test_previews_are_all_or_nothing(monkeypatch):
@@ -704,3 +726,33 @@ def test_no_skia_at_import():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=".")
     assert "ok" in out.stdout, out.stderr[-400:]
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_late_tucked_look_whose_accent_leads_is_offered_and_saved(monkeypatch, route):
+    """KRI-1618, ref 5's shape: line 1 is the script accent that enters late. The offer keeps it
+    only when the route's real phone Save accepts it (a refused look would vanish silently)."""
+    title = "city guide: lisbon, day one"
+    candidate = {
+        "voices": ["accent", "accent", "solid", "solid", "solid"],
+        "font_pair": "script_serif",
+        "entrance": "fade",
+        "zones": list(scene_mod.ZONES),
+        "stagger": "accent_after",
+        "stack": "script_over_serif",
+    }
+    monkeypatch.setattr(st.pick, "pick_candidates", lambda *_args, **_kwargs: [candidate])
+    job, vid, rows = fx.BUILDERS[route](title)
+    offer = st.build_offer(st.detach(job), vid, rows, "first")
+    assert offer["available"], offer.get("reason")
+    [look] = [o for o in offer["options"] if o["key"] != "none"]
+    params = [r["source_params"]["title_look"] for r in look["rows"]]
+    assert [(p["style"], p["stagger"], p["stack"]) for p in params] == [
+        ("intro_accent", "accent_after", "script_over_serif"),
+        ("intro_solid", "accent_after", "script_over_serif"),
+    ]
+    assert look["preview"]["time_s"] > look["rows"][0]["start_s"] > look["rows"][1]["start_s"]
+    assert (
+        st.dry_run_save(job, vid, route, look["rows"], base_generation="first", save_arguments={})
+        is None
+    )

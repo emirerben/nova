@@ -1,0 +1,161 @@
+{
+  "agent": "nova.compose.intro_scene",
+  "prompt_version": "is-364e6e5914db",
+  "prompt_sha": "68589443c1a7a9da",
+  "input": {
+    "language": "en",
+    "splits": [
+      [
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "accent"
+      ]
+    ],
+    "font_pairs": [
+      "grotesk_hand",
+      "serif_italic",
+      "grotesk_loop",
+      "script_serif",
+      "young_serif",
+      "grotesk_pen"
+    ],
+    "inks": [
+      "oxblood",
+      "chartreuse",
+      "cream",
+      "butter",
+      "white"
+    ],
+    "zones": [
+      "above_head",
+      "top_left",
+      "mid_frame"
+    ],
+    "entrances": [
+      "fade",
+      "rise",
+      "pop",
+      "ink"
+    ],
+    "staggers": [
+      "together",
+      "accent_after"
+    ],
+    "stacks": [
+      "gap",
+      "script_over_serif"
+    ],
+    "brightness": "dark",
+    "title_words": [
+      "city",
+      "guide:",
+      "lisbon,",
+      "day",
+      "one"
+    ],
+    "footage_notes": "a man talking to camera in a dim bar, room above his head"
+  },
+  "raw_text": "{\"decision\": \"compose\", \"voices\": [\"accent\", \"accent\", \"solid\", \"solid\", \"solid\"], \"font_pair\": \"script_serif\", \"ink\": \"white\", \"zone\": \"above_head\", \"entrance\": \"fade\", \"stagger\": \"accent_after\", \"stack\": \"script_over_serif\", \"sound\": \"none\"}",
+  "output": {
+    "decision": "compose",
+    "voices": [
+      "accent",
+      "accent",
+      "solid",
+      "solid",
+      "solid"
+    ],
+    "font_pair": "script_serif",
+    "ink": "white",
+    "zone": "above_head",
+    "entrance": "fade",
+    "sound": "none",
+    "stagger": "accent_after",
+    "stack": "script_over_serif"
+  },
+  "meta": {
+    "source": "hand_authored",
+    "note": "A hand-authored answer, NOT recorded model output (no paid run, KRI-1618): ref 5's script label tucked onto its serif subject, the accent landing late. Input is what build_input issues for the title today.",
+    "expect": "compose",
+    "language": "en"
+  }
+}

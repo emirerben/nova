@@ -128,6 +128,9 @@ def pick_candidates(
     if not splits or not allowed:
         return []
     rng = _rng(seed, "candidates", title)
+    # KRI-1618: the moves draw from their own stream, so every other choice for a seed is the
+    # one it was before they existed.
+    moves = _rng(seed, "moves", title)
     pairs = allowed
     rng.shuffle(pairs)
     pairs.sort(key=lambda pair: pair in recent)  # stable: only moves recent looks back
@@ -148,9 +151,46 @@ def pick_candidates(
                 "font_pair": pair,
                 "entrance": entrance,
                 "zones": zones,
+                **_moves(moves, title, voices, pair, menu),
             }
             if round_index == 0 or candidate not in out:
                 out.append(candidate)
+    return out
+
+
+_LATE_ACCENT_SHARE = 0.4  # ref 1's look, not every look
+_TUCK_SHARE = 0.5
+
+
+def _moves(
+    rng: random.Random,
+    title: str,
+    voices: Sequence[str],
+    pair: str,
+    menu: scene_mod.IntroMenu,
+) -> dict[str, str]:
+    """The stagger and stack for one candidate, only where they apply (`check_scene`); today's
+    look adds no key."""
+    wanted = {
+        "stagger": "accent_after" if rng.random() < _LATE_ACCENT_SHARE else None,
+        "stack": "script_over_serif" if rng.random() < _TUCK_SHARE else None,
+    }
+    out: dict[str, str] = {}
+    for key, value in wanted.items():
+        if value is None:
+            continue
+        trial = scene_mod.IntroScene(
+            decision="compose",
+            voices=tuple(voices),
+            font_pair=pair,
+            ink=menu.inks[0],
+            zone=menu.zones[0],
+            entrance=menu.entrances_for(pair)[0],
+            sound="none",
+            **{key: value},
+        )
+        if scene_mod.check_scene(trial, title, menu) is None:
+            out[key] = value
     return out
 
 
@@ -355,6 +395,8 @@ def fit_intro_scene(
                         zone=zone,
                         entrance=candidate["entrance"],
                         sound="none",  # a sound is a suggestion, not an automatic add (project Q1)
+                        stagger=candidate.get("stagger", scene_mod.TOGETHER),
+                        stack=candidate.get("stack", scene_mod.GAP),
                     )
                 except Exception:  # noqa: BLE001 - a stamp this build cannot read
                     info["tried"].append({**step, "reason": "invalid_scene"})
@@ -563,6 +605,7 @@ def resolve_model_scene(
             "ink": scene.ink,
             "zone": scene.zone,
             "entrance": scene.entrance,
+            **scene.moves(),
         },
     }
 
@@ -639,6 +682,7 @@ def ask_for_fit(ask: Mapping[str, Any]) -> tuple[Mapping[str, Any] | None, dict[
                     "font_pair": scene.font_pair,
                     "entrance": scene.entrance,
                     "zones": zones,
+                    **scene.moves(),
                 }
             ],
         },

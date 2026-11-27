@@ -45,6 +45,75 @@ def is_title_look_row(row: Mapping[str, Any]) -> bool:
     return _look_params(row) is not None
 
 
+# The shortest a title line is shown (`phone_subtitled_title._TITLE_MIN_S / 5`).
+MIN_LINE_S = 0.1
+
+
+def title_window(rows: Sequence[Mapping[str, Any]]) -> tuple[float, float]:
+    """When one title is on screen: its first line's entrance to its last line's exit (KRI-1618:
+    an accent line may enter after the others)."""
+    return (
+        min(float(row["start_s"]) for row in rows),
+        max(float(row["end_s"]) for row in rows),
+    )
+
+
+def _declared_delay(row: Mapping[str, Any]) -> float:
+    from app.pipeline.intro_scene import STAGGERS  # noqa: PLC0415
+
+    look = _look_params(row) or {}
+    if look.get("style") != "intro_accent":
+        return 0.0
+    return STAGGERS.get(str(look.get("stagger")), 0.0)
+
+
+def retime_title_rows(
+    rows: Sequence[Mapping[str, Any]], start: float, end: float
+) -> list[dict[str, Any]]:
+    """One title's lines shown over ``[start, end]``: an intro accent line waits the stagger it
+    declares (`intro_scene.STAGGERS`), every other line enters at ``start``, and all leave at
+    ``end``. A window too short for the wait shows every line together. The times come from the
+    declaration, never from the rows' current offsets, so a cut that bent them is undone and
+    retiming twice gives the same rows."""
+    delays = [_declared_delay(row) for row in rows]
+    if end - start - max(delays, default=0.0) < MIN_LINE_S:
+        delays = [0.0] * len(delays)
+    return [
+        {**row, "start_s": start + delay, "end_s": end}
+        for row, delay in zip(rows, delays, strict=True)
+    ]
+
+
+def retime_title_stacks(rows: Sequence[Any]) -> list[Any]:
+    """``rows`` with each stacked title that declares a stagger retimed over its own window
+    (`retime_title_rows`). For a lane the system moved row by row (a Range cut re-anchors each
+    text row through source time on its own), so a late accent line is back at its delay. Rows
+    of a stack that declares nothing, and every other row, are returned as they were."""
+    out = list(rows)
+    for family in TITLE_FAMILY_IDS:
+        lines = [
+            index
+            for index, row in enumerate(out)
+            if isinstance(row, Mapping)
+            and not row.get("removed")
+            and title_family_of(row.get("id")) == family
+            and is_title_look_row(row)
+        ]
+        stack = [out[index] for index in lines]
+        if len(stack) < _MIN_LINES or not any(_declared_delay(row) for row in stack):
+            continue
+        for index, row in zip(lines, retime_title_rows(stack, *title_window(stack)), strict=True):
+            out[index] = row
+    return out
+
+
+def issued_delay(delay: float, *, tolerance_s: float) -> bool:
+    """Is ``delay`` (a line's entrance after the title's first) one the engine issues?"""
+    from app.pipeline.intro_scene import STAGGERS  # noqa: PLC0415
+
+    return any(abs(delay - issued) <= tolerance_s for issued in STAGGERS.values())
+
+
 def title_stack_rows(live: Sequence[dict[str, Any]], row: dict[str, Any]) -> list[dict[str, Any]]:
     """KRI-1633: every line (in line order) of the stacked title ``row`` heads, else ``[row]``.
     Only a family's first-line id heads a stack, so an edit aimed at one ``-line-N`` stays a line

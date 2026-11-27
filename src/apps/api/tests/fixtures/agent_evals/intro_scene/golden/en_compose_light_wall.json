@@ -1,7 +1,7 @@
 {
   "agent": "nova.compose.intro_scene",
   "prompt_version": "is-5b06f2dd33f5",
-  "prompt_sha": "48a5b217c09d5e56",
+  "prompt_sha": "34df0dbf8873cbee",
   "input": {
     "language": "en",
     "splits": [
