@@ -1549,52 +1549,6 @@
         }
       }
     },
-    "%lld clips Kria couldn’t place will be used as filler." : {
-      "localizations" : {
-        "de" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Clip, den Kria nicht platzieren konnte, wird als Füller verwendet."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld Clips, die Kria nicht platzieren konnte, werden als Füller verwendet."
-                }
-              }
-            }
-          }
-        },
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld clip Kria couldn’t place will be used as filler."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld clips Kria couldn’t place will be used as filler."
-                }
-              }
-            }
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kria’nın yerleştiremediği %lld klip dolgu olarak kullanılacak."
-          }
-        }
-      }
-    },
     "%lld clips ready" : {
       "localizations" : {
         "de" : {
@@ -12678,6 +12632,22 @@
         }
       }
     },
+    "Couldn’t send your answer." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deine Antwort konnte nicht gesendet werden."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cevabın gönderilemedi."
+          }
+        }
+      }
+    },
     "Couldn’t send your answer. Tap it again." : {
       "localizations" : {
         "de" : {
@@ -20848,52 +20818,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kria kayıtlı içerikleri gelecekteki fikirler için örnek olarak kullanır."
-          }
-        }
-      }
-    },
-    "Kria wasn’t sure where %lld clips fit in your song. Tap a clip to watch it, then drag or use the arrows to fix the order." : {
-      "localizations" : {
-        "de" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Kria war sich nicht sicher, wo %lld Clip in deinen Song passt. Tipp einen Clip an, um ihn anzusehen, und zieh oder nutz die Pfeile, um die Reihenfolge zu korrigieren."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Kria war sich nicht sicher, wo %lld Clips in deinen Song passen. Tipp einen Clip an, um ihn anzusehen, und zieh oder nutz die Pfeile, um die Reihenfolge zu korrigieren."
-                }
-              }
-            }
-          }
-        },
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Kria wasn’t sure where %lld clip fits in your song. Tap a clip to watch it, then drag or use the arrows to fix the order."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Kria wasn’t sure where %lld clips fit in your song. Tap a clip to watch it, then drag or use the arrows to fix the order."
-                }
-              }
-            }
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kria %lld klibin şarkında nereye uyduğundan emin değildi. İzlemek için bir klibe dokun, sonra sürükle ya da okları kullanarak sırayı düzelt."
           }
         }
       }
@@ -31636,22 +31560,6 @@
         }
       }
     },
-    "Replaced by a newer question." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Durch eine neuere Frage ersetzt."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daha yeni bir soruyla değiştirildi."
-          }
-        }
-      }
-    },
     "Replacement footage is not available yet." : {
       "localizations" : {
         "de" : {
@@ -35425,22 +35333,6 @@
         }
       }
     },
-    "Slide the timeline and press play to hear the song. Tap a clip to edit it, or press and hold a clip to move it." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Schieb die Timeline und tipp auf Play, um den Song zu hören. Tipp einen Clip an, um ihn zu bearbeiten, oder halte ihn gedrückt, um ihn zu verschieben."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Şarkıyı dinlemek için zaman çizelgesini kaydır ve oynat’a bas. Düzenlemek için bir klibe dokun, taşımak için basılı tut."
-          }
-        }
-      }
-    },
     "Slider" : {
       "localizations" : {
         "de" : {
@@ -37898,22 +37790,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Düzenlediğin her türü kaydetmek için “Tercihleri kaydet”e dokun."
-          }
-        }
-      }
-    },
-    "Tap a clip to watch it, then drag or use the arrows to change the order." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tipp einen Clip an, um ihn anzusehen, und zieh oder nutz die Pfeile, um die Reihenfolge zu ändern."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "İzlemek için bir klibe dokun, sonra sürükle ya da okları kullanarak sırayı değiştir."
           }
         }
       }

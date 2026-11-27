@@ -12,6 +12,14 @@ enum AskPhase<Answer> {
 
 extension AskPhase: Equatable where Answer: Equatable {}
 
+/// What the chat hands one ask card: where it is in its life, whether a send is in flight, and what the card calls
+/// with the creator's answer.
+struct AskCardState<Answer, Submit> {
+    let phase: AskPhase<Answer>
+    let isBusy: Bool
+    let submit: Submit
+}
+
 enum AskKind: String, CaseIterable, Hashable {
     case clip, songOrder, songRange, region, moment, choice
 }
@@ -116,5 +124,23 @@ struct AskFold: Equatable {
             keys.allSatisfy { fold.standings[$0] == .queued } ? message : nil
         })
         return fold
+    }
+}
+
+extension AskFold {
+    /// What the card for `askID` on `messageID` draws, or nil when it draws nothing: it is queued behind another ask,
+    /// was replaced or closed, or is answered by something the card cannot name. `failure` is the server's reason for
+    /// refusing the last answer; it wins over `isStale`, which only says the list under the card was refreshed.
+    func phase<Answer>(_ messageID: String, _ askID: String, answer: () -> Answer?, failure: String? = nil,
+                       isStale: Bool = false) -> AskPhase<Answer>? {
+        switch standing(messageID, askID) {
+        case .open:
+            if let failure { return .failed(failure) }
+            return isStale ? .stale : .open
+        case .answered:
+            return answer().map(AskPhase.answered)
+        default:
+            return nil
+        }
     }
 }

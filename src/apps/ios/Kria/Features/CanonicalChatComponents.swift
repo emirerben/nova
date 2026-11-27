@@ -188,15 +188,15 @@ struct ChatMessageRow: View {
     var clipSelectionMedia: [CreationAttachedMedia] = []
     /// KRI-694: the chat's reply language, which the clip answer is posted in.
     var clipSelectionLanguage: ClipAnswerLanguage = .english
-    /// KRI-374: how to present `message.songOrderQuestion`. nil (old server, flag off, not a question) = text only.
-    var songOrderMode: SongOrderCardMode? = nil
+    /// KRI-374: how to present `message.songOrderQuestion`. nil (old server, flag off, not the open ask) = text only.
+    var songOrder: AskCardState<String, (SongOrderSubmission, String) -> Void>? = nil
     var songOrderMedia: [CreationAttachedMedia] = []
     /// KRI-561: set when the server advertises `song_order_placements`; the order question is then the song timeline.
     var songTimeline: SongTimelineConfiguration? = nil
     var songDurationS: Double? = nil
     var projectID: UUID? = nil
-    /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not a question) = text question only.
-    var choiceQuestionMode: ChoiceQuestionCardMode? = nil
+    /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not the open ask) = text question only.
+    var choiceAsk: AskCardState<String, (ChoiceSelectionSubmission, String) -> Void>? = nil
     /// True for the user message whose text is the "You chose" capsule of the choice question it answered.
     var hidesAnswerEcho = false
     /// KRI-802: set when this reply asks the choice card and the clip picker together; their answers wait here and
@@ -206,10 +206,10 @@ struct ChatMessageRow: View {
     var songRangeMode: SongRangeCardMode? = nil
     /// KRI-901: how to present `message.protectedRegionQuestion`. nil (old server, not a question) = text only.
     var objectMarkMode: ObjectMarkCardMode? = nil
-    /// KRI-723: how to present `message.momentOrderQuestion`. nil (old server, not a question) = text only.
-    var momentOrderMode: MomentOrderCardMode? = nil
+    /// KRI-723: how to present `message.momentOrderQuestion`. nil (old server, not the open ask) = text only.
+    var momentOrder: AskCardState<String, (MomentOrderAnswer) -> Void>? = nil
     /// KRI-1591: the clip-order strip under this message (it reads `songOrderMedia` for thumbnails). nil = nothing.
-    var clipOrderMode: ClipOrderCardMode? = nil
+    var clipOrder: ClipOrderStripInput? = nil
     /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
     /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
     var replyOptionsMode: ReplyOptionsMode? = nil
@@ -282,8 +282,8 @@ struct ChatMessageRow: View {
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
                     .accessibilityLabel(String(localized: "Kria: \(shownContent)"))
-                if let clipOrderMode {
-                    ClipOrderStripCard(mode: clipOrderMode, media: songOrderMedia, projectID: projectID)
+                if let clipOrder {
+                    ClipOrderStripCard(clipOrder, media: songOrderMedia, projectID: projectID)
                 }
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
@@ -301,13 +301,15 @@ struct ChatMessageRow: View {
                                       language: clipSelectionLanguage, note: questionBatch?.clipsNote)
                         .id(question.questionID)
                 }
-                if let question = message.songOrderQuestion, let songOrderMode, let projectID {
+                if let question = message.songOrderQuestion, let songOrder, let projectID {
                     if let songTimeline {
-                        SongTimelineCard(question: question, media: songOrderMedia, projectID: projectID, mode: songOrderMode,
+                        SongTimelineCard(question: question, media: songOrderMedia, projectID: projectID, phase: songOrder.phase,
+                                         isBusy: songOrder.isBusy, submit: songOrder.submit,
                                          configuration: songTimeline, songDurationS: songDurationS)
                             .id(question.questionID)
                     } else {
-                        SongOrderCard(question: question, media: songOrderMedia, projectID: projectID, mode: songOrderMode)
+                        SongOrderCard(question: question, media: songOrderMedia, projectID: projectID, phase: songOrder.phase,
+                                      isBusy: songOrder.isBusy, submit: songOrder.submit)
                             .id(question.questionID)
                     }
                 }
@@ -319,8 +321,9 @@ struct ChatMessageRow: View {
                     ObjectMarkCard(question: question, projectID: projectID, mode: objectMarkMode)
                         .id(question.questionID)
                 }
-                if let question = message.momentOrderQuestion, let momentOrderMode {
-                    MomentOrderCard(question: question, projectID: projectID, language: clipSelectionLanguage, mode: momentOrderMode)
+                if let question = message.momentOrderQuestion, let momentOrder {
+                    MomentOrderCard(question: question, projectID: projectID, language: clipSelectionLanguage,
+                                    phase: momentOrder.phase, isBusy: momentOrder.isBusy, submit: momentOrder.submit)
                         .id(question.questionID)
                 }
                 if questionBatch == nil { choiceCard }
@@ -341,8 +344,8 @@ struct ChatMessageRow: View {
     }
 
     @ViewBuilder private var choiceCard: some View {
-        if let question = message.choiceQuestion, let choiceQuestionMode {
-            ChoiceQuestionCard(question: question, mode: choiceQuestionMode,
+        if let question = message.choiceQuestion, let choiceAsk {
+            ChoiceQuestionCard(question: question, phase: choiceAsk.phase, isBusy: choiceAsk.isBusy, submit: choiceAsk.submit,
                                heldKey: questionBatch?.choice?.optionKey, note: questionBatch?.choiceNote,
                                changeHeld: questionBatch?.choice != nil ? changeHeldChoice : nil,
                                typeMyOwn: answerOwn, edit: editOption, isTyping: isAnsweringOwn,

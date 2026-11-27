@@ -140,10 +140,8 @@ struct ClipOrderThread: Equatable {
     let newest: ClipOrderCard?
     /// The latest message that carries a card: the strip is drawn under it.
     let anchorMessageID: String?
-    /// Older messages that carried a card: they collapse to one line.
-    let earlierMessageIDs: Set<String>
 
-    static let empty = ClipOrderThread(newest: nil, anchorMessageID: nil, earlierMessageIDs: [])
+    static let empty = ClipOrderThread(newest: nil, anchorMessageID: nil)
 
     static func fold(_ events: [ThreadEvent], isMessage: (ThreadEvent) -> Bool = { ChatTranscriptMessage.from(event: $0) != nil }) -> ClipOrderThread {
         var newest: ClipOrderCard?
@@ -156,7 +154,7 @@ struct ClipOrderThread: Equatable {
         // Nothing is drawn unless the newest card says the strip is shown (a thread with no card, or one the server
         // never showed, looks exactly as it did before this feature).
         guard let newest, newest.shown, let anchor = carriers.last else { return .empty }
-        return ClipOrderThread(newest: newest, anchorMessageID: anchor, earlierMessageIDs: Set(carriers.dropLast()))
+        return ClipOrderThread(newest: newest, anchorMessageID: anchor)
     }
 }
 
@@ -309,6 +307,15 @@ struct ClipOrderSheetSeed: Identifiable, Equatable {
     private var pendingBaseCardID: String?
     private var outbox = ClipOrderOutbox()
     private var task: Task<Void, Never>?
+
+    /// The strip's phase: a send in flight or failed outranks the card's own `confirmed`.
+    nonisolated static func phase(status: Status, confirmed: Bool, order: [String], failure: String) -> AskPhase<[String]> {
+        switch status {
+        case .sending: .submitting(order)
+        case .failed: .failed(failure)
+        case .idle: confirmed ? .answered(order) : .open
+        }
+    }
 
     /// The order and moved marks the strip draws for `card`: the creator's own order while their confirm is still
     /// outstanding (or the server has not answered it yet), otherwise exactly the server's card.

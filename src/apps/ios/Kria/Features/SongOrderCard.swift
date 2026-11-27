@@ -2,17 +2,6 @@ import AVFoundation
 import KriaMediaEngine
 import SwiftUI
 
-/// How a song-order question is shown under its message (KRI-374).
-enum SongOrderCardMode {
-    /// The latest unanswered question: interactive. `submit` receives the structured answer and its readable message.
-    case active(isSending: Bool, submit: (SongOrderSubmission, String) -> Void)
-    /// Answered by a `song_order` message: read-only, collapsed. `summary` names the confirmed order; nil when
-    /// that message's clips can no longer be named, which reads as a neutral "Order question closed".
-    case answered(summary: String?)
-    /// A newer question replaced this one before it was answered.
-    case superseded
-}
-
 /// Finds a take's original on this iPhone without hashing it: the card only needs something to play.
 @MainActor enum SongOrderPreviewSource {
     static func localURL(projectID: UUID, mediaID: String) -> URL? {
@@ -31,7 +20,11 @@ struct SongOrderCard: View {
     let question: SongOrderQuestion
     let media: [CreationAttachedMedia]
     let projectID: UUID
-    let mode: SongOrderCardMode
+    /// `answered` carries the confirmed order, empty when that message's clips can no longer be named.
+    let phase: AskPhase<String>
+    var isBusy = false
+    /// Receives the structured answer and its readable message.
+    var submit: (SongOrderSubmission, String) -> Void = { _, _ in }
     /// Resolves a take's local original for the inline preview. Injected so tests can supply a fixture file.
     var previewURL: @MainActor (String) -> URL?
     @State private var state: SongOrderState
@@ -41,12 +34,15 @@ struct SongOrderCard: View {
     @State private var selectedPreviewURL: URL?
     @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 92
 
-    init(question: SongOrderQuestion, media: [CreationAttachedMedia], projectID: UUID, mode: SongOrderCardMode,
+    init(question: SongOrderQuestion, media: [CreationAttachedMedia], projectID: UUID, phase: AskPhase<String>,
+         isBusy: Bool = false, submit: @escaping (SongOrderSubmission, String) -> Void = { _, _ in },
          previewURL: (@MainActor (String) -> URL?)? = nil) {
         self.question = question
         self.media = media
         self.projectID = projectID
-        self.mode = mode
+        self.phase = phase
+        self.isBusy = isBusy
+        self.submit = submit
         self.previewURL = previewURL ?? { SongOrderPreviewSource.localURL(projectID: projectID, mediaID: $0) }
         _state = State(initialValue: SongOrderState(question: question))
     }
@@ -73,45 +69,20 @@ struct SongOrderCard: View {
     }
 
     var body: some View {
-        switch mode {
-        case .answered(let summary):
-            HStack(spacing: 8) {
-                Image(systemName: summary == nil ? "circle.dashed" : "checkmark.circle.fill")
-                    .foregroundStyle(summary == nil ? KriaColor.mutedInk : KriaColor.success)
-                Text(Self.answeredText(summary: summary))
-                    .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(minHeight: 44, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("song-order-answered")
-        case .superseded:
-            KriaSupersededLine().accessibilityIdentifier("song-order-superseded")
-        case .active(let isSending, let submit):
-            VStack(alignment: .leading, spacing: 14) {
-                header
+        if case .answered(let summary) = phase {
+            KriaAnsweredReceipt(text: Self.answeredText(summary: summary.isEmpty ? nil : summary))
+                .accessibilityIdentifier("song-order-answered")
+        } else {
+            KriaQuestionCard(title: String(localized: "Check the order of your clips")) {
                 if let selectedMediaID {
                     SongOrderPreview(mediaID: selectedMediaID, url: selectedPreviewURL,
                                      title: String(localized: "Clip \(positions[selectedMediaID] ?? 0)"))
                 }
-                list(isSending: isSending)
-                footer(isSending: isSending, submit: submit)
+                list(isSending: isBusy)
+                footer(isSending: isBusy)
             }
-            .padding(14)
-            .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("song-order-card")
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Check the order of your clips")
-                .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                .accessibilityAddTraits(.isHeader)
-            Text(Self.hint(ambiguous: question.ambiguousCount, unmatched: question.unmatchedCount))
-                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -220,7 +191,7 @@ struct SongOrderCard: View {
         .accessibilityIdentifier(id)
     }
 
-    private func footer(isSending: Bool, submit: @escaping (SongOrderSubmission, String) -> Void) -> some View {
+    private func footer(isSending: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button("Use this order") {
                 let submission = state.submission
@@ -254,21 +225,6 @@ struct SongOrderCard: View {
 
     /// Honest about what happens to it: with no position in the song the server can only use the clip as filler.
     static var unplacedCaption: String { String(localized: "Kria couldn’t place this clip — it will be used as filler") }
-
-    /// The sentence under the card title. The "drag or use the arrows" advice is only given when some take can
-    /// actually be moved to fix a doubtful position; unplaced takes are explained instead.
-    static func hint(ambiguous: Int, unmatched: Int) -> String {
-        var parts: [String] = []
-        if ambiguous > 0 {
-            parts.append(String(localized: "Kria wasn’t sure where \(ambiguous) clips fit in your song. Tap a clip to watch it, then drag or use the arrows to fix the order."))
-        } else {
-            parts.append(String(localized: "Tap a clip to watch it, then drag or use the arrows to change the order."))
-        }
-        if unmatched > 0 {
-            parts.append(String(localized: "\(unmatched) clips Kria couldn’t place will be used as filler."))
-        }
-        return parts.joined(separator: " ")
-    }
 
     /// The collapsed line once answered. Without a nameable order it stays neutral rather than claiming a confirmation.
     static func answeredText(summary: String?) -> String {

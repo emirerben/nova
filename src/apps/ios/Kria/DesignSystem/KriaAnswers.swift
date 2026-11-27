@@ -214,12 +214,17 @@ struct KriaAnswerStack: View {
     /// KRI-1560: the pencil beside an editable block; it hands that block's words to the composer.
     var edit: ((KriaAnswerOption) -> Void)?
     var decide: (() -> Void)?
+    /// A failed send offers "Try again", which sends the same answer again; off, the failure says to tap it again.
+    var retriesFailedSend = false
     let select: (KriaAnswerOption) -> Void
 
     @State private var tappedID: String?
     @State private var sendFailed = false
+    @State private var failedOption: KriaAnswerOption?
 
-    private let failureText = String(localized: "Couldn’t send your answer. Tap it again.")
+    private var failureText: String {
+        retriesFailedSend ? String(localized: "Couldn’t send your answer.") : String(localized: "Couldn’t send your answer. Tap it again.")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -229,6 +234,7 @@ struct KriaAnswerStack: View {
                                   isRecommended: option.isRecommended && !sendFailed) {
                         tappedID = option.id
                         sendFailed = false
+                        failedOption = option
                         select(option)
                     }
                     .disabled(isSending || isLocked || (heldID != nil && option.id != heldID))
@@ -254,6 +260,16 @@ struct KriaAnswerStack: View {
             }
             if sendFailed {
                 KriaInlineFailure(text: failureText, announces: false).accessibilityIdentifier("answer-send-failed")
+                if retriesFailedSend, let failedOption {
+                    Button("Try again") {
+                        tappedID = failedOption.id
+                        sendFailed = false
+                        select(failedOption)
+                    }
+                    .buttonStyle(KriaButtonStyle(role: .primary, size: .medium, fullWidth: true))
+                    .disabled(isSending || isLocked)
+                    .accessibilityIdentifier("answer-try-again")
+                }
             }
             if let decide {
                 Button("Let Kria decide", action: decide)
@@ -307,6 +323,25 @@ struct KriaInlineFailure: View {
     }
 }
 
+/// A notice that nothing broke (the list under the card was refreshed, an order moved): the failure line's glyph and
+/// layout in slate, so red stays for what cannot be used. Announced once when it appears.
+struct KriaInlineNotice: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.circle").font(.system(size: 13, weight: .semibold))
+                .accessibilityHidden(true)
+            Text(text).kriaType(.label).fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(KriaColor.mutedInk)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isStaticText)
+        .onAppear { KriaAnnouncements.post(text) }
+    }
+}
+
 /// Spoken announcements for failures and notices, once per distinct text. A view that is rebuilt (a transcript
 /// re-render, a lazy row scrolling back in) draws the same failure again; without this it would be read out every
 /// time. The same text is spoken again only after `repeatsAfter` seconds, so a real second failure still is.
@@ -356,15 +391,6 @@ struct KriaYouChose: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("You chose: \(text)")
-    }
-}
-
-/// The quiet line a question leaves behind when a newer one replaced it (Paper S2.08).
-struct KriaSupersededLine: View {
-    var body: some View {
-        Text("Replaced by a newer question.")
-            .kriaType(.caption).foregroundStyle(KriaColor.zinc)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

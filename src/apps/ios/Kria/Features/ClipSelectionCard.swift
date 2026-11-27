@@ -7,8 +7,6 @@ enum ClipSelectionCardMode {
     case active(isSending: Bool, submit: (ClipSelectionSubmission, String) -> Void)
     /// Already answered: read-only, collapsed. `summary` is nil after a relaunch.
     case answered(summary: String?)
-    /// A newer question replaced this one before it was answered.
-    case superseded
 }
 
 /// The clip question under the assistant's text: a compact summary card whose "Choose clips" button opens a
@@ -59,8 +57,6 @@ struct ClipSelectionCard: View {
         case .answered(let summary):
             KriaAnsweredReceipt(text: summary ?? String(localized: "Clips chosen"))
                 .accessibilityIdentifier("clip-card-answered")
-        case .superseded:
-            KriaSupersededLine().accessibilityIdentifier("clip-card-superseded")
         case .active(let isSending, let submit):
             activeCard(isSending: isSending, submit: submit)
         }
