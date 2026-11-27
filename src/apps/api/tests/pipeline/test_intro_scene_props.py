@@ -19,6 +19,7 @@ Failure modes (intro_scene M19-M30) covered here:
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 from typing import Any
 
@@ -317,3 +318,75 @@ def test_a_title_placement_that_breaks_a_rule_is_declined(monkeypatch, fault, re
 )
 def test_what_the_layout_cannot_use_is_declined(arrangement, aspects, stage, reason):
     assert _layout(arrangement, aspects, stage=stage) == props.PropsDecline(reason)
+
+
+# --- the compile: a scene with an arrangement, end to end through the approval check ---------
+
+
+def _compile(arrangement, photos=PORTRAIT_PHOTOS, language="en", *, stage=ROOMY, **over):
+    return mod.compile_intro_scene(
+        _scene(arrangement=arrangement, **over),
+        TITLES[language],
+        canvas=PORTRAIT,
+        timeline_duration_s=30.0,
+        language=language,
+        photo_aspects=photos,
+        stage=stage,
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("arrangement", ["around_speaker", "grid_2x2"])
+def test_her_title_compiles_between_her_cards_and_still_reads_as_her_title(arrangement, language):
+    from app.cli.verify_intro_scenes import approval_matches
+
+    out = _compile(arrangement, language=language, stack="script_over_serif")
+    assert out.reason == "ok", out.reason
+    assert out.props is not None and out.rows is out.props.rows
+    _assert_drawable(out.props, PORTRAIT_PHOTOS)
+    [match] = approval_matches(out.rows, TITLES[language])
+    assert match["start_s"] == 0.0
+
+
+def test_cards_that_do_not_fit_leave_todays_title_and_no_card():
+    out = _compile("grid_2x2", stage=None)  # the typical close speaker
+    assert (out.rows, out.reason, out.props) == (None, "props_do_not_fit", None)
+
+
+@pytest.mark.parametrize("photos", [(), (1.0, 1.0, 1.0)])
+def test_without_a_photo_for_every_slot_the_arrangement_is_not_issued(photos):
+    out = _compile("grid_2x2", photos)
+    assert (out.rows, out.reason) == (None, "option_not_issued")
+
+
+def test_a_scene_without_an_arrangement_compiles_as_before():
+    def compile_plain(**extra):
+        return mod.compile_intro_scene(
+            _scene(), TITLE_EN, canvas=PORTRAIT, timeline_duration_s=30.0, language="en", **extra
+        )
+
+    plain = compile_plain()
+    assert plain.reason == "ok" and plain.props is None
+    assert compile_plain(photo_aspects=PORTRAIT_PHOTOS, stage=ROOMY) == plain
+    assert {row["y_frac"] for row in plain.rows} == {0.15}  # unplaced: the caller places them
+
+
+def test_the_drawn_ink_of_the_title_never_touches_a_card(monkeypatch):
+    real = props.layout_intro_props
+
+    def card_on_the_title(*args, **kwargs):
+        layout = real(*args, **kwargs)
+        block = title_block_box(layout.rows, canvas=PORTRAIT)
+        card = props.PropCard("prop_1", block, 0)
+        return dataclasses.replace(layout, cards=(card, *layout.cards[1:]))
+
+    monkeypatch.setattr(props, "layout_intro_props", card_on_the_title)
+    assert (_compile("grid_2x2").rows, _compile("grid_2x2").reason) == (None, "props_do_not_fit")
+
+
+def test_a_layout_error_never_breaks_the_compile(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("layout fell over")
+
+    monkeypatch.setattr(props, "layout_intro_props", boom)
+    assert _compile("grid_2x2").reason == "compile_error"

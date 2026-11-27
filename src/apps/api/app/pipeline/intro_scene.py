@@ -149,6 +149,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_serializer, m
 
 if TYPE_CHECKING:
     from app.pipeline.render_geometry import NormalizedBox
+    from app.services.intro_props_layout import PropsLayout, Stage
 
 log = structlog.get_logger(__name__)
 
@@ -605,12 +606,27 @@ def place_on_stage(
 def preflight_rows(rows: list[dict[str, Any]], position: str | None, canvas: Any) -> str | None:
     """Place ``rows`` on a typical speaker, draw them, and measure the ink. Returns the decline
     reason, or ``None`` when they sit clear."""
-    from app.pipeline import overlay_verify as ov  # noqa: PLC0415
-    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
-
     placed, receipt = place_on_typical_face(rows, position, canvas)
     if not placement_is_clean(receipt):
         return "placement_unclean"
+    return _ink_problem(
+        placed, faces=[__getattr__("TYPICAL_FACE")], captions=__getattr__("TYPICAL_CAPTIONS")
+    )
+
+
+def _ink_problem(
+    placed: list[dict[str, Any]],
+    *,
+    faces: Sequence[NormalizedBox],
+    captions: NormalizedBox,
+    cards: Sequence[NormalizedBox] = (),
+) -> str | None:
+    """Draw each placed row and measure its ink: off the safe zone, the faces and the captions
+    (``ink_off_zone``), and touching no card (``props_do_not_fit``)."""
+    from app.pipeline import overlay_verify as ov  # noqa: PLC0415
+    from app.pipeline.render_geometry import NormalizedBox  # noqa: PLC0415
+    from app.services.phone_card_layout import boxes_intersect  # noqa: PLC0415
+
     for row in placed:
         bare = ov.render_overlay_frame({**overlay_for_row(row), "shadow_enabled": False})
         bbox = ov.text_bbox(bare)
@@ -619,10 +635,10 @@ def preflight_rows(rows: list[dict[str, Any]], position: str | None, canvas: Any
         box = NormalizedBox(
             bbox[0] / bare.width, bbox[1] / bare.height, bbox[2] / bare.width, bbox[3] / bare.height
         )
-        if ink_box_problems(
-            box, face=__getattr__("TYPICAL_FACE"), captions=__getattr__("TYPICAL_CAPTIONS")
-        ):
+        if any(ink_box_problems(box, face=face, captions=captions) for face in faces):
             return "ink_off_zone"
+        if any(boxes_intersect(box, card) for card in cards):
+            return "props_do_not_fit"
     return None
 
 
@@ -644,6 +660,9 @@ class IntroCompile:
     typed_title: str = ""  # her words with " / " between rows, what `stacked_title_matches` reads
     sound: str = "none"
     position: str | None = None  # for `place_title_look(position=...)`
+    # KRI-1615: a scene with an arrangement. ``rows`` are then already placed between the cards
+    # on the stage the compile was given; placing them again without the cards would undo that.
+    props: PropsLayout | None = None
 
 
 class _Decline(Exception):
@@ -741,6 +760,57 @@ def _build_rows(
     return retime_title_rows(rows, 0.0, end_s)
 
 
+def typical_stage() -> Stage:
+    """The compile's stand-in speaker and captions, as a props stage."""
+    from app.services.intro_props_layout import Stage  # noqa: PLC0415
+
+    captions = __getattr__("TYPICAL_CAPTIONS")
+    return Stage((__getattr__("TYPICAL_FACE"),), (captions.top, captions.bottom))
+
+
+def _compile_with_props(
+    scene: IntroScene,
+    rows: list[dict[str, Any]],
+    typed: str,
+    *,
+    photo_aspects: Sequence[float],
+    stage: Stage | None,
+    canvas: Any,
+) -> IntroCompile:
+    """The title rows placed with the scene's cards (M22-M29), or ``props_do_not_fit``."""
+    from app.services.intro_props_layout import PropsDecline, layout_intro_props  # noqa: PLC0415
+
+    assert scene.zone and scene.sound
+    stage = stage or typical_stage()
+    layout = layout_intro_props(
+        scene.arrangement,
+        photo_aspects,
+        rows,
+        stage=stage,
+        canvas=canvas,
+        position=ZONES[scene.zone],
+    )
+    if isinstance(layout, PropsDecline):
+        log.info("intro_scene.props_declined", reason=layout.reason, arrangement=scene.arrangement)
+        return IntroCompile(None, "props_do_not_fit")
+    unsat = _ink_problem(
+        layout.rows,
+        faces=stage.faces,
+        captions=stage.caption_box,
+        cards=[card.box for card in layout.cards],
+    )
+    if unsat:
+        return IntroCompile(None, unsat)
+    return IntroCompile(
+        layout.rows,
+        "ok",
+        typed_title=typed,
+        sound=scene.sound,
+        position=ZONES[scene.zone],
+        props=layout,
+    )
+
+
 def compile_intro_scene(
     scene: IntroScene | dict[str, Any],
     title: str,
@@ -750,9 +820,16 @@ def compile_intro_scene(
     language: str | None = None,
     duration_s: float | None = None,
     menu: IntroMenu | None = None,
+    photo_aspects: Sequence[float] = (),
+    stage: Stage | None = None,
 ) -> IntroCompile:
     """Today's title rows for ``scene`` over ``title``, or ``rows=None`` and the reason. Never
-    raises: a decline, a bad scene, an unissued id or any error all mean "use today's title"."""
+    raises: a decline, a bad scene, an unissued id or any error all mean "use today's title".
+
+    KRI-1615: ``photo_aspects`` (width over height of each owned photo the caller issued, in
+    slot order) issue the arrangements they fill when no ``menu`` is given. A scene with one is
+    laid out with its cards on ``stage`` (default: the typical speaker, whose title fills the
+    room above the head, so it declines there); any failure is ``props_do_not_fit``."""
     from app.pipeline.phone_title_look import (  # noqa: PLC0415
         split_title_lines,
         title_look_text,
@@ -764,11 +841,10 @@ def compile_intro_scene(
                 scene = IntroScene.model_validate(scene)
             except ValidationError:
                 return IntroCompile(None, "invalid_scene")
-        reason = check_scene(scene, title, menu or issue_menu(title))
+        issued = menu or issue_menu(title, photo_count=len(photo_aspects))
+        reason = check_scene(scene, title, issued)
         if reason:
             return IntroCompile(None, reason)
-        if scene.arrangement != NO_ARRANGEMENT:
-            return IntroCompile(None, "props_do_not_fit")  # the joint layout is not wired yet
         runs = _runs(title_words(title), scene.voices)
         if len(runs) == 1:
             return IntroCompile(None, "single_run")  # a lone row is the plain title path
@@ -788,6 +864,10 @@ def compile_intro_scene(
         if typed is None or split_title_lines(typed) != [run.text for run in runs]:
             return IntroCompile(None, "stack_mismatch")
         assert scene.zone and scene.sound
+        if scene.arrangement != NO_ARRANGEMENT:
+            return _compile_with_props(
+                scene, rows, typed, photo_aspects=photo_aspects, stage=stage, canvas=canvas
+            )
         unsat = preflight_rows(rows, ZONES[scene.zone], canvas)
         if unsat:
             return IntroCompile(None, unsat)
