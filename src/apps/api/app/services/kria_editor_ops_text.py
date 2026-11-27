@@ -377,6 +377,10 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
         ]
         if candidates:
             title_ids.add(min(candidates, key=lambda bar: bar["start_s"])["id"])
+    # KRI-1618: a stacked title's accent line may enter after the 0.5 s opening window (or be
+    # line 1), but it is still a line of that title.
+    title_families = {title_family_of(bar_id) for bar_id in title_ids} - {None}
+    title_ids.update(bar["id"] for bar in live if title_family_of(bar["id"]) in title_families)
     title_lineages = {
         bar.get("sequence_source_id") or bar["id"] for bar in live if bar["id"] in title_ids
     }
