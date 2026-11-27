@@ -24,3 +24,13 @@ Native UI tests are separate from the offline check. The inspected synthetic nat
 
 - The guided-phone Save-core integration test starts from a server-admitted photo outside the legacy video paths, saves it on the timeline, parses the photo request even when the recorded model answer says total length, compiles the retime/reorder, executes `prepare_editor_commit`, and reads the new native device recipe plus reopened editor snapshot. The result is a 0.2-second photo followed by the unchanged 1.0-second video.
 - Rebased on `5c11326681` (CA-8). Regenerated the Xcode project because main added Swift files; the final seven native tests passed, and the independent frame evidence matched the earlier export byte-for-byte in the reported measurements. The 902 selected reliability checks and the request evidence gate passed.
+
+## Hosted CI correction
+
+The first hosted run, 46023454235 (head 5417af7d33), found stale prompt/version, localized-copy, parity, and journey-selector contracts rather than a reproduced runtime regression. The structural eval run 46023453845 found the v135 caption-scope golden pin. This follow-up keeps the two recorded caption answers unchanged and updates their version metadata only.
+
+- The six-line per-photo/overlay timing paragraph is the sole shared brief prompt difference. Removing it in memory reproduces all four prior lane prompt digests and all six prior speaker-background/brief-extractor digests; the corresponding pins were updated without relaxing any gates.
+- Turkish catalog generation adds exactly the five photo-timing responses; the same five EN/TR pairs are registered as intentional additions. The copy catalog suite passed (12 tests).
+- The native order method maps to the existing reorder agent capability; thumbnail lookup is non-editing. A shared bilingual standalone selector replaces the folded-text overlay-membership check; four legacy receipt cases prove that an exact duration in the wrong lane cannot satisfy the request, in both English and Turkish.
+- The selector's 23 failures were a cascade from one outdated shared edit-prompt mapping. The expectation now includes the photo journey as well as Turkish chat. An explicit photo-regression-path case was added. All 96 selector self-tests passed.
+- Full offline structural replay: 4,594 passed, 74 skipped, 2 expected failures. No paid or live provider evaluation. No Swift source or native rendering contract changed in this follow-up; the six-photo-frame/no-gap artifact remains valid.

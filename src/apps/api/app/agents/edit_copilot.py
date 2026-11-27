@@ -3211,14 +3211,23 @@ _EXACT_PHOTO_DURATION_RE = _BilingualPattern(
 )
 
 
+def recognize_standalone_photo_hold(
+    text: str,
+) -> tuple[Literal["overlay", "timeline"], float] | None:
+    match = _EXACT_PHOTO_DURATION_RE.search(text)
+    if match is None:
+        return None
+    return ("overlay" if match.group(1) else "timeline", float(match.group(2).replace(",", ".")))
+
+
 def _exact_native_photo_timing(input: EditCopilotInput) -> dict[str, Any] | None:
     snapshot = input.variant_snapshot
     if not (snapshot.get("guided_revision") or snapshot.get("render_destination") == "device"):
         return None
-    match = _EXACT_PHOTO_DURATION_RE.search(input.utterance)
-    if match is None:
+    request = recognize_standalone_photo_hold(input.utterance)
+    if request is None:
         return None
-    seconds = float(match.group(2).replace(",", "."))
+    scope, seconds = request
     if below_editor_minimum(seconds) or seconds > MAX_PROPOSAL_DURATION_S:
         return {
             "intent": "reject",
@@ -3231,7 +3240,7 @@ def _exact_native_photo_timing(input: EditCopilotInput) -> dict[str, Any] | None
                 tr=("Bu fotoğraf süresi desteklenen aralığın dışında. Düzenlemeyi değiştirmedim."),
             ),
         }
-    if match.group(1):
+    if scope == "overlay":
         overlays = snapshot.get("overlays") or {}
         photos = [row for row in overlays.get("cards", []) if row.get("kind") == "image"]
         if not photos:

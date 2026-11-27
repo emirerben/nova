@@ -156,6 +156,44 @@ def test_receipt_rejects_wrong_photo_even_with_correct_video_duration():
     assert receipt(0.5).status != "met"
 
 
+@pytest.mark.parametrize(
+    ("message", "is_overlay"),
+    [
+        ("Make the images show only 0.2 seconds", False),
+        ("Make the overlay images 0.2 seconds", True),
+        ("fotoğraflar 0,2 saniye kalsın", False),
+        ("overlay görselleri 0,2 saniye yap", True),
+    ],
+)
+def test_legacy_photo_timing_receipt_uses_only_the_requested_lane(message, is_overlay):
+    from app.kria.brief_checks import check_requirement, plan_facts_from_editor_payload
+
+    request = BriefRequirement(
+        id="legacy-photo",
+        kind="timing",
+        scope="global",
+        description=message,
+        facts={"duration_s": 0.2},
+    )
+
+    def receipt(timeline_hold, overlay_hold):
+        return check_requirement(
+            request,
+            plan_facts_from_editor_payload(
+                {
+                    "timeline_slots": [
+                        {"media_kind": "video", "duration_s": 2.0},
+                        {"media_kind": "image", "duration_s": timeline_hold},
+                    ],
+                    "media_overlays": [{"kind": "image", "start_s": 0.0, "end_s": overlay_hold}],
+                }
+            ),
+        ).status
+
+    assert receipt(0.5, 0.2) == ("met" if is_overlay else "partial")
+    assert receipt(0.2, 0.5) == ("partial" if is_overlay else "met")
+
+
 def test_montage_plan_receipt_uses_group_photo_holds():
     from app.kria.brief_checks import check_requirement, plan_facts_from_unified_montage
 

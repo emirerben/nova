@@ -3080,6 +3080,31 @@
    "app/kria/research_selection.py",
    "Kept {kept} of {total} sourced facts.",
    "{total} kaynaklı bilginin {kept} tanesini tuttum."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Full-screen photo overlays need at least 0.3 seconds. I left the edit unchanged.",
+   "Tam ekran fotoğraf katmanları en az 0,3 saniye olmalı. Düzenlemeyi değiştirmedim."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I don't see any photo overlays. Do you mean the photos on the main timeline?",
+   "Fotoğraf katmanı göremiyorum. Ana zaman çizelgesindeki fotoğrafları mı kastediyorsun?"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "I don't see any photos on the main timeline. Do you mean photo overlays?",
+   "Ana zaman çizelgesinde fotoğraf göremiyorum. Fotoğraf katmanlarını mı kastediyorsun?"
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "Prepared the photo timing change.",
+   "Fotoğraf sürelerindeki değişikliği hazırladım."
+  ],
+  [
+   "app/agents/edit_copilot.py",
+   "That photo duration is outside the supported range. I left the edit unchanged.",
+   "Bu fotoğraf süresi desteklenen aralığın dışında. Düzenlemeyi değiştirmedim."
   ]
  ],
  "retired": [

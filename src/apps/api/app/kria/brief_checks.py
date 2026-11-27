@@ -14294,14 +14294,15 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
     photo_target = req.facts.get("photo_hold_s")
     overlay_target = req.facts.get("photo_overlay_hold_s")
     if photo_target is None and overlay_target is None and _has_duration_target(req):
-        from app.schemas.edit_proposal import recognize_mixed_media_timing  # noqa: PLC0415
+        from app.agents.edit_copilot import recognize_standalone_photo_hold  # noqa: PLC0415
 
-        timing = recognize_mixed_media_timing(req.description or "")
-        if timing and timing.image_hold_s == req.facts["duration_s"]:
-            if "overlay" in (req.description or "").casefold():
-                overlay_target = timing.image_hold_s
+        timing = recognize_standalone_photo_hold(req.description or "")
+        if timing is not None and timing[1] == req.facts["duration_s"]:
+            scope, seconds = timing
+            if scope == "overlay":
+                overlay_target = seconds
             else:
-                photo_target = timing.image_hold_s
+                photo_target = seconds
     target = overlay_target if overlay_target is not None else photo_target
     if isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0:
         durations = (
