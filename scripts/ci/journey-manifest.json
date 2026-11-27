@@ -4219,7 +4219,12 @@
         "KriaTests/IntroStylesOfferTests/testApplyReapplyAndUndoRestoreTheDocumentExactly",
         "KriaTests/IntroStylesOfferTests/testTheSaveLaneEqualsTheOptionRowsRaw",
         "KriaTests/IntroStylesOfferTests/testTurkishLooksDrawTheSameCapitalsAsTheServersPreview",
-        "KriaUITests/IntroStylesUITests/testOffersFittedLooksPickSavesAsEditableTitleRowsInEnglishAndTurkish"
+        "KriaUITests/IntroStylesUITests/testOffersFittedLooksPickSavesAsEditableTitleRowsInEnglishAndTurkish",
+        "KriaTests/IntroStylesOfferTests/testAMalformedCardDropsOnlyItsLookAndThePlainLooksStay",
+        "KriaTests/IntroStylesOfferTests/testACardLookAddsHerPhotosAfterHerOwnCardInOneUndoStep",
+        "KriaTests/IntroStylesOfferTests/testSaveSendsTheContractCardRowsAfterHersWithoutTheCaptionMark",
+        "KriaTests/NativeEditorSessionTests/testAnIntroCardPhotoComesFromHerVisualsAndOneThatCannotLoadIsSkipped",
+        "KriaUITests/IntroStylesUITests/testACardLookSavesHerPhotosAfterHerCardAndADeletedCardStaysGone"
       ],
       "paths": [
         "src/apps/ios/Kria/Core/IntroStyles.swift",

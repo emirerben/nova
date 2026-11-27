@@ -6,8 +6,9 @@ import Foundation
 ///
 /// The editor variant (the capability and the plain title rows) and the offers come from
 /// `Tests/Fixtures/KRI1633IntroStyles.json`, which the backend writes from the real offer builder and drift-checks. The
-/// block is picked by launch argument (`-intro-styles-tr` = the montage Turkish offer, `-intro-styles-narrated`;
-/// default = Talking English). The route answers the offer with `replace_ids` set to the ids of the rows it was SENT,
+/// block is picked by launch argument (`-intro-styles-tr` = the montage Turkish offer, `-intro-styles-narrated`,
+/// `-intro-styles-cards` = the Talking edit with her card and the card looks of KRI-1615; default = Talking English).
+/// The route answers the offer with `replace_ids` set to the ids of the rows it was SENT,
 /// like the server's. Every editor-commit body is appended, one JSON object per line, to
 /// `KRIA_EDITOR_INTRO_STYLES_CAPTURE` so the UI test (another process) can read what Save sent; the commit itself is
 /// answered by `NativeEditorUITestCommitTransport`.
@@ -21,6 +22,7 @@ enum IntroStylesUITestFixture {
     static var block: String {
         if args.contains("-ui-testing-editor-intro-styles-tr") { return "montage_tr" }
         if args.contains("-ui-testing-editor-intro-styles-narrated") { return "narrated_en" }
+        if args.contains("-ui-testing-editor-intro-styles-cards") { return "talking_cards" }
         return "talking_en"
     }
 
