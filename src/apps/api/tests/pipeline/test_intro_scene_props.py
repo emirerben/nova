@@ -19,6 +19,7 @@ Failure modes (intro_scene M19-M30) covered here:
 
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 import pytest
@@ -99,3 +100,220 @@ def test_a_scene_without_an_arrangement_dumps_and_declares_as_before():
     assert grid.model_dump(mode="json")["arrangement"] == "grid_2x2"
     assert mod.IntroScene.model_validate(grid.model_dump(mode="json")) == grid
     assert grid.moves() == plain.moves() == {}  # the title rows never declare the cards
+
+
+# --- the joint layout (Skia: the title is measured and placed for real) -----------------------
+
+skia = pytest.importorskip("skia")
+
+from app.pipeline.canvas import PORTRAIT  # noqa: E402
+from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC  # noqa: E402
+from app.pipeline.phone_subtitled_title import _measure_title_box  # noqa: E402
+from app.pipeline.phone_title_look import title_block_box  # noqa: E402
+from app.services import intro_props_layout as props  # noqa: E402
+from app.services.phone_card_layout import (  # noqa: E402
+    EDGE_INSET,
+    WATERMARK_BOX,
+    boxes_intersect,
+)
+
+# A speaker centred with room above and below (refs 3 and 5 on the taste board), her captions
+# measured under her.
+ROOMY_FACE = mod.NormalizedBox(0.32, 0.44, 0.68, 0.66)
+CAPTIONS = (0.81, 0.87)
+ROOMY = props.Stage((ROOMY_FACE,), CAPTIONS)
+PORTRAIT_PHOTOS = (0.75, 0.75, 0.75, 0.75)
+ASPECTS = {
+    "portrait": PORTRAIT_PHOTOS,
+    "square": (1.0, 1.0, 1.0, 1.0),
+    "landscape": (1.5, 1.5, 1.5, 1.5),
+    "mixed": (1.333, 0.75, 1.0, 1.0),
+}
+TITLES = {"en": TITLE_EN, "tr": TITLE_TR}
+
+
+def _title_rows(title: str, language: str, **over: Any) -> tuple[list[dict], str | None]:
+    out = mod.compile_intro_scene(
+        _scene(**over), title, canvas=PORTRAIT, timeline_duration_s=30.0, language=language
+    )
+    assert out.rows is not None, out.reason
+    return out.rows, out.position
+
+
+def _layout(arrangement, aspects, language="en", *, stage=ROOMY, title=None, **over):
+    rows, position = _title_rows(title or TITLES[language], language, **over)
+    return props.layout_intro_props(
+        arrangement, aspects, rows, stage=stage, canvas=PORTRAIT, position=position
+    )
+
+
+def _drawn_shape(box) -> float:
+    return box.width * PORTRAIT.width / (box.height * PORTRAIT.height)
+
+
+def _assert_drawable(layout, aspects, *, stage=ROOMY):
+    """The contract, checked from the requirement: on the frame, off the face, the caption row,
+    the watermark and each other, each the shape of its photo; the title clear of every card,
+    under the top row and over the bottom row."""
+    assert isinstance(layout, props.PropsLayout), layout
+    top, bottom = stage.caption_band or (CAPTION_BAND_TOP_FRAC, 1.0)
+    captions = mod.NormalizedBox(0.0, top, 1.0, bottom)  # the caption row spans the frame
+    boxes = [card.box for card in layout.cards]
+    assert [card.slot for card in layout.cards] == [f"prop_{n}" for n in range(1, len(boxes) + 1)]
+    for box, aspect in zip(boxes, aspects, strict=False):
+        assert EDGE_INSET - 1e-6 <= box.left and box.right <= 1 - EDGE_INSET + 1e-6, box
+        assert EDGE_INSET - 1e-6 <= box.top and box.bottom <= 1 - EDGE_INSET + 1e-6, box
+        assert not any(boxes_intersect(box, face) for face in stage.faces), box
+        assert not boxes_intersect(box, captions), box
+        assert not boxes_intersect(box, WATERMARK_BOX), box
+        assert _drawn_shape(box) == pytest.approx(aspect, rel=1e-3)
+    for a, b in itertools.combinations(boxes, 2):
+        assert not boxes_intersect(a, b), (a, b)
+    assert mod.placement_is_clean(layout.receipt), layout.receipt
+    lines = [_measure_title_box(dict(row), canvas=PORTRAIT) for row in layout.rows]
+    assert not any(boxes_intersect(line, box) for line in lines for box in boxes)
+    block = title_block_box(layout.rows, canvas=PORTRAIT)
+    face_top = min(face.top for face in stage.faces)
+    above = [box for box in boxes if box.bottom <= face_top]
+    below = [box for box in boxes if box.top >= max(face.bottom for face in stage.faces)]
+    assert above and below and len(above) + len(below) == len(boxes)
+    assert max(box.bottom for box in above) <= block.top
+    assert block.bottom <= min(box.top for box in below)
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("aspects", sorted(ASPECTS), ids=str)
+@pytest.mark.parametrize("arrangement", ["around_speaker", "grid_2x2"])
+def test_cards_and_title_sit_clear_of_each_other_and_of_her(arrangement, aspects, language):
+    photos = ASPECTS[aspects]
+    _assert_drawable(_layout(arrangement, photos, language, stack="script_over_serif"), photos)
+
+
+def test_slots_take_the_photos_in_the_order_issued():
+    photos = (0.75, 1.0, 1.333, 0.8)
+    grid = _layout("grid_2x2", photos, stack="script_over_serif")
+    _assert_drawable(grid, photos)
+    first, second, third, fourth = (card.box for card in grid.cards)
+    assert first.right <= second.left and third.right <= fourth.left  # left to right
+    assert first.bottom <= ROOMY_FACE.top <= ROOMY_FACE.bottom <= third.top  # top row first
+    assert [card.z for card in grid.cards] == [0, 1, 2, 3]
+
+
+def test_a_grid_is_two_rows_of_one_height_and_around_the_speaker_is_two_corners():
+    grid = _layout("grid_2x2", PORTRAIT_PHOTOS)
+    assert len({round(card.box.height, 6) for card in grid.cards}) == 1
+    columns = [(round(c.box.left, 4), round(c.box.right, 4)) for c in grid.cards]
+    assert columns[:2] == columns[2:]  # portrait photos: the columns sit over each other
+    around = _layout("around_speaker", (1.333, 0.75))
+    top, bottom = (card.box for card in around.cards)
+    assert top.left == pytest.approx(EDGE_INSET) and bottom.right == pytest.approx(1 - EDGE_INSET)
+
+
+def test_a_card_that_would_cover_the_watermark_moves_and_a_grid_stays_aligned():
+    # Landscape photos make the bottom row wide enough to reach the wordmark's corner.
+    photos = ASPECTS["landscape"]
+    layout = _layout("grid_2x2", photos)
+    _assert_drawable(layout, photos)
+    centres = [round(card.x_frac, 4) for card in layout.cards]
+    assert centres[:2] == centres[2:]
+
+
+def test_without_a_measured_caption_band_every_card_ends_above_the_caption_cap():
+    stage = props.Stage((mod.NormalizedBox(0.32, 0.36, 0.68, 0.48),), None)
+    for arrangement, photos in (("grid_2x2", (1.0,) * 4), ("around_speaker", (1.0, 1.0))):
+        layout = _layout(arrangement, photos, stage=stage)
+        _assert_drawable(layout, photos, stage=stage)
+        assert max(card.box.bottom for card in layout.cards) <= CAPTION_BAND_TOP_FRAC
+    assert isinstance(
+        _layout("grid_2x2", (1.0,) * 4, stage=props.Stage((ROOMY_FACE,))), props.PropsDecline
+    )
+
+
+def test_the_cards_take_the_room_the_title_leaves():
+    """M28: a longer (Turkish) title wraps; the cards move up and stay clear, or decline."""
+    short = _layout("grid_2x2", PORTRAIT_PHOTOS, "tr", stack="script_over_serif")
+    longer = _layout(
+        "grid_2x2",
+        PORTRAIT_PHOTOS,
+        "tr",
+        title="şehir rehberi: lizbon, birinci gün",
+        stack="script_over_serif",
+    )
+    _assert_drawable(short, PORTRAIT_PHOTOS)
+    _assert_drawable(longer, PORTRAIT_PHOTOS)
+    tall = title_block_box(longer.rows, canvas=PORTRAIT).height
+    assert tall > title_block_box(short.rows, canvas=PORTRAIT).height
+    assert longer.cards[0].box.bottom < short.cards[0].box.bottom
+    too_long = _layout(
+        "grid_2x2",
+        PORTRAIT_PHOTOS,
+        "tr",
+        title="şehir rehberi: lizbon, ilk gün, bütün gün yürüyoruz",
+        voices=VOICES + ["solid"] * 3,
+        stack="script_over_serif",
+    )
+    assert too_long == props.PropsDecline("no_room_for_cards")
+
+
+def test_a_close_speaker_leaves_no_room_for_cards():
+    """The typical close selfie: the title alone fills the band above her head."""
+    stage = props.Stage((mod.TYPICAL_FACE,), CAPTIONS)
+    assert _layout("grid_2x2", PORTRAIT_PHOTOS, stage=stage) == props.PropsDecline(
+        "no_room_for_cards"
+    )
+
+
+def test_the_title_keeps_the_size_it_has_without_the_cards():
+    rows, position = _title_rows(TITLE_EN, "en", stack="script_over_serif")
+    alone, _receipt = mod.place_on_stage(
+        rows, position, PORTRAIT, faces=ROOMY.faces, avoid=[mod.NormalizedBox(0, *CAPTIONS, 1)]
+    )
+    layout = _layout("grid_2x2", PORTRAIT_PHOTOS, stack="script_over_serif")
+    assert [row["size_px"] for row in layout.rows] == [row["size_px"] for row in alone]
+
+
+@pytest.mark.parametrize(
+    ("fault", "reason"),
+    [
+        ("onto_the_cards", "title_touches_a_card"),
+        ("under_the_bottom_row", "title_not_between_the_cards"),
+        ("shrunk", "cards_shrink_the_title"),
+        ("unclean", "title_unclean_with_cards"),
+    ],
+)
+def test_a_title_placement_that_breaks_a_rule_is_declined(monkeypatch, fault, reason):
+    real = mod.place_on_stage
+    calls = []
+
+    def place(rows, position, canvas, *, faces, avoid):
+        placed, receipt = real(rows, position, canvas, faces=faces, avoid=avoid)
+        calls.append(1)
+        if len(calls) == 1:
+            return placed, receipt
+        if fault == "onto_the_cards":
+            placed = [{**row, "y_frac": 0.19} for row in placed]
+        elif fault == "under_the_bottom_row":
+            placed = [{**row, "y_frac": 0.9} for row in placed]
+        elif fault == "shrunk":
+            receipt = {**receipt, "scale": 0.5}
+        else:
+            receipt = {**receipt, "status": "best_effort"}
+        return placed, receipt
+
+    monkeypatch.setattr(props, "place_on_stage", place)
+    assert _layout("grid_2x2", PORTRAIT_PHOTOS) == props.PropsDecline(reason)
+
+
+@pytest.mark.parametrize(
+    ("arrangement", "aspects", "stage", "reason"),
+    [
+        ("grid_2x2", (1.0, 1.0, 1.0), ROOMY, "too_few_photos"),
+        ("grid_2x2", (1.0, 1.0, 0.0, 1.0), ROOMY, "too_few_photos"),
+        ("none", (1.0, 1.0), ROOMY, "no_arrangement"),
+        # A 9:16 photo as tall as the band under her face is narrower than a card is drawn.
+        ("grid_2x2", (1.0, 1.0, 1.0, 0.5625), ROOMY, "no_room_for_cards"),
+        ("around_speaker", (1.0, 1.0), props.Stage(()), "no_face"),
+    ],
+)
+def test_what_the_layout_cannot_use_is_declined(arrangement, aspects, stage, reason):
+    assert _layout(arrangement, aspects, stage=stage) == props.PropsDecline(reason)

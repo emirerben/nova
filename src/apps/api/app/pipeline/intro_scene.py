@@ -140,6 +140,7 @@ title's time. Guards: tests/pipeline/test_intro_scene_props.py and the props cas
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -561,24 +562,43 @@ def overlay_for_row(row: dict[str, Any]) -> dict[str, Any]:
 def place_on_typical_face(
     rows: list[dict[str, Any]], position: str | None, canvas: Any
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    return place_on_stage(
+        rows,
+        position,
+        canvas,
+        faces=[__getattr__("TYPICAL_FACE")],
+        avoid=[__getattr__("TYPICAL_CAPTIONS")],
+    )
+
+
+def place_on_stage(
+    rows: list[dict[str, Any]],
+    position: str | None,
+    canvas: Any,
+    *,
+    faces: Sequence[NormalizedBox],
+    avoid: Sequence[NormalizedBox],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """`place_title_look` with fixed face boxes (canvas space) standing in for sampled ones."""
     from app.pipeline.phone_title_look import place_title_look  # noqa: PLC0415
     from app.pipeline.render_geometry import ProtectedRegion  # noqa: PLC0415
 
-    region = ProtectedRegion(0.0, 1e6, __getattr__("TYPICAL_FACE"), kind="face")
+    regions = [ProtectedRegion(0.0, 1e6, face, kind="face") for face in faces]
 
     def sample(_path, anchors, **_kwargs):  # noqa: ANN001, ANN202 - a fixed stand-in speaker
-        return [region], {"attempted": len(anchors), "decoded": 1, "detected": 1}
+        return regions, {"attempted": len(anchors), "decoded": 1, "detected": len(regions)}
 
     return place_title_look(
         rows,
-        clip_path="typical-speaker.mp4",
+        clip_path="stand-in-speaker.mp4",
         keep_segments=[(0.0, 1e6)],
         display_width=canvas.width,
         display_height=canvas.height,
         canvas=canvas,
         sample=sample,
         position=position,
-        avoid=[__getattr__("TYPICAL_CAPTIONS")],
+        avoid=list(avoid),
+        protect_all_faces=len(regions) > 1,
     )
 
 
