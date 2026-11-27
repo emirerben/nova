@@ -541,7 +541,7 @@ extension KriaAPIClient {
 
     func submitTurn(threadID: UUID, request: SubmitTurnRequest) async throws -> TurnAccepted {
         // A conformer that only knows the field-by-field overloads would drop the order and report success.
-        guard request.clipOrderOps == nil else { throw APIError.unsupported }
+        guard request.clipOrderOps == nil, request.researchSelection == nil else { throw APIError.unsupported }
         return try await submitTurn(threadID: threadID, message: request.message, expectedRevision: request.expectedThreadRevision, clientEventID: request.clientEventID, editorState: request.editorState, clipSelection: request.clipSelection, songOrder: request.songOrder, choiceSelection: request.choiceSelection, songRange: request.songRange, suggestion: request.suggestion, protectedRegion: request.protectedRegion, momentOrder: request.momentOrder)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
@@ -2678,9 +2678,11 @@ struct SubmitTurnRequest: Encodable, Sendable {
     let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil; var momentOrder: MomentOrderAnswer? = nil
     /// KRI-1591: the creator's whole clip order from the order card. A turn that carries it makes no model call.
     var clipOrderOps: ClipOrderOps? = nil
+    /// CA-6: the sourced facts the creator kept on a research draft. A turn that carries it makes no model call.
+    var researchSelection: ResearchSelectionAnswer? = nil
     var frozenBody: Data? = nil
     var outcomeContext: RequestOutcomeContext? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order"; case clipOrderOps = "clip_order_ops"; case outcomeContext = "outcome_context" }
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order"; case clipOrderOps = "clip_order_ops"; case researchSelection = "research_selection"; case outcomeContext = "outcome_context" }
     func encode(to encoder: Encoder) throws {
         if let frozenBody {
             try JSONDecoder().decode(JSONValue.self, from: frozenBody).encode(to: encoder)
@@ -2698,6 +2700,7 @@ struct SubmitTurnRequest: Encodable, Sendable {
         try c.encodeIfPresent(protectedRegion, forKey: .protectedRegion)
         try c.encodeIfPresent(momentOrder, forKey: .momentOrder)
         try c.encodeIfPresent(clipOrderOps, forKey: .clipOrderOps)
+        try c.encodeIfPresent(researchSelection, forKey: .researchSelection)
         try c.encodeIfPresent(outcomeContext, forKey: .outcomeContext)
     }
 }

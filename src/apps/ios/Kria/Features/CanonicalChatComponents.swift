@@ -788,6 +788,8 @@ struct DirectionStage: View {
     /// KRI-881: the draft's sourced wording and sources (`draft_applied.research_preview`). Nil (no research, an
     /// older server, or an unreadable payload) leaves the card exactly as it was.
     var researchPreview: ResearchPreview? = nil
+    /// CA-6: the pick of sourced facts above this card is not answered yet, so no approve action is offered.
+    var awaitsResearchChoice = false
     var replyLanguage: ClipAnswerLanguage = .english
     let isBusy: Bool
     var responseStartedAt: Date? = nil
@@ -838,7 +840,7 @@ struct DirectionStage: View {
                 VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)
             }
 
-            cleanupActions
+            if !awaitsResearchChoice { cleanupActions }
 
             Button(approval.retryOfExecutionID == nil ? String(localized: "Change direction") : String(localized: "Cancel retry")) { decide("deny", nil, nil) }
                 .buttonStyle(CanonicalSecondaryButtonStyle())

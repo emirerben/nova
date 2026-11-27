@@ -69,6 +69,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// turn (KRI-1591). Cards come from the thread's own events; this only says whether a confirm will be taken.
     /// Nil (older server) = unknown, treated as available; an explicit false (kill switch) = a read-only strip.
     var clipOrderCards: Bool? = nil
+    /// CA-5: the server offers the pick of sourced facts on a research draft.
+    var researchSelections: Bool? = nil
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
@@ -127,6 +129,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         return format.runsAsMontage || format == .talkingToCamera
     }
     var choiceQuestionsEnabled: Bool { choiceQuestions == true }
+    var researchSelectionsEnabled: Bool { researchSelections == true }
     var voiceoverScriptCardsEnabled: Bool { voiceoverScriptCards == true }
     var wrongFactFeedbackEnabled: Bool { wrongFactFeedback == true }
     var ideaExampleFeedbackEnabled: Bool { ideaExampleFeedback == true }
@@ -166,6 +169,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case protectedRegionMarks = "protected_region_marks"
         case momentOrderQuestions = "moment_order_questions"
         case clipOrderCards = "clip_order_cards"
+        case researchSelections = "research_selections"
         case choiceQuestions = "choice_questions"
         case voiceoverScriptCards = "voiceover_script_cards"
         case wrongFactFeedback = "wrong_fact_feedback", ideaExampleFeedback = "idea_example_feedback"
@@ -216,6 +220,7 @@ extension CreationCapabilities {
         protectedRegionMarks = try container.decodeIfPresent(Bool.self, forKey: .protectedRegionMarks)
         momentOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .momentOrderQuestions)
         clipOrderCards = try? container.decodeIfPresent(Bool.self, forKey: .clipOrderCards)
+        researchSelections = try? container.decodeIfPresent(Bool.self, forKey: .researchSelections)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
         wrongFactFeedback = try container.decodeIfPresent(Bool.self, forKey: .wrongFactFeedback)

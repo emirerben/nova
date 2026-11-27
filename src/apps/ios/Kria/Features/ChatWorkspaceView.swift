@@ -538,6 +538,7 @@ private struct CreationWorkspaceView: View {
     @State private var derived = ChatDerivedMemo()
     /// KRI-1591: the clip-order strip's optimistic order, its one-at-a-time send and its sheet.
     @StateObject private var clipOrder = ClipOrderCoordinator()
+    @StateObject private var researchSelection = ResearchSelectionCoordinator()
     @State private var hasHistoryBaseline = false
     /// False only while the transcript on screen came from the on-disk cache and the server has not answered yet:
     /// the question cards stay read-only, because a cached "active" question may already be answered elsewhere.
@@ -943,6 +944,7 @@ private struct CreationWorkspaceView: View {
         if capabilities?.protectedRegionMarks == true { kinds.insert(.region) }
         if capabilities?.momentOrderQuestions == true { kinds.insert(.moment) }
         if capabilities?.choiceQuestionsEnabled == true { kinds.insert(.choice) }
+        if capabilities?.researchSelectionsEnabled == true { kinds.insert(.research) }
         return kinds
     }
 
@@ -954,9 +956,17 @@ private struct CreationWorkspaceView: View {
         hasher.combine(derived.timelineKey)
         hasher.combine(kinds)
         hasher.combine(closedSongRangeQuestions)
+        let research = kinds.contains(.research) ? researchAsk : nil
+        hasher.combine(research?.question.selectionID)
+        hasher.combine(research.map { researchSelection.answered[$0.question.selectionID] != nil })
         let key = hasher.finalize()
         if derived.timelineKey != nil, derived.askKey == key { return derived.ask }
-        let folded = AskFold.fold(messages.map { $0.askEntry(enabled: kinds) }, closed: closedSongRangeQuestions)
+        var entries = messages.map { $0.askEntry(enabled: kinds) }
+        if let research {
+            entries += research.question.foldEntries(proposalID: research.event.id,
+                                                      answeredLocally: researchSelection.answered[research.question.selectionID] != nil)
+        }
+        let folded = AskFold.fold(entries, closed: closedSongRangeQuestions)
         if derived.timelineKey != nil { derived.askKey = key; derived.ask = folded }
         return folded
     }
@@ -996,6 +1006,60 @@ private struct CreationWorkspaceView: View {
         guard let card = thread.newest, let anchor = thread.anchorMessageID,
               suppressedTimelineMessages.contains(anchor) else { return nil }
         return currentClipOrderStrip(card)
+    }
+
+    /// CA-6: the research draft's pick of sourced facts. The draft's message is not drawn while its approval card is up,
+    /// so the ask is read from the proposal event itself, once, for the draft the approval is about.
+    private var researchAsk: (event: ThreadEvent, question: ResearchSelectionQuestion)? {
+        guard capabilities?.researchSelectionsEnabled == true, workspaceStage == .direction,
+              approval?.retryOfExecutionID == nil, let event = activeProposalEvent,
+              let question = ResearchSelectionQuestion(payload: event.payload) else { return nil }
+        return (event, question)
+    }
+
+    private func researchPhase(_ ask: (event: ThreadEvent, question: ResearchSelectionQuestion)) -> AskPhase<ResearchSelectionLabel.Receipt>? {
+        let id = ask.question.selectionID
+        if case .sending(id) = researchSelection.status { return .submitting(ResearchSelectionLabel.waived) }
+        let failure: String? = if case .failed(id, let text) = researchSelection.status { text } else { nil }
+        return askFold.phase(ask.event.id, id, answer: {
+            researchSelection.answered[id].map { $0.kept == 0 ? ResearchSelectionLabel.waived : ResearchSelectionLabel.answered(kept: $0.kept, total: $0.total) }
+        }, failure: failure, isStale: researchSelection.status == .stale)
+    }
+
+    /// True while the research ask is not answered: the approval card does not offer its approve action yet.
+    private var awaitsResearchChoice: Bool {
+        researchAsk.map { ResearchSelectionQuestion.gatesApproval(phase: researchPhase($0)) } ?? false
+    }
+
+    @ViewBuilder private var researchSelectionStageCard: some View {
+        if let ask = researchAsk {
+            if let phase = researchPhase(ask) {
+                ResearchSelectionCard(question: ask.question, phase: phase, isBusy: isSending || isActing || isThinking) { kept in
+                    submitResearchSelection(ask.question, kept: kept)
+                }
+                .id(ask.question.selectionID)
+            }
+        } else if workspaceStage == .direction, approval?.retryOfExecutionID == nil, let event = activeProposalEvent,
+                  let receipt = ResearchSelectionReceipt(payload: event.payload)?.summary(in: events) {
+            KriaYouChose(text: receipt.text, caption: receipt.caption)
+                .accessibilityIdentifier("research-selection-receipt")
+        }
+    }
+
+    /// One `research_selection` turn. Like the clip order it is not a chat send: no bubble, no thinking row, no draft
+    /// receipt. The server saves the narrowed draft and its new approval inside the request, so the events are read back at once.
+    private func submitResearchSelection(_ question: ResearchSelectionQuestion, kept: [String]) {
+        let api = model.api, threadID = project.id
+        Task {
+            await researchSelection.submit(question: question, kept: kept, transport: .init(
+                revision: { threadRevision },
+                submit: { try await api.submitTurn(threadID: threadID, request: $0) },
+                accepted: { accepted in
+                    threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
+                    _ = try? await refreshDelta()
+                },
+                refresh: { _ = try? await refreshDelta() }))
+        }
     }
 
     /// One `clip_order_ops` turn with the whole order. It is not a chat send: no bubble, no thinking row, no draft
@@ -1578,6 +1642,7 @@ private struct CreationWorkspaceView: View {
                 ClipOrderStripCard(clipOrderStageStrip, media: CreationAttachedMedia.parse(threadState), projectID: project.id)
                     .id("clip-order-stage-strip")
             }
+            researchSelectionStageCard
             stageContent.id(entry.id)
         case .pendingUpload(let recordID):
             KriaMediaRow(name: uploadRecords.first { $0.id == recordID }.map { BackgroundUploadCoordinator.displayFilename($0.filename) }
@@ -2348,6 +2413,9 @@ private struct CreationWorkspaceView: View {
         .onChange(of: clipOrderThread.newest?.eventID) { _, id in
             if let id { clipOrder.serverCardChanged(to: id) }
         }
+        .onChange(of: researchAsk?.question.selectionID) { _, id in
+            if let id { researchSelection.cardChanged(to: id) }
+        }
         .fullScreenCover(isPresented: $showsResult) {
             // Chat <-> Editor is a switch, not a page rising from the bottom: the
             // editor cross-dissolves over the chat (see `WorkspaceCrossfade`).
@@ -2548,7 +2616,8 @@ private struct CreationWorkspaceView: View {
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     speechCheckTimedOut: speechCheckTimedOut,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
-                    researchPreview: ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
+                    researchPreview: awaitsResearchChoice ? nil : ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
+                    awaitsResearchChoice: awaitsResearchChoice,
                     replyLanguage: ClipAnswerLanguage(threadState: threadState),
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },

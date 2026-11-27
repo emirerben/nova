@@ -375,13 +375,15 @@ struct KriaAnsweredReceipt: View {
     }
 }
 
-/// What the creator chose (Paper S2.08): a small "You chose" caption over a right-aligned ink capsule.
+/// What the creator chose (Paper S2.08): a small "You chose" caption over a right-aligned ink capsule. A card whose
+/// answer is not a choice (what was kept) names its own caption.
 struct KriaYouChose: View {
     let text: String
+    var caption: String?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text("You chose").kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
+            Text(caption ?? String(localized: "You chose")).kriaType(.caption).foregroundStyle(KriaColor.mutedInk)
             Text(text).kriaType(.button).foregroundStyle(KriaColor.paper)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -390,7 +392,7 @@ struct KriaYouChose: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("You chose: \(text)")
+        .accessibilityLabel(caption.map { Text(verbatim: "\($0) \(text)") } ?? Text("You chose: \(text)"))
     }
 }
 
