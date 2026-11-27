@@ -19,6 +19,7 @@ struct NativeEditorView: View {
     @StateObject private var panelDrafts = NativeEditorPanelDrafts()
     @StateObject private var panelLifecycle = NativeEditorPanelLifecycle()
     @State private var panel: NativeEditorPanel?
+    @State private var showsClipOrder = false
     /// A timeline gap tapped: the Split tool opens its picker aimed at that panel, then clears this.
     @State private var splitAddRequest: NativeSplitAddRequest?
     /// KRI-240: the caption line open in the caption editor (plan 026 D27: the
@@ -238,6 +239,7 @@ struct NativeEditorView: View {
                     .presentationDragIndicator(.visible)
             }
             .sheet(item: $emptyAddClip) { NativeEditorAddClipSheet(session: session, launch: $0) }
+            .sheet(isPresented: $showsClipOrder) { NativeEditorClipOrderSheet(session: session) }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
@@ -744,7 +746,14 @@ struct NativeEditorView: View {
                                     .transition(panelTransition)
                             }
                             if !keyboardVisible && !lineEditing {
-                                NativeEditorToolRail(selected: panel?.tool, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, showsSplit: session.canEditSplitScreen, onSelect: selectTool)
+                                NativeEditorToolRail(
+                                    selected: panel?.tool, connected: true,
+                                    showsDraw: session.canAddDrawing,
+                                    showsBackground: session.canEditSpeakerBackground,
+                                    showsSplit: session.canEditSplitScreen,
+                                    showsReorder: session.canReorderClips && session.clipOrderItems.count > 1,
+                                    onSelect: selectTool
+                                )
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
@@ -902,6 +911,9 @@ struct NativeEditorView: View {
         case .visuals:
             changePanel(to: .visuals)
             session.select(nil)
+        case .reorder:
+            changePanel(to: nil)
+            showsClipOrder = true
         case .background: changePanel(to: .background)
         case .sounds: changePanel(to: .sounds)
         case .split: changePanel(to: .split)

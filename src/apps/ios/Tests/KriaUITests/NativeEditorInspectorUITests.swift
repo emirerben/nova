@@ -878,11 +878,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
     func testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt() {
         let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor"]
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals"]
         app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "390"
         app.launch()
         XCTAssertTrue(app.buttons["native-editor-tool-text"].waitForExistence(timeout: 20))
         XCTAssertEqual(app.scrollViews.containing(.button, identifier: "native-editor-tool-text").count, 0, "a rail that fits must not be a scroll view")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["native-editor-tool-reorder"].exists, "A single included clip cannot be reordered")
+        XCTAssertFalse(app.buttons["native-editor-reorder-clips"].exists)
     }
 
     func testVisiblePanelHandleExpandsAndRestoresEveryTool() {
@@ -1301,11 +1305,18 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-reorder-clips"]
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
-        let open = app.buttons["native-editor-reorder-clips"]
-        XCTAssertTrue(open.waitForExistence(timeout: 10))
+        let open = assertReorderToolbar(app)
+        let toolbarCapture = XCTAttachment(screenshot: app.screenshot())
+        toolbarCapture.name = "reorder-bottom-toolbar"
+        toolbarCapture.lifetime = .keepAlways
+        add(toolbarCapture)
         open.tap()
         let sheet = app.descendants(matching: .any)["native-editor-reorder-list"].firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let sheetCapture = XCTAttachment(screenshot: app.screenshot())
+        sheetCapture.name = "reorder-bottom-toolbar-sheet"
+        sheetCapture.lifetime = .keepAlways
+        add(sheetCapture)
         let before = sheet.value as? String ?? ""
         let ids = before.split(separator: ",").map(String.init)
         XCTAssertEqual(ids.count, 3)
@@ -1316,6 +1327,43 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(clipDurations(app), ["1.400", "1.000", "1.200"])
         app.buttons["native-editor-undo"].tap()
         XCTAssertEqual(clipDurations(app), ["1.000", "1.400", "1.200"])
+    }
+
+    func testReorderToolbarFitsAllFiveToolsInNarrowEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-reorder-clips"]
+        app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "320"
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        _ = assertReorderToolbar(app)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "reorder-bottom-toolbar-narrow"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    @discardableResult
+    private func assertReorderToolbar(_ app: XCUIApplication) -> XCUIElement {
+        let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        XCTAssertTrue(rail.waitForExistence(timeout: 10))
+        let tools = ["text", "captions", "visuals", "reorder", "sounds"].map {
+            app.buttons["native-editor-tool-" + $0]
+        }
+        let reorder = tools[3]
+        XCTAssertTrue(reorder.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "native-editor-tool-reorder").count, 1)
+        XCTAssertFalse(app.buttons["native-editor-reorder-clips"].exists)
+        XCTAssertEqual(reorder.label, "Reorder")
+        for tool in tools {
+            XCTAssertTrue(tool.isHittable, "All five tools must be immediately reachable")
+            XCTAssertGreaterThanOrEqual(tool.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(tool.frame.minX, rail.frame.minX - 1)
+            XCTAssertLessThanOrEqual(tool.frame.maxX, rail.frame.maxX + 1)
+            XCTAssertEqual(tool.frame.midY, rail.frame.midY, accuracy: 4)
+        }
+        XCTAssertEqual(tools.map { $0.frame.midX }, tools.map { $0.frame.midX }.sorted())
+        XCTAssertEqual(app.scrollViews.containing(.button, identifier: "native-editor-tool-reorder").count, 0)
+        return reorder
     }
 
     func testQuickSwipeAcrossAClipSeeksInsteadOfReordering() {

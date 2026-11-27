@@ -2041,7 +2041,6 @@ struct NativeMiniStrip: View {
     /// jumping straight to the add-clip sheet, so Visual/Text are reachable
     /// from the same discoverable entry point video already had.
     @State private var isPresentingAddMenu = false
-    @State private var showsClipOrder = false
     /// Selecting Video/Visual/Text (`NativeMiniStrip`'s owner routes these).
     var onSelectVisual: () -> Void = {}
     var onSelectText: () -> Void = {}
@@ -2256,7 +2255,6 @@ struct NativeMiniStrip: View {
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $isPresentingAddClip) { NativeEditorAddClipSheet(session: session) }
-        .sheet(isPresented: $showsClipOrder) { NativeEditorClipOrderSheet(session: session) }
 
         // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
         // Suppressed while the sheet is open, where it shows the same error inline.
@@ -2318,18 +2316,6 @@ struct NativeMiniStrip: View {
                 .accessibilityIdentifier("native-editor-duration")
 
             Spacer(minLength: 8)
-            if session.canReorderClips && session.clipOrderItems.count > 1 {
-                Button { showsClipOrder = true } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(KriaColor.ink)
-                .background(KriaColor.softZinc, in: Circle())
-                .accessibilityLabel("Reorder clips")
-                .accessibilityIdentifier("native-editor-reorder-clips")
-            }
             Button {
                 withAnimation(reduceMotion ? nil : quickAddSpring) { isPresentingAddMenu.toggle() }
             } label: {

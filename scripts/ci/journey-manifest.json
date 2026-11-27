@@ -8,6 +8,7 @@
       "xctests": [
         "KriaTests/NativeSplitScreenRowsTests/testSerialReorderMovesClipLocalLanesButKeepsSongAndSpanningOverlay",
         "KriaUITests/NativeEditorInspectorUITests/testReorderSheetAppliesTheWholeOrderInOneUndoStep",
+        "KriaUITests/NativeEditorInspectorUITests/testReorderToolbarFitsAllFiveToolsInNarrowEditor",
         "KriaTests/RenderedOriginalClockTests/testMixedMontagePhotoQuickCutReordersReopensAndExportsSixFrames"
       ],
       "paths": [
@@ -22,6 +23,9 @@
         "src/apps/ios/Kria/Core/NativeSplitTimelineRebase.swift",
         "src/apps/ios/Kria/Features/ClipOrderCardView.swift",
         "src/apps/ios/Kria/Features/CreationAttachments.swift",
+        "src/apps/ios/Kria/Features/NativeEditorComponents.swift",
+        "src/apps/ios/Kria/Features/NativeEditorIsland.swift",
+        "src/apps/ios/Kria/Features/NativeEditorView.swift",
         "src/apps/ios/Kria/Features/NativeEditorMediaViews.swift",
         "src/apps/ios/Kria/Features/NativeEditorSession.swift",
         "src/apps/ios/Kria/Resources/Localizable.xcstrings",

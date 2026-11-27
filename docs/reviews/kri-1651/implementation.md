@@ -34,3 +34,9 @@ The first hosted run, 46023454235 (head 5417af7d33), found stale prompt/version,
 - The native order method maps to the existing reorder agent capability; thumbnail lookup is non-editing. A shared bilingual standalone selector replaces the folded-text overlay-membership check; four legacy receipt cases prove that an exact duration in the wrong lane cannot satisfy the request, in both English and Turkish.
 - The selector's 23 failures were a cascade from one outdated shared edit-prompt mapping. The expectation now includes the photo journey as well as Turkish chat. An explicit photo-regression-path case was added. All 96 selector self-tests passed.
 - Full offline structural replay: 4,594 passed, 74 skipped, 2 expected failures. No paid or live provider evaluation. No Swift source or native rendering contract changed in this follow-up; the six-photo-frame/no-gap artifact remains valid.
+
+## Reorder tool placement
+
+The creator chose the permanent bottom editor rail instead of the playback row. The existing rail now offers Text, Captions, Visuals, Reorder, and Sounds for eligible montages. The Reorder item opens the same numbered sheet; there is no transport duplicate. The eligibility check still requires reorder capability and two included clip occurrences. The five core tools fit the narrow viewport without scrolling; optional-tool overflow retains its existing layout.
+
+The updated native UI test failed against the previous toolbar placement. On the revised editor, all 11 focused native tests passed: the actual bottom toolbar tap and confirmation/Undo, the 320-point viewport, the one-clip gate, both optional-tool overflow cases, connected panels, layout metrics, clip-local lanes, and the native six-frame export. Screenshots were captured before tapping the toolbar and after opening the sheet using the account-free fixture; the images remain local rather than being committed.
