@@ -77,15 +77,22 @@ jobs:
             echo "Skipping: a newer or identical commit was already uploaded."
             exit 0
           fi
+          # The release inputs are defined once, in scripts/ios/release_inputs.py:
+          # ios.yml's main-push selector reads the same list to decide whether a
+          # push starts the Mac lane that dispatches this workflow (KRI-1547).
+          # Like the provenance helper, read it from the policy revision.
+          git show "$GITHUB_SHA:scripts/ios/release_inputs.py" > "$RUNNER_TEMP/testflight-release-inputs.py"
+          release_list="$(python3 "$RUNNER_TEMP/testflight-release-inputs.py")"
+          release_inputs=()
+          while IFS= read -r path; do
+            if [ -n "$path" ]; then release_inputs+=("$path"); fi
+          done <<< "$release_list"
+          if [ "${#release_inputs[@]}" -eq 0 ]; then
+            echo "::error::scripts/ios/release_inputs.py listed no release inputs"
+            exit 1
+          fi
           echo "Comparing release inputs since ${base}"
-          if git diff --quiet "$base" "$HEAD_SHA" -- \
-            src/apps/ios \
-            scripts/ios \
-            .github/workflows/ios.yml \
-            .github/workflows/testflight.yml \
-            .claude/worktrees \
-            src/apps/api/app/config.py \
-            src/apps/api/app/services/mobile_auth.py; then
+          if git diff --quiet "$base" "$HEAD_SHA" -- "${release_inputs[@]}"; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "Skipping: no iOS release input changed since the last upload."
           else

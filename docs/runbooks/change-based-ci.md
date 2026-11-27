@@ -1,7 +1,10 @@
 # Change-based CI
 
 PRs targeting `main` or `dev` select whole suites from their merge-base diff.
-Every push to `main` runs full API coverage and an iOS build/unit/smoke release check.
+Every push to `main` runs full API coverage. Its iOS build/unit/smoke release
+check, and the TestFlight dispatch that follows it, start only when an iPhone or
+release input changed since the last green push run (see "When a push to `main`
+gets a Mac").
 PRs run the affected iOS build/unit phase and a focused UI subset when selected;
 the exhaustive iOS UI phase runs nightly and on manual dispatch. Web application
 tests and lint are retired; public web assets bundled into iOS remain covered
@@ -31,7 +34,7 @@ Other specialized workflows and deployment triggers retain their existing rules.
 
 The `ios_ui` output identifies UI-affecting changes and always implies
 `ios=true`; PRs run smoke and the affected UI group or changed test methods.
-When selection is broad, PRs run the smoke tripwire. Main pushes run one build/unit/smoke lane; the complete UI suite runs nightly
+When selection is broad, PRs run the smoke tripwire. Main pushes run one build/unit/smoke lane when an iPhone or release input changed; the complete UI suite runs nightly
 and on manual dispatch. See the
 [iOS runbook](ios-development.md#change-based-ci) for phase commands and cache reuse.
 
@@ -249,7 +252,7 @@ fixture bundle is downloaded and fails the leg unless `journey-offline` (and
 `journey-library`, when selected) succeeded, so the Linux journeys are no
 longer in front of the Mac queue. The stable `build-and-test` gate requires every leg and the contract
 job to pass when iOS is selected. Main uses one iOS build/unit/smoke lane and dispatches TestFlight after those checks
-pass. Full iOS regression runs nightly or on manual dispatch; full native
+pass, on pushes that changed an iPhone or release input (KRI-1547). Full iOS regression runs nightly or on manual dispatch; full native
 journeys run nightly or on manual CI dispatch. Neither regression path
 dispatches TestFlight.
 
@@ -566,7 +569,9 @@ What still runs for such a PR, unchanged:
 - The `journey` gate recomputes Mac selection from `ios_native`, so a Mac that
   is skipped when an input changed, or runs when none did, fails the gate.
 
-Nightly and manual `CI` runs and every push to `main` are not affected.
+Nightly and manual `CI` runs are not affected. A push to `main` has its own rule
+for the `iOS` workflow's Mac lane (see "When a push to `main` gets a Mac");
+Linux push CI is not affected.
 
 **Rollback:** set the repository variable `CI_MAC_SELECTION` to `full`
 (Settings, Variables, or `gh variable set CI_MAC_SELECTION --body full`). On
@@ -660,6 +665,84 @@ are the 26 above plus 7, each read:
 - 1 is `NativeEditorPlaybackAdmissionUITests`: an in-app playback fixture that
   never admitted its first frame on that runner. The same test passed on ten
   other Mac jobs within four hours, including the same branch.
+
+## When a push to `main` gets a Mac (KRI-1547)
+
+The `iOS` workflow's push lane (build, every unit test, the UI smoke tests, then
+the TestFlight dispatch) starts only when a path either side reads changed since
+the last green push run of `ios.yml` on `main`. It took about 37 Mac-minutes on
+every merge, and TestFlight then spent about 4 more deciding there was nothing
+to release on a third of its runs.
+
+- **Paths:** `main_push_input` in `scripts/ci/select-tests.py`, the union of
+  the PR rule's iPhone inputs (`native_input`: `IOS_NATIVE_INPUTS`, the fixture
+  files Swift tests open, CI policy and every path the selector cannot
+  classify) and TestFlight's own release inputs,
+  `scripts/ios/release_inputs.py`. TestFlight reads that same file to decide
+  whether to upload, so the two lists cannot drift. A journey-manifest edit
+  counts when a changed row is native; release-only version bumps never count.
+- **Baseline:** the commit of the newest completed, green push run of `ios.yml`
+  on `main` that is an ancestor of the pushed commit, not the parent commit. A
+  change whose own run was cancelled (a newer push replaced it while pending) or
+  failed is still in the diff of the next push, so it is never stranded. A green
+  run that skipped its Mac is a valid baseline: nothing the Mac reads changed
+  since the green run before it.
+- **TestFlight retry:** before this rule every push re-dispatched TestFlight,
+  so a failed release was retried by the next merge. Now, when the newest
+  TestFlight run on `main` ended without success, the push runs the Mac lane
+  (and so dispatches again). A TestFlight run still in progress is not a reason.
+- **Fail closed:** no green ancestor run, any API or git error, no `gh`, no
+  repository name or commit: the Mac runs. Only an explicit
+  `ios_native=false` drops the Mac leg from `ios.yml`'s matrix.
+- **Unchanged:** every suite is still selected; the Linux contract leg of
+  `ios.yml` and all of `ci.yml` run on every push. Only `ios.yml` asks for the
+  rule (`push_native_selection: true` on its `changes` job, which may read
+  Actions); `ci.yml`'s push outputs are byte-identical to before. Nightly and
+  manual runs always start the Mac.
+- **Summary line:** "iPhone inputs: unchanged since <commit> (iOS push run
+  <id>): no Mac, ..." or the reason the Mac runs.
+
+**What it costs:** the nightly becomes the only full native run on unchanged
+inputs. A pull request that changes a file the iPhone build reads but the input
+list does not know (the KRI-1534 gap) now also gets no Mac on `main`; the next
+nightly or the next iPhone change catches it, not the merge. This is why the rule
+waits for three green nightlies in a row before it ships.
+
+**Rollback:** `gh variable set CI_MAC_SELECTION --body full`, the same switch as
+the PR rule. Every push starts the Mac again from the next run; no code change.
+
+**Replay** (2026-11-06 to 11-22, run list and local git only, no paid call; selector as of 2026-11-23, after KRI-1551 classified more root paths):
+
+| | Pushes | No Mac under the rule |
+| --- | --- | --- |
+| Each push compared with its own parent (upper bound) | 358 | 123 (34%) |
+| Real queue: each run compared with the last green run before it | 352 | 30 (9%) |
+
+The real figure lies between the two. Today a push waits behind a ~40-minute
+Mac run and pending runs are replaced, so one run covers 2 to 13 commits and
+almost always contains an iPhone change. Under the rule a run with no Mac ends
+in minutes, so runs cover fewer commits. Most ranges that need a Mac touch
+`src/apps/ios/` (239 of 304 in the first replay); after that `src/apps/api/app/config.py` (131, a
+TestFlight release input that changes with every new flag), a native journey
+row (103) and unclassified root paths such as `.gitignore` and `fly.toml`.
+In the same period 20 pushes would have run the Mac because the last
+TestFlight run was red (the replay checks that first, so some of them changed
+an input too).
+
+To see what a push would decide, read-only:
+
+```sh
+GITHUB_REPOSITORY=Kria-AI/kria python3 -c 'import importlib.util as u, subprocess
+s = u.spec_from_file_location("s", "scripts/ci/select-tests.py"); m = u.module_from_spec(s); s.loader.exec_module(m)
+print(m.main_push_native(subprocess.check_output(["git", "rev-parse", "origin/main"], text=True).strip()))'
+```
+
+Guards: `MainPushMacTests` in `scripts/ci/test_select_tests.py` (its docstring
+lists the failure modes; it replays the issue's sequence on recorded run
+history: an iPhone push whose run was cancelled, then an API-only push, still
+gets the Mac; an API-only push after a green run does not) and
+`ReleaseInputTests` in `scripts/ios/tests/test_testflight_release.py` (runs the
+TestFlight gate's own shell on a scratch repository and pins its list).
 
 ## When a nightly goes red (KRI-1549)
 

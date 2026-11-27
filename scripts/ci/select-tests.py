@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import journey_registry
+import release_inputs
 import render_evidence
 import ui_tests
 
@@ -599,6 +600,29 @@ def native_input(path):
     return declared_native_input(path) or affected(path) == set(SUITES)
 
 
+def inputs_changed_between(ancestor, head, is_input=native_input):
+    """Whether ancestor..head changes a path `is_input` accepts.
+
+    An empty diff counts as changed, a journey-manifest edit by its rows (a
+    native row needs the Mac), and release-only version bumps never count.
+    Raises on any git or decoding error; callers fail closed.
+    """
+    raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
+    paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
+    if not paths:
+        return True
+    for path in paths:
+        if path == JOURNEY_MANIFEST:
+            edit = manifest_edit(ancestor, head)
+            if edit is not None:
+                if edit[1]:
+                    return True
+                continue
+        if not release_only(path, ancestor, head) and is_input(path):
+            return True
+    return False
+
+
 def native_inputs_changed(event, base, head):
     """The PR Mac rule (KRI-1534): did this PR change an iPhone input?
 
@@ -608,22 +632,145 @@ def native_inputs_changed(event, base, head):
         return True
     try:
         ancestor = git("merge-base", base, head).decode().strip()
-        raw = git("diff", "--no-renames", "--name-only", "-z", ancestor, head)
-        paths = [p.decode("utf-8") for p in raw.split(b"\0") if p]
-        if not paths:
-            return True
-        for path in paths:
-            if path == JOURNEY_MANIFEST:
-                edit = manifest_edit(ancestor, head)
-                if edit is not None:
-                    if edit[1]:
-                        return True
-                    continue
-            if not release_only(path, ancestor, head) and native_input(path):
-                return True
-        return False
+        return inputs_changed_between(ancestor, head)
     except (subprocess.CalledProcessError, UnicodeError, OSError):
         return True
+
+
+# The main-push Mac rule (KRI-1547). ios.yml's push lane builds, runs the unit
+# suite and the UI smoke tests, then dispatches TestFlight. It starts only when
+# a path either side reads changed since the last green push run of ios.yml.
+IOS_WORKFLOW = "ios.yml"
+TESTFLIGHT_WORKFLOW = "testflight.yml"
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+# Errors that mean "history or diff unknown": the Mac runs.
+HISTORY_ERRORS = (
+    AttributeError,
+    subprocess.SubprocessError,
+    OSError,
+    UnicodeError,
+    ValueError,
+    KeyError,
+    TypeError,
+)
+
+
+def main_push_input(path):
+    """An iPhone build/test input (as on a PR) or a TestFlight release input."""
+    return native_input(path) or release_inputs.release_input(path)
+
+
+def workflow_runs(workflow, **query):
+    """One page of a workflow's runs, newest first, through `gh api`.
+
+    Raises on a missing repository name, a failed call or unexpected JSON.
+    """
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
+        raise ValueError("GITHUB_REPOSITORY is not set")
+    command = ["gh", "api", "-X", "GET"]
+    command.append(f"repos/{repo}/actions/workflows/{workflow}/runs")
+    for key, value in query.items():
+        command += ["-f", f"{key}={value}"]
+    raw = subprocess.check_output(command, stderr=subprocess.PIPE, timeout=120)
+    runs = json.loads(raw)["workflow_runs"]
+    if not isinstance(runs, list) or not all(isinstance(r, dict) for r in runs):
+        raise ValueError("unexpected workflow run listing")
+    return runs
+
+
+def is_ancestor(commit, head):
+    """Whether `commit` is in `head`'s history; an unknown commit is not."""
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, head], capture_output=True
+    )
+    return result.returncode == 0
+
+
+def last_green_push(head):
+    """The newest completed, green push run of ios.yml on main whose commit is
+    an ancestor of `head`, or None.
+
+    Every field is checked here, not trusted to the API's filters: a
+    cancelled, failed, running, manual or nightly run never proves the push
+    lane (build, unit, smoke, TestFlight dispatch) passed for its commit.
+    """
+    for run in workflow_runs(
+        IOS_WORKFLOW, branch="main", event="push", status="success", per_page=50
+    ):
+        if (
+            run.get("event") == "push"
+            and run.get("head_branch") == "main"
+            and run.get("status") == "completed"
+            and run.get("conclusion") == "success"
+            and run.get("path", "").split("@", 1)[0]
+            == f".github/workflows/{IOS_WORKFLOW}"
+            and isinstance(run.get("head_sha"), str)
+            and FULL_SHA.fullmatch(run["head_sha"])
+            and is_ancestor(run["head_sha"], head)
+        ):
+            return run
+    return None
+
+
+def unfinished_release():
+    """The newest TestFlight run on main, when it ended without success.
+
+    Before KRI-1547 every push to main dispatched TestFlight, so a failed
+    release was retried by the next push. A run still in progress covers a
+    newer tested commit than any run before it and is not a reason to start.
+    """
+    runs = [
+        run
+        for run in workflow_runs(TESTFLIGHT_WORKFLOW, branch="main", per_page=10)
+        if run.get("head_branch") == "main"
+        and run.get("event") == "workflow_dispatch"
+    ]
+    if runs and runs[0].get("status") == "completed":
+        if runs[0].get("conclusion") != "success":
+            return runs[0]
+    return None
+
+
+def main_push_native(head):
+    """Does this push to main start ios.yml's Mac lane? Returns (start, note).
+
+    The pushed commit is compared with the commit of the last green ios.yml
+    push run, not with its parent, so a change whose own run was cancelled or
+    failed still gets its Mac on the next push. Every unknown runs the Mac:
+    no green ancestor run, an API or git error, an unclassifiable path, the
+    rollback variable, or a TestFlight run that ended without success.
+    """
+    if selection_rollback():
+        return True, "CI_MAC_SELECTION=full keeps the Mac on every push"
+    try:
+        if not FULL_SHA.fullmatch(head or ""):
+            raise ValueError("the pushed commit is not a full SHA")
+        release = unfinished_release()
+        if release is not None:
+            return True, (
+                f"the last TestFlight run ({release.get('id')}) ended "
+                f"{release.get('conclusion')}, so the Mac lane runs to dispatch "
+                "the release again"
+            )
+        baseline = last_green_push(head)
+        if baseline is None:
+            return True, (
+                "no green iOS push run on main to compare with, so the Mac runs"
+            )
+        since = f"{baseline['head_sha'][:9]} (iOS push run {baseline.get('id')})"
+        if inputs_changed_between(baseline["head_sha"], head, main_push_input):
+            return True, f"changed since {since}"
+        return False, (
+            f"unchanged since {since}: no Mac, no UI smoke and no TestFlight "
+            "dispatch on this push; the Linux contract leg still runs and the "
+            "nightly runs the full native suite"
+        )
+    except HISTORY_ERRORS as error:
+        return True, (
+            f"run history or diff unavailable ({type(error).__name__}), "
+            "so the Mac runs"
+        )
 
 
 def journey_selection(event, base, head):
@@ -960,6 +1107,11 @@ def main():
         event, os.environ.get("CI_BASE", ""), os.environ.get("CI_HEAD", "")
     )
     native_inputs = inputs_changed or not mac_rule
+    # ios.yml asks for the main-push Mac rule (KRI-1547); ci.yml never does,
+    # so Linux push CI keeps exactly what it selected before.
+    push_note = None
+    if event == "push" and os.environ.get("CI_PUSH_NATIVE_SELECTION") == "true":
+        native_inputs, push_note = main_push_native(os.environ.get("CI_SHA", ""))
     mac_runs = native_validation(event, suites, native, native_inputs)
     output += f"native_validation={str(mac_runs).lower()}\n"
     output += f"ios_ui_groups={groups}\nios_ui_shards={shards}\njourney={str(journey).lower()}\njourney_coverage={coverage}\njourney_ids={journey_ids}\njourney_needs_native={str(native).lower()}\n"
@@ -972,7 +1124,9 @@ def main():
     output += f"ios_render_evidence={str(render).lower()}\n"
     output += f"ios_native={str(native_inputs).lower()}\n"
     inputs_note = (
-        "changed"
+        push_note
+        if push_note is not None
+        else "changed"
         if inputs_changed
         else "unchanged, but CI_MAC_SELECTION=full keeps the Mac"
         if not mac_rule
