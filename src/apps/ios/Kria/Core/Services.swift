@@ -1472,7 +1472,12 @@ enum KriaClientProtocolContract {
     /// across it. The server plans layouts per topic only for this protocol.
     /// 62 (KRI-1615): reads an intro-styles option's `cards` and applies a card look as her photos on the media-overlay
     /// lane with its title rows. The server sends card looks only to this protocol (`INTRO_CARDS_PROTOCOL`).
-    static let version = 62
+    /// 63 (KRI-1616): reads an intro-styles card on a sticker slot (`sticker_N`, her own transparent image) and draws it with
+    /// its alpha in the tile and the live preview. The server sends sticker looks only to this protocol.
+    /// 64 (KRI-1616): reads intro cards and preview boxes that hang past the frame edge, lets her drag a card's centre past
+    /// the frame within `VisualMediaPlacement.edgeBleedKeepOnCanvas`, and the engine draws such a placement. The server sends
+    /// bleed looks, keeps a bled centre on Save and serves a bled recipe (else 426) only to this protocol.
+    static let version = 64
     static let header = "X-Kria-Client-Protocol"
     /// KRI-1558 (Tadic, #prs 2026-11-26): renderer features this build advertises in `X-Kria-Client-Features`. Another
     /// branch's build can take the same protocol number without the renderer, so the server offers these only to a build

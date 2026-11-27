@@ -883,6 +883,15 @@ class Settings(BaseSettings):
     # only to a build at or above the protocol below (set by scripts/bump-protocol.py).
     intro_cards_enabled: bool = False
     intro_cards_min_client_protocol: int = 62
+    # KRI-1616: sticker looks (her own transparent Visuals) in "Try intro styles", on top of the
+    # cards switch above. Sent only to a build at or above this protocol (set by
+    # scripts/bump-protocol.py); =999 is the kill switch.
+    intro_stickers_min_client_protocol: int = 63
+    # KRI-1616: intro looks whose cards hang past the frame edge. Sent only to a build at or above
+    # this protocol; =999 is the kill switch for the offer only. Her own Saves and the recipe gate
+    # read the build's capability (`INTRO_EDGE_BLEED_PROTOCOL`), never this field, so turning
+    # the offer off never locks her out of an edit she saved.
+    intro_edge_bleed_min_client_protocol: int = 64
 
     def intro_scene_for(self, user_id: object) -> bool:
         if not self.intro_scene_enabled or user_id is None:

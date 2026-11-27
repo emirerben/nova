@@ -107,12 +107,14 @@ from app.services.phone_rollout import (
     clip_dim_client_supported,
     clip_tilt_client_supported,
     color_moments_client_supported,
+    edge_bleed_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     recipe_has_clip_backdrop_media,
     recipe_has_clip_dim,
     recipe_has_clip_tilt,
     recipe_has_color_moments,
+    recipe_has_edge_bleed,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
     recipe_has_speech_duck,
@@ -775,6 +777,16 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "card_tilt",
             "minimum_client_protocol": settings.media_card_tilt_min_client_protocol,
+        }
+    if not edge_bleed_client_supported() and recipe_has_edge_bleed(recipe):
+        # KRI-1616: a card she dragged past the frame on a newer build. An older build's engine
+        # refuses a placement centred outside [0, 1] and would fail the whole recipe.
+        from app.services.client_protocol import INTRO_EDGE_BLEED_PROTOCOL  # noqa: PLC0415
+
+        return {
+            "code": "client_update_required",
+            "feature": "edge_bleed",
+            "minimum_client_protocol": INTRO_EDGE_BLEED_PROTOCOL,
         }
     if not clip_dim_client_supported() and recipe_has_clip_dim(recipe):
         # An older build cannot decode the `clipDim` token, so the whole recipe would fail

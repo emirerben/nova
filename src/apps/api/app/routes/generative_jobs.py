@@ -4914,7 +4914,50 @@ def validate_media_overlays_for_user(
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+            validated = _keep_edge_bleed(overlays_raw, validated, variant_context)
     return validated
+
+
+_BLEED_ROUNDING = 1e-6
+
+
+def _keep_edge_bleed(posted: list[dict], validated: list[dict], variant: dict) -> list[dict]:
+    """KRI-1616: the shared card schema clamps a centre to [0, 1] (agents, the web and cloud
+    renders keep that). A phone Talking pip card she dragged past the frame keeps its centre,
+    within the renderer bound, when the sending build draws it; an older build posting one (a bled
+    edit it opened) is told to update instead of pulling her card back onto the frame."""
+    from app.kria.portable_visual import clamp_to_edge_bleed  # noqa: PLC0415
+    from app.services.client_protocol import INTRO_EDGE_BLEED_PROTOCOL  # noqa: PLC0415
+    from app.services.phone_rollout import edge_bleed_client_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant,
+    )
+
+    if not is_phone_subtitled_editor_variant(variant):
+        return validated
+    kept: list[dict] = []
+    for raw, card in zip(posted, validated, strict=True):
+        x = raw.get("x_frac") if isinstance(raw, dict) else None
+        if (
+            card.get("display_mode") == "fullscreen"
+            or not isinstance(x, (int, float))
+            or isinstance(x, bool)
+            or not math.isfinite(x)
+            or -_BLEED_ROUNDING <= x <= 1.0 + _BLEED_ROUNDING
+        ):
+            kept.append(card)
+            continue
+        if not edge_bleed_client_supported():
+            raise HTTPException(
+                status_code=426,
+                detail={
+                    "code": "client_update_required",
+                    "feature": "edge_bleed",
+                    "minimum_client_protocol": INTRO_EDGE_BLEED_PROTOCOL,
+                },
+            )
+        kept.append({**card, "x_frac": clamp_to_edge_bleed(float(x), float(card["scale"]))})
+    return kept
 
 
 def validate_sound_effects_for_user(
