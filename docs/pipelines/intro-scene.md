@@ -47,8 +47,8 @@ a reason. Tests: `tests/pipeline/test_intro_scene_schema.py` (skia-free) and `te
 * **Dispatch** (`stamp_intro_scene`, after `stamp_phone_text_style` and `stamp_title_look` in
   `_dispatch_item_render`): admits the job and pins `assembly_plan["intro_scene_ask"]`: a seed, up to
   six footage-free candidates (accent split of her words, a font pair that can draw them, an
-  entrance, a zone order) and an ink order. Her last four pinned looks are tried last. Sound is
-  always `none` (an automatic sound is an open question on the project). No Skia and no trace event
+  entrance, a zone order) and an ink order. Her last four pinned looks are tried last. The seeded
+  pick never chooses a sound (only the model arm may, KRI-1613). No Skia and no trace event
   (dispatch holds the item lock); a failed history lookup only means no exclusion.
 * **Worker** (`_intro_scene_title_rows` in `_phone_talking_title_rows`, so it also serves the
   `_title_clear_of_captions` re-placement): compiles each candidate x zone and places it with the
@@ -71,7 +71,7 @@ a reason. Tests: `tests/pipeline/test_intro_scene_schema.py` (skia-free) and `te
 Check: `tests/pipeline/test_intro_scene_pick.py` and the picks / wiring section of
 `make verify-intro-scenes` (EN and TR, light and dark plates, an unreadable-ink control).
 
-Not covered: a lower-third zone, ref 2's folder sticker and refs 3, 4, 5's extras (KRI-1613, 1615,
+Not covered: a lower-third zone, ref 2's folder sticker and refs 3, 4, 5's extras (KRI-1615,
 1616), phone-build font support and per-footage ink (KRI-1619). The late accent and ref 5's tuck
 are KRI-1618 (below). The realized pick is not
 written back, so "recent looks" are the first stamped candidate of each earlier job.
@@ -148,8 +148,8 @@ the seeded pick.
 * **Data shape.** The answer IS an `IntroScene` (ids and voices only; no field reaches the screen as
   text or number). `build_input` issues, for this title: the accent splits (`accent_splits`), the font
   pairs that can draw her words, inks, zones and entrances (not `pen`, see below). The response schema
-  sent with the call is closed over those ids; `parse` re-checks every id with `check_scene`, the voices
-  against the issued splits, and refuses any sound. Her title words and Gemini's footage notes are
+  sent with the call is closed over those ids; `parse` re-checks every id with `check_scene` (the sound
+  and its cue included, KRI-1613) and the voices against the issued splits. Her title words and Gemini's footage notes are
   UNTRUSTED data in one `untrusted` object. Hard rules (one ink, no Fraunces, stroke, fit, clearance
   from the face and captions) stay in the engine, never in the prompt.
 * **Taste** is the `intro-design` skill (`agents/skills/intro-design/SKILL.md`, on the closed
@@ -319,3 +319,57 @@ and a stagger with nothing to stagger.
 
 Not covered: a per-line entrance time (B2's serif lands 0.2 s after its script) and any other
 overlap (`engine_limits`).
+
+## The scene's own sound (KRI-1613)
+
+Emir's ruling (2026-11-27): an intro scene's sound is automatic when the scene carries one. This
+lifts "no sound unless she asked" for intro scenes only; every sound-effect gate still applies.
+
+* **Data shape.** `IntroScene.sound` (a slug of the seeded creator library: `accent-pop`,
+  `soft-pop`, `click`, `sparkle`, `whoosh-fast`, `camera-shutter`) plus `sound_cue`, an option id
+  mapped through `SOUND_CUES`: `none`, `accent` (once, as the accent lines enter) or `each` (once
+  per entrance; lines that enter on the same frame share one sound). `check_scene` refuses a cue
+  with no sound and an `accent` cue with no accent line. A slug without a cue is silent, as every
+  scene, teardown and intake reply before was; `sound_cue` is omitted from dumps while `none`.
+* **Rows declare, times are derived.** The compiler writes `sound` and `sound_cue` into the
+  lines' `title_look` param (only when a cue plays). `title_family.intro_sound_cues(rows)` is the
+  one reader: an `introsfx-<line id>` sound-effect row at the line's `start_s`, the entrance's
+  first frame. With `accent_after` the accent-only cue is 0.6 s in.
+* **Worker.** `fit_intro_scene(sound=...)` compiles the sound only when `_intro_scene_sound_open`
+  holds: `INTRO_SCENE_SOUND_ENABLED` (default off, the kill switch, read on every render), the
+  Talking sound-effect lane the KRI-1561 chooser writes to (`sfx_capability.subtitled_sfx_limit`:
+  `SOUND_EFFECTS_ENABLED`, the Talking media and editor lanes, `soundEffects` + `audioMix`
+  verified) and no live "no sound effects" in her brief. Closed: the rows declare nothing and no
+  row is written. `_with_intro_scene_sounds` adds the rows on the cut timeline after every lane
+  was remapped and before the chooser, so a chosen effect keeps its spacing. The slug resolves to
+  the library row the seed script owns (`services.sfx_library`: provenance
+  `kria-sfx-library-v1:<slug> `, file `<slug>.m4a`, ready, published, not archived, newest).
+  A cue within `MIN_SPACING_S` of another lane sound is skipped (hers wins); a missing or
+  unplayable row is skipped. The render never fails on a sound; the `intro_scene_sound` trace
+  event lists each cue and why it was skipped. Ducking under speech stays as compiled.
+* **Editor.** Every Talking Save re-pins each `introsfx-*` row to the entrance its line declares
+  in that Save's text (`phone_editor.rebind_intro_scene_sounds`) and drops it when the line is gone
+  or no longer declares it (removed, a whole-title rewrite, another look). A Save never adds one,
+  so a sound she deleted stays deleted, and saved sounds stay when the switch is turned off later
+  (the colour-moment precedent, KRI-1350). Range leaves the rows out of its source-time
+  reprojection (`phone_talking_range.reproject_lanes`).
+* **Taste.** The model is issued the sounds and cues; the `intro-design` skill pairs them with the
+  entrances (pops with pop and ink, a click or shutter for a crisp title, sparkle for a reveal, a
+  whoosh for a title that sweeps in). Teardowns: refs 1 and 3 cue the accent, refs 4 and 5 each
+  entrance. That timing is a reading of the taste board's stills: it stays a guess until the
+  reference videos are measured.
+* **Phone.** No protocol number: the rows are ordinary `sfx` clips. `IntroSceneSoundExportTests`
+  (KriaMediaEngine) exports the clips the worker compiled
+  (`tests/fixtures/intro-scene-sound/`, generated by `test_intro_scene_sound_phone_fixture.py`,
+  `KRI1613_REGENERATE=1`) and finds each onset on its line's entrance frame, and silence with the
+  switch off. Keep the MP4s with `KRIA_INTRO_SOUND_EVIDENCE_DIR` and measure them with
+  `scripts/verify-colour-moments.py measure`.
+
+Not covered: the seeded pick and the "Try intro styles" offer stay silent (the offer's look is
+applied by a Save, which never adds a sound); the intake prompt does not offer sounds yet; a sound
+on an element other than a line entrance (`engine_limits`).
+
+Checks: `tests/pipeline/test_intro_scene_sound.py`, `tests/tasks/test_intro_scene_sound_worker.py`
+(real worker, EN and TR, every gate closed), `tests/tasks/test_intro_scene_sound_save.py` (real
+worker then real Saves, Range), `tests/services/test_sfx_library.py` (real Postgres) and the free
+replay evals.
