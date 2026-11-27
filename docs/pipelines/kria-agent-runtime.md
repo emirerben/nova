@@ -1710,7 +1710,7 @@ charge. `app/kria/overlay_set.py` owns the shape, the routes are `thread_router`
 `POST /plan-items/{item_id}/overlay-plan` is unchanged.
 
 **Gate.** `KRIA_SUGGESTION_GENERATED_OVERLAY_ENABLED` (default off), the generated-images account gate for the
-paid steps, and `OVERLAY_SET_MIN_CLIENT_PROTOCOL` (default 60; `999` = kill switch; apply with a fly secret on api +
+paid steps, and `OVERLAY_SET_MIN_CLIENT_PROTOCOL` (default 61; `999` = kill switch; apply with a fly secret on api +
 worker + restart). Capability `overlay_sets` on `GET /creation-threads/capabilities`. Flag off: every route is a
 404 and nothing is written. A build below the protocol gets a 426 on a write, and `overlay_set` events are left out
 of its thread read and its delta read (`overlay_set.visible_events`), so a build that cannot draw the card never
