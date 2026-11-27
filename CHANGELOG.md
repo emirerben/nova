@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.1.0] - 2026-11-27
+
+### Changed
+- ci(ios): start the main-push Mac lane and TestFlight dispatch only when an iPhone or release input changed (KRI-1547) (#2484) <!-- release-pr: 2484 -->
+
 ## [0.91.0.0] - 2026-11-26
 
 ### Added
