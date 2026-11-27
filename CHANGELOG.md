@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.11.0] - 2026-11-27
+
+### Added
+- feat(intro): a late accent and a script tucked onto the serif, as option ids (KRI-1618) (#2541) <!-- release-pr: 2541 -->
+
 ## [0.91.10.0] - 2026-11-27
 
 ### Changed
