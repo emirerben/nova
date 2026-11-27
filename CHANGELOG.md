@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.6.0] - 2026-11-27
+
+### Changed
+- feat(kria): let the creator keep some research facts before approving (CA-5) (#2533) <!-- release-pr: 2533 -->
+
 ## [0.91.5.0] - 2026-11-27
 
 ### Changed
