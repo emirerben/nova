@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.8.0] - 2026-11-27
+
+### Changed
+- feat(ios): pick which research facts stay, in the chat (CA-6, KRI-1645) (#2538) <!-- release-pr: 2538 -->
+
 ## [0.91.7.0] - 2026-11-27
 
 ### Changed
