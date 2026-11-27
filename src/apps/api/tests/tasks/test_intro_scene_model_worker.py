@@ -118,11 +118,11 @@ def test_the_prompt_carries_her_words_only_as_untrusted_data(monkeypatch, route)
     [
         json.dumps({"decision": "decline", "decline_reason": "title_unsuited"}),
         json.dumps({**COMPOSE, "ink": "hot_pink"}),
-        json.dumps({**COMPOSE, "sound": "accent-pop"}),
+        json.dumps({**COMPOSE, "sound_cue": "accent"}),
         "not json",
         RuntimeError("provider 503"),
     ],
-    ids=["decline", "void_ink", "void_sound", "not_json", "provider_error"],
+    ids=["decline", "void_ink", "cue_without_sound", "not_json", "provider_error"],
 )
 def test_a_decline_or_failure_is_todays_title_and_the_render_completes(monkeypatch, route, answer):
     client = route(answer)

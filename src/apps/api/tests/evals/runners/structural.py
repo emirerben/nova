@@ -2693,7 +2693,8 @@ def check_intro_scene(output: Any, input: Any) -> list[str]:  # noqa: A002
     """KRI-1612: structural checks on the intro-scene agent. Skia-free: it reads only the issued
     ids in the input, never the compiler. A decline carries no choice; a compose uses only what
     the server issued for this title (a split from the issued list, ids from the menu, ``pen``
-    only with a Patrick Hand pair, no sound)."""
+    only with a Patrick Hand pair, a sound and cue the server issued and a cue only with a
+    sound, KRI-1613)."""
     from app.pipeline import intro_scene as scene  # noqa: PLC0415
 
     failures: list[str] = []
@@ -2706,6 +2707,7 @@ def check_intro_scene(output: Any, input: Any) -> list[str]:  # noqa: A002
                 output.zone,
                 output.entrance,
                 output.sound,
+                output.sound_cue != "none",
             ]
         ):
             failures.append("a decline carries choices")
@@ -2719,11 +2721,13 @@ def check_intro_scene(output: Any, input: Any) -> list[str]:  # noqa: A002
         ("ink", input.inks),
         ("zone", input.zones),
         ("entrance", input.entrances),
+        ("sound", input.sounds),
+        ("sound_cue", input.sound_cues),
     ):
         if getattr(output, name) not in issued:
             failures.append(f"{name} is not an issued id")
-    if output.sound != "none":
-        failures.append("an automatic sound was chosen")
+    if output.sound_cue != "none" and output.sound == "none":
+        failures.append("a sound cue with no sound")
     if (
         output.entrance == "pen"
         and output.font_pair in scene.FONT_PAIRS

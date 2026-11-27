@@ -688,8 +688,8 @@ def run(*, out_dir: str, realized: bool = True) -> dict[str, Any]:
         "controls": ctl,
         "blind_controls": blind,
         "montage": montage,
-        "exempt_sound": "sound is always 'none' in the pick (an automatic sound is an open "
-        "question on the project), so it is not an axis",
+        "exempt_sound": "the seeded pick never chooses a sound (only the model arm may, "
+        "KRI-1613), so it is not an axis",
     }
     Path(out_dir, "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
     return report

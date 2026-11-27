@@ -54,11 +54,23 @@ the way. The accent is a span of her words, never new words.
 
 ## Sound
 
-There is no sound choice. Always answer sound "none".
+The scene may carry one short library sound. The engine plays it on the first frame of
+a line's entrance and decides when that is; you choose only the sound and the cue.
+
+- sound_cue "accent": once, as the accent words enter. Best with stagger accent_after,
+  where the accent lands a beat late and the sound marks the payoff.
+- sound_cue "each": once per entrance (lines that enter together share one sound). For
+  a title with no accent contrast, or one that should arrive with a hit.
+- sound_cue "none" and sound "none": silent. Choose this for calm, editorial or serious
+  titles, and whenever a sound would feel like a gimmick.
+
+Match the sound to the entrance: accent-pop or soft-pop with pop and ink, a click or a
+camera-shutter for a crisp, informational title, sparkle for a reveal, whoosh-fast for
+a title that sweeps in. Never a cue without a sound.
 
 ## Return
 
 Only the JSON object of the response schema. For a scene: decision "compose", the
 voices array copied exactly from one issued split, and one id for each of font_pair,
-ink, zone, entrance, stagger, stack, and sound "none". To decline: decision "decline" and a decline_reason.
+ink, zone, entrance, stagger, stack, sound and sound_cue. To decline: decision "decline" and a decline_reason.
 No other field, no text, no number.

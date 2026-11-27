@@ -10,7 +10,8 @@ Ways this agent can go wrong, written before the code (each is a case below):
  1. An id the server never issued (font pair, ink, zone, entrance), or ``pen`` with a pair whose
     accent face is not Patrick Hand                                    -> void
  2. A split that is short, long, reordered, or not one of the issued ones -> void
- 3. A smuggled field (``text``, ``why``, a number) or any sound            -> void
+ 3. A smuggled field (``text``, ``why``, a number), a sound or cue never issued, or a cue
+    with no sound                                                         -> void
  4. A decline carrying choices, a decline with no reason, a half compose   -> void
  5. A decline                                                              -> honoured, once
  6. Provider answers that are not JSON / are empty / are an array          -> void
@@ -83,6 +84,7 @@ def test_both_languages_and_a_decline_are_covered() -> None:
     outputs = [load_fixture(p).output for p in FIXTURES]  # KRI-1618: both moves are answered
     assert any(o.get("stack") == "script_over_serif" for o in outputs)
     assert any(o.get("stagger") == "accent_after" for o in outputs)
+    assert any(o.get("sound_cue", "none") != "none" for o in outputs)  # KRI-1613
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
@@ -95,8 +97,8 @@ def test_the_call_sends_a_schema_closed_over_the_issued_ids(path: Path) -> None:
     assert free_leaves(schema) == []
     props = schema["properties"]
     assert props["font_pair"]["enum"] == fixture.input["font_pairs"]
-    assert props["sound"]["enum"] == ["none"]
     model = designer.IntroSceneInput.model_validate(fixture.input)
+    assert (props["sound"]["enum"], props["sound_cue"]["enum"]) == (model.sounds, model.sound_cues)
     assert (props["stagger"]["enum"], props["stack"]["enum"]) == (model.staggers, model.stacks)
     count = len(fixture.input["title_words"])
     assert props["voices"]["minItems"] == props["voices"]["maxItems"] == count
@@ -136,6 +138,7 @@ def test_the_schema_walker_catches_free_text() -> None:
 _REDUCED = {  # a menu with one face fewer and no pen pair: what a title it cannot draw issues
     "font_pairs": ["grotesk_hand", "serif_italic"],
 }
+_SOUNDS = {"sounds": list(scene_mod.SOUNDS), "sound_cues": list(scene_mod.SOUND_CUES)}
 
 
 @pytest.mark.parametrize(
@@ -154,7 +157,19 @@ _REDUCED = {  # a menu with one face fewer and no pen pair: what a title it cann
             _good(voices=["accent", "solid", "solid", "solid", "solid", "accent"]),
             {},
         ),
-        ("a_sound", _good(sound="accent-pop"), {}),
+        ("a_cue_without_a_sound", _good(sound_cue="accent"), _SOUNDS),
+        ("unknown_sound", _good(sound="boom", sound_cue="each"), _SOUNDS),
+        ("sound_not_issued", _good(sound="accent-pop", sound_cue="accent"), {}),
+        (
+            "cue_not_issued",
+            _good(sound="accent-pop", sound_cue="each"),
+            {**_SOUNDS, "sound_cues": ["none", "accent"]},
+        ),
+        (
+            "decline_with_a_cue",
+            {"decision": "decline", "decline_reason": "no_good_fit", "sound_cue": "accent"},
+            _SOUNDS,
+        ),
         ("smuggled_text", {**_good(), "text": "HACKED"}, {}),
         ("smuggled_reason", {**_good(), "why": "it looks nice"}, {}),
         ("a_number", {**_good(), "size_px": 400}, {}),
@@ -210,6 +225,14 @@ def test_the_pen_entrance_is_never_issued_to_the_model() -> None:
         assert '"pen"' not in designer.IntroSceneDesignerAgent(None).render_prompt(model)
 
 
+def test_an_issued_sound_on_its_cue_is_the_answer() -> None:
+    raw = json.dumps(_good(sound="accent-pop", sound_cue="accent"))
+    agent, _ = _agent(raw)
+    out = agent.parse(raw, _input(**_SOUNDS))
+    assert (out.sound, out.sound_cue) == ("accent-pop", "accent")
+    assert out.moves() == {"sound": "accent-pop", "sound_cue": "accent"}
+
+
 def test_a_decline_is_returned_as_is() -> None:
     raw = json.dumps({"decision": "decline", "decline_reason": "footage_unsuited"})
     agent, _ = _agent(raw)
@@ -246,13 +269,17 @@ def test_the_prompt_leaves_the_hard_rules_to_the_engine() -> None:
         assert word not in head, word
 
 
-def test_examples_are_taste_with_no_sound_and_only_issued_ids() -> None:
+def test_examples_are_taste_with_a_sound_only_on_its_cue_and_only_issued_ids() -> None:
     for language in ("en", "tr"):
         examples = designer.examples_for(language)
         assert len(examples) >= 3
+        assert any("sound" in example["choice"] for example in examples)
         for example in examples:
             choice = example["choice"]
-            assert "sound" not in choice
+            assert ("sound" in choice) == ("sound_cue" in choice)
+            if "sound" in choice:
+                assert choice["sound"] in scene_mod.SOUNDS and choice["sound"] != "none"
+                assert choice["sound_cue"] in scene_mod.SOUND_CUES
             assert choice["font_pair"] in scene_mod.FONT_PAIRS
             assert choice["ink"] in scene_mod.INKS
             assert choice["zone"] in scene_mod.ZONES

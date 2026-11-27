@@ -1,0 +1,214 @@
+{
+  "agent": "nova.compose.intro_scene",
+  "prompt_version": "is-fb2cda6b3c55",
+  "prompt_sha": "657eac95ddf24565",
+  "input": {
+    "language": "en",
+    "splits": [
+      [
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent"
+      ],
+      [
+        "accent",
+        "accent",
+        "accent",
+        "solid",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "accent",
+        "accent",
+        "accent",
+        "solid",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "accent",
+        "solid"
+      ],
+      [
+        "solid",
+        "solid",
+        "solid",
+        "accent",
+        "accent",
+        "accent"
+      ]
+    ],
+    "font_pairs": [
+      "grotesk_hand",
+      "serif_italic",
+      "grotesk_loop",
+      "script_serif",
+      "young_serif",
+      "grotesk_pen"
+    ],
+    "inks": [
+      "oxblood",
+      "chartreuse",
+      "cream",
+      "butter",
+      "white"
+    ],
+    "zones": [
+      "above_head",
+      "top_left",
+      "mid_frame"
+    ],
+    "entrances": [
+      "fade",
+      "rise",
+      "pop",
+      "ink"
+    ],
+    "staggers": [
+      "together",
+      "accent_after"
+    ],
+    "stacks": [
+      "gap",
+      "script_over_serif"
+    ],
+    "sounds": [
+      "none",
+      "accent-pop",
+      "soft-pop",
+      "click",
+      "sparkle",
+      "whoosh-fast",
+      "camera-shutter"
+    ],
+    "sound_cues": [
+      "none",
+      "accent",
+      "each"
+    ],
+    "brightness": "light",
+    "title_words": [
+      "the",
+      "biggest",
+      "design",
+      "trend",
+      "right",
+      "now"
+    ],
+    "footage_notes": "a woman talking to camera in front of a plain white wall, lots of room above her head"
+  },
+  "raw_text": "{\"decision\": \"compose\", \"voices\": [\"solid\", \"solid\", \"solid\", \"solid\", \"accent\", \"accent\"], \"font_pair\": \"grotesk_hand\", \"ink\": \"oxblood\", \"zone\": \"above_head\", \"entrance\": \"ink\", \"sound\": \"accent-pop\", \"stagger\": \"accent_after\", \"sound_cue\": \"accent\"}",
+  "output": {
+    "decision": "compose",
+    "decline_reason": null,
+    "voices": [
+      "solid",
+      "solid",
+      "solid",
+      "solid",
+      "accent",
+      "accent"
+    ],
+    "font_pair": "grotesk_hand",
+    "ink": "oxblood",
+    "zone": "above_head",
+    "entrance": "ink",
+    "sound": "accent-pop",
+    "stagger": "accent_after",
+    "sound_cue": "accent"
+  },
+  "meta": {
+    "source": "hand_authored",
+    "note": "A hand-authored answer, NOT recorded model output (no paid run, KRI-1613): ref 1: the handwritten accent lands late with a pop on it. Input is what build_input issues for the title today.",
+    "expect": "compose",
+    "language": "en"
+  }
+}

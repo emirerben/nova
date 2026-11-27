@@ -12,7 +12,8 @@ is in `app/pipeline/intro_scene_pick.py`, "the model arm"):
 * A4: a re-render asks again or picks differently (`test_a_pinned_answer_*`, `test_pin_*`).
 * A5: the model's pick cannot sit clear on the footage (`test_the_model_pick_that_*`).
 * A6: its ink is unreadable on the take (`test_the_model_ink_*`).
-* A7: a sound is added without a request (the eval's void-answer table).
+* A7: a sound nobody issued, or a cue with no sound to play (the eval's void-answer table and
+  `test_a_failed_call_*`); whether one plays is `test_intro_scene_sound_worker.py`.
 * A8: it asks for a scene that would not apply (`test_no_call_when_the_scene_would_not_apply`).
 
 Real compiler, real `place_title_look`, real Skia; only the provider transport is replayed.
@@ -179,7 +180,8 @@ def test_a_decline_is_honoured_and_pinned():
     [
         (json.dumps({**COMPOSE, "ink": "hot_pink"}), "unissued ink"),
         (json.dumps({**COMPOSE, "entrance": "pen"}), "the pen entrance, never issued"),
-        (json.dumps({**COMPOSE, "sound": "accent-pop"}), "a sound"),
+        (json.dumps({**COMPOSE, "sound_cue": "accent"}), "a cue with no sound"),
+        (json.dumps({**COMPOSE, "sound": "boom", "sound_cue": "each"}), "a sound nobody issued"),
         (json.dumps({**COMPOSE, "text": "HACKED"}), "smuggled text"),
         (json.dumps({**COMPOSE, "voices": ["accent"] * 6}), "a split nobody issued"),
         ("not json", "unreadable"),
