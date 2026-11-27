@@ -782,9 +782,12 @@ final class IntroStylesOfferTests: XCTestCase {
     }
 
     func testAStickerLookAppliesInOneStepAndHerDragFurtherOffStopsAtTheEnginesBound() throws {
-        var talking = try editorVariant("editor_talking_cards")
-        talking["edit_format"] = .string("subtitled")
-        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: talking), operations: LocalEditorOperations())
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: try editorVariant("editor_talking_cards")),
+                                          operations: LocalEditorOperations())
+        func variant(_ archetype: String) -> [String: JSONValue] {
+            ["render_destination": .string("device"), "resolved_archetype": .string(archetype)]
+        }
+        session.configureClipAudioForTesting(variant: variant("subtitled"), pinnedNarrationPresent: nil, resolvedNarration: nil)
         let offer = try offer("offer_talking_stickers")
         session.introStylesState = .ready(offer)
         session.introStylesOfferContext = session.introStylesContext()
@@ -792,7 +795,11 @@ final class IntroStylesOfferTests: XCTestCase {
         let look = try stickerLook(offer)
         XCTAssertTrue(session.applyIntroStyle(look))
         XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
-        XCTAssertTrue(session.rendersOnDevice && session.document.editFormat == "subtitled", "a phone Talking edit")
+        let photoCard = ["display_mode": JSONValue.string("pip"), "scale": .number(0.3)]
+        session.configureClipAudioForTesting(variant: variant("guided_story"), pinnedNarrationPresent: nil, resolvedNarration: nil)
+        XCTAssertEqual(session.mediaOverlayXRange(photoCard), 0...1, "a phone montage's renderer keeps 0...1")
+        session.configureClipAudioForTesting(variant: variant("subtitled"), pinnedNarrationPresent: nil, resolvedNarration: nil)
+        XCTAssertEqual(session.mediaOverlayXRange(photoCard), VisualMediaPlacement.edgeBleedXRange(width: 0.3), "a phone Talking card")
 
         let sticker = look.cards[0]
         let bound = VisualMediaPlacement.edgeBleedXRange(width: sticker.scale)

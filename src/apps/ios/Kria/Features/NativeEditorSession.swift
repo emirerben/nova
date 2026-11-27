@@ -9282,7 +9282,10 @@ enum EditorOpenIntent { case warm, open }
     /// up to the engine's bound (a quarter of it stays on, so she can still grab it), which is where a drag further off
     /// stops; every other card keeps 0...1, as its renderer does.
     func mediaOverlayXRange(_ raw: [String: JSONValue]) -> ClosedRange<Double> {
-        guard rendersOnDevice, document.editFormat == "subtitled", raw["display_mode"]?.stringValue != "fullscreen" else { return 0...1 }
+        // The server's own test for a phone Talking edit (`is_phone_subtitled_editor_variant`): a device render of the
+        // `subtitled` archetype.
+        guard rendersOnDevice, previewVariant["resolved_archetype"] == .string("subtitled"),
+              raw["display_mode"]?.stringValue != "fullscreen" else { return 0...1 }
         return VisualMediaPlacement.edgeBleedXRange(width: min(max(raw["scale"]?.numberValue ?? 0.35, 0.05), 1))
     }
     func setMediaOverlayScale(id: String, scale: Double) {

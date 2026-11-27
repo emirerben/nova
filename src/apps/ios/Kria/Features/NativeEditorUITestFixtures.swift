@@ -776,12 +776,10 @@ enum NativeEditorUITestFixtures {
             "text_elements": variant["text_elements"] ?? .array([]),
         ]
         if let overlays = variant["media_overlays"] { sections["media_overlays"] = overlays }
-        var root: [String: JSONValue] = [
+        return draft(clips: clips, text: [], captions: false, music: false, sections: sections, rootExtras: [
             "render_destination": .string("device"),
             "editor_capabilities": variant["editor_capabilities"] ?? .object([:]),
-        ]
-        if let format = variant["edit_format"] { root["edit_format"] = format }
-        return draft(clips: clips, text: [], captions: false, music: false, sections: sections, rootExtras: root)
+        ])
     }
 
     /// The translate route's stand-in for UI tests: each cue's text is looked up in `dualCaptionLines`; a text it does
