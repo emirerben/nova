@@ -1341,7 +1341,7 @@
     },
     "research_selection_min_client_protocol": {
       "source": "default",
-      "value": 59
+      "value": 60
     },
     "research_unmet_is_note_enabled": {
       "source": "default",

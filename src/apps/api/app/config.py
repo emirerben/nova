@@ -1374,7 +1374,7 @@ class Settings(BaseSettings):
     # >= this see fact ids on a research preview or may send `research_selection`; an older
     # build that sends it gets 426. Kill switch: `fly secrets set
     # RESEARCH_SELECTION_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart.
-    research_selection_min_client_protocol: int = 59
+    research_selection_min_client_protocol: int = 60
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
