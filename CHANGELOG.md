@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.15.0] - 2026-11-27
+
+### Added
+- feat(intro): photo cards in Try intro styles, with short face-covering cards (KRI-1615 backend) (#2546) <!-- release-pr: 2546 -->
+
 ## [0.91.14.0] - 2026-11-27
 
 ### Added
