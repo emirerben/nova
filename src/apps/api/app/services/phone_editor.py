@@ -1715,6 +1715,8 @@ def _compile_subtitled_editor_commit(
                 variant["color_moments"] = moved_moments
             else:
                 variant.pop("color_moments", None)
+    from app.services.intro_card_pool import CAPTION_CLEAR_ATTR  # noqa: PLC0415
+
     lanes = lanes_from_editor_sections(
         previous=previous_lanes,
         sound_effects=prep.get("sfx_override"),
@@ -1722,6 +1724,7 @@ def _compile_subtitled_editor_commit(
         visuals=visuals,
         background_touched=bool(prep.get("speaker_background_touched")),
         background=_background_lane(prep.get("speaker_background_override"), visuals),
+        caption_clear=getattr(staged, CAPTION_CLEAR_ATTR, None),
     )
     # KRI-1350: a colour moment's own sound always sits on its moment's edge, whatever moved.
     # KRI-1613: an intro scene's sound sits on its title line's entrance in this Save's text.

@@ -364,8 +364,9 @@ async def pin_background_for_commit(
     db: AsyncSession, job: Any, variant_id: str, payload: Any, *, plan_item_id: uuid.UUID
 ) -> None:
     """Pin the pool visuals ``payload`` sets: the speaker background (fill and windows, KRI-1162),
-    every clip backdrop of kind ``media`` (KRI-1139) and every accepted generated image placed as a
-    picture card (KRI-1253); a no-op for a Save that sets none of them."""
+    every clip backdrop of kind ``media`` (KRI-1139), every accepted generated image placed as a
+    picture card (KRI-1253) and every photo of an intro look's cards (KRI-1615); a no-op for a
+    Save that sets none of them."""
     for media_id, kind in background_pin_requests(job, variant_id, payload):
         await pin_pool_visual_for_background(
             db, job, plan_item_id=plan_item_id, media_id=media_id, kind=kind
@@ -385,6 +386,9 @@ async def pin_background_for_commit(
     )
 
     await pin_generated_overlays_for_commit(db, job, variant_id, payload, plan_item_id=plan_item_id)
+    from app.services.intro_card_pool import pin_intro_cards_for_commit  # noqa: PLC0415
+
+    await pin_intro_cards_for_commit(db, job, variant_id, payload, plan_item_id=plan_item_id)
 
 
 def pin_background_for_commit_sync(
@@ -410,3 +414,6 @@ def pin_background_for_commit_sync(
     )
 
     pin_generated_overlays_for_commit_sync(db, job, variant_id, payload, plan_item_id=plan_item_id)
+    from app.services.intro_card_pool import pin_intro_cards_for_commit_sync  # noqa: PLC0415
+
+    pin_intro_cards_for_commit_sync(db, job, variant_id, payload, plan_item_id=plan_item_id)

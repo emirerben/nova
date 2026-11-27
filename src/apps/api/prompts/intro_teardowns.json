@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-27-kri-1613-1",
+  "version": "2026-11-27-kri-1615-1",
   "_note": "footage_plate names the synthetic footage the render check draws the reference on (light_wall or dark_room), chosen to match footage_fit. Five creator intros, torn down as data (KRI-1609 / KRI-1610). Not a template list: a reference is evidence of taste, and each scene is the closest IntroScene today's engine can compile. The example titles are fixtures for the render check (make verify-intro-scenes) and are never used as on-screen text at runtime. Scenes are option ids and one voice per title word, nothing else. Source of the look: the approved taste board https://claude.ai/artifact/QjPSuSE4RGWZDq681BXqiT (2026-11-24).",
   "engine_limits": [
     {
@@ -99,7 +99,7 @@
       "missing_moves": [
         {
           "piece": "five topic photo cards around the speaker",
-          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+          "move": "arrangement around_speaker lays out two of her photos (one above the title, one under the speaker); five, overlapping and tilted like the reference, needs a collage arrangement with overlap rules, and no offer carries her photos yet (KRI-1615 stages B and C)"
         },
         {
           "piece": "cards running past the canvas edge",
@@ -107,7 +107,7 @@
         },
         {
           "piece": "title laid out together with the cards (between them)",
-          "move": "a title zone aware of the card positions; the title zones offered are above the head, top left and mid frame"
+          "move": "the engine places the title between the card rows (services/intro_props_layout.py, drawn by make verify-intro-scenes), but no offer carries her photos and the phone does not draw the cards yet (KRI-1615 stages B and C)"
         }
       ],
       "examples": {
@@ -197,7 +197,7 @@
       "missing_moves": [
         {
           "piece": "2 + 2 photo grid",
-          "move": "a card layout option in the scene (cards exist as overlay cards, but a card set is not an IntroScene choice yet)"
+          "move": "arrangement grid_2x2 lays two of her photos above the title and two under the speaker (make verify-intro-scenes draws it in English and Turkish on a speaker with room above and below; a close selfie declines), but no offer carries her photos and the phone does not draw the cards yet (KRI-1615 stages B and C)"
         }
       ],
       "examples": {

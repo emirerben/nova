@@ -491,6 +491,10 @@ def test_render_check_lists_what_it_could_not_render(report):
         "declared_tuck_not_drawn",
         "unissued_delay",
         "solid_line_waits",
+        "card_over_title",
+        "card_over_face",
+        "card_bleeds_off_frame",
+        "card_on_captions",
     ],
 )
 def test_render_check_negative_controls_must_fail(report, control):
@@ -688,3 +692,55 @@ def test_a_squeezed_title_keeps_the_tuck(face_top):
     rise = serif.baseline_y - script.baseline_y
     caps = mod.STACKS["script_over_serif"].tuck_caps
     assert rise == pytest.approx(caps * font.getMetrics().fCapHeight, abs=2.0)
+
+
+# --- KRI-1615: her photo cards laid out with the title ----------------------------------------
+
+
+def test_render_check_draws_both_arrangements_in_both_languages(report):  # M22-M29
+    cards = [c for c in report["cases"] if c.get("name") == "KRI-1615 cards" and not c["control"]]
+    assert {(c["id"], c["language"]) for c in cards} == {
+        (case_id, language)
+        for case_id in ("ref3+around_speaker", "ref5+grid_2x2")
+        for language in ("en", "tr")
+    }
+    assert all(c["verdict"] == "PASS" for c in cards), [c["reasons"] for c in cards]
+    assert {len(c["cards"]) for c in cards} == {2, 4}
+
+
+def test_render_check_draws_pop_cards_over_a_close_speaker(report):  # M47-M56
+    pop = [c for c in report["cases"] if c.get("name") == "KRI-1615 pop cards"]
+    cases = [c for c in pop if not c["control"]]
+    assert {(c["id"], c["language"]) for c in cases} == {
+        (f"{case_id}+pop", language)
+        for case_id in ("ref3+around_speaker", "ref5+grid_2x2")
+        for language in ("en", "tr")
+    }
+    assert all(c["verdict"] == "PASS" for c in cases), [c["reasons"] for c in cases]
+    controls = {c["control"]: c["verdict"] for c in pop if c["control"]}
+    assert controls == {
+        "pop_card_over_title": "FAIL",
+        "pop_card_on_captions": "FAIL",
+        "pop_card_bleeds_off_frame": "FAIL",
+        "pop_card_held_2s": "FAIL",
+    }
+    wiring = {w["name"]: w["ok"] for w in report["wiring"]}
+    assert wiring["a_close_speaker_leaves_clean_cards_no_room"]
+    assert wiring["cards_never_pop_over_the_stand_in_speaker"]
+
+
+def test_render_check_wires_the_card_declines(report):
+    wiring = {w["name"]: w for w in report["wiring"]}
+    for name in (
+        "cards_decline_on_a_close_speaker",
+        "no_grid_from_three_photos",
+        "no_arrangement_is_issued_without_her_photos",
+    ):
+        assert wiring[name]["ok"], wiring[name]
+
+
+def test_props_sweep_renders_clean_or_declines():
+    sweep = check.sweep_props(thorough=False)
+    assert sweep["compiled"] > 50, sweep  # not vacuous: most shapes fit the roomy speaker
+    assert sweep["declined"], sweep  # and the tight corner declines, not renders
+    assert sweep["failed"] == [], sweep["failed"][:3]

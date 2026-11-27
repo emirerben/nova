@@ -83,6 +83,64 @@ tests/pipeline/test_intro_scene_pick.py, and `make verify-intro-styles`):
 * F26 protocol collision with other open PRs: `scripts/bump-protocol.py` is re-run after every
   rebase and tests compare against the constant.
 
+KRI-1615 stage B: a Talking look may carry her own photos as cards, laid out with the title
+(`intro_scene` arrangements, `services/intro_props_layout`). A card look is one more option, never
+automatic; its ``cards`` are `IntroCard`s (the wire stage C parses). Her photos come from
+`services/intro_card_pool` (one rule for the offer's query and the Save's pin), oldest first, as
+many as the arrangement has slots. The M-numbers continue the intro-scene list (M1-M30 are in
+`intro_scene`). Guards: tests/routes/test_intro_cards_e2e.py (real PostgreSQL, the real routes,
+the real Save, only the storage download replaced) and `make verify-intro-styles`.
+
+* M31 an old build, or the switch off, gets a card. Card looks are built only when the route
+  resolved `cards_allowed` (``INTRO_CARDS_ENABLED`` and a build at ``INTRO_CARDS_PROTOCOL``)
+  and loaded her photos; otherwise the offer is today's byte for byte, and the new build's
+  offer minus its card options equals it.
+* M32 a photo from another item or another user, or outside the item's pool namespace, becomes
+  a card. `card_photo` checks owner, item and path for the offer and for the Save's pin, and
+  the bind re-checks them before it reads a byte; a Save that posts such a card is refused
+  with today's "isn't a photo Kria pinned" error (the wrong-content control).
+* M33 a photo that is not ready, has no generation, is transparent (a sticker, KRI-1616), has
+  no measured upright shape, is library-backed, deduplicated or too large. Excluded by
+  `card_photo`, so neither offered nor pinned.
+* M34 fewer photos than slots. Two or three photos issue ``around_speaker`` only, four or more
+  also ``grid_2x2``; under two, no card look.
+* M35 the arrangement does not fit her real framing. No card look (the reason is logged);
+  measured on real Talking face bands by `app/cli/intro_cards_fit.py` (docs/pipelines/
+  intro-scene.md): on a typical close speaker the title alone fills the room above her head.
+* M36 cards or text already on screen with the title (the worker's cards, cards she placed, a
+  corner line). Her content stays: no card look (``cards_in_the_way``). Intro cards of an
+  earlier apply are not in the way.
+* M37 an option applied twice, or another applied over a card look, stacks cards. Card ids are
+  the slots' (``intro-card-<n>``); applying ANY option, plain looks and "No intro style"
+  included, replaces every ``intro-card-*`` card with that option's ``cards`` (none for a plain
+  look). Two Saves of the same look give the same lanes; the next offer marks it ``current``.
+* M38 a Save after she deletes one card fails or moves the other. The deleted card leaves the
+  lanes and the recipe; the other keeps its place. Its photo's receipt stays (append-only, like
+  every pool pin).
+* M39 an offer on an old baseline. 409 ``baseline_conflict`` before her photos are read.
+* M40 a Turkish title. Card looks compile and save in TR like EN.
+* M41 a bottom card lands on her captions, or the phone lifts it onto her face. The Save marks
+  ``caption_clear`` itself (`intro_card_pool.caption_clear_decisions`: her captions'
+  `caption_band`, the photo's shape, the card's place), never from the client; a look is
+  offered only when the dry-run Save compiles every card exactly where the offer placed it
+  (``card_moved`` otherwise).
+* M42 the dry run proves less than the Save. It pins provisional receipts (no bytes are read at
+  request time); the real Save binds the bytes and can still refuse
+  ``intro_card_unavailable``.
+* M43 the preview shows something else. A card look's preview carries its cards' boxes; previews
+  stay all or nothing under `PREVIEW_BYTES_CAP`.
+* M44 the request gets slow. Card looks have their own `MAX_CARD_COMPILES`, after the plain
+  looks.
+* M45 a card look outside a Talking edit with her face saved. Narrated and montage have no face
+  evidence and no card lane; a typical face is never assumed for cards.
+* M46 (open) a chat move or retime of a card look's title leaves its cards where and when they
+  were: nothing re-places the title with the cards in ``avoid`` after the Save. Her own drag in
+  the editor is hers to judge.
+
+Pop cards (Emir's ruling 2026-11-27: cards may cover her face for a short time) continue the list
+as M47-M59 in `services/intro_props_layout`: `fit_card_looks` asks for them only for an
+arrangement none of whose clean tries laid its cards out, one of them for lack of room.
+
 Skia is imported lazily (no Skia at import).
 """
 
@@ -98,6 +156,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import structlog
+from pydantic import BaseModel, ConfigDict
 
 from app.pipeline import intro_scene as scene_mod
 from app.pipeline import intro_scene_pick as pick
@@ -386,18 +445,16 @@ def layer_box(layer: Mapping[str, Any], canvas: Any) -> Any:
     return NormalizedBox(max(0.0, left), max(0.0, top), min(1.0, right), min(1.0, bottom))
 
 
-def avoid_boxes(
-    assembly: Mapping[str, Any], variant_id: str, title: Title, canvas: Any
-) -> list[Any]:
-    """Boxes of the OTHER text layers in the pinned recipe shown during the title's window (the
-    captions, a corner line, a closing line): the title keeps clear of them (F6). The layers that
-    draw her current title are not other text: those are matched whole (a caption that repeats
-    her words, which she usually says, is NOT her title), and a caption layer never is."""
+def other_layers(assembly: Mapping[str, Any], variant_id: str, title: Title) -> list[dict]:
+    """The OTHER text layers of the pinned recipe shown during the title's window (the captions,
+    a corner line, a closing line). The layers that draw her current title are not other text:
+    those are matched whole (a caption that repeats her words, which she usually says, is NOT her
+    title), and a caption layer never is."""
     from app.text_fold import fold_text  # noqa: PLC0415
 
     own = {fold_text(" ".join(str(row["text"]).split())) for row in title.rows}
     own.add(fold_text(title.words))
-    boxes: list[Any] = []
+    out: list[dict] = []
     for layer in recipe_layers(assembly, variant_id):
         if (
             float(layer.get("end", 0)) <= title.start_s
@@ -409,10 +466,16 @@ def avoid_boxes(
             text in own and not str(layer.get("id") or "").startswith("caption")
         ):
             continue
-        box = layer_box(layer, canvas)
-        if box is not None:
-            boxes.append(box)
-    return boxes
+        out.append(layer)
+    return out
+
+
+def avoid_boxes(
+    assembly: Mapping[str, Any], variant_id: str, title: Title, canvas: Any
+) -> list[Any]:
+    """Boxes of the other text layers (`other_layers`): the title keeps clear of them (F6)."""
+    boxes = (layer_box(layer, canvas) for layer in other_layers(assembly, variant_id, title))
+    return [box for box in boxes if box is not None]
 
 
 def evidence_for(
@@ -533,9 +596,16 @@ def dry_run_save(
     *,
     base_generation: str,
     save_arguments: Mapping[str, Any],
+    cards: Sequence[IntroCard] = (),
+    photos: Sequence[Any] = (),
 ) -> str | None:
     """Push ``option_rows`` through this route's real phone Save on a throwaway copy (nothing is
-    written anywhere) and return the refusal, or ``None`` when Save accepts them (F11)."""
+    written anywhere) and return the refusal, or ``None`` when Save accepts them (F11).
+
+    With ``cards`` (KRI-1615) the Save also posts them after her other cards, as the editor does,
+    with provisional receipts for ``photos`` (no bytes are read here: M42) and the server's own
+    ``caption_clear`` marks; it refuses (``card_moved``) unless every card compiles exactly where
+    the offer placed it (M41)."""
     from app.pipeline.phone_title_look import title_family_of  # noqa: PLC0415
     from app.routes import generative_jobs as gj  # noqa: PLC0415
 
@@ -552,17 +622,19 @@ def dry_run_save(
     except Exception:  # noqa: BLE001 - no revision token: the Save is judged without one
         revision = None
     try:
+        extra = _stage_cards(scratch, variant, cards, photos) if cards else {}
         body = gj.EditorCommitRequest(
             base_generation=base_generation,
             text_elements=[*[copy.deepcopy(dict(r)) for r in option_rows], *keep],
             **({"guided_revision_number": revision["revision_number"]} if revision else {}),
+            **extra,
         )
         gj.prepare_editor_commit(scratch, variant_id, body, **dict(save_arguments))
     except Exception as exc:  # noqa: BLE001 - any refusal drops this look
         detail = getattr(exc, "detail", None)
         code = detail.get("code") if isinstance(detail, dict) else None
         return str(code or detail or type(exc).__name__)[:120]
-    return None
+    return _card_moved(scratch, variant_id, cards) if cards else None
 
 
 # --- the fit ------------------------------------------------------------------------------------
@@ -687,21 +759,27 @@ def _tagged(
     zone: str,
     ink: str,
     restore: Sequence[Mapping[str, Any]] | None = None,
+    arrangement: str | None = None,
+    card_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """The placed rows as ``route``'s title rows, each carrying ``title_look.intro_style`` (so the
     next offer can mark the current look and tell a stack from a plain title). Line 1 also carries
-    ``restore``, the title this look replaces, for "No intro style" (F15)."""
+    ``restore``, the title this look replaces, for "No intro style" (F15). A card look's rows
+    also name its ``arrangement`` and take its key; a pop look's name its ``card_mode`` (server
+    only: the phone carries ``source_params`` untouched)."""
     from app.pipeline.phone_title_look import TITLE_LOOK_PARAM  # noqa: PLC0415
 
     rows = remap_to_route(placed, route)
     style = {
         "version": 1,
         "offer_id": offer,
-        "key": pair,
+        "key": card_look_key(pair, arrangement) if arrangement else pair,
         "font_pair": pair,
         "entrance": entrance,
         "zone": zone,
         "ink": ink,
+        **({"arrangement": arrangement} if arrangement else {}),
+        **({"card_mode": card_mode} if card_mode and card_mode != "clean" else {}),
     }
     for index, row in enumerate(rows):
         look = dict(row["source_params"][TITLE_LOOK_PARAM])
@@ -710,6 +788,343 @@ def _tagged(
             look["intro_style"]["restore"] = copy.deepcopy([dict(r) for r in restore])
         row["source_params"] = {**row["source_params"], TITLE_LOOK_PARAM: look}
     return rows
+
+
+# --- her photos as cards (KRI-1615 stage B, M31-M45) --------------------------------------------
+
+MAX_CARD_COMPILES = 8
+# Pop tries per arrangement, after its clean tries all declined (M44, M47): the pop title is the
+# title alone, so a later try mostly differs by font pair only.
+MAX_POP_COMPILES = 4
+# A card look's title sits between its card rows, so only the top-band zones are tried.
+_CARD_ZONES = ("above_head", "top_left")
+_PLACEMENT_EPS = 1e-6
+
+
+class IntroCard(BaseModel):
+    """One card of a card look, as the offer sends it (stage C parses exactly this).
+
+    Canvas fractions of the 1080x1920 frame: ``x_frac``/``y_frac`` the centre, ``scale`` the
+    width; the phone draws the photo at its own shape. Each card shows for its own
+    ``start_s``-``end_s`` (a clean card exactly the title's window, a pop card a shorter window
+    inside it). ``caption_clear`` is what the Save will mark from the same server evidence; the
+    Save never reads it from the client (a `MediaOverlay` has no such field)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str
+    slot: str
+    media_id: str
+    gcs_path: str
+    generation: str
+    x_frac: float
+    y_frac: float
+    scale: float
+    caption_clear: bool
+    z: int
+    start_s: float
+    end_s: float
+
+    def media_overlay(self) -> dict[str, Any]:
+        """The editor Save's ``media_overlays`` entry for this card."""
+        return {
+            "id": self.id,
+            "kind": "image",
+            "src_gcs_path": self.gcs_path,
+            "display_mode": "pip",
+            "position": "custom",
+            "x_frac": self.x_frac,
+            "y_frac": self.y_frac,
+            "scale": self.scale,
+            "start_s": self.start_s,
+            "end_s": self.end_s,
+            "z": self.z,
+        }
+
+
+@dataclass
+class CardLook:
+    look: Look
+    cards: list[IntroCard]
+    boxes: list[Any]  # NormalizedBox per card, slot order (the preview draws these)
+
+
+def card_look_key(pair: str, arrangement: str) -> str:
+    return f"{pair}+{arrangement}"
+
+
+def cards_allowed(protocol: int | None) -> bool:
+    """May this request get card looks (M31)? The switch and a build that parses ``cards``."""
+    from app.config import settings  # noqa: PLC0415
+
+    return (
+        settings.intro_cards_enabled
+        and protocol is not None
+        and protocol >= settings.intro_cards_min_client_protocol
+    )
+
+
+def _saved_cards(assembly: Mapping[str, Any], variant: Mapping[str, Any]) -> list[dict]:
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        project_phone_subtitled_editor_sections,
+    )
+
+    sections = project_phone_subtitled_editor_sections(dict(assembly), dict(variant)) or {}
+    return [card for card in sections.get("media_overlays") or [] if isinstance(card, dict)]
+
+
+def cards_in_the_way(assembly: Mapping[str, Any], variant: Mapping[str, Any], title: Title) -> bool:
+    """A card that is not an intro card, or text that is not hers or a caption, shows with the
+    title (M36): her content stays, so no card look is offered."""
+    from app.services.intro_card_pool import is_intro_card_id  # noqa: PLC0415
+
+    for card in _saved_cards(assembly, variant):
+        if is_intro_card_id(card.get("id")):
+            continue
+        if float(card.get("start_s") or 0) < title.end_s and float(card.get("end_s") or 0) > (
+            title.start_s
+        ):
+            return True
+    layers = other_layers(assembly, str(variant.get("variant_id") or ""), title)
+    return any(not str(layer.get("id") or "").startswith("caption") for layer in layers)
+
+
+def card_stage(
+    variant: Mapping[str, Any], assembly: Mapping[str, Any], title: Title, evidence: Evidence
+) -> Any:
+    """The speaker and captions her cards are laid out around, or None (M45): Talking's saved
+    face only (a typical face is never assumed for cards), her captions from `caption_band`."""
+    from app.services.intro_card_pool import caption_band  # noqa: PLC0415
+    from app.services.intro_props_layout import Stage  # noqa: PLC0415
+
+    if evidence.face_source != "saved" or evidence.face is None:
+        return None
+    return Stage((evidence.face,), caption_band(variant, assembly, (title.start_s, title.end_s)))
+
+
+def _stage_cards(
+    scratch: Any, variant: dict, cards: Sequence[IntroCard], photos: Sequence[Any]
+) -> dict[str, Any]:
+    """The dry run's ``media_overlays`` (her other cards, then these, as the editor posts them),
+    with a provisional receipt for each photo the job has not pinned and the server's marks."""
+    from app.services import intro_card_pool as pool  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_VISUALS_FIELD  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import pinned_visual  # noqa: PLC0415
+
+    plan = scratch.assembly_plan
+    posted = [
+        *(c for c in _saved_cards(plan, variant) if not pool.is_intro_card_id(c.get("id"))),
+        *(card.media_overlay() for card in cards),
+    ]
+    receipts = [
+        {
+            "media_id": photo.media_id,
+            "gcs_path": photo.gcs_path,
+            "generation": photo.generation,
+            "sha256": "0" * 64,
+            "byte_count": 1,
+        }
+        for photo in photos
+        if pinned_visual(plan, photo.media_id) is None
+    ]
+    marks = pool.caption_clear_decisions(variant, plan, posted, photos)
+    plan[PHONE_VISUALS_FIELD] = [*(plan.get(PHONE_VISUALS_FIELD) or []), *receipts]
+    setattr(scratch, pool.CAPTION_CLEAR_ATTR, marks)
+    return {"media_overlays": posted}
+
+
+def _card_moved(scratch: Any, variant_id: str, cards: Sequence[IntroCard]) -> str | None:
+    """``card_moved`` unless the recompiled recipe draws every card where and when the offer put
+    it (M41, M57)."""
+    from app.services.device_render import device_status  # noqa: PLC0415
+
+    recipe = device_status(scratch, variant_id).request.recipe
+    drawn = {
+        clip.id: clip.visual_placement
+        for track in recipe.tracks
+        for clip in track.clips
+        if clip.visual_placement is not None
+    }
+    for card in cards:
+        placement = drawn.get(f"subtitled-overlay-{card.id}")
+        if placement is None or any(
+            abs(float(got if got is not None else -1) - want) > _PLACEMENT_EPS
+            for got, want in (
+                (placement.width_fraction, card.scale),
+                (placement.x_fraction, card.x_frac),
+                (placement.y_fraction, card.y_frac),
+                (placement.window_start, card.start_s),
+                (placement.window_end, card.end_s),
+            )
+        ):
+            return "card_moved"
+    return None
+
+
+def fit_card_looks(
+    title: Title,
+    *,
+    route: str,
+    variant: Mapping[str, Any],
+    assembly: Mapping[str, Any],
+    evidence: Evidence,
+    photos: Sequence[Any],
+    canvas: Any,
+    seed: str,
+    offer: str,
+    language: str | None,
+    excluded_fonts: Sequence[str],
+    timeline_duration_s: float,
+    declines: dict[str, int],
+    accept: Callable[[Look, list[IntroCard], Sequence[Any]], str | None] | None = None,
+    restore: Sequence[Mapping[str, Any]] | None = None,
+) -> list[CardLook]:
+    """At most one card look per arrangement her photos fill (``around_speaker`` from two,
+    ``grid_2x2`` from four), in `ARRANGEMENTS` order. Each candidate x top-band zone is compiled
+    with the arrangement on her real stage (`compile_intro_scene` lays the cards and the title out
+    together and declines anything that does not fit); the first that the dry-run Save accepts,
+    cards where they were placed, is the look. Never raises."""
+    from app.services import intro_card_pool as pool  # noqa: PLC0415
+    from app.services import intro_props_layout as props_mod  # noqa: PLC0415
+
+    def decline(reason: str) -> list[CardLook]:
+        declines[f"cards:{reason}"] = declines.get(f"cards:{reason}", 0) + 1
+        return []
+
+    if route != "talking" or len(photos) < 2:
+        return decline("too_few_photos") if route == "talking" else []
+    try:
+        stage = card_stage(variant, assembly, title, evidence)
+        in_the_way = stage is not None and cards_in_the_way(assembly, variant, title)
+    except Exception as exc:  # noqa: BLE001 - unreadable lanes or recipe: no card look
+        log.warning("intro_styles.card_stage_failed", error=str(exc)[:200])
+        return decline("fit_error")
+    if stage is None:
+        return decline("no_face")
+    if in_the_way:
+        return decline("in_the_way")
+    menu = scene_mod.issue_menu(title.words, photo_count=len(photos))
+    tries = [
+        (candidate, zone)
+        for candidate in pick.pick_candidates(
+            title.words, seed=seed, recent=(), excluded_fonts=frozenset(excluded_fonts)
+        )
+        if candidate["font_pair"] in menu.font_pairs
+        for zone in candidate["zones"]
+        if zone in _CARD_ZONES
+    ]
+    window = round(title.end_s - title.start_s, 3)
+
+    def fit(
+        candidate: dict, zone: str, arrangement: str, chosen: list, mode: str
+    ) -> CardLook | tuple[str, bool]:
+        """The look, or why not and whether its cards were laid out (then a clean layout
+        exists, so the cards never pop: M47)."""
+        pair = candidate["font_pair"]
+        entrance = candidate["entrance"]
+        if entrance == "pen":
+            entrance = _non_pen_entrance(menu, pair, seed)
+        ink = first_light_ink(seed, pair)
+        out = scene_mod.compile_intro_scene(
+            scene_mod.IntroScene(
+                decision="compose",
+                voices=tuple(candidate["voices"]),
+                font_pair=pair,
+                ink=ink,
+                zone=zone,
+                entrance=entrance,
+                sound="none",
+                stagger=candidate.get("stagger", scene_mod.TOGETHER),
+                stack=candidate.get("stack", scene_mod.GAP),
+                arrangement=arrangement,
+            ),
+            title.words,
+            canvas=canvas,
+            timeline_duration_s=max(timeline_duration_s, window),
+            language=language,
+            duration_s=window,
+            photo_aspects=[photo.aspect for photo in chosen],
+            stage=stage,
+            card_mode=mode,
+        )
+        laid_out = out.card_layout == scene_mod.CARD_LAYOUT_FIT
+        if out.rows is None or out.props is None:
+            return (out.reason if laid_out else out.card_layout or out.reason), laid_out
+        rows = retime_title_rows(out.rows, title.start_s, title.end_s)
+        windows = props_mod.CARD_MODES[mode].windows(len(chosen), *title_window(rows))
+        if windows is None:
+            return "title_too_brief", True
+        placed = [
+            {
+                "id": pool.card_id(index),
+                "slot": card.slot,
+                "media_id": photo.media_id,
+                "gcs_path": photo.gcs_path,
+                "generation": photo.generation,
+                "x_frac": card.x_frac,
+                "y_frac": card.y_frac,
+                "scale": card.scale,
+                "z": card.z,
+                "start_s": start,
+                "end_s": end,
+            }
+            for index, (card, photo, (start, end)) in enumerate(
+                zip(out.props.cards, chosen, windows, strict=True)
+            )
+        ]
+        marks = pool.caption_clear_decisions(
+            variant,
+            assembly,
+            [{**card, "src_gcs_path": card["gcs_path"]} for card in placed],
+            chosen,
+        )
+        cards = [IntroCard(**card, caption_clear=marks.get(card["id"], False)) for card in placed]
+        look = Look(
+            card_look_key(pair, arrangement),
+            _tagged(rows, route, offer, pair, entrance, zone, ink, restore, arrangement, mode),
+            zone,
+            ink,
+            entrance,
+        )
+        refusal = accept(look, cards, chosen) if accept else None
+        if refusal:
+            return f"save_refused:{refusal}", True
+        return CardLook(look, cards, [card.box for card in out.props.cards])
+
+    def first_fit(
+        arrangement: str, chosen: list, mode: str, budget: int
+    ) -> CardLook | list[tuple[str, bool]]:
+        """The first try that fits in ``mode``, else each try's decline."""
+        declined: list[tuple[str, bool]] = []
+        for candidate, zone in tries[:budget]:
+            try:
+                result = fit(candidate, zone, arrangement, chosen, mode)
+            except Exception as exc:  # noqa: BLE001 - one look failing never fails the offer
+                log.warning("intro_styles.card_fit_failed", error=str(exc)[:200])
+                result = ("fit_error", True)
+            if isinstance(result, CardLook):
+                return result
+            declined.append(result)
+            decline(f"{mode}:{result[0]}")
+        if len(tries) > budget:
+            decline(f"{mode}:compile_budget")
+        return declined
+
+    looks: list[CardLook] = []
+    for arrangement in menu.arrangements:
+        if arrangement == scene_mod.NO_ARRANGEMENT:
+            continue
+        chosen = list(photos[: scene_mod.ARRANGEMENTS[arrangement].slots])
+        result = first_fit(arrangement, chosen, props_mod.CLEAN, MAX_CARD_COMPILES)
+        if (
+            not isinstance(result, CardLook)
+            and not any(laid_out for _reason, laid_out in result)
+            and any(reason == props_mod.NO_ROOM for reason, _laid_out in result)
+        ):
+            result = first_fit(arrangement, chosen, props_mod.POP, MAX_POP_COMPILES)  # M47
+        if isinstance(result, CardLook):
+            looks.append(result)
+    return looks
 
 
 # --- "No intro style" ---------------------------------------------------------------------------
@@ -918,11 +1333,16 @@ def build_offer(
     base_generation: str,
     *,
     save_arguments: Mapping[str, Any] | None = None,
+    photos: Sequence[Any] = (),
 ) -> dict[str, Any]:
     """The wire offer for one variant: up to `MAX_LOOKS` fitted looks plus "No intro style".
 
     ``job`` is a detached copy (`detach`). Writes nothing and calls no model (F18, F21).
-    Raises `TitleRowsInvalid` for rows that are not this variant's title (422)."""
+    Raises `TitleRowsInvalid` for rows that are not this variant's title (422).
+
+    ``photos`` (KRI-1615, `intro_card_pool.CardPhoto`, oldest first) are her card photos, given
+    only when the route resolved `cards_allowed`; with them, card looks follow the plain looks
+    (M31: without them the offer is today's)."""
     from app.pipeline.canvas import PORTRAIT  # noqa: PLC0415
 
     started = time.monotonic()
@@ -999,6 +1419,39 @@ def build_offer(
         log.info("intro_styles.offer", reason=reason, **log_fields)
         return _unavailable(reason)
 
+    def accept_cards(look: Look, cards: list[IntroCard], chosen: Sequence[Any]) -> str | None:
+        return dry_run_save(
+            job,
+            variant_id,
+            route,
+            look.rows,
+            base_generation=base_generation,
+            save_arguments=arguments,
+            cards=cards,
+            photos=chosen,
+        )
+
+    card_looks = (
+        fit_card_looks(
+            title,
+            route=route,
+            variant=variant,
+            assembly=assembly,
+            evidence=evidence,
+            photos=photos,
+            canvas=canvas,
+            seed=seed,
+            offer=offer,
+            language=language,
+            excluded_fonts=sorted(pick.excluded_font_families(policy)),
+            timeline_duration_s=_timeline_duration(variant, title),
+            declines=declines,
+            accept=accept_cards,
+            restore=title.restore,
+        )
+        if photos
+        else []
+    )
     options: list[dict[str, Any]] = [
         {
             "key": look.key,
@@ -1008,6 +1461,17 @@ def build_offer(
             "preview": None,
         }
         for index, look in enumerate(looks)
+    ]
+    options += [
+        {
+            "key": card_look.look.key,
+            "recommended": False,
+            "current": title.is_intro_stack and title.intro_key == card_look.look.key,
+            "rows": card_look.look.rows,
+            "preview": None,
+            "cards": [card.model_dump(mode="json") for card in card_look.cards],
+        }
+        for card_look in card_looks
     ]
     none_rows = _none_rows(
         title, route=route, variant=variant, assembly=assembly, evidence=evidence, canvas=canvas
@@ -1024,7 +1488,15 @@ def build_offer(
             "preview": None,
         }
     )
-    _attach_previews(options, assembly, variant_id, canvas)
+    _attach_previews(
+        options,
+        assembly,
+        variant_id,
+        canvas,
+        cards={look.look.key: preview_cards(look) for look in card_looks},
+    )
+    if photos:
+        log_fields["card_looks"] = len(card_looks)
     log.info(
         "intro_styles.offer", reason="ok", previews=options[0]["preview"] is not None, **log_fields
     )
@@ -1097,14 +1569,40 @@ def _none_rows(
         return None
 
 
+def preview_cards(card_look: CardLook) -> list[dict[str, Any]]:
+    """A card look's cards as its preview draws them (M43): her photo in each box, slot order,
+    ``box`` in canvas fractions (the phone draws the photo there, or a plate until it loads)."""
+    return [
+        {
+            "media_id": card.media_id,
+            "media_kind": "image",
+            "box": {"left": box.left, "top": box.top, "right": box.right, "bottom": box.bottom},
+            "z": card.z,
+        }
+        for card, box in zip(card_look.cards, card_look.boxes, strict=True)
+    ]
+
+
 def _attach_previews(
-    options: list[dict[str, Any]], assembly: Mapping[str, Any], variant_id: str, canvas: Any
+    options: list[dict[str, Any]],
+    assembly: Mapping[str, Any],
+    variant_id: str,
+    canvas: Any,
+    *,
+    cards: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> None:
     """Previews are all or nothing: one that cannot be drawn, or a payload past the cap, leaves
-    every option without one and the app shows label tiles (F17)."""
+    every option without one and the app shows label tiles (F17). A card look's preview also
+    carries its ``cards`` (KRI-1615)."""
     previews = [
         preview_for(option["rows"], frame_source=assembly, variant_id=variant_id, canvas=canvas)
         for option in options
+    ]
+    previews = [
+        {**preview, "cards": (cards or {})[option["key"]]}
+        if preview is not None and option.get("cards")
+        else preview
+        for option, preview in zip(options, previews, strict=True)
     ]
     if any(p is None for p in previews):
         return

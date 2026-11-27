@@ -27,6 +27,25 @@ unissued delay, a solid line waiting instead of the accent).
 KRI-1612 adds the model arm (`verify_intro_scene_model`): the real agent, parser and fit with the
 provider call replayed, drawn and measured the same way (see that module).
 
+KRI-1615 adds her photo cards (`props_cases`): ref 3's title with ``around_speaker`` and ref 5's
+with ``grid_2x2``, in English and Turkish, compiled with the cards on a speaker framed with room
+above and below (`ROOMY_FACE`; on the typical close speaker cards decline, a wiring check). Each
+card is drawn as a neutral plate at its planned box under the real Skia title and measured
+(`card_reasons`): inside the frame, off the face, the caption row, the Kria wordmark and the other
+cards, clear of the title's drawn ink, the title between the card rows. Four controls MUST fail
+(a card moved onto the title, onto the face, past the frame edge, onto the caption row), and
+`sweep_props` renders every arrangement x photo shape x issued pair x top zone over the stress
+titles.
+
+Pop cards (`pop_cases`, Emir's ruling 2026-11-27: cards may cover her face for a short time): the
+same two references on a close speaker (`CLOSE_FACE`, the face box of a real close Talking take,
+where the clean layout has no room), compiled with ``card_mode="pop"``. The cards may sit on her
+face and body (the blue box; the orange box is her eyes and mouth, `face_centre`) and are checked
+for everything else, plus their time: each shown at most `SHORT_CARD_S` inside the title's window,
+the first after the title lands, the rest one after another in slot order. Four controls MUST
+fail (a pop card on the title, on the caption row, past the frame edge, held 2 s), and the sweep
+runs pop on the close speaker too.
+
 KRI-1611 adds the picks: the real dispatch pick (`intro_scene_pick`) for several job seeds, in
 English and Turkish, on a light and a dark plate. Each pick is fitted with the real
 `place_title_look`, takes its one ink from the plate (`intro_ink_pass`), and goes through the same
@@ -51,6 +70,7 @@ import itertools
 import json
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +87,8 @@ from app.pipeline import intro_scene_pick as pick_mod  # noqa: E402
 from app.pipeline import overlay_verify as ov  # noqa: E402
 from app.pipeline.canvas import PORTRAIT  # noqa: E402
 from app.pipeline.render_geometry import NormalizedBox  # noqa: E402
+from app.services import intro_props_layout as props_mod  # noqa: E402
+from app.services.phone_card_layout import EDGE_INSET, WATERMARK_BOX, boxes_intersect  # noqa: E402
 
 _TEARDOWNS = Path(__file__).resolve().parents[2] / "prompts" / "intro_teardowns.json"
 LANGUAGES = ("en", "tr")
@@ -74,6 +96,15 @@ LANGUAGES = ("en", "tr")
 # accepts is judged here against the same head and captions.
 FACE_BOX = scene_mod.TYPICAL_FACE
 CAPTION_BOX = scene_mod.TYPICAL_CAPTIONS
+# KRI-1615: the footage refs 3 and 5 suit, a speaker centred with room above and below. On the
+# typical (close) speaker the title alone fills the room above the head, so cards decline there.
+ROOMY_FACE = NormalizedBox(0.32, 0.44, 0.68, 0.66)
+ROOMY_STAGE = props_mod.Stage((ROOMY_FACE,), (CAPTION_BOX.top, CAPTION_BOX.bottom))
+# The face box of a real close Talking take (prod, 2026-10): head large, chin near the captions.
+CLOSE_FACE = NormalizedBox(0.19, 0.38, 0.83, 0.77)
+CLOSE_STAGE = props_mod.Stage((CLOSE_FACE,), (CAPTION_BOX.top, CAPTION_BOX.bottom))
+_CARD_FILL = (150, 154, 160)  # a neutral plate where her photo would be
+_CARD_EDGE = (236, 238, 240)
 _FONTS = Path(__file__).resolve().parents[2] / "assets" / "fonts"
 _OVERLAP_MAX = 0.02
 # KRI-1618: no pixel measure tells a tuck from a plain stack. A tuck's crossing ink touches under
@@ -112,8 +143,17 @@ def _luminance(rgb: tuple[int, ...]) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-def plate(kind: str = "light_wall") -> Image.Image:
-    """A wall and a head-and-shoulders silhouette inside FACE_BOX, 1080x1920."""
+def _px(fraction: float, size: int) -> int:
+    return int(round(fraction * size, 6))
+
+
+def plate(
+    kind: str = "light_wall",
+    face: NormalizedBox = FACE_BOX,
+    cards: Sequence[NormalizedBox] = (),
+) -> Image.Image:
+    """A wall and a head-and-shoulders silhouette inside ``face``, 1080x1920, and a neutral
+    plate where each of her photo cards would be (KRI-1615)."""
     w, h = PORTRAIT.width, PORTRAIT.height
     wall, ceiling, shoulders = PLATES[kind]
     im = Image.new("RGBA", (w, h), (*wall, 255))
@@ -122,16 +162,22 @@ def plate(kind: str = "light_wall") -> Image.Image:
     draw.polygon(
         [
             (0, h),
-            (0, int(h * 0.80)),
-            (int(w * 0.28), int(h * 0.74)),
-            (int(w * 0.72), int(h * 0.74)),
-            (w, int(h * 0.80)),
+            (0, _px(face.bottom + 0.07, h)),
+            (_px(face.left + 0.01, w), _px(face.bottom + 0.01, h)),
+            (_px(face.right - 0.02, w), _px(face.bottom + 0.01, h)),
+            (w, _px(face.bottom + 0.07, h)),
             (w, h),
         ],
         fill=(*shoulders, 255),
     )  # shoulders
-    box = [FACE_BOX.left * w, FACE_BOX.top * h, FACE_BOX.right * w, FACE_BOX.bottom * h]
+    box = [face.left * w, face.top * h, face.right * w, face.bottom * h]
     draw.ellipse(box, fill=(214, 168, 140, 255))
+    label = ImageFont.truetype(str(_FONTS / "Inter-Bold.ttf"), 34)
+    for slot, card in enumerate(cards, start=1):
+        rect = [card.left * w, card.top * h, card.right * w, card.bottom * h]
+        draw.rectangle(rect, fill=(*_CARD_FILL, 255), outline=(*_CARD_EDGE, 255), width=4)
+        centre = ((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2)
+        draw.text(centre, f"prop_{slot}", font=label, fill=(*_CARD_EDGE, 255), anchor="mm")
     caption = ImageFont.truetype(str(_FONTS / "Inter-Bold.ttf"), 62)
     draw.text(
         (w / 2, (CAPTION_BOX.top + CAPTION_BOX.bottom) / 2 * h),
@@ -172,8 +218,11 @@ def verify_rows(
     face: NormalizedBox,
     scene: scene_mod.IntroScene,
     footage: str = "light_wall",
+    cards: Sequence[NormalizedBox] = (),
+    card_mode: str = props_mod.CLEAN,
 ) -> tuple[str, list[str], Image.Image]:
-    """Draw ``rows`` over the plate and measure them. Returns (verdict, reasons, the frame)."""
+    """Draw ``rows`` over the plate (her ``cards`` drawn under them) and measure them. Returns
+    (verdict, reasons, the frame)."""
     from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
     from app.pipeline import text_overlay_skia as tos  # noqa: PLC0415
     from app.pipeline.phone_title_look import (  # noqa: PLC0415
@@ -204,7 +253,7 @@ def verify_rows(
     if any(str(r.get("color")).upper() != ink_hex for r in rows):
         reasons.append(f"a row is not in the scene's ink {ink_hex}")
 
-    backdrop = plate(footage)
+    backdrop = plate(footage, face, cards)
     frame = backdrop.copy()
     inks: list[NormalizedBox] = []
     drawn: list[tuple[Image.Image, tuple[int, int, int, int]] | None] = []
@@ -266,7 +315,78 @@ def verify_rows(
         tightest = _TIGHT_GAP_PX - insets * height
         if line_gap < tightest - _LINE_GAP_SLACK_PX:
             reasons.append(f"{lines}, plain stacks keep {tightest:.0f}): rows overlap undeclared")
+    if cards:
+        reasons.extend(card_reasons(cards, face=face, inks=inks, card_mode=card_mode))
     return ("FAIL" if reasons else "PASS"), reasons, frame
+
+
+def card_reasons(
+    cards: Sequence[NormalizedBox],
+    *,
+    face: NormalizedBox,
+    inks: Sequence[NormalizedBox],
+    card_mode: str = props_mod.CLEAN,
+) -> list[str]:
+    """KRI-1615: why her cards may not be drawn with this title, measured against the plate's
+    own face, the caption row across the frame, the Kria wordmark and the title's drawn ink. A
+    pop card may cover her face and body, is at most 0.45 of the frame wide, and needs no rows
+    around the title."""
+    captions = NormalizedBox(0.0, CAPTION_BOX.top, 1.0, CAPTION_BOX.bottom)
+    pop = card_mode == props_mod.POP
+    reasons = []
+    for n, card in enumerate(cards, start=1):
+        if (
+            card.left < EDGE_INSET - 1e-6
+            or card.top < EDGE_INSET - 1e-6
+            or card.right > 1 - EDGE_INSET + 1e-6
+            or card.bottom > 1 - EDGE_INSET + 1e-6
+        ):
+            reasons.append(f"card {n} leaves the frame {card.as_dict()}")
+        keep_off = (("caption row", captions), ("watermark", WATERMARK_BOX))
+        for what, box in keep_off if pop else (("face", face), *keep_off):
+            if boxes_intersect(card, box):
+                reasons.append(f"card {n} is on the {what}")
+        if any(boxes_intersect(card, ink) for ink in inks):
+            reasons.append(f"card {n} touches the title's ink")
+        if pop and card.width > 0.45 + 1e-6:
+            reasons.append(f"pop card {n} is {card.width:.2f} of the frame wide")
+    for (a, first), (b, second) in itertools.combinations(enumerate(cards, start=1), 2):
+        if boxes_intersect(first, second):
+            reasons.append(f"cards {a} and {b} overlap")
+    if inks and not pop:
+        title_top, title_bottom = min(i.top for i in inks), max(i.bottom for i in inks)
+        middle = (face.top + face.bottom) / 2
+        above = [c for c in cards if (c.top + c.bottom) / 2 < middle]
+        below = [c for c in cards if (c.top + c.bottom) / 2 >= middle]
+        if any(c.bottom > title_top for c in above) or any(c.top < title_bottom for c in below):
+            reasons.append("the title is not between the cards")
+    return reasons
+
+
+def card_time_reasons(
+    windows: Sequence[tuple[float, float]], rows: Sequence[dict[str, Any]], card_mode: str
+) -> list[str]:
+    """When her cards show, against the title's window (first entrance to last exit): a clean
+    card exactly with the title; a pop card inside it for at most `SHORT_CARD_S`, the first
+    after the title lands and each later in slot order."""
+    from app.pipeline.title_family import title_window  # noqa: PLC0415
+
+    start, end = title_window(rows)
+    if card_mode != props_mod.POP:
+        return [
+            f"card {n} shows {w}, the title {start}-{end}"
+            for n, w in enumerate(windows, start=1)
+            if w != (start, end)
+        ]
+    reasons = [
+        f"pop card {n} shows {w[1] - w[0]:.2f} s ({w[0]}-{w[1]}), the title {start}-{end}"
+        for n, w in enumerate(windows, start=1)
+        if w[1] - w[0] > props_mod.SHORT_CARD_S + 1e-6 or w[0] < start or w[1] > end + 1e-6
+    ]
+    enters = [w[0] for w in windows]
+    if enters and (enters[0] <= start or enters != sorted(set(enters))):
+        reasons.append(f"pop cards enter at {enters}, not one after another after the title")
+    return reasons
 
 
 def _place(rows: list[dict[str, Any]], position: str | None) -> tuple[list[dict], dict]:
@@ -904,6 +1024,371 @@ def move_cases() -> list[dict[str, Any]]:
     return cases
 
 
+# --- KRI-1615: her photo cards laid out with the title ----------------------------------------
+
+# (teardown, arrangement, her photos' aspects in slot order): ref 3's collage, ref 5's 2 + 2 grid.
+PROPS_CASES = (
+    ("ref3", "around_speaker", (4 / 3, 3 / 4)),
+    ("ref5", "grid_2x2", (3 / 4, 3 / 4, 3 / 4, 3 / 4)),
+)
+PROPS_PHOTO_SETS = {
+    "portrait": (3 / 4,) * 4,
+    "landscape": (4 / 3,) * 4,
+    "square": (1.0,) * 4,
+    "mixed": (4 / 3, 3 / 4, 1.0, 3 / 4),
+}
+
+
+def _with_props(
+    example: dict[str, Any],
+    language: str,
+    arrangement: str,
+    photos: Sequence[float],
+    stage: props_mod.Stage | None = ROOMY_STAGE,
+    card_mode: str = props_mod.CLEAN,
+) -> tuple[scene_mod.IntroScene, scene_mod.IntroCompile]:
+    scene = scene_mod.IntroScene.model_validate({**example["scene"], "arrangement": arrangement})
+    out = scene_mod.compile_intro_scene(
+        scene,
+        example["title"],
+        canvas=PORTRAIT,
+        timeline_duration_s=30.0,
+        language=language,
+        photo_aspects=photos,
+        stage=stage,
+        card_mode=card_mode,
+    )
+    return scene, out
+
+
+def _props_case(
+    case_id: str,
+    language: str,
+    title: str,
+    scene: scene_mod.IntroScene,
+    out: scene_mod.IntroCompile,
+    footage: str,
+    *,
+    cards: Sequence[NormalizedBox] | None = None,
+    windows: Sequence[tuple[float, float]] | None = None,
+    control: str | None = None,
+    face: NormalizedBox = ROOMY_FACE,
+    card_mode: str = props_mod.CLEAN,
+) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "id": case_id,
+        "name": "KRI-1615 pop cards" if card_mode == props_mod.POP else "KRI-1615 cards",
+        "language": language,
+        "control": control,
+        "expressible": "yes",
+        "missing_moves": [],
+        "title": title,
+        "rendered": True,
+        "scene": scene.model_dump(mode="json", exclude_none=True),
+    }
+    if out.props is None or out.rows is None:
+        return _case(
+            {**base, "verdict": "FAIL", "reasons": [f"compile declined: {out.reason}"]}, None
+        )
+    boxes = list(cards if cards is not None else (card.box for card in out.props.cards))
+    shown = list(
+        windows if windows is not None else ((c.start_s, c.end_s) for c in out.props.cards)
+    )
+    verdict, reasons, frame = verify_rows(
+        out.rows,
+        out.props.receipt,
+        face=face,
+        scene=scene,
+        footage=footage,
+        cards=boxes,
+        card_mode=card_mode,
+    )
+    reasons = [*reasons, *card_time_reasons(shown, out.rows, card_mode)]
+    if out.props.mode != card_mode:
+        reasons.append(f"the layout ran {out.props.mode}, the case asked {card_mode}")
+    if not approval_matches(out.rows, title):
+        reasons = [*reasons, "the approval check does not find her title in the drawn layers"]
+    return _case(
+        {
+            **base,
+            "verdict": "FAIL" if reasons else "PASS",
+            "reasons": reasons,
+            "rows": _row_summary(out.rows),
+            "cards": [
+                {"slot": f"prop_{n}", **box.as_dict(), "start_s": w[0], "end_s": w[1]}
+                for n, (box, w) in enumerate(zip(boxes, shown, strict=True), start=1)
+            ],
+        },
+        frame,
+        _face=face,
+        **({"_centre": props_mod.face_centre(face)} if card_mode == props_mod.POP else {}),
+    )
+
+
+def _moved(box: NormalizedBox, *, x: float | None = None, y: float | None = None) -> NormalizedBox:
+    """``box`` with its centre moved to ``x`` / ``y``, its size kept."""
+    dx = 0.0 if x is None else x - (box.left + box.right) / 2
+    dy = 0.0 if y is None else y - (box.top + box.bottom) / 2
+    return NormalizedBox(box.left + dx, box.top + dy, box.right + dx, box.bottom + dy)
+
+
+def props_cases(teardowns: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each arrangement in English and Turkish on the roomy speaker: compiled, cards drawn as
+    neutral plates under the real Skia title, measured and approved. Then controls that MUST
+    fail, each one card of the English grid moved: onto the title, onto the face, past the frame
+    edge, onto the caption row."""
+    from app.pipeline.phone_title_look import title_block_box  # noqa: PLC0415
+
+    cases: list[dict[str, Any]] = []
+    for ref, arrangement, photos in PROPS_CASES:
+        footage = teardowns[ref]["footage_plate"]
+        for language in LANGUAGES:
+            example = teardowns[ref]["examples"][language]
+            scene, out = _with_props(example, language, arrangement, photos)
+            case_id = f"{ref}+{arrangement}"
+            cases.append(_props_case(case_id, language, example["title"], scene, out, footage))
+    example = teardowns["ref5"]["examples"]["en"]
+    scene, out = _with_props(example, "en", "grid_2x2", PROPS_CASES[1][2])
+    assert out.props is not None and out.rows is not None, out.reason
+    boxes = [card.box for card in out.props.cards]
+    title = title_block_box(out.rows, canvas=PORTRAIT)
+    face = ROOMY_FACE
+    for control, index, moved in (
+        ("card_over_title", 0, lambda b: _moved(b, y=(title.top + title.bottom) / 2)),
+        ("card_over_face", 2, lambda b: _moved(b, y=(face.top + face.bottom) / 2)),
+        ("card_bleeds_off_frame", 1, lambda b: _moved(b, x=1.0 - b.width / 4)),
+        ("card_on_captions", 3, lambda b: _moved(b, y=(CAPTION_BOX.top + CAPTION_BOX.bottom) / 2)),
+    ):
+        mutated = [moved(box) if n == index else box for n, box in enumerate(boxes)]
+        cases.append(
+            _props_case(
+                "ref5+grid_2x2",
+                "en",
+                example["title"],
+                scene,
+                out,
+                "dark_room",
+                cards=mutated,
+                control=control,
+            )
+        )
+    return cases
+
+
+def pop_cases(teardowns: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pop cards on the close speaker: each arrangement in English and Turkish, then controls
+    that MUST fail, each one card of the English grid moved or held: onto the title, onto the
+    caption row, past the frame edge, shown 2 s."""
+    from app.pipeline.phone_title_look import title_block_box  # noqa: PLC0415
+
+    pop = {"stage": CLOSE_STAGE, "card_mode": props_mod.POP}
+    checks = {"face": CLOSE_FACE, "card_mode": props_mod.POP}
+    cases: list[dict[str, Any]] = []
+    for ref, arrangement, photos in PROPS_CASES:
+        footage = teardowns[ref]["footage_plate"]
+        for language in LANGUAGES:
+            example = teardowns[ref]["examples"][language]
+            scene, out = _with_props(example, language, arrangement, photos, **pop)
+            case_id = f"{ref}+{arrangement}+pop"
+            cases.append(
+                _props_case(case_id, language, example["title"], scene, out, footage, **checks)
+            )
+    example = teardowns["ref5"]["examples"]["en"]
+    scene, out = _with_props(example, "en", "grid_2x2", PROPS_CASES[1][2], **pop)
+    assert out.props is not None and out.rows is not None, out.card_layout
+    boxes = [card.box for card in out.props.cards]
+    windows = [(card.start_s, card.end_s) for card in out.props.cards]
+    title = title_block_box(out.rows, canvas=PORTRAIT)
+    for control, index, moved in (
+        ("pop_card_over_title", 0, lambda b: _moved(b, y=(title.top + title.bottom) / 2)),
+        (
+            "pop_card_on_captions",
+            3,
+            lambda b: _moved(b, y=(CAPTION_BOX.top + CAPTION_BOX.bottom) / 2),
+        ),
+        ("pop_card_bleeds_off_frame", 1, lambda b: _moved(b, x=1.0 - b.width / 4)),
+    ):
+        mutated = [moved(box) if n == index else box for n, box in enumerate(boxes)]
+        cases.append(
+            _props_case(
+                "ref5+grid_2x2+pop",
+                "en",
+                example["title"],
+                scene,
+                out,
+                "dark_room",
+                cards=mutated,
+                control=control,
+                **checks,
+            )
+        )
+    held = [(w[0], w[0] + 2.0) if n == 0 else w for n, w in enumerate(windows)]
+    cases.append(
+        _props_case(
+            "ref5+grid_2x2+pop",
+            "en",
+            example["title"],
+            scene,
+            out,
+            "dark_room",
+            windows=held,
+            control="pop_card_held_2s",
+            **checks,
+        )
+    )
+    return cases
+
+
+def props_wiring(teardowns: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The arrangement's own contract: what declines, what is not issued."""
+    example = teardowns["ref5"]["examples"]["en"]
+    photos = PROPS_CASES[1][2]
+    _scene, close = _with_props(example, "en", "grid_2x2", photos, stage=None)
+    _scene, three = _with_props(example, "en", "grid_2x2", photos[:3])
+    issued = scene_mod.issue_menu(example["title"]).arrangements
+    _scene, close_clean = _with_props(example, "en", "grid_2x2", photos, stage=CLOSE_STAGE)
+    _scene, stand_in = _with_props(
+        example, "en", "grid_2x2", photos, stage=None, card_mode=props_mod.POP
+    )
+    return [
+        {
+            "name": "a_close_speaker_leaves_clean_cards_no_room",
+            "expected": "no_room_for_cards (the offer may then ask for pop)",
+            "observed": str(close_clean.card_layout),
+            "ok": close_clean.card_layout == props_mod.NO_ROOM,
+        },
+        {
+            "name": "cards_never_pop_over_the_stand_in_speaker",
+            "expected": "props_do_not_fit, no_stage",
+            "observed": f"{stand_in.reason}, {stand_in.card_layout}",
+            "ok": (stand_in.reason, stand_in.card_layout) == ("props_do_not_fit", "no_stage"),
+        },
+        {
+            "name": "cards_decline_on_a_close_speaker",
+            "expected": "props_do_not_fit, no rows",
+            "observed": f"{close.reason}, {'rows' if close.rows else 'no rows'}",
+            "ok": close.reason == "props_do_not_fit" and close.rows is None,
+        },
+        {
+            "name": "no_grid_from_three_photos",
+            "expected": "option_not_issued",
+            "observed": three.reason,
+            "ok": three.reason == "option_not_issued",
+        },
+        {
+            "name": "no_arrangement_is_issued_without_her_photos",
+            "expected": "('none',)",
+            "observed": str(issued),
+            "ok": issued == ("none",),
+        },
+    ]
+
+
+def sweep_props(
+    *,
+    thorough: bool = True,
+    stage: props_mod.Stage = ROOMY_STAGE,
+    card_mode: str = props_mod.CLEAN,
+) -> dict[str, Any]:
+    """Every arrangement x photo shapes x issued font pair x top zone over the stress titles on
+    ``stage`` by ``card_mode``: whatever compiles must PASS the same render check, cards and
+    their time included; the rest must be declined with a reason. (The approval check runs on
+    the cases above.)"""
+    compiled = 0
+    declined: dict[str, int] = {}
+    failed: list[dict[str, Any]] = []
+    shared: list[dict[str, Any]] = []
+    photo_sets = list(PROPS_PHOTO_SETS.items())[: None if thorough else 2]
+    zones = ("above_head", "top_left") if thorough else ("above_head",)
+    for language, title in (*SWEEP_TITLES, *PICK_TITLES):
+        menu = scene_mod.issue_menu(title, photo_count=4)
+        words = len(scene_mod.title_words(title))
+        for pair, zone, voices, arrangement, (shape, photos) in itertools.product(
+            menu.font_pairs,
+            zones,
+            _sweep_voices(words, thorough=False),
+            ("around_speaker", "grid_2x2"),
+            photo_sets,
+        ):
+            scene = scene_mod.IntroScene(
+                decision="compose",
+                voices=voices,
+                font_pair=pair,
+                ink="cream",
+                zone=zone,
+                entrance="fade",
+                sound="none",
+                arrangement=arrangement,
+            )
+            out = scene_mod.compile_intro_scene(
+                scene,
+                title,
+                canvas=PORTRAIT,
+                timeline_duration_s=30.0,
+                language=language,
+                photo_aspects=photos,
+                stage=stage,
+                menu=menu,
+                card_mode=card_mode,
+            )
+            if out.props is None or out.rows is None:
+                laid_out = out.card_layout in (None, scene_mod.CARD_LAYOUT_FIT)
+                reason = out.reason if laid_out else str(out.card_layout)
+                declined[reason] = declined.get(reason, 0) + 1
+                continue
+            compiled += 1
+            verdict, reasons, _ = verify_rows(
+                out.rows,
+                out.props.receipt,
+                face=stage.faces[0],
+                scene=scene,
+                footage="dark_room",
+                cards=[card.box for card in out.props.cards],
+                card_mode=card_mode,
+            )
+            windows = [(card.start_s, card.end_s) for card in out.props.cards]
+            reasons = [*reasons, *card_time_reasons(windows, out.rows, card_mode)]
+            if reasons and card_mode == props_mod.POP:
+                # A pop title IS the title placed alone: what the same rows fail with no card
+                # is the plain look's own defect on this framing, listed, not blamed on pop.
+                _verdict, alone, _frame = verify_rows(
+                    out.rows,
+                    out.props.receipt,
+                    face=stage.faces[0],
+                    scene=scene,
+                    footage="dark_room",
+                )
+                if set(reasons) <= set(alone):
+                    shared.append(
+                        {
+                            "title": title,
+                            "font_pair": pair,
+                            "zone": zone,
+                            "voices": "".join(v[0] for v in voices),
+                            "reasons": reasons,
+                        }
+                    )
+                    continue
+            if reasons:
+                failed.append(
+                    {
+                        "title": title,
+                        "font_pair": pair,
+                        "zone": zone,
+                        "voices": "".join(v[0] for v in voices),
+                        "arrangement": arrangement,
+                        "photos": shape,
+                        "reasons": reasons,
+                    }
+                )
+    return {
+        "compiled": compiled,
+        "declined": declined,
+        "failed": failed,
+        "title_defects_without_cards": shared,
+    }
+
+
 def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     data = json.loads(_TEARDOWNS.read_text())
     teardowns = {t["id"]: t for t in data["teardowns"]}
@@ -967,6 +1452,8 @@ def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             )
     cases.extend(_controls(teardowns))
     cases.extend(move_cases())
+    cases.extend(props_cases(teardowns))
+    cases.extend(pop_cases(teardowns))
     cases.extend(pick_cases())
     from app.cli.verify_intro_scene_model import model_cases  # noqa: PLC0415
 
@@ -1012,13 +1499,19 @@ def build_montage(cases: list[dict[str, Any]], out_path: str) -> None:
         frame = case.get("_frame")
         if frame is not None:
             tile = frame.convert("RGB").resize((thumb_w, thumb_h))
+            face = case.get("_face", FACE_BOX)
             fb = [
-                FACE_BOX.left * thumb_w,
-                FACE_BOX.top * thumb_h,
-                FACE_BOX.right * thumb_w,
-                FACE_BOX.bottom * thumb_h,
+                face.left * thumb_w,
+                face.top * thumb_h,
+                face.right * thumb_w,
+                face.bottom * thumb_h,
             ]
             ImageDraw.Draw(tile).rectangle(fb, outline=(40, 120, 220), width=2)
+            centre = case.get("_centre")
+            if centre is not None:
+                cb = [centre.left * thumb_w, centre.top * thumb_h]
+                cb += [centre.right * thumb_w, centre.bottom * thumb_h]
+                ImageDraw.Draw(tile).rectangle(cb, outline=(240, 140, 30), width=2)
         else:
             tile = Image.new("RGB", (thumb_w, thumb_h), (48, 54, 61))
             td = ImageDraw.Draw(tile)
@@ -1055,25 +1548,36 @@ def run(*, out_dir: str, sweep: bool = True) -> dict[str, Any]:
     montage = os.path.join(out_dir, "montage.png")
     report_path = os.path.join(out_dir, "report.json")
     build_montage(cases, montage)
-    public = [{k: v for k, v in case.items() if k != "_frame"} for case in cases]
+    public = [{k: v for k, v in case.items() if not k.startswith("_")} for case in cases]
     checked = [c for c in public if not c["control"] and c["rendered"]]
     blind = [c["control"] for c in public if c["control"] and c["verdict"] != "FAIL"]
     failed = [f"{c['id']}/{c['language']}" for c in checked if c["verdict"] != "PASS"]
-    sweep_report = sweep_issued_menu() if sweep else {"compiled": 0, "declined": {}, "failed": []}
+    nothing: dict[str, Any] = {"compiled": 0, "declined": {}, "failed": []}
+    sweep_report = sweep_issued_menu() if sweep else nothing
+    props_sweep = sweep_props() if sweep else nothing
+    pop_sweep = sweep_props(stage=CLOSE_STAGE, card_mode=props_mod.POP) if sweep else nothing
     from app.cli.verify_intro_scene_model import model_wiring  # noqa: PLC0415
 
-    wiring = [*wiring_controls(), *model_wiring()]
+    teardowns = {t["id"]: t for t in data["teardowns"]}
+    wiring = [*wiring_controls(), *model_wiring(), *props_wiring(teardowns)]
     wiring_failed = [w["name"] for w in wiring if not w["ok"]]
     report = {
         "teardowns_version": data["version"],
         "environment": "prod-image" if os.environ.get("NOVA_IN_PROD_IMAGE") else "host",
         "skia": getattr(skia, "__version__", "unknown"),
         "overall": "PASS"
-        if not failed and not blind and not sweep_report["failed"] and not wiring_failed
+        if not failed
+        and not blind
+        and not sweep_report["failed"]
+        and not props_sweep["failed"]
+        and not pop_sweep["failed"]
+        and not wiring_failed
         else "FAIL",
         "failed": failed,
         "wiring": wiring,
         "sweep": sweep_report,
+        "props_sweep": props_sweep,
+        "pop_sweep": pop_sweep,
         "blind_controls": blind,
         "inexpressible": [
             {"id": t["id"], "expressible": t["expressible"], "missing_moves": t["missing_moves"]}
@@ -1111,6 +1615,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     for bad in sweep["failed"][:10]:
         print(f"    FAIL {bad['font_pair']}/{bad['zone']} {bad['voices']}: {bad['reasons']}")
+    for label, key in (("props", "props_sweep"), ("pop", "pop_sweep")):
+        props = report[key]
+        print(
+            f"  {label} sweep: {props['compiled']} scene(s) with cards rendered, "
+            f"{len(props['failed'])} failed; declined {props['declined']}"
+        )
+        for bad in props["failed"][:10]:
+            print(
+                f"    FAIL {bad['arrangement']} {bad['photos']} {bad['font_pair']}/{bad['zone']} "
+                f"{bad['voices']}: {bad['reasons']}"
+            )
+        for known in {
+            (k["title"], k["font_pair"], k["zone"], k["voices"], tuple(k["reasons"]))
+            for k in props.get("title_defects_without_cards", [])
+        }:
+            print(f"    TITLE DEFECT WITHOUT CARDS (not pop's) {known}")
     print(
         f"  rendered {sum(1 for c in cases if c['rendered'])} case(s); "
         f"{len(report['inexpressible'])} reference(s) name a missing move"

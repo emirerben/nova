@@ -877,6 +877,12 @@ class Settings(BaseSettings):
     # lane's gate (`sfx_capability.subtitled_sfx_limit`). Read on every render: off, a scene is
     # compiled silent. Sounds already saved on an edit stay (they are ordinary lane rows).
     intro_scene_sound_enabled: bool = False
+    # KRI-1615 stage B: the kill switch for photo cards in "Try intro styles" (her own Visuals
+    # photos laid out with the title, `services/intro_card_pool`). Off: every offer is today's and
+    # a Save refuses a new card photo as before; cards already saved stay. A card option is sent
+    # only to a build at or above the protocol below (set by scripts/bump-protocol.py).
+    intro_cards_enabled: bool = False
+    intro_cards_min_client_protocol: int = 62
 
     def intro_scene_for(self, user_id: object) -> bool:
         if not self.intro_scene_enabled or user_id is None:
