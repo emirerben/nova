@@ -1747,8 +1747,10 @@ enum EditorOpenIntent { case warm, open }
         guard saveRequestedDuringLoad else { return }
         saveRequestedDuringLoad = false
         guard loadState == .loaded, hasUnsavedChanges else { return }
-        Task { await save() }
+        saveKeptForLoadTask = Task { await save() }
     }
+
+    private var saveKeptForLoadTask: Task<Void, Never>?
 
     /// A Save in flight has already sent the document, and its answer lands on it, so a discard would undo what it saves.
     /// A load holds `isSaving` as a fence only, and Save waiting on an upload has no attempt yet; both can be discarded.
@@ -9471,6 +9473,9 @@ enum EditorOpenIntent { case warm, open }
     /// "Save and exit": true when the edit is saved and the editor may close.
     func saveForExit() async -> Bool {
         await save()
+        // During a load the tap only kept the Save; the exit waits for it to run, as the Save button's own spinner does.
+        while saveRequestedDuringLoad, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
+        await saveKeptForLoadTask?.value
         guard !hasUnsavedChanges else { return false }
         switch saveState {
         case .loadFailed, .failed, .renderRetryNeeded, .deviceRenderRetryNeeded: return false
