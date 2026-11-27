@@ -75,7 +75,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 563.1207690429687,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -113,92 +113,92 @@
         "glyphs": [
          {
           "glyph_id": 202,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 151,
-          "x": 38.08000183105469,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 104.72000122070312,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 247,
-          "x": 153.44000244140625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 127,
-          "x": 177.2400016784668,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 153,
-          "x": 237.5800018310547,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 277.9000015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 334.04000091552734,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 390.1800003051758,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 196,
-          "x": 438.9000015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 202,
-          "x": 481.1800003051758,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 247,
-          "x": 519.2600021362305,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 133,
-          "x": 543.060001373291,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 609.4200019836426,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 196,
-          "x": 658.1400032043457,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 153,
-          "x": 700.4200019836426,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 740.7400016784668,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 173,
-          "x": 796.8800010681152,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -212,7 +212,7 @@
         },
         "stroke_width": 0.0,
         "text": "the biggest design",
-        "x": 105.0899658203125
+        "x": "<measured>"
        }
       ],
       "start": 0.6
@@ -226,7 +226,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 779.0648239746093,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -264,77 +264,77 @@
         "glyphs": [
          {
           "glyph_id": 202,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 192,
-          "x": 38.849998474121094,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 86.54999923706055,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 173,
-          "x": 139.79999923706055,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 133,
-          "x": 210.29999923706055,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 282,
-          "x": 278.85000228881836,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 192,
-          "x": 304.35000228881836,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 153,
-          "x": 352.0500030517578,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 385.50000381469727,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 151,
-          "x": 445.8000030517578,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 202,
-          "x": 516.3000030517578,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 282,
-          "x": 555.1500015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 173,
-          "x": 580.6500015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 179,
-          "x": 651.1500015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 216,
-          "x": 712.3500022888184,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -348,7 +348,7 @@
         },
         "stroke_width": 0.0,
         "text": "trend right now",
-        "x": 139.04998779296875
+        "x": "<measured>"
        }
       ],
       "start": 0.0
@@ -396,7 +396,7 @@
           "removed": false,
           "role": "generative_intro",
           "size_class": "large",
-          "size_px": 117.0,
+          "size_px": "<measured>",
           "source_params": {
            "source": "opening_title"
           },
@@ -587,7 +587,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 563.1207690429687,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -625,92 +625,92 @@
         "glyphs": [
          {
           "glyph_id": 202,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 151,
-          "x": 38.08000183105469,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 104.72000122070312,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 247,
-          "x": 153.44000244140625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 127,
-          "x": 177.2400016784668,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 153,
-          "x": 237.5800018310547,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 277.9000015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 334.04000091552734,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 390.1800003051758,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 196,
-          "x": 438.9000015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 202,
-          "x": 481.1800003051758,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 247,
-          "x": 519.2600021362305,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 133,
-          "x": 543.060001373291,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 609.4200019836426,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 196,
-          "x": 658.1400032043457,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 153,
-          "x": 700.4200019836426,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 740.7400016784668,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 173,
-          "x": 796.8800010681152,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -724,7 +724,7 @@
         },
         "stroke_width": 0.0,
         "text": "the biggest design",
-        "x": 105.0899658203125
+        "x": "<measured>"
        }
       ],
       "start": 0.6
@@ -738,7 +738,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 779.0648239746093,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -776,77 +776,77 @@
         "glyphs": [
          {
           "glyph_id": 202,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 192,
-          "x": 38.849998474121094,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 137,
-          "x": 86.54999923706055,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 173,
-          "x": 139.79999923706055,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 133,
-          "x": 210.29999923706055,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 282,
-          "x": 278.85000228881836,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 192,
-          "x": 304.35000228881836,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 153,
-          "x": 352.0500030517578,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 147,
-          "x": 385.50000381469727,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 151,
-          "x": 445.8000030517578,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 202,
-          "x": 516.3000030517578,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 282,
-          "x": 555.1500015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 173,
-          "x": 580.6500015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 179,
-          "x": 651.1500015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 216,
-          "x": 712.3500022888184,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -860,7 +860,7 @@
         },
         "stroke_width": 0.0,
         "text": "trend right now",
-        "x": 139.04998779296875
+        "x": "<measured>"
        }
       ],
       "start": 0.0
@@ -908,7 +908,7 @@
           "removed": false,
           "role": "generative_intro",
           "size_class": "large",
-          "size_px": 117.0,
+          "size_px": "<measured>",
           "source_params": {
            "source": "opening_title"
           },
@@ -1051,7 +1051,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 477.576,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -1089,72 +1089,72 @@
         "glyphs": [
          {
           "glyph_id": 358,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 253,
-          "x": 28.31999969482422,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 280,
-          "x": 60.84000015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 283,
-          "x": 95.04000091552734,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 351,
-          "x": 110.16000080108643,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 515,
-          "x": 136.14000034332275,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 351,
-          "x": 151.74000072479248,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 253,
-          "x": 177.7200002670288,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 280,
-          "x": 210.24000072479248,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 242,
-          "x": 244.44000148773193,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 253,
-          "x": 278.6400022506714,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 351,
-          "x": 311.16000270843506,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 283,
-          "x": 337.1400022506714,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 523,
-          "x": 352.26000213623047,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -1168,7 +1168,7 @@
         },
         "stroke_width": 0.0,
         "text": "şehir rehberi:",
-        "x": 64.8
+        "x": "<measured>"
        }
       ],
       "start": 0.0
@@ -1182,7 +1182,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 726.4119375,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -1220,77 +1220,77 @@
         "glyphs": [
          {
           "glyph_id": 79,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 76,
-          "x": 36.474609375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 93,
-          "x": 65.771484375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 69,
-          "x": 159.375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 82,
-          "x": 229.248046875,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 81,
-          "x": 279.638671875,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 15,
-          "x": 353.90625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 3,
-          "x": 397.119140625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 76,
-          "x": 472.119140625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 79,
-          "x": 501.416015625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 78,
-          "x": 537.890625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 3,
-          "x": 608.349609375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 74,
-          "x": 683.349609375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 190,
-          "x": 762.451171875,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 81,
-          "x": 828.22265625,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -1304,7 +1304,7 @@
         },
         "stroke_width": 0.0,
         "text": "lizbon, ilk gün",
-        "x": 64.8
+        "x": "<measured>"
        }
       ],
       "start": 0.6
@@ -1352,7 +1352,7 @@
           "removed": false,
           "role": "generative_intro",
           "size_class": "large",
-          "size_px": 120.0,
+          "size_px": "<measured>",
           "source_params": {
            "source": "opening_title"
           },
@@ -1545,7 +1545,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 477.576,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -1583,72 +1583,72 @@
         "glyphs": [
          {
           "glyph_id": 358,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 253,
-          "x": 28.31999969482422,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 280,
-          "x": 60.84000015258789,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 283,
-          "x": 95.04000091552734,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 351,
-          "x": 110.16000080108643,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 515,
-          "x": 136.14000034332275,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 351,
-          "x": 151.74000072479248,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 253,
-          "x": 177.7200002670288,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 280,
-          "x": 210.24000072479248,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 242,
-          "x": 244.44000148773193,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 253,
-          "x": 278.6400022506714,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 351,
-          "x": 311.16000270843506,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 283,
-          "x": 337.1400022506714,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 523,
-          "x": 352.26000213623047,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -1662,7 +1662,7 @@
         },
         "stroke_width": 0.0,
         "text": "şehir rehberi:",
-        "x": 64.8
+        "x": "<measured>"
        }
       ],
       "start": 0.0
@@ -1676,7 +1676,7 @@
       "rotation_degrees": 0.0,
       "runs": [
        {
-        "baseline_y": 726.4119375,
+        "baseline_y": "<measured>",
         "blur_layers": [
          {
           "alpha_power": 1,
@@ -1714,77 +1714,77 @@
         "glyphs": [
          {
           "glyph_id": 79,
-          "x": 0.0,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 76,
-          "x": 36.474609375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 93,
-          "x": 65.771484375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 69,
-          "x": 159.375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 82,
-          "x": 229.248046875,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 81,
-          "x": 279.638671875,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 15,
-          "x": 353.90625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 3,
-          "x": 397.119140625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 76,
-          "x": 472.119140625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 79,
-          "x": 501.416015625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 78,
-          "x": 537.890625,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 3,
-          "x": 608.349609375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 74,
-          "x": 683.349609375,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 190,
-          "x": 762.451171875,
+          "x": "<measured>",
           "y": 0.0
          },
          {
           "glyph_id": 81,
-          "x": 828.22265625,
+          "x": "<measured>",
           "y": 0.0
          }
         ],
@@ -1798,7 +1798,7 @@
         },
         "stroke_width": 0.0,
         "text": "lizbon, ilk gün",
-        "x": 64.8
+        "x": "<measured>"
        }
       ],
       "start": 0.6
@@ -1846,7 +1846,7 @@
           "removed": false,
           "role": "generative_intro",
           "size_class": "large",
-          "size_px": 120.0,
+          "size_px": "<measured>",
           "source_params": {
            "source": "opening_title"
           },

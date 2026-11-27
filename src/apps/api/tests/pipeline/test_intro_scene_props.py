@@ -632,11 +632,27 @@ def test_the_drawn_ink_of_the_title_never_touches_a_pop_card(monkeypatch):
 
 _CLEAN_GOLDEN = Path(__file__).resolve().parents[1] / "fixtures" / "kri1615_clean_card_looks.json"
 
+# Text the OS font backend measures: macOS and Linux shape the same font with the same Skia
+# a pixel or so apart, and the fixture title's fitted size can differ by 1 px.
+_FONT_MEASURED = {("runs", "x"), ("runs", "baseline_y"), ("glyphs", "x"), ("restore", "size_px")}
+
+
+def _font_measured_masked(value, parent: str = ""):
+    if isinstance(value, dict):
+        return {
+            key: "<measured>" if (parent, key) in _FONT_MEASURED else _font_measured_masked(v, key)
+            for key, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_font_measured_masked(v, parent) for v in value]
+    return value
+
 
 def test_card_looks_on_a_framing_with_room_are_stage_bs_byte_for_byte(monkeypatch):
     """The card looks the offer makes where the cards fit off her face (rows, cards, windows,
     previews), EN and TR, equal the golden captured from stage B before cards could pop over
-    her. `KRI1615_CLEAN_REGENERATE=1` rewrites it; only a reviewed look change may."""
+    her, except the font measurements in `_FONT_MEASURED`. `KRI1615_CLEAN_REGENERATE=1`
+    rewrites it; only a reviewed look change may."""
     from app.cli import intro_styles_fixtures as fx
     from app.cli import verify_intro_styles as styles
     from app.config import settings
@@ -648,7 +664,8 @@ def test_card_looks_on_a_framing_with_room_are_stage_bs_byte_for_byte(monkeypatc
         lang: [o for o in styles._card_offer(lang, index)[3]["options"] if o.get("cards")]
         for index, lang in enumerate(styles.CARD_TITLES)
     }
-    text = json.dumps(looks, sort_keys=True, indent=1, ensure_ascii=False) + "\n"
+    masked = _font_measured_masked(looks)
+    text = json.dumps(masked, sort_keys=True, indent=1, ensure_ascii=False) + "\n"
     if os.environ.get("KRI1615_CLEAN_REGENERATE") == "1":
         _CLEAN_GOLDEN.write_text(text)
     assert all(looks.values()), "a framing with room gets card looks in EN and TR"
