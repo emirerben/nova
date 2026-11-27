@@ -519,3 +519,88 @@ def test_without_the_servers_mark_a_card_look_is_not_offered(make, monkeypatch):
         lambda *_args, **_kwargs: {},
     )
     assert not card_options(offer(client, seeded))
+
+
+def test_her_card_later_in_the_video_stays_and_the_phone_may_fetch_every_photo(make, monkeypatch):
+    """The usual edit: a card she already has outside the title's window. The card look is still
+    offered, her card keeps its exact place, one photo may be both her card and an intro card,
+    and the phone's asset grant signs every card photo (same owner, item, generation)."""
+    from app import storage
+    from app.kria.render_assets import VisualRenderAsset
+
+    seeded, client = make()
+    first = card_options(offer(client, seeded))[0]
+    assert save(client, seeded, first["rows"], as_overlays(first["cards"])).status_code == 200
+    hers = {**as_overlays(first["cards"])[0], "id": "her-card", "start_s": 4.0, "end_s": 6.0}
+    hers.update(x_frac=0.5, y_frac=0.3, scale=0.3)
+    plain = offer(client, seeded, first["rows"])["options"][0]
+    assert save(client, seeded, plain["rows"], [hers]).status_code == 200
+    her_place = seeded.drawn_cards()["her-card"]
+
+    look = card_options(offer(client, seeded, plain["rows"]))[0]  # M36: not in the way
+    assert hers["src_gcs_path"] in {c["gcs_path"] for c in look["cards"]}
+    response = save(client, seeded, look["rows"], [hers, *as_overlays(look["cards"])])
+    assert response.status_code == 200, response.text
+    drawn = seeded.drawn_cards()
+    assert drawn["her-card"] == her_place
+    for card in look["cards"]:
+        assert drawn[card["id"]] == pytest.approx((card["x_frac"], card["y_frac"], card["scale"]))
+
+    monkeypatch.setattr(
+        storage, "signed_get_url_for_generation", lambda path, *, generation: f"signed:{path}"
+    )
+    status = device_status(seeded.job(), seeded.variant_id)
+    visuals = [
+        a for a in status.request.recipe.asset_manifest.assets if isinstance(a, VisualRenderAsset)
+    ]
+    assert {a.visual_id for a in visuals} >= {c["media_id"] for c in look["cards"]}
+    for asset in visuals:
+        grant = client.post(
+            f"/me/jobs/{seeded.job_id}/device-render/assets",
+            json={
+                "identity": status.request.identity.model_dump(mode="json"),
+                "asset_id": asset.id,
+            },
+            headers=CARDS,
+        )
+        assert grant.status_code == 200, grant.text
+
+
+def test_a_card_on_a_row_in_her_namespace_that_is_not_hers_is_refused(make, _flags):
+    """The wrong-content control (M32): the path is under her item's pool, the row is another
+    account's. Nothing is downloaded and no receipt is left behind."""
+    seeded, client = make()
+    stranger = uuid.uuid4()
+    with sync_session() as db:
+        db.add(User(id=stranger, email=f"{stranger}@intro-cards.test"))
+        db.commit()
+    seeded.users.append(stranger)
+    foreign_id = uuid.uuid4()
+    foreign_path = f"users/{seeded.owner}/plan/{seeded.item_id}/pool/{foreign_id}.jpg"
+    seeded.add_photo(
+        created_at=datetime(2026, 10, 1, tzinfo=UTC),
+        id=foreign_id,
+        user_id=stranger,
+        gcs_path=foreign_path,
+    )
+    look = card_options(offer(client, seeded))[0]
+    assert foreign_path not in {c["gcs_path"] for c in look["cards"]}
+    posted = as_overlays(look["cards"])
+    posted[0]["src_gcs_path"] = foreign_path
+    _flags.clear()
+    response = save(client, seeded, look["rows"], posted)
+    assert response.status_code in (409, 422), response.text
+    assert _flags == []
+    assert seeded.job().assembly_plan.get(PHONE_VISUALS_FIELD) in (None, [])
+    assert seeded.drawn_cards() == {}
+
+
+def test_saved_cards_survive_the_switch_turned_off(make, monkeypatch):
+    seeded, client = make()
+    look = card_options(offer(client, seeded))[0]
+    assert save(client, seeded, look["rows"], as_overlays(look["cards"])).status_code == 200
+    drawn = seeded.drawn_cards()
+    monkeypatch.setattr(settings, "intro_cards_enabled", False)
+    response = save(client, seeded, look["rows"], as_overlays(look["cards"]))
+    assert response.status_code == 200, response.text  # their photos are already pinned
+    assert seeded.drawn_cards() == drawn
