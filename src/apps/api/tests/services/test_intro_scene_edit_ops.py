@@ -239,6 +239,19 @@ def test_a_whole_title_rewrite_of_a_late_accent_first_title_starts_with_the_titl
     assert (title["text"], title["start_s"], title["end_s"]) == (NEW, 0.0, rows[0]["end_s"])
 
 
+@pytest.mark.parametrize("accent_first", [False, True], ids=["late-accent-line", "late-first-line"])
+def test_a_chat_rewrite_of_the_title_group_replaces_a_late_accent_title(accent_first):
+    """M6: the chat's "edit the title" selects ``group: "title"``. The line that enters
+    `STAGGERS["accent_after"]` late is still a line of that title, so the rewrite replaces the
+    whole stack instead of the new words on the other lines and the old words on the late one."""
+    rows = _late_accent_scene(accent_first=accent_first)
+    assert any(r["start_s"] == pytest.approx(scene_mod.STAGGERS["accent_after"]) for r in rows)
+    job, variant, snapshot, _others = _scene_job(rows)
+    raw = [{"op": "rewrite_text", "selector": {"group": "title"}, "text": NEW}]
+    [title] = _title_rows(_compile(job, variant, snapshot, raw))
+    assert (title["text"], title["start_s"]) == (NEW, 0.0)
+
+
 def test_the_render_contract_reads_a_late_accent_first_title_as_one_text_from_its_start():
     from app.pipeline.phone_title_look import intro_stack_as_one_row
 
