@@ -9155,6 +9155,22 @@
         }
       }
     },
+    "Change the play order of included clips" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Abspielreihenfolge der Clips ändern"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kliplerin oynatma sırasını değiştir"
+          }
+        }
+      }
+    },
     "Change the post size" : {
       "localizations" : {
         "de" : {
@@ -27412,6 +27428,22 @@
         }
       }
     },
+    "Photos play as clips in your montage." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotos werden in deiner Montage als Clips abgespielt."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraflar montajında klip olarak oynatılır."
+          }
+        }
+      }
+    },
     "Photos have no range to choose." : {
       "localizations" : {
         "de" : {
@@ -31828,6 +31860,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Videon oluşturuluyor"
+          }
+        }
+      }
+    },
+    "Reorder" : {
+      "comment" : "Editor tool: change clip playback order",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sortieren"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sırala"
           }
         }
       }

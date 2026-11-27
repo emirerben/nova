@@ -404,3 +404,106 @@ struct ClipOrderLargePreview: View {
         }
     }
 }
+
+struct NativeEditorClipOrderSheet: View {
+    @ObservedObject var session: NativeEditorSession
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: ClipOrderDraft
+    @State private var stale = false
+    private let items: [NativeEditorSession.ClipOrderItem]
+
+    init(session: NativeEditorSession) {
+        self.session = session
+        let rows = session.clipOrderItems
+        items = rows
+        _draft = State(initialValue: ClipOrderDraft(order: rows.map(\.id)))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Reorder clips").kriaType(.title).foregroundStyle(KriaColor.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("\(draft.order.count) clips").kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                }
+                Spacer(minLength: 0)
+                Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 17, weight: .semibold)) }
+                    .buttonStyle(.kriaIcon)
+                    .accessibilityLabel("Close")
+            }
+            .padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 8)
+            List {
+                ForEach(draft.order, id: \.self) { id in
+                    if let item = items.first(where: { $0.id == id }) {
+                        row(item)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 24, bottom: 6, trailing: 12))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                }
+                .onMove { source, destination in draft.move(from: source, to: destination) }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.editMode, .constant(.active))
+            .accessibilityValue(draft.order.joined(separator: ","))
+            .accessibilityIdentifier("native-editor-reorder-list")
+        }
+        .background(KriaColor.paper)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 8) {
+                if stale { KriaInlineFailure(text: String(localized: "Kria couldn’t save this order. Try again.")) }
+                Button("Use this order") {
+                    if session.applyClipOrder(draft.order, opening: draft.opening) { dismiss() }
+                    else { stale = true }
+                }
+                .buttonStyle(KriaButtonStyle(role: .primary, fullWidth: true))
+                .accessibilityIdentifier("native-editor-reorder-use")
+                .disabled(stale)
+            }
+            .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 16)
+            .background(KriaColor.paper)
+        }
+    }
+
+    private func row(_ item: NativeEditorSession.ClipOrderItem) -> some View {
+        let position = draft.position(of: item.id) ?? 0
+        let label = item.split ? String(localized: "Split screen") : item.isPhoto ? String(localized: "Photo") : String(localized: "Video")
+        return HStack(spacing: 12) {
+            NativeEditorOrderThumbnail(session: session, item: item)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(verbatim: "\(position)  \(label)").kriaType(.button).foregroundStyle(KriaColor.ink)
+                if let before = draft.was(item.id) {
+                    Text(ClipOrderWas.text(before)).kriaType(.label).foregroundStyle(KriaColor.mutedInk)
+                }
+            }
+            Spacer(minLength: 0)
+            Button { draft.moveUp(item.id) } label: { Image(systemName: "chevron.up").frame(width: 36, height: 44) }
+                .buttonStyle(.borderless).disabled(!draft.canMoveUp(item.id))
+                .accessibilityLabel("Move up")
+            Button { draft.moveDown(item.id) } label: { Image(systemName: "chevron.down").frame(width: 36, height: 44) }
+                .buttonStyle(.borderless).disabled(!draft.canMoveDown(item.id))
+                .accessibilityLabel("Move down")
+                .accessibilityIdentifier("native-editor-reorder-down-\(item.id)")
+        }
+    }
+}
+
+private struct NativeEditorOrderThumbnail: View {
+    let session: NativeEditorSession
+    let item: NativeEditorSession.ClipOrderItem
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            KriaColor.fill
+            if let image { Image(uiImage: image).resizable().scaledToFill() }
+            else { Image(systemName: item.isPhoto ? "photo" : "film").foregroundStyle(KriaColor.zinc) }
+        }
+        .frame(width: 44, height: 58)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .task(id: item.id) { image = await session.clipOrderThumbnail(id: item.id) }
+        .accessibilityHidden(true)
+    }
+}

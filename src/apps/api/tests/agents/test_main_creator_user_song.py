@@ -120,10 +120,11 @@ pytestmark = pytest.mark.journey("kri-586-hook-copy")
 # brief-on hashes re-pinned (before: 1dd7c57f… / 389e0842…); brief-off unchanged.
 # KRI-1413: the brief section also routes informative text about a public place or route to the
 # typed `research` fact; the two brief-on hashes re-pinned (before: c017d2f4… / 42af559e…).
+# KRI-1651: photo holds are separate from total duration. Only brief-on hashes change.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "640a80bb59ab1c856e9d4bc8a2bb09105514f382b75604e955d19cc5345923f0",
+    (True, True): "40c62fe69e150961058c31c09643ea2b48a3d58332d47bae9aa3489a02a62913",
     (True, False): "67797ad5d4390601c8802c280fe68759ecdd697c64d2093aede2f1a7c4c063d1",
-    (False, True): "afe0a5952626fe872166adda5c910fa12df47b238f95abe3c12e55b9ac295525",
+    (False, True): "cb60cf553608d1d9a32ec50cc5ec807cb32dcded4bbe5befc46f736ecb518fd5",
     (False, False): "05f0b6f7a774d08fa47fe57ebc60baaab793b0cda14625cfbdef91d03bac09c2",
 }
 

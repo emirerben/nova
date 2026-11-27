@@ -5950,6 +5950,46 @@ enum EditorOpenIntent { case warm, open }
     /// no such capability falls back to the timeline section's editability.
     var canReorderClips: Bool { canEditTimeline && canEditOperation(["clips.reorder"], section: .timeline) }
 
+    struct ClipOrderItem: Identifiable, Equatable {
+        let id: String
+        let isPhoto: Bool
+        let split: Bool
+    }
+
+    var clipOrderItems: [ClipOrderItem] {
+        var seenSections = Set<String>()
+        return timelineClips.compactMap { clip in
+            let id = clip.id.uuidString
+            guard let index = clipSlotIndex(id) else { return nil }
+            let slot = document.clips[index]
+            guard !slot.removed, !slot.isBlank else { return nil }
+            if let section = slot.splitSectionID, !seenSections.insert(section).inserted { return nil }
+            return ClipOrderItem(id: id, isPhoto: isStillSlot(slot), split: slot.splitSectionID != nil)
+        }
+    }
+
+    @discardableResult
+    func applyClipOrder(_ order: [String], opening: [String]) -> Bool {
+        guard canReorderClips, clipOrderItems.map(\.id) == opening,
+              order.count == opening.count, Set(order) == Set(opening) else { return false }
+        return transactDocument(sections: [.timeline], rebasesSerialOrder: true) { value in
+            var current = opening
+            for (target, id) in order.enumerated() {
+                guard let source = current.firstIndex(of: id), source != target,
+                      let from = clipSlotIndex(id, in: value),
+                      let to = clipSlotIndex(current[target], in: value) else { continue }
+                value.clips = NativeEditorInteraction.reorderedSlots(value.clips, from: from, to: to)
+                current.insert(current.remove(at: source), at: target)
+            }
+        }
+    }
+
+    func clipOrderThumbnail(id: String) async -> UIImage? {
+        guard let clip = timelineClips.first(where: { $0.id.uuidString == id }),
+              let source = clip.sourceClipIndex.flatMap({ resolvedSources?[$0] }) else { return nil }
+        return await KriaCropFrameLoader.image(at: source.url, time: clip.trimIn, maxPixel: 160)
+    }
+
     func moveSelected(by offset: TimeInterval) {
         if selectedSplitScreenSectionID != nil {
             if abs(offset) > 0.000001 { moveSelectedSplitScreenSection(by: offset < 0 ? -1 : 1) }
@@ -5969,7 +6009,7 @@ enum EditorOpenIntent { case warm, open }
         guard ordered.indices.contains(toIndex),
               let from = clipSlotIndex(id.uuidString),
               let to = clipSlotIndex(ordered[toIndex].id.uuidString), from != to else { return }
-        transactDocument(section: .timeline) { value in
+        transactDocument(sections: [.timeline], rebasesSerialOrder: true) { value in
             value.clips = NativeEditorInteraction.reorderedSlots(value.clips, from: from, to: to)
         }
     }
@@ -9980,7 +10020,7 @@ enum EditorOpenIntent { case warm, open }
 
     /// `rebasesSplitLanes: false` is only for an edit that keeps every clip's window where it was.
     @discardableResult
-    func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, _ body: (inout EditorDocument) -> Void) -> Bool {
+    func transactDocument(sections: Set<EditorSection>, rebasesSplitLanes: Bool = true, rebasesSerialOrder: Bool = false, _ body: (inout EditorDocument) -> Void) -> Bool {
         var next = document; body(&next)
         // A section lives while a clip with footage does. Blanks alone have nothing to play, so they go with it.
         let retainedSplitIDs = Set(next.clips.filter { !$0.removed && !$0.isBlank }.compactMap(\.splitSectionID))
@@ -9996,7 +10036,7 @@ enum EditorOpenIntent { case warm, open }
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return true }
         NativeSpeechTimelineProjection.acknowledgeCaptionEdits(&next, from: document)
-        if rebasesSplitLanes { NativeSplitTimelineRebase.rebase(&next, from: document) }
+        if rebasesSplitLanes { NativeSplitTimelineRebase.rebase(&next, from: document, includesSerialOrder: rebasesSerialOrder) }
         rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }

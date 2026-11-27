@@ -1034,23 +1034,25 @@ def test_flag_off_the_brief_sections_are_the_bytes_they_were_before_the_opening(
     # Main Creator digests were re-frozen for KRI-1384 (every stated ask is recorded whatever the
     # action); the extractor strips that sentence, so its digests are unchanged. All were
     # re-frozen for KRI-1405 (typed `no_sound_effects`; a kept ask after a simpler version).
+    # KRI-1651: removing the new six-line photo-duration paragraph from both shared brief
+    # sections reproduces all six previous digests, including the rendered extractor prompts.
     assert brief_prompt_section() is _BRIEF_PROMPT_SECTION
     assert digest(brief_prompt_section()) == (
-        "63a08717391bb6da832abe0c84986cf8b2c63f2773184be18bcc2c4f055927ea"
+        "12f9b6f87f919cea4a6a24df538ff27486f7d297a0085b1cd260b2c37c5c3e0c"
     )
     assert digest(brief_prompt_section(True)) == (
-        "7ae1c499ac0cd4b0069e72c9093222fc8a612614e78b84b7c908f9ff72cb6a3d"
+        "7ea262f6e92ef7e754c4573bf53d38b8e32a23fe5695094dcd99e1cdafe6d123"
     )
     assert digest(_narrow_brief_section(False)) == (
-        "2232a7f0ab021c7616851dc55f4bac548d5aa4062c128109ada4565bd718059f"
+        "3b49563b6af55260974ff7e6eb03ac936d52b3ddaa414aa64fab45686d2b3358"
     )
     assert digest(_narrow_brief_section(True)) == (
-        "8b32b2e3b686586e2a28fd8c017f28cc7ca069a679976af21006b85e41ee00d1"
+        "c5ee41ed6167ae1b4c09b48c3617bb5c3c34e9f95d7dd017497878476ab14794"
     )
     # and the whole extractor prompt, byte for byte (captured from that same tree)
     for insert_open, expected in (
-        (False, "e3f33187985014d61965f3ac53571b5ea0079ae5a1e03fdec5dd662e5aad4ac8"),
-        (True, "9fd82d9e45dff7af2babe3e4b76eaa58f24e83e743877382db96e9e7dfb913ba"),
+        (False, "0c9a7874730a5195e51c2c7c3e9fb6310118ba87769d90510603e739a2c1ebeb"),
+        (True, "8fd1bd8a0e4fbc34bf53c04381de53e23a3c75f705be3111014d913f8b7f78a5"),
     ):
         rendered = BriefExtractorAgent(None).render_prompt(
             BriefExtractionInput(

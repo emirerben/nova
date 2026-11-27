@@ -70,6 +70,30 @@ final class NativeSplitScreenRowsTests: XCTestCase {
         XCTAssertEqual(moved.map(\.end), [2, 4, 8])
     }
 
+    func testSerialReorderMovesClipLocalLanesButKeepsSongAndSpanningOverlay() {
+        var before = EditorDocument(clips: [
+            EditorTimelineSlot(id: "a", clipIndex: 0, inS: 0, durationS: 2),
+            EditorTimelineSlot(id: "photo", clipIndex: 1, inS: 0, durationS: 0.2, raw: ["media_kind": .string("image")]),
+            EditorTimelineSlot(id: "b", clipIndex: 2, inS: 0, durationS: 3)
+        ])
+        before.captionCues = [
+            EditorCaptionCue(id: "clip-caption", startS: 0.2, endS: 0.7, text: "a"),
+            EditorCaptionCue(id: "song-caption-1", startS: 0.2, endS: 0.7, text: "song")
+        ]
+        before.mediaOverlays = [
+            EditorTimedEffect(id: "local", startS: 0.2, endS: 0.7, raw: [:]),
+            EditorTimedEffect(id: "spanning", startS: 0.2, endS: 2.5, raw: [:])
+        ]
+        var after = before
+        after.clips = NativeEditorInteraction.reorderedSlots(before.clips, from: 0, to: 2)
+        NativeSplitTimelineRebase.rebase(&after, from: before, includesSerialOrder: true)
+        XCTAssertEqual(after.clips.map(\.id), ["photo", "b", "a"])
+        XCTAssertEqual(after.captionCues[0].startS, 3.4, accuracy: 1e-6)
+        XCTAssertEqual(after.captionCues[1], before.captionCues[1])
+        XCTAssertEqual(after.mediaOverlays[0].startS, 3.4, accuracy: 1e-6)
+        XCTAssertEqual(after.mediaOverlays[1], before.mediaOverlays[1])
+    }
+
     private func clip(_ slotID: String, start: Double, end: Double) -> EditorClip {
         EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: start, end: end,
                    trimIn: 0, trimOut: end - start, sourceDuration: 20, muted: false, slotID: slotID)

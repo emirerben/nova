@@ -2255,6 +2255,7 @@ struct NativeMiniStrip: View {
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $isPresentingAddClip) { NativeEditorAddClipSheet(session: session) }
+
         // The add-clip sheet closes as soon as a file is chosen, so a failure has to surface here.
         // Suppressed while the sheet is open, where it shows the same error inline.
         .alert("Couldn’t add clip", isPresented: Binding(

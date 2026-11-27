@@ -170,6 +170,11 @@ struct AttachmentSheet: View {
     /// A lip-sync starts from the song, so its song step leads the sheet.
     private var songLeads: Bool { hasSongStep && resolvedFormat == .lipsync }
     private var hasOverlaysStep: Bool { usesVisualPoolOnly || (capabilities?.visualsEnabled == true && itemID != nil) }
+    private var canAddMontagePhotos: Bool {
+        resolvedFormat == .montage && hasOverlaysStep && uploadDestination(for: .clip) == .phone
+            && uploadDestination(for: .visual).visualKinds?.contains(.image) == true
+    }
+
     private var steps: [AttachmentStep] {
         var result: [AttachmentStep] = usesVisualPoolOnly ? [.overlays] : (songLeads ? [.song, .footage] : [.footage])
         if hasVoiceoverStep { result.append(.voiceover) }
@@ -441,7 +446,7 @@ struct AttachmentSheet: View {
             }
             // Un-choosing a visual in the picker removes it server-side; refresh the pool now rather
             // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
-            .onReceive(model.uploads.$photoSelections) { _ in if role == .visual { Task { await loadVisuals() } } }
+            .onReceive(model.uploads.$photoSelections) { _ in if role == .visual || canAddMontagePhotos { Task { await loadVisuals() } } }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { recorder.stopForInterruption(); songPreview.pausePlayback() }
                 if phase == .background { recorder.cancelPendingWorkAndStop(); songPreview.cancelPendingWorkAndStop() }
@@ -506,6 +511,24 @@ struct AttachmentSheet: View {
                 .buttonStyle(.plain).accessibilityIdentifier("teleprompter-open")
             }
             attachedList(role: .clip)
+            if canAddMontagePhotos {
+                montagePhotos
+            }
+        }
+    }
+
+    private var montagePhotos: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AttachmentHeading(title: String(localized: "Photos"), subtitle: String(localized: "Photos play as clips in your montage."))
+            if pool == nil {
+                if error != nil {
+                    Button("Retry") { Task { await loadVisuals() } }.buttonStyle(KriaButtonStyle(role: .tertiary, size: .medium))
+                } else { KriaSpinner(size: 16) }
+            } else {
+                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: mediaLimit(for: .visual), destination: .phoneVisuals([.image]), showsHeading: false, titleOverride: String(localized: "Photos"), libraryEnabled: capabilities?.mediaLibrary == true)
+                    .accessibilityIdentifier("montage-footage-photos")
+                ForEach((pool?.assets ?? []).filter { $0.kind == "image" }) { asset in visualRow(asset) }
+            }
         }
     }
 

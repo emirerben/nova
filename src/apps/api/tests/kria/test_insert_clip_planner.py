@@ -433,7 +433,8 @@ def _extractor_prompt(**kw) -> str:
 # KRI-1384 (every stated ask is recorded whatever the action) moves it from c0151ced250653122….
 # KRI-1405 (typed `no_sound_effects`; a kept ask after a simpler version is restated) moves it
 # from f8a8e0b780319462….
-_BRIEF_SECTION_BEFORE_INSERTS = "63a08717391bb6da832abe0c84986cf8b2c63f2773184be18bcc2c4f055927ea"
+# KRI-1651 (per-photo/overlay duration paragraph); removing it reproduces 63a08717391b….
+_BRIEF_SECTION_BEFORE_INSERTS = "12f9b6f87f919cea4a6a24df538ff27486f7d297a0085b1cd260b2c37c5c3e0c"
 
 
 def test_a_closed_rollout_leaves_the_brief_section_byte_identical_to_before_inserts():

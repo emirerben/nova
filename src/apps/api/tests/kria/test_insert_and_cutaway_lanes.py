@@ -111,11 +111,13 @@ TAIL_OPEN_INSERT = "exists only as `insert_clips`"
 # Re-pinned for KRI-1523 (these several-clip Talking manifests are taught the typed
 # `selected_media_ids` select fact, `CHOSEN_VIDEOS_BRIEF_SENTENCE`); masking that one sentence
 # reproduces the values before it: 5df476e6 / 6e96cdb6 / 3ffcb200 / f40fa3c9.
+# KRI-1651: removing the new six-line per-photo/overlay duration paragraph restores all four
+# previous digests; the insert/cutaway lane gates are unchanged.
 MAIN_PROMPT_SHA = {
-    "neither": "66d7bab46943cab2ba51d1a624a7fc665fa9c83737dc7ccec052944aa4d808de",
-    (True, True): "b61b7e0ac62326a6b5671aa8dddbfdf8e1e4291c77a2ed9018e12c6dee1f4d41",
-    (True, False): "eb16825caf0e34102efc774286700a61a4ddd6de1e3dd0a0a0ead6b8b6126127",
-    (False, True): "7e226e28cee9c85e3e3597d3e1483f4c1d8a24b5cefeac09b00c65ad52313cbb",
+    "neither": "142e1fd608d403e650b595250eed440d1fd9595ae49a821edd3c07636909572f",
+    (True, True): "06a3341d9160a00015fc7438a1cf5da3be042fd3679841e5fcb0543f7de5cc29",
+    (True, False): "29ad50addb8f185e02a4549e0d44a6d27e971707a0cb39fc4c551e759bdb0ed6",
+    (False, True): "5c7515b96fef69d01551c9c9257dade27699f21992c766902fe2a77825ae7299",
 }
 MAIN_NOTE_SHA = {
     ask_refusals.CAPABILITY_MENTION: (

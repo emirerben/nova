@@ -1712,7 +1712,11 @@ class GitDiffTests(GitRepoCase):
             ),
             (
                 "src/apps/api/prompts/edit_copilot.txt",
-                (True, "covered", "kri-667-turkish-chat"),
+                (True, "covered", "kri-1651-montage-photo-timeline,kri-667-turkish-chat"),
+            ),
+            (
+                "src/apps/api/tests/services/test_photo_timeline_duration.py",
+                (True, "covered", "kri-1651-montage-photo-timeline"),
             ),
             (
                 "src/apps/api/app/kria/opening_cut_ask.py",

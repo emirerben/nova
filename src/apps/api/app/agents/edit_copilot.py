@@ -167,7 +167,7 @@ log = structlog.get_logger()
 # retime_background_window and the SECTIONS + LAYOUT WINDOWS lines (prompts/edit_copilot_ops/
 # speaker_sections.txt), printed only where the sections gate is open (a protocol 59 build with
 # speakerSections verified), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-26-v134"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-27-v135"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3200,6 +3200,130 @@ _DURATION_ANSWER_RE = _BilingualPattern(
     r"\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
     r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b|sekunde\w*|sek\b)",
 )
+_EXACT_PHOTO_DURATION_RE = _BilingualPattern(
+    r"^\s*(?:please\s+)?(?:make|set|keep|show|hold)\s+(?:(?:all|each|every|the|my|of)\s+)*"
+    r"(?:(overlay)\s+)?(?:photos|images|pictures|stills)\s+"
+    r"(?:(?:show|play|last|stay|be|on screen|only|just|for|to)\s+)*"
+    r"(\d+(?:[.,]\d+)?)\s*(?:seconds?|secs?|s)\s*(?:each|apiece|only)?[.!?]?\s*$",
+    r"^\s*(?:lutfen\s+)?(?:(?:tum|butun|her)\s+)*(?:(overlay)\s+)?"
+    r"(?:foto|resim|resm|gorsel)\w*l[ae]r\w*\s+(?:(?:sadece|yalnizca)\s+)?"
+    r"(\d+(?:[.,]\d+)?)\s*(?:saniye|sn)\s*(?:yap|olsun|kalsin|goster)?[.!?]?\s*$",
+)
+
+
+def recognize_standalone_photo_hold(
+    text: str,
+) -> tuple[Literal["overlay", "timeline"], float] | None:
+    match = _EXACT_PHOTO_DURATION_RE.search(text)
+    if match is None:
+        return None
+    return ("overlay" if match.group(1) else "timeline", float(match.group(2).replace(",", ".")))
+
+
+def _exact_native_photo_timing(input: EditCopilotInput) -> dict[str, Any] | None:
+    snapshot = input.variant_snapshot
+    if not (snapshot.get("guided_revision") or snapshot.get("render_destination") == "device"):
+        return None
+    request = recognize_standalone_photo_hold(input.utterance)
+    if request is None:
+        return None
+    scope, seconds = request
+    if below_editor_minimum(seconds) or seconds > MAX_PROPOSAL_DURATION_S:
+        return {
+            "intent": "reject",
+            "ops": [],
+            "confidence": 0.99,
+            "reply": say(
+                en=(
+                    "That photo duration is outside the supported range. I left the edit unchanged."
+                ),
+                tr=("Bu fotoğraf süresi desteklenen aralığın dışında. Düzenlemeyi değiştirmedim."),
+            ),
+        }
+    if scope == "overlay":
+        overlays = snapshot.get("overlays") or {}
+        photos = [row for row in overlays.get("cards", []) if row.get("kind") == "image"]
+        if not photos:
+            return {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.99,
+                "needs_clarification": True,
+                "reply": say(
+                    en=(
+                        "I don't see any photo overlays. "
+                        "Do you mean the photos on the main timeline?"
+                    ),
+                    tr=(
+                        "Fotoğraf katmanı göremiyorum. "
+                        "Ana zaman çizelgesindeki fotoğrafları mı kastediyorsun?"
+                    ),
+                ),
+            }
+        from app.pipeline.phone_subtitled_plan import _MIN_FULLSCREEN_S  # noqa: PLC0415
+
+        if seconds < _MIN_FULLSCREEN_S and any(
+            row.get("display_mode") == "fullscreen" for row in photos
+        ):
+            return {
+                "intent": "reject",
+                "ops": [],
+                "confidence": 0.99,
+                "reply": say(
+                    en=(
+                        "Full-screen photo overlays need at least 0.3 seconds. "
+                        "I left the edit unchanged."
+                    ),
+                    tr=(
+                        "Tam ekran fotoğraf katmanları en az 0,3 saniye olmalı. "
+                        "Düzenlemeyi değiştirmedim."
+                    ),
+                ),
+            }
+        operations = [
+            {
+                "op": "patch_overlay",
+                "overlay_index": row["index"],
+                "patch": {"end_s": round(float(row["start_s"]) + seconds, 6)},
+            }
+            for row in photos
+        ]
+    else:
+        if not any(
+            row.get("media_kind") == "image" and not row.get("removed")
+            for row in snapshot.get("slots", [])
+        ):
+            return {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.99,
+                "needs_clarification": True,
+                "reply": say(
+                    en="I don't see any photos on the main timeline. Do you mean photo overlays?",
+                    tr=(
+                        "Ana zaman çizelgesinde fotoğraf göremiyorum. "
+                        "Fotoğraf katmanlarını mı kastediyorsun?"
+                    ),
+                ),
+            }
+        operations = [
+            {
+                "op": "patch_slots",
+                "selector": {"media_kind": "image"},
+                "patch": {"duration_s": seconds},
+            }
+        ]
+    return {
+        "intent": "edit",
+        "ops": operations,
+        "confidence": 0.99,
+        "reply": say(
+            en="Prepared the photo timing change.",
+            tr="Fotoğraf sürelerindeki değişikliği hazırladım.",
+        ),
+    }
+
+
 _VAGUE_DURATION_RE = _BilingualPattern(
     r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b",
     # Shortening only, like the English side: "uzat" is not a vague "how short?".
@@ -4302,6 +4426,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 research_request=request,
             )
 
+        # A standalone explicit photo duration is bound to its named lane even when the
+        # model mistakes it for the length of the whole video.
+        if repair is None and (photo_timing := _exact_native_photo_timing(input)):
+            data = photo_timing
         intent = data.get("intent", "unknown")
         if intent not in _VALID_INTENTS:
             log.warning("edit_copilot.unknown_intent", intent=intent)

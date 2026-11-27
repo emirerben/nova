@@ -147,8 +147,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     # --------------------------------------------------------------- timeline
     "clip_trim_and_move": _g(
         "agent_ops",
-        "trimSelected beginTrim updateTrim endTrim moveSelected moveClip slideSourceWindow "
-        "setClipTiming setClipSourceWindow updateClipSourceWindow setSourceWindow "
+        "trimSelected beginTrim updateTrim endTrim moveSelected moveClip applyClipOrder "
+        "slideSourceWindow setClipTiming setClipSourceWindow updateClipSourceWindow "
+        "setSourceWindow "
         "beginTimedEdgeTrim updateTimedEdgeTrim endTimedEdgeTrim beginTimedBodyMove "
         "updateTimedBodyMove endTimedBodyMove",
         (
@@ -535,8 +536,9 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "not_an_edit",
         "canEdit canEditCaptionAnimation canEditOperation capability capabilityReason "
         "operationCapability operationCapabilityReason readOnlyReason cropBlockedReason "
-        "cropSourceFrame speedBlockedReason sourceWindowBlockedReason sourceWindowContext "
-        "sourceWindowLength sourceWindowSlot sourceWindowExplainsOnTap effectiveSourceRate "
+        "cropSourceFrame clipOrderThumbnail speedBlockedReason sourceWindowBlockedReason "
+        "sourceWindowContext sourceWindowLength sourceWindowSlot sourceWindowExplainsOnTap "
+        "effectiveSourceRate "
         "canAdjustMotionSpeed "
         "motionRuntimeMismatchReason isMotionSceneReadOnly isClipAudioOn isCaptionUnitEdited "
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "

@@ -24,8 +24,9 @@ enum NativeSplitTimelineRebase {
         return result
     }
 
-    static func rebase(_ next: inout EditorDocument, from previous: EditorDocument) {
-        guard !previous.splitScreenSections.isEmpty || !next.splitScreenSections.isEmpty else { return }
+    static func rebase(_ next: inout EditorDocument, from previous: EditorDocument, includesSerialOrder: Bool = false) {
+        guard includesSerialOrder || !previous.splitScreenSections.isEmpty || !next.splitScreenSections.isEmpty else { return }
+        let serialOnly = previous.splitScreenSections.isEmpty && next.splitScreenSections.isEmpty
         let speech = previous.clips.contains { $0.id?.hasPrefix("native-phone-talking-source") == true }
         let old = units(previous), new = units(next)
         guard old != new else { return }
@@ -46,6 +47,11 @@ enum NativeSplitTimelineRebase {
         }
         func interval(_ start: Double, _ end: Double) -> (Double, Double) {
             guard end > start else { let t = point(start); return (t, t) }
+            if serialOnly {
+                guard let unit = old.last(where: { start >= $0.start && end <= $0.end }),
+                      let destination = target(unit) else { return (start, end) }
+                return (destination.start + start - unit.start, destination.start + end - unit.start)
+            }
             let parts = old.compactMap { unit -> (Double, Double)? in
                 guard unit.start < end, unit.end > start, let destination = target(unit) else { return nil }
                 return (min(destination.end, destination.start + max(0, start - unit.start)),
@@ -70,7 +76,7 @@ enum NativeSplitTimelineRebase {
     private static func remap(_ next: inout EditorDocument, speech: Bool, point: (Double) -> Double,
                               interval: (Double, Double) -> (Double, Double)) {
         func owns(_ raw: [String: JSONValue]) -> Bool { !speech || NativeSpeechTimelineProjection.ownerID(raw) == nil }
-        for i in next.captionCues.indices where !speech {
+        for i in next.captionCues.indices where !speech && !next.captionCues[i].id.hasPrefix("song-caption-") {
             let row = next.captionCues[i], span = interval(row.startS, row.endS)
             next.captionCues[i].startS = span.0; next.captionCues[i].endS = span.1
             if case .array(let words)? = row.raw["words"] {

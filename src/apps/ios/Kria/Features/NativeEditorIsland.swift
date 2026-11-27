@@ -14,7 +14,7 @@ enum NativeEditorIslandMetrics {
     static let islandHorizontalPadding: CGFloat = 8
     static let toolSpacing: CGFloat = 2
     static let toolWidth: CGFloat = 76
-    /// The narrowest a rail tool may get before the rail scrolls instead of squeezing it (DESIGN.md: 44pt targets).
+    /// Comfort floor for overflow rails; the five core tools can fit more compactly.
     static let minToolWidth: CGFloat = 64
     static let toolHeight: CGFloat = 54
     static let contextHeight: CGFloat = 52
@@ -37,11 +37,13 @@ enum NativeEditorIslandMetrics {
 
     /// Tools keep a comfortable width and the rail scrolls rather than squeezing them. When they cannot all fit,
     /// the width is chosen so the viewport ends in the middle of a tool, the way iOS tab strips hint at more.
-    static func toolRailLayout(toolCount: Int, railWidth: CGFloat) -> ToolRailLayout {
+    static func toolRailLayout(toolCount: Int, railWidth: CGFloat, fitsFiveCoreTools: Bool = false) -> ToolRailLayout {
         guard toolCount > 0 else { return ToolRailLayout(itemWidth: toolWidth, scrolls: false, wholeItemsVisible: 0) }
         let count = CGFloat(toolCount)
         let fitWidth = (railWidth - 2 * islandHorizontalPadding - (count - 1) * toolSpacing) / count
-        if fitWidth >= minToolWidth {
+        // A 296pt rail still holds all five core tools above the 44pt touch-target floor.
+        let fitMinimum: CGFloat = fitsFiveCoreTools ? 54 : minToolWidth
+        if fitWidth >= fitMinimum {
             return ToolRailLayout(itemWidth: min(toolWidth, fitWidth), scrolls: false, wholeItemsVisible: toolCount)
         }
         func peekWidth(whole: Int) -> CGFloat {

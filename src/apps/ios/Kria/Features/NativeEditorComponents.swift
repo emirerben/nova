@@ -11,6 +11,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case text = "Text"
     case captions = "Captions"
     case visuals = "Visuals"
+    case reorder = "Reorder"
     /// KRI-1118: shown only when the server opens `speaker_background` (a Talk-to-camera edit rendered on the phone).
     case background = "Background"
     case sounds = "Sounds"
@@ -21,10 +22,10 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The tools the rail offers: Draw, Background and Split appear only when the server opens them for this variant.
-    static func railTools(showsDraw: Bool, showsBackground: Bool, showsSplit: Bool = false) -> [NativeEditorTool] {
+    static func railTools(showsDraw: Bool, showsBackground: Bool, showsSplit: Bool = false, showsReorder: Bool = false) -> [NativeEditorTool] {
         allCases.filter {
-            $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground) && ($0 != .split || showsSplit)
+            $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground)
+                && ($0 != .split || showsSplit) && ($0 != .reorder || showsReorder)
         }
     }
 
@@ -34,6 +35,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: "textformat"
         case .captions: "captions.bubble"
         case .visuals: "camera.filters"
+        case .reorder: "arrow.up.arrow.down"
         case .background: "photo.on.rectangle"
         case .sounds: "waveform"
         case .draw: "pencil.tip"
@@ -48,6 +50,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: String(localized: "Text", comment: "Editor tool: text overlays")
         case .captions: String(localized: "Captions")
         case .visuals: String(localized: "Visuals", comment: "Editor tool: photos, videos and effects layered over the video")
+        case .reorder: String(localized: "Reorder", comment: "Editor tool: change clip playback order")
         case .background: String(localized: "Background")
         case .sounds: String(localized: "Sounds")
         case .draw: String(localized: "Draw")
@@ -61,6 +64,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: String(localized: "Add or edit text overlays")
         case .captions: String(localized: "Turn captions on or off and choose a style")
         case .visuals: String(localized: "Browse visual lanes and adjust supported effects")
+        case .reorder: String(localized: "Change the play order of included clips")
         case .background: String(localized: "Put a photo or video behind you")
         case .sounds: String(localized: "Adjust music and add sound effects")
         case .draw: String(localized: "Draw on the video with your finger")
@@ -788,8 +792,11 @@ struct NativeEditorToolRail: View {
     var showsBackground = false
     /// The Split tool is offered only when the variant can edit split screens. It is always the last tool.
     var showsSplit = false
+    var showsReorder = false
     let onSelect: (NativeEditorTool) -> Void
-    private var tools: [NativeEditorTool] { NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground, showsSplit: showsSplit) }
+    private var tools: [NativeEditorTool] {
+        NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground, showsSplit: showsSplit, showsReorder: showsReorder)
+    }
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
@@ -797,7 +804,10 @@ struct NativeEditorToolRail: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let layout = NativeEditorIslandMetrics.toolRailLayout(toolCount: tools.count, railWidth: proxy.size.width)
+            let layout = NativeEditorIslandMetrics.toolRailLayout(
+                toolCount: tools.count, railWidth: proxy.size.width,
+                fitsFiveCoreTools: showsReorder && tools.count == 5
+            )
             if layout.scrolls {
                 ScrollViewReader { scroller in
                     ScrollView(.horizontal, showsIndicators: false) {
