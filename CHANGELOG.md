@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.3.0] - 2026-11-27
+
+### Changed
+- feat(ios): move the existing ask cards onto the shared lifecycle (CA-2, KRI-1641) (#2534) <!-- release-pr: 2534 -->
+
 ## [0.91.2.0] - 2026-11-27
 
 ### Changed
