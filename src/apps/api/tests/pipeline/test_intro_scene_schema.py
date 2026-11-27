@@ -144,7 +144,13 @@ def test_decline_is_explicit_and_carries_only_a_reason():
 
 
 @pytest.mark.parametrize(
-    "choice", [{"ink": "cream"}, {"stagger": "accent_after"}, {"stack": "script_over_serif"}]
+    "choice",
+    [
+        {"ink": "cream"},
+        {"stagger": "accent_after"},
+        {"stack": "script_over_serif"},
+        {"arrangement": "grid_2x2"},
+    ],
 )
 def test_decline_with_choices_is_rejected(choice):
     with pytest.raises(ValidationError):
@@ -167,7 +173,7 @@ def test_compose_missing_a_choice_is_rejected(missing):
 
 
 @pytest.mark.parametrize(
-    "field", ["font_pair", "ink", "zone", "entrance", "sound", "stagger", "stack"]
+    "field", ["font_pair", "ink", "zone", "entrance", "sound", "stagger", "stack", "arrangement"]
 )
 def test_compose_with_an_unknown_id_is_rejected(field):
     with pytest.raises(ValidationError):
@@ -190,6 +196,7 @@ def test_compose_with_an_unknown_voice_is_rejected():
         (mod.ZoneId, mod.ZONES),
         (mod.EntranceId, mod.ENTRANCES),
         (mod.SoundId, mod.SOUNDS),
+        (mod.ArrangementId, mod.ARRANGEMENTS),
     ],
 )
 def test_every_issued_id_is_a_schema_id_and_back(literal, catalogue):

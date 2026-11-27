@@ -96,6 +96,45 @@ the KriaMediaEngine export test `IntroSceneSoundExportTests`.
   Sounds already saved stay when the switch is later turned off (the colour-moment precedent).
 * M18: old pins, cassettes and goldens change. ``sound_cue`` defaults to ``none`` and adds no
   key; a silent scene's rows and dumps are byte for byte as before.
+
+KRI-1615 (stage A, nothing calls it in production yet) adds photo cards from her own clips:
+``arrangement`` names a card layout from `ARRANGEMENTS` (``around_speaker``: one card above the
+title, one under the speaker; ``grid_2x2``: two and two). The scene holds no media id: the engine
+fills the ordinal slots ``prop_1`` .. ``prop_N`` with the owned photos the caller issued, in that
+order. `services.intro_props_layout` lays the cards and the title out together (the title between
+the card rows) around the speaker and her captions it is given; `compile_intro_scene` returns
+those rows already placed, with the card boxes on ``IntroCompile.props``. The cards share the
+title's time. Guards: tests/pipeline/test_intro_scene_props.py and the props cases of
+``make verify-intro-scenes``.
+
+* M19: an arrangement nobody issued, or one with fewer photos than slots (a grid from three).
+  `issue_menu` issues an arrangement only for ``photo_count`` >= its slots; `check_scene`
+  refuses the rest (``option_not_issued``). The pick, the offer and the model arm pass no photos,
+  so they issue none.
+* M20: a media id or a coordinate in the scene. It names the arrangement only; slots are ordinal
+  and every box comes from the layout.
+* M21: an arrangement with a title zone it would ignore (``mid_frame``: the title can only sit
+  between the card rows). `check_scene` refuses it (``arrangement_needs_a_top_zone``).
+* M22: a card on the face, the caption row or the Kria watermark. The card bands are bounded by
+  every face and the caption band (from `CAPTION_BAND_TOP_FRAC` down when it was not measured);
+  a card that would cover the mark moves beside or past it; every box is re-checked strictly.
+* M23: cards on each other or off the frame. Cards in a row sit `GAP` apart and every box stays
+  `EDGE_INSET` inside the frame (bleed is KRI-1616).
+* M24: the title touches a card or leaves the band between the rows. The real `place_title_look`
+  places it with the cards in ``avoid``; its receipt must be clean, every line box must clear
+  every card, the block must sit under the top row and over the bottom row, and the compile
+  measures the drawn ink against the cards.
+* M25: the cards shrink the title. It keeps the size it has without them; the cards take the
+  room that is left.
+* M26: a card drawn at another shape. A phone card has a width only (its height is the photo's
+  own aspect), so every box keeps its slot's aspect.
+* M27: portrait, landscape and square photos in one row. A row is one height; widths follow.
+* M28: a Turkish title, longer, needs more room. The band is measured from the placed title, so
+  the cards get smaller; under the card minimum the compile declines.
+* M29: a title that cannot fit between the cards. ``props_do_not_fit`` (``rows=None``: today's
+  title and no cards), never a squeezed title or cards under the minimum.
+* M30: old pins, cassettes and goldens change. ``arrangement`` defaults to ``none``, adds no key
+  and no row declaration; ``issue_menu(title)`` issues ``none`` only.
 """
 
 from __future__ import annotations
@@ -128,6 +167,7 @@ SoundId = Literal[
 StaggerId = Literal["together", "accent_after"]
 StackId = Literal["gap", "script_over_serif"]
 SoundCueId = Literal["none", "accent", "each"]
+ArrangementId = Literal["none", "around_speaker", "grid_2x2"]
 
 _MAX_RUNS = 5
 _MIN_RUN_CHARS = 2
@@ -227,6 +267,39 @@ STACKS: dict[str, Stack] = {
 }
 
 
+@dataclass(frozen=True)
+class CardRow:
+    band: Literal["top", "bottom"]  # above the title, or under the speaker
+    cards: int  # side by side, `GAP` apart, one height
+    align: Literal["left", "center", "right"]
+    width_share: float  # of the frame's inner width the row may take
+
+
+@dataclass(frozen=True)
+class Arrangement:
+    rows: tuple[CardRow, ...]
+    same_height: bool = False  # every row takes the shortest row's height (a grid)
+
+    @property
+    def slots(self) -> int:
+        return sum(row.cards for row in self.rows)
+
+
+# Arrangement id -> its card rows; `services.intro_props_layout` turns them into boxes. Slots are
+# numbered row by row, left to right (``prop_1`` is the first photo the caller issued).
+NO_ARRANGEMENT = "none"
+ARRANGEMENTS: dict[str, Arrangement] = {
+    NO_ARRANGEMENT: Arrangement(()),
+    "around_speaker": Arrangement(
+        (CardRow("top", 1, "left", 0.5), CardRow("bottom", 1, "right", 0.5))
+    ),
+    "grid_2x2": Arrangement(
+        (CardRow("top", 2, "center", 1.0), CardRow("bottom", 2, "center", 1.0)),
+        same_height=True,
+    ),
+}
+
+
 class IntroScene(BaseModel):
     """One composed intro, or a decline. Ids and voices only (see the module docstring)."""
 
@@ -245,6 +318,7 @@ class IntroScene(BaseModel):
     stagger: StaggerId = TOGETHER
     stack: StackId = GAP
     sound_cue: SoundCueId = SILENT
+    arrangement: ArrangementId = NO_ARRANGEMENT  # KRI-1615
 
     @model_validator(mode="after")
     def _shape(self) -> IntroScene:
@@ -255,7 +329,8 @@ class IntroScene(BaseModel):
             if (
                 self.voices
                 or any(choice is not None for choice in choices)
-                or (self.stagger, self.stack, self.sound_cue) != (TOGETHER, GAP, SILENT)
+                or (self.stagger, self.stack, self.sound_cue, self.arrangement)
+                != (TOGETHER, GAP, SILENT, NO_ARRANGEMENT)
             ):
                 raise ValueError("a decline carries no choices")
             return self
@@ -269,9 +344,16 @@ class IntroScene(BaseModel):
     def _omit_todays_look(self, handler: Any) -> dict[str, Any]:
         # A scene from before KRI-1618 dumps byte for byte as it did (teardowns, pins, cassettes).
         data = handler(self)
-        return {
-            k: v for k, v in data.items() if k not in ("stagger", "stack", "sound_cue")
-        } | self.moves()
+        return (
+            {
+                k: v
+                for k, v in data.items()
+                if k not in ("stagger", "stack", "sound_cue", "arrangement")
+            }
+            | self.moves()
+            # Not a move: title rows never declare it (the cards are rows of their own).
+            | ({"arrangement": self.arrangement} if self.arrangement != NO_ARRANGEMENT else {})
+        )
 
     def moves(self) -> dict[str, str]:
         """What this scene adds to today's look, as rows and pins store it: the KRI-1618 moves
@@ -336,6 +418,7 @@ class IntroMenu:
     staggers: tuple[str, ...] = (TOGETHER,)
     stacks: tuple[str, ...] = (GAP,)
     sound_cues: tuple[str, ...] = (SILENT,)
+    arrangements: tuple[str, ...] = (NO_ARRANGEMENT,)
 
     def entrances_for(self, font_pair: str) -> tuple[str, ...]:
         """``pen`` draws Patrick Hand strokes, so only a pair whose accent face is Patrick Hand
@@ -347,7 +430,9 @@ class IntroMenu:
         return tuple(s for s in self.stacks if font_pair in STACKS[s].pairs)
 
 
-def issue_menu(title: str) -> IntroMenu:
+def issue_menu(title: str, *, photo_count: int = 0) -> IntroMenu:
+    """``photo_count``: owned photos the caller can fill card slots with (KRI-1615). An
+    arrangement is issued only when there is a photo for every slot."""
     text = " ".join(word.text for word in title_words(title))
     pairs = tuple(
         pair_id
@@ -363,6 +448,7 @@ def issue_menu(title: str) -> IntroMenu:
         staggers=tuple(STAGGERS),
         stacks=tuple(STACKS),
         sound_cues=tuple(SOUND_CUES),
+        arrangements=tuple(a for a, spec in ARRANGEMENTS.items() if spec.slots <= photo_count),
     )
 
 
@@ -384,8 +470,11 @@ def check_scene(scene: IntroScene, title: str, menu: IntroMenu) -> str | None:
         or scene.stagger not in menu.staggers
         or scene.stack not in menu.stacks_for(scene.font_pair)
         or scene.sound_cue not in menu.sound_cues
+        or scene.arrangement not in menu.arrangements
     ):
         return "option_not_issued"
+    if scene.arrangement != NO_ARRANGEMENT and scene.zone == "mid_frame":
+        return "arrangement_needs_a_top_zone"
     runs = _runs(words, scene.voices)
     if scene.stagger != TOGETHER and {run.voice for run in runs} != {"solid", "accent"}:
         return "stagger_needs_both_voices"
@@ -658,6 +747,8 @@ def compile_intro_scene(
         reason = check_scene(scene, title, menu or issue_menu(title))
         if reason:
             return IntroCompile(None, reason)
+        if scene.arrangement != NO_ARRANGEMENT:
+            return IntroCompile(None, "props_do_not_fit")  # the joint layout is not wired yet
         runs = _runs(title_words(title), scene.voices)
         if len(runs) == 1:
             return IntroCompile(None, "single_run")  # a lone row is the plain title path
