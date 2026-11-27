@@ -81,7 +81,9 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
+    private var buffered: URLRequest?
     override func startLoading() {
+        buffered = ChatRequestCapture.record(request)
         if request.httpMethod == "POST", request.url?.path == "/creation-threads",
            let delay = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATE_DELAY"].flatMap(Double.init), delay > 0 {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
@@ -128,7 +130,8 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     }
     private func finishLoading() {
         if PerfFixture.isFullProjectionRead(request) { Perf.mark("fixture.full.sent") }
-        if let perf = DesignPickerUITestFixture.respond(request) ?? ChatShortenFixture.respond(request) ?? PerfFixture.respond(request) {
+        let served = buffered ?? request
+        if let perf = DesignPickerUITestFixture.respond(served) ?? ChatShortenFixture.respond(served) ?? PerfFixture.respond(served) {
             guard let url = request.url,
                   let response = HTTPURLResponse(url: url, statusCode: perf.status, httpVersion: nil, headerFields: perf.headers.merging(["Content-Type": "application/json"]) { first, _ in first }) else {
                 client?.urlProtocol(self, didFailWithError: URLError(.badURL))
@@ -140,7 +143,7 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         let fixture: (Int, Data)? = ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] != nil
-            ? CreationChatFixture.shared.respond(request)
+            ? CreationChatFixture.shared.respond(served)
             : (503, Data())
         // No fixture response means the connection dropped before the server answered.
         guard let result = fixture else {
@@ -158,6 +161,39 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     }
     override func stopLoading() { delayedResponse?.cancel() }
 }
+/// KRI-1625 (`KRIA_CHAT_REQUEST_CAPTURE=<path>`): every editor-commit and chat-turn POST the app sends is appended to
+/// the file as one `{"path": ..., "body": ...}` line, so a UI test (another process) can read what left the phone.
+enum ChatRequestCapture {
+    private static let lock = NSLock()
+
+    /// The request with its body read into memory, so the fixture that answers it still finds the body.
+    static func record(_ request: URLRequest) -> URLRequest {
+        guard let file = ProcessInfo.processInfo.environment["KRIA_CHAT_REQUEST_CAPTURE"], request.httpMethod == "POST",
+              let route = request.url?.path,
+              ["/editor-commit", "/turns", "/messages"].contains(where: route.hasSuffix) else { return request }
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                data.append(buffer, count: count)
+            }
+        }
+        var buffered = request
+        buffered.httpBody = data
+        buffered.httpBodyStream = nil
+        let body = (try? JSONSerialization.jsonObject(with: data)) ?? NSNull()
+        guard var line = try? JSONSerialization.data(withJSONObject: ["path": route, "body": body]) else { return buffered }
+        line.append(Data("\n".utf8))
+        lock.lock(); defer { lock.unlock() }
+        let url = URL(fileURLWithPath: file)
+        try? (((try? Data(contentsOf: url)) ?? Data()) + line).write(to: url)
+        return buffered
+    }
+}
+
 /// Deterministic API fixture uses the same native request/response decoder as a
 /// real account. Enabled only by explicit UI-test environment in Debug builds.
 final class CreationChatFixture: @unchecked Sendable {
@@ -583,6 +619,11 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_CHAT_QUESTION_BATCH"] == "1" {
                 capabilities["choice_questions"] = true
                 capabilities["clip_selection_questions"] = true
+            }
+            // KRIA_CHAT_EDITOR_STATE_TURNS (KRI-1625): the server takes the editor's unsaved state with a chat turn.
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_EDITOR_STATE_TURNS"] == "1" {
+                capabilities["editor_state_turns"] = true
+                capabilities["editor_state_max_bytes"] = 262_144
             }
             if DeviceRenderUITestFixture.scenario != nil || ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] == "1" {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]

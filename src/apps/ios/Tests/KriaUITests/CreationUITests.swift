@@ -187,6 +187,84 @@ final class CreationUITests: XCTestCase {
         attach(app, "Handoff - Undo restores NEW title inspect pixels")
     }
 
+    /// KRI-1625: "Discard changes" in an editor opened from the chat leaves the saved edit behind, not the unsaved one.
+    /// The chat owns the editor session, so a discard that only leaves would hand the edit to the next message: saved
+    /// by the send, or posted as the turn's editor state.
+    func testDiscardingChangesInAChatOpenedEditorKeepsThemOutOfTheNextMessage() {
+        assertADiscardedEditNeverLeavesThePhone(editorStateTurns: false)
+    }
+
+    func testDiscardingChangesInAChatOpenedEditorKeepsThemOutOfTheNextEditorStateTurn() {
+        assertADiscardedEditNeverLeavesThePhone(editorStateTurns: true)
+    }
+
+    private func assertADiscardedEditNeverLeavesThePhone(editorStateTurns: Bool) {
+        let capture = FileManager.default.temporaryDirectory.appendingPathComponent("kri1625-requests-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: capture) }
+        var environment = ["KRIA_CHAT_REQUEST_CAPTURE": capture.path, "KRIA_CHAT_SEND_DELAY": "0"]
+        if editorStateTurns { environment["KRIA_CHAT_EDITOR_STATE_TURNS"] = "1" }
+        let app = launchEditorAIActivityFixture(reduceMotion: true, extraEnvironment: environment)
+        defer { app.terminate() }
+        let control = app.buttons["native-editor-conversation"]
+        guard waitForEditorIdle(control: control) else { return }
+        let note = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: DISCARDED NOTE")).firstMatch
+        guard addTextInEditor("DISCARDED NOTE", app: app), note.waitForExistence(timeout: 5) else {
+            XCTFail("the edit to discard must be on the canvas first")
+            return
+        }
+        XCTAssertTrue(app.buttons["native-editor-undo"].isEnabled)
+
+        let discard = app.buttons["Discard changes"]
+        for _ in 0..<3 where !discard.exists {
+            app.buttons["native-editor-back"].tap()
+            _ = discard.waitForExistence(timeout: 3)
+        }
+        guard discard.exists else { return XCTFail("leaving with an unsaved edit asks what to do with it") }
+        discard.tap()
+
+        let reopen = app.buttons["Open editor"]
+        guard reopen.waitForExistence(timeout: 15) else { return XCTFail("Discard changes leaves the editor") }
+        reopen.tap()
+        guard waitForEditorIdle(control: control) else { return }
+        XCTAssertFalse(note.exists, "the reopened editor shows the saved edit, not the discarded text")
+        XCTAssertFalse(app.buttons["native-editor-undo"].isEnabled, "nothing is left to undo after a discard")
+        app.buttons["native-editor-back"].tap()
+        // A clean editor leaves at once; only a run that kept the edit asks again.
+        if discard.waitForExistence(timeout: 2) { discard.tap() }
+        guard control.waitForNonExistence(timeout: 15) else { return XCTFail("the editor closes") }
+
+        let composer = app.textFields["Message Kria"]
+        guard composer.waitForExistence(timeout: 10) else { return XCTFail("the chat is back") }
+        composer.tap()
+        composer.typeText("Make the title bigger")
+        app.buttons["chat-send-message"].tap()
+        let sent = eventually(timeout: 20) { self.requests(capture).contains { $0.hasSuffix("/turns") || $0.hasSuffix("/messages") } }
+        XCTAssertTrue(sent, "the message goes out")
+        XCTAssertFalse(requests(capture).contains { $0.hasSuffix("/editor-commit") }, "a discarded edit is never saved by the send")
+        let text = (try? String(contentsOf: capture, encoding: .utf8)) ?? ""
+        XCTAssertFalse(text.contains("DISCARDED NOTE"), "a discarded edit is never sent as the editor's state")
+    }
+
+    /// The routes of the editor-commit and chat-turn POSTs the app sent, oldest first.
+    private func requests(_ capture: URL) -> [String] {
+        guard let text = try? String(contentsOf: capture, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])?["path"] as? String
+        }
+    }
+
+    private func addTextInEditor(_ content: String, app: XCUIApplication) -> Bool {
+        app.buttons["native-editor-tool-text"].tap()
+        let input = app.descendants(matching: .any)["native-editor-new-text-input"].firstMatch
+        guard input.waitForExistence(timeout: 3) else { return false }
+        input.tap(); input.typeText(content)
+        app.buttons["native-editor-text-done"].tap()
+        let done = app.buttons["native-editor-text-inspector-done"]
+        guard done.waitForExistence(timeout: 3) else { return false }
+        done.tap()
+        return true
+    }
+
     func testEditorAIActivityStopsOnRejectedPromptAndKeepsTheDraft() {
         let app = launchEditorAIActivityFixture(reduceMotion: true, rejects: true)
         let message = "Keep this rejected editor instruction"
@@ -220,7 +298,8 @@ final class CreationUITests: XCTestCase {
 
     private func launchEditorAIActivityFixture(reduceMotion: Bool, opaque: Bool = false,
                                                rejects: Bool = false, holdsTurn: Bool = false,
-                                               completingFollowup: Bool = false, changedHandoff: Bool = false) -> XCUIApplication {
+                                               completingFollowup: Bool = false, changedHandoff: Bool = false,
+                                               extraEnvironment: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
         app.launchEnvironment = [
@@ -230,6 +309,7 @@ final class CreationUITests: XCTestCase {
             "UI_TEST_REDUCE_TRANSPARENCY": opaque ? "1" : "0",
         ]
         if changedHandoff { app.launchEnvironment["KRIA_EDITOR_CHANGED_HANDOFF"] = "1" }
+        app.launchEnvironment.merge(extraEnvironment) { _, new in new }
         if rejects { app.launchEnvironment["KRIA_CHAT_SEND_FAILURE"] = "reject" }
         if holdsTurn || completingFollowup {
             app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1"

@@ -65,6 +65,8 @@
   },
   "also": {
     "CreationUITests/testChangedEditorPreviewRetainsOldPictureAndBlocksExportThenSupportsManualUndo": "editor",
+    "CreationUITests/testDiscardingChangesInAChatOpenedEditorKeepsThemOutOfTheNextEditorStateTurn": "editor",
+    "CreationUITests/testDiscardingChangesInAChatOpenedEditorKeepsThemOutOfTheNextMessage": "editor",
     "CreationUITests/testEditorAIActivityCompletingLifecycleCapture": "editor",
     "CreationUITests/testEditorAIActivityCompletingOpaqueCapture": "editor",
     "CreationUITests/testEditorAIActivityCompletingReducedMotionCapture": "editor",

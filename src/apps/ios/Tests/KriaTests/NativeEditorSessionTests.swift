@@ -4928,12 +4928,124 @@ final class NativeEditorSessionTests: XCTestCase {
         held.session.addText(content: "Typed while the preview prepares")
         await held.session.save()
         XCTAssertEqual(headerSaveControl(held.session), .saving)
-        held.session.forgetSaveKeptForLoad()
+        XCTAssertTrue(held.session.discardChanges(), "the load holds isSaving as a fence only, so she can still discard")
         XCTAssertNotEqual(headerSaveControl(held.session), .saving, "she chose to discard, so no save is coming")
         held.spy.resumeSourcePool()
         _ = await held.loading.value
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(held.spy.commitCount, 0, "a discarded edit must not be saved")
+    }
+
+    private static func sortedJSON(_ lanes: EditorCommitRequest) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try encoder.encode(lanes)
+    }
+
+    /// KRI-1625: the chat keeps its editor session after the editor closes, so "Discard changes" has to put the session
+    /// back on the saved edit. Left as it is, the next chat message saves the edit or sends it as the editor's state.
+    func testDiscardedChangesLeaveTheSavedEditAndNothingToSend() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let saved = session.document
+        let cleanLanes = try Self.sortedJSON(XCTUnwrap(session.exportEditorState()).lanes)
+        session.setUserSongVolume(0.7)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertTrue(session.discardChanges())
+        XCTAssertEqual(session.document, saved, "the document is the saved edit again")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertFalse(session.canUndo, "a discarded edit leaves no Undo step to bring it back")
+        XCTAssertFalse(session.canRedo)
+        XCTAssertEqual(try Self.sortedJSON(XCTUnwrap(session.exportEditorState()).lanes), cleanLanes, "the next turn carries no lanes")
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 0, "a discarded edit is not saved by a later send")
+    }
+
+    /// An edit the chat staged lives in the server's draft head. Discarding it drops it from the editor and declares that
+    /// revision seen, so the same head is not staged again, while a newer head still is.
+    func testDiscardedChatStagedEditIsNotStagedAgainButANewerOneIs() async throws {
+        let chatSong: JSONValue = .object(["volume": .number(0.4), "removed": .bool(false)])
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps, chatSong: chatSong)
+        let jobID = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        XCTAssertTrue(session.discardChanges())
+        XCTAssertNil(session.document.userSong, "the chat's edit is gone from the editor")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.document.userSong, "the same head is not staged twice")
+        let state = try XCTUnwrap(session.exportEditorState())
+        XCTAssertEqual(state.draftRevision, 2, "the turn declares the discarded revision seen")
+        XCTAssertNil(state.lanes.userSong)
+
+        fake.draftSnapshot = Self.chatSongHead(.object(["volume": .number(0.3), "removed": .bool(false)]), revision: 3, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.3), "a newer chat edit still arrives")
+    }
+
+    /// KRI-1617: "Save and exit" tapped while the editor still prepares keeps the Save for the end of the load. The exit
+    /// follows that Save: the editor closes once it lands, and stays open, edit intact, when it fails.
+    func testSaveAndExitTappedWhileTheEditorPreparesLeavesOnceTheKeptSaveLands() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitResponse = Self.textSaved
+        held.session.addText(content: "Typed while the preview prepares")
+        let exit = Task { @MainActor in await held.session.saveForExit() }
+        let kept = await waitUntil(timeout: .seconds(5)) { held.session.showsSavingIndicator }
+        XCTAssertTrue(kept, "setup: the Save is kept for the end of the load")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let mayLeave = await exit.value
+        XCTAssertEqual(held.spy.commitCount, 1)
+        XCTAssertFalse(held.session.hasUnsavedChanges)
+        XCTAssertTrue(mayLeave, "the edit is saved, so the editor closes")
+    }
+
+    func testSaveAndExitTappedWhileTheEditorPreparesStaysWhenTheKeptSaveFails() async throws {
+        let held = try await Self.preparingSession()
+        held.spy.commitThrow = URLError(.notConnectedToInternet)
+        held.session.addText(content: "Typed while the preview prepares")
+        let exit = Task { @MainActor in await held.session.saveForExit() }
+        let kept = await waitUntil(timeout: .seconds(5)) { held.session.showsSavingIndicator }
+        XCTAssertTrue(kept, "setup: the Save is kept for the end of the load")
+        held.spy.resumeSourcePool()
+        _ = await held.loading.value
+        let mayLeave = await exit.value
+        XCTAssertFalse(mayLeave, "the save failed, so the creator stays with her edit")
+        XCTAssertTrue(held.session.hasUnsavedChanges)
+    }
+
+    /// A Save in flight has sent the document already and its answer lands on it. Discarding then would turn the saved
+    /// edit into an unsaved revert, so the prompt does not offer it and the call refuses.
+    func testDiscardIsRefusedWhileASaveIsInFlight() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongVolume(0.7)
+        let edited = session.document
+        fake.commitResponse = okResponse("generation-2")
+        fake.suspendNextCommit = true
+        let saving = Task { await session.save() }
+        let suspended = await waitUntil(timeout: .seconds(5)) { fake.commitIsSuspended }
+        XCTAssertTrue(suspended, "setup: the commit is outstanding")
+        XCTAssertFalse(session.canDiscardChanges)
+        XCTAssertFalse(session.discardChanges())
+        XCTAssertEqual(session.document, edited)
+        fake.resumeCommit()
+        await saving.value
+        XCTAssertFalse(session.hasUnsavedChanges, "the save landed, and nothing reverted it")
+        XCTAssertEqual(session.yourSongControls?.volume, 0.7)
+        XCTAssertTrue(session.canDiscardChanges)
+    }
+
+    /// Text still being typed is part of what is discarded: it must not survive as a staged item that Done would add.
+    func testDiscardAlsoDropsTextBeingTyped() async throws {
+        let (session, _, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let saved = session.document
+        session.beginTextCreation()
+        session.updatePendingText("Never finished")
+        XCTAssertNotNil(session.pendingText, "setup: a new text is being typed")
+        XCTAssertTrue(session.discardChanges())
+        XCTAssertNil(session.pendingText)
+        XCTAssertEqual(session.document, saved)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertNil(session.finishTextCreation(), "Done after a discard adds nothing")
+        XCTAssertEqual(session.document, saved)
     }
 
     private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>, threadID: UUID) {
