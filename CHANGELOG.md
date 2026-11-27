@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.10.0] - 2026-11-27
+
+### Changed
+- fix(ios): keep montage photo timing exact and reorder finished clips (KRI-1651) (#2542) <!-- release-pr: 2542 -->
+
 ## [0.91.9.0] - 2026-11-27
 
 ### Changed
