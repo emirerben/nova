@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.9.0] - 2026-11-27
+
+### Changed
+- feat(ios): make overlays in chat and keep the results sheet (KRI-1647, CA-8) (#2539) <!-- release-pr: 2539 -->
+
 ## [0.91.8.0] - 2026-11-27
 
 ### Changed
