@@ -826,6 +826,13 @@ def _her_cards_saved(make):
     return seeded, client, look, seeded.drawn_cards(), seeded.drawn_windows()
 
 
+def _assert_same_cards(actual: dict[str, tuple], expected: dict[str, tuple]) -> None:
+    # pytest >= 9.2 refuses pytest.approx over a dict whose values are tuples.
+    assert actual.keys() == expected.keys()
+    for card_id, value in expected.items():
+        assert actual[card_id] == pytest.approx(value), card_id
+
+
 def test_a_title_retime_saved_with_or_without_her_cards_keeps_them(make):
     seeded, client, look, drawn, windows = _her_cards_saved(make)
     later = [{**row, "end_s": row["end_s"] + 1.0} for row in look["rows"]]
@@ -835,8 +842,8 @@ def test_a_title_retime_saved_with_or_without_her_cards_keeps_them(make):
     earlier = [{**row, "end_s": row["end_s"] - 0.5} for row in look["rows"]]
     response = save(client, seeded, earlier, _hers(look))
     assert response.status_code == 200, response.text  # P5: the editor posts them again
-    assert seeded.drawn_cards() == pytest.approx(drawn)
-    assert seeded.drawn_windows() == pytest.approx(windows)
+    _assert_same_cards(seeded.drawn_cards(), drawn)
+    _assert_same_cards(seeded.drawn_windows(), windows)
 
 
 @pytest.mark.parametrize(
@@ -868,8 +875,8 @@ def test_a_chat_title_change_keeps_her_cards(make, raw):
     response = _commit(client, seeded, body)
     assert response.status_code == 200, response.text  # P5
     assert seeded.title_evidence() != titles_before, "the title changed"
-    assert seeded.drawn_cards() == pytest.approx(drawn)
-    assert seeded.drawn_windows() == pytest.approx(windows)
+    _assert_same_cards(seeded.drawn_cards(), drawn)
+    _assert_same_cards(seeded.drawn_windows(), windows)
 
 
 def test_a_card_she_drags_low_follows_the_caption_rule_every_card_has(make):
