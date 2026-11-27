@@ -4936,6 +4936,45 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(held.spy.commitCount, 0, "a discarded edit must not be saved")
     }
 
+    /// KRI-1625: the chat keeps its editor session after the editor closes, so "Discard changes" has to put the session
+    /// back on the saved edit. Left as it is, the next chat message saves the edit or sends it as the editor's state.
+    func testDiscardedChangesLeaveTheSavedEditAndNothingToSend() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        let saved = session.document
+        let cleanState = try XCTUnwrap(session.exportEditorState())
+        session.setUserSongVolume(0.7)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        session.forgetSaveKeptForLoad()
+        XCTAssertEqual(session.document, saved, "the document is the saved edit again")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertFalse(session.canUndo, "a discarded edit leaves no Undo step to bring it back")
+        XCTAssertFalse(session.canRedo)
+        XCTAssertEqual(try XCTUnwrap(session.exportEditorState()).lanes, cleanState.lanes, "the next turn carries no lanes")
+        await session.save()
+        XCTAssertEqual(fake.commitCount, 0, "a discarded edit is not saved by a later send")
+    }
+
+    /// An edit the chat staged lives in the server's draft head. Discarding it drops it from the editor and declares that
+    /// revision seen, so the same head is not staged again, while a newer head still is.
+    func testDiscardedChatStagedEditIsNotStagedAgainButANewerOneIs() async throws {
+        let chatSong: JSONValue = .object(["volume": .number(0.4), "removed": .bool(false)])
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps, chatSong: chatSong)
+        let jobID = try XCTUnwrap(fake.draftSnapshot.baseJobID)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges)
+        session.forgetSaveKeptForLoad()
+        XCTAssertNil(session.document.userSong, "the chat's edit is gone from the editor")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        await session.synchronizePromptRevision()
+        XCTAssertNil(session.document.userSong, "the same head is not staged twice")
+        let state = try XCTUnwrap(session.exportEditorState())
+        XCTAssertEqual(state.draftRevision, 2, "the turn declares the discarded revision seen")
+        XCTAssertNil(state.lanes.userSong)
+
+        fake.draftSnapshot = Self.chatSongHead(.object(["volume": .number(0.3), "removed": .bool(false)]), revision: 3, jobID: jobID)
+        await session.synchronizePromptRevision()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.3), "a newer chat edit still arrives")
+    }
+
     private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>, threadID: UUID) {
         let jobID = UUID(), threadID = UUID()
         let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
