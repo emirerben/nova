@@ -27,9 +27,23 @@ public struct VisualMediaPlacement: Codable, Equatable, Sendable {
         self.xFraction = xFraction; self.yFraction = yFraction; self.windowStart = windowStart; self.windowEnd = windowEnd
         self.fadeIn = fadeIn; self.fadeOut = fadeOut
     }
+    /// KRI-1616: the renderer-safety bound for a placed card hanging past the side of the canvas, the only limit on the
+    /// creator's own drag (`portable_visual.EDGE_BLEED_KEEP_ON_CANVAS`; both read tests/fixtures/edge-bleed-bound/). At
+    /// least this share of the card's width stays on the canvas, so the part she can touch never goes. Its height is its
+    /// picture's, unknown to the recipe, so y keeps 0...1.
+    public static let edgeBleedKeepOnCanvas = 0.25
+
+    /// Where the centre of a card `width` of the canvas wide may lie across.
+    public static func edgeBleedXRange(width: Double) -> ClosedRange<Double> {
+        let reach = (0.5 - edgeBleedKeepOnCanvas) * min(max(width, 0), 1)
+        return -reach...(1 + reach)
+    }
+
     func validate() throws {
         try editorStyle?.validate()
-        guard (0...1000).contains(order), [focalX, focalY, xFraction, yFraction].allSatisfy({ $0.isFinite && (0...1).contains($0) }),
+        let across = widthFraction.map(Self.edgeBleedXRange(width:)) ?? 0...1
+        guard (0...1000).contains(order), [focalX, focalY, yFraction].allSatisfy({ $0.isFinite && (0...1).contains($0) }),
+              xFraction.isFinite, ((across.lowerBound - 1e-9)...(across.upperBound + 1e-9)).contains(xFraction),
               zoom.isFinite, (1...4).contains(zoom), widthFraction.map({ $0.isFinite && (0.05...1).contains($0) }) ?? true,
               windowStart.isFinite, windowEnd.isFinite, windowStart >= 0, windowEnd > windowStart, windowEnd <= 1800 else { throw RecipeError.invalidTimeline }
     }

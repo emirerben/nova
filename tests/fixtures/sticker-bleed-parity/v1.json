@@ -1,0 +1,60 @@
+{
+  "comment": "KRI-1616: a transparent sticker hanging past the frame edge draws the same on the cloud card\npass and the phone engine.",
+  "canvas": [
+    1080,
+    1920
+  ],
+  "base_rgb": [
+    40,
+    90,
+    160
+  ],
+  "ink_diff": 40,
+  "frame_at_s": 0.5,
+  "cards": [
+    {
+      "id": "intro-card-sticker-1",
+      "scale": 0.3,
+      "x_frac": 0.075,
+      "y_frac": 0.25
+    },
+    {
+      "id": "intro-card-sticker-2",
+      "scale": 0.22,
+      "x_frac": 0.967,
+      "y_frac": 0.62
+    }
+  ],
+  "cloud": [
+    {
+      "id": "intro-card-sticker-1",
+      "ink_box": [
+        0,
+        335,
+        225,
+        625
+      ],
+      "coverage": 0.3723,
+      "mean_rgb": [
+        237.2,
+        193.9,
+        38.1
+      ]
+    },
+    {
+      "id": "intro-card-sticker-2",
+      "ink_box": [
+        936,
+        1082,
+        1079,
+        1295
+      ],
+      "coverage": 0.3697,
+      "mean_rgb": [
+        236.0,
+        193.4,
+        38.9
+      ]
+    }
+  ]
+}
