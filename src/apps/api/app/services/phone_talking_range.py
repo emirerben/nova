@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from app.kria.portable_color_moments import SOUND_ID_PREFIX as COLOR_MOMENT_SOUND_ID_PREFIX
 from app.pipeline.phone_talking_inserts import PHONE_INSERT_CLIPS_FIELD
 from app.pipeline.speech_cut_state import reproject_authored_speech_records
+from app.pipeline.title_family import INTRO_SOUND_ID_PREFIX
 from app.schemas.editor_window import (
     EDITOR_MIN_CLIP_S,
     below_editor_minimum,
@@ -339,9 +340,11 @@ def reproject_lanes(lanes: Any, old_slots: list[dict], new_slots: list[dict]) ->
             )
     effects = []
     for effect in lanes.sound_effects:
-        if effect.request.id.startswith(COLOR_MOMENT_SOUND_ID_PREFIX):
-            # KRI-1350: a colour moment's own sound is re-pinned to its moment's edge by the
-            # caller (`rebind_color_moment_sounds`), never moved through source time on its own.
+        if effect.request.id.startswith((COLOR_MOMENT_SOUND_ID_PREFIX, INTRO_SOUND_ID_PREFIX)):
+            # KRI-1350 / KRI-1613: a colour moment's or an intro scene's own sound is re-pinned by
+            # the caller to its moment's edge or its title line's entrance
+            # (`rebind_color_moment_sounds`, `rebind_intro_scene_sounds`), never moved through
+            # source time on its own.
             effects.append(effect)
             continue
         parts = reproject_between_layouts(
