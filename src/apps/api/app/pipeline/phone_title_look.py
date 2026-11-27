@@ -50,6 +50,7 @@ from app.pipeline.title_family import (  # noqa: F401
     title_family_of,
     title_look_line_ids,
     title_stack_rows,
+    title_window,
 )
 from app.text_fold import fold_text
 
@@ -179,7 +180,9 @@ def intro_stack_as_one_row(rows: Sequence[Any]) -> list[Any]:
     ordered = sorted(stack, key=lambda row: int((_look_params(row) or {}).get("line") or 0))
     first = ordered[0]
     gone = {id(row) for row in ordered[1:]}
-    return [{**row, "text": plain} if row is first else row for row in rows if id(row) not in gone]
+    start, end = title_window(ordered)  # KRI-1618: line 1 may be a late accent
+    one = {**first, "text": plain, "start_s": start, "end_s": end}
+    return [one if row is first else row for row in rows if id(row) not in gone]
 
 
 def collapse_title_look(
@@ -198,6 +201,9 @@ def collapse_title_look(
         return None
     look.sort(key=lambda row: int(_look_params(row).get("line") or 0))  # type: ignore[union-attr]
     first, rest = look[0], look[1:]
+    if all("start_s" in row and "end_s" in row for row in look):
+        # KRI-1618: the title keeps its own window, not that of a late accent on line 1.
+        first["start_s"], first["end_s"] = title_window(look)
     params = dict(first.get("source_params") or {})
     params[TITLE_LOOK_PARAM] = {"line": 1, "lines": 1, "style": "plain"}
     first["source_params"] = params

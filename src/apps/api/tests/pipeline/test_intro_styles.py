@@ -726,3 +726,33 @@ def test_no_skia_at_import():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=".")
     assert "ok" in out.stdout, out.stderr[-400:]
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_late_tucked_look_whose_accent_leads_is_offered_and_saved(monkeypatch, route):
+    """KRI-1618, ref 5's shape: line 1 is the script accent that enters late. The offer keeps it
+    only when the route's real phone Save accepts it (a refused look would vanish silently)."""
+    title = "city guide: lisbon, day one"
+    candidate = {
+        "voices": ["accent", "accent", "solid", "solid", "solid"],
+        "font_pair": "script_serif",
+        "entrance": "fade",
+        "zones": list(scene_mod.ZONES),
+        "stagger": "accent_after",
+        "stack": "script_over_serif",
+    }
+    monkeypatch.setattr(st.pick, "pick_candidates", lambda *_args, **_kwargs: [candidate])
+    job, vid, rows = fx.BUILDERS[route](title)
+    offer = st.build_offer(st.detach(job), vid, rows, "first")
+    assert offer["available"], offer.get("reason")
+    [look] = [o for o in offer["options"] if o["key"] != "none"]
+    params = [r["source_params"]["title_look"] for r in look["rows"]]
+    assert [(p["style"], p["stagger"], p["stack"]) for p in params] == [
+        ("intro_accent", "accent_after", "script_over_serif"),
+        ("intro_solid", "accent_after", "script_over_serif"),
+    ]
+    assert look["preview"]["time_s"] > look["rows"][0]["start_s"] > look["rows"][1]["start_s"]
+    assert (
+        st.dry_run_save(job, vid, route, look["rows"], base_generation="first", save_arguments={})
+        is None
+    )

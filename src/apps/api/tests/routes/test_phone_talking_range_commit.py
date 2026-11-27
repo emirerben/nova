@@ -444,3 +444,39 @@ def test_widening_a_window_with_captions_on_and_the_transcript_covering_it_saves
     saved = job.assembly_plan["variants"][0]
     assert saved["speech_timing_unresolved"] is False
     assert [c["text"] for c in saved["caption_cues"]] == ["Hello everyone", "welcome back"]
+
+
+def test_a_trim_inside_the_late_accents_wait_keeps_the_declared_delay(monkeypatch):
+    """KRI-1618: a Range save re-anchors each text row through source time on its own. Trimming
+    0.3 s off the start moved the late accent line to 0.3 s after the title, a delay the approval
+    check refuses; the projected lane is re-pinned to the declared stagger."""
+    from app.pipeline import intro_scene as scene_mod
+    from app.pipeline.canvas import PORTRAIT
+
+    scene = scene_mod.IntroScene(
+        decision="compose",
+        voices=("solid",) * 4 + ("accent",) * 2,
+        font_pair="grotesk_hand",
+        ink="oxblood",
+        zone="above_head",
+        entrance="ink",
+        sound="none",
+        stagger="accent_after",
+    )
+    title = scene_mod.compile_intro_scene(
+        scene, "the biggest design trend right now", canvas=PORTRAIT, timeline_duration_s=9.0
+    )
+    assert title.rows is not None, title.reason
+    job = talking_job(monkeypatch)
+    job.assembly_plan["variants"][0]["text_elements"] = title.rows
+
+    save(job, [_row(_SLOT0, 0.3, 3.7), _row(_SLOT1, 5.0, 5.0)])
+
+    rows = {
+        row["source_params"]["title_look"]["style"]: row
+        for row in job.assembly_plan["variants"][0]["text_elements"]
+        if row["id"].startswith("opening-title")
+    }
+    solid, accent = rows["intro_solid"], rows["intro_accent"]
+    assert accent["start_s"] - solid["start_s"] == pytest.approx(scene_mod.STAGGERS["accent_after"])
+    assert accent["end_s"] == solid["end_s"]

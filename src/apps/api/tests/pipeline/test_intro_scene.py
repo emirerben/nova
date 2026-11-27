@@ -649,3 +649,42 @@ def test_render_check_draws_each_move_in_both_languages(report):  # KRI-1618 M8-
         for language in ("en", "tr")
     }
     assert all(c["verdict"] == "PASS" for c in moves), [c["reasons"] for c in moves]
+
+
+@pytest.mark.parametrize("face_top", [0.18, 0.2])
+def test_a_squeezed_title_keeps_the_tuck(face_top):
+    """A tall face leaves the band above it too short: the title squeezes (ink to ink, smaller)
+    and the tuck still sits on the board's geometry at that size."""
+    from app.pipeline.canvas import PORTRAIT
+    from app.pipeline.phone_title_look import place_title_look
+    from app.pipeline.render_geometry import ProtectedRegion
+
+    face = mod.NormalizedBox(0.2, face_top, 0.8, 0.85)
+
+    def sample(_path, anchors, **_kwargs):
+        return [ProtectedRegion(0.0, 1e6, face, kind="face")], {"attempted": len(anchors)}
+
+    scene = _compose(
+        REF5_VOICES, font_pair="script_serif", ink="white", sound="none", stack="script_over_serif"
+    )
+    out = mod.compile_intro_scene(
+        scene, REF5_TITLES["en"], canvas=PORTRAIT, timeline_duration_s=30.0, language="en"
+    )
+    placed, receipt = place_title_look(
+        out.rows,
+        clip_path="take.mp4",
+        keep_segments=[(0.0, 1e6)],
+        display_width=1080,
+        display_height=1920,
+        canvas=PORTRAIT,
+        sample=sample,
+    )
+    assert receipt["status"] == "squeezed" and receipt["scale"] < 1.0, receipt
+    script, serif = (layer.runs[0] for layer in _phone_layers(placed))
+    font = skia.Font(
+        skia.Typeface.MakeFromFile(str(PROMPTS.parent / "assets/fonts/Newsreader-Medium.ttf")),
+        serif.font_size,
+    )
+    rise = serif.baseline_y - script.baseline_y
+    caps = mod.STACKS["script_over_serif"].tuck_caps
+    assert rise == pytest.approx(caps * font.getMetrics().fCapHeight, abs=2.0)

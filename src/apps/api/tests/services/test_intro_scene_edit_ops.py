@@ -164,16 +164,26 @@ def test_her_typed_slash_stack_follows_the_same_rule():
 # a window too short for the delay leaves a line starting at or after its end.
 
 
-def _late_accent_scene() -> list[dict]:
+def _late_accent_scene(*, accent_first: bool = False) -> list[dict]:
+    """ref 1's late accent; ``accent_first`` is ref 5's shape, a script line tucked onto the serif
+    line under it, so line 1 is the line that enters late."""
+    look = (
+        {"voices": ("accent",) * 2 + ("solid",) * 4, "font_pair": "script_serif", "ink": "white"}
+        if accent_first
+        else {
+            "voices": ("solid",) * 4 + ("accent",) * 2,
+            "font_pair": "grotesk_hand",
+            "ink": "oxblood",
+        }
+    )
     scene = scene_mod.IntroScene(
         decision="compose",
-        voices=("solid",) * 4 + ("accent",) * 2,
-        font_pair="grotesk_hand",
-        ink="oxblood",
         zone="above_head",
-        entrance="ink",
+        entrance="fade" if accent_first else "ink",
         sound="none",
         stagger="accent_after",
+        **({"stack": "script_over_serif"} if accent_first else {}),
+        **look,
     )
     out = scene_mod.compile_intro_scene(scene, EN, canvas=PORTRAIT, timeline_duration_s=30.0)
     assert out.rows is not None, out.reason
@@ -216,3 +226,22 @@ def test_a_range_cut_that_bent_the_delay_is_undone_and_other_rows_are_left_alone
     assert out[-1] is caption
     plain = _scene()  # a scene that declares no stagger is returned as it was
     assert retime_title_stacks(plain) == plain
+
+
+def test_a_whole_title_rewrite_of_a_late_accent_first_title_starts_with_the_title():
+    rows = _late_accent_scene(accent_first=True)
+    assert rows[0]["start_s"] == pytest.approx(scene_mod.STAGGERS["accent_after"])
+    job, variant, snapshot, _others = _scene_job(rows)
+    raw = manual_edits_to_ops(
+        [ManualEdit(kind="rewrite_text", target_id="opening-title", text=NEW)], snapshot
+    )
+    [title] = _title_rows(_compile(job, variant, snapshot, raw))
+    assert (title["text"], title["start_s"], title["end_s"]) == (NEW, 0.0, rows[0]["end_s"])
+
+
+def test_the_render_contract_reads_a_late_accent_first_title_as_one_text_from_its_start():
+    from app.pipeline.phone_title_look import intro_stack_as_one_row
+
+    rows = _late_accent_scene(accent_first=True)
+    [one] = intro_stack_as_one_row(rows)
+    assert (one["text"], one["start_s"]) == (EN, 0.0)
