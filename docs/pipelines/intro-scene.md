@@ -413,7 +413,9 @@ offers cards as a one-tap suggestion (never automatic); stage C draws them on th
 * **For stages B and C.** Boxes are fractions of the 1080x1920 canvas. A phone card has a width
   only (`SubtitledOverlayCard.scale`; its height is the photo's aspect), so the aspects passed must
   be the real photos'. A bottom-row card can sit below `CAPTION_BAND_TOP_FRAC` when the band was
-  measured: it then needs `caption_clear`, or the compile pulls its centre up onto the captions.
+  measured: it then needs `caption_clear`, or the compile clamps its centre up to 0.62, off its
+  planned box (on the verified framing, from 0.735 onto her face). Every bottom row the render
+  check passes sits there.
   Anything that places the title again (the worker's caption re-placement, a chat move) must keep
   the card rows in `avoid`. Removing one card leaves the others where they are; a layout for fewer
   photos is not defined here.
