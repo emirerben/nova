@@ -47,7 +47,7 @@ from tests.tasks.test_kri841_talking_ending_clip import (
 )
 from tests.tasks.test_qendresa_list_labels_worker import FULL_FRAME_FACE, _faces, _flag
 
-TAKE_S = 62.0
+TAKE_S = 62.0  # her take in seconds, not a client protocol: protocol-literal-ok
 STEP = 0.2  # seconds per spoken word
 
 # ------------------------------------------------------------------ her take (synthetic words)

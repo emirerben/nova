@@ -140,6 +140,11 @@ RESEARCH_SELECTION_PROTOCOL = 60
 
 OVERLAY_SET_PROTOCOL = 61
 
+# KRI-1615 stage B: the first build that parses an intro-styles option's `cards` (her own
+# photos laid out with the title) and applies them as media overlays. An older build is never
+# sent a card option.
+INTRO_CARDS_PROTOCOL = 62
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()
