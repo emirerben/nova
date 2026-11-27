@@ -568,6 +568,7 @@ final class CreationChatFixture: @unchecked Sendable {
             // choice_question payload but does not advertise the capability (old-server text fallback).
             if ["1", "refuse-first"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"]) { capabilities["choice_questions"] = true }
             if HeldDraftReplayFixture.isEnabled || DesignPickerUITestFixture.isEnabled { capabilities["choice_questions"] = true }
+            if OverlaySetUITestFixture.isEnabled { capabilities["overlay_sets"] = true }
             // A server that still advertises the removed place-hint capability: the app must ignore it.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_SCREEN_RECORDING"] == "1" { capabilities["upload_place_hint"] = true }
             // KRIA_CHAT_VOICEOVER_SCRIPT (KRI-815): "1" = server advertises voiceover_script_cards; "legacy" = it still
@@ -655,11 +656,17 @@ final class CreationChatFixture: @unchecked Sendable {
         if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] == "1",
            parts.first == "generative-jobs" {
             if parts.last == "status" {
-                return response(["variants": [[
+                var variant: [String: Any] = [
                     "variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device",
                     "render_destination": "device", "duration_s": 1, "render_generation_id": "fixture-generation",
                     "ai_timeline": ["slots": [["slot_id": "clip-0", "clip_index": 0, "in_s": 0, "duration_s": 1, "source_duration_s": 1]]]
-                ]]])
+                ]
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_EDITOR_OVERLAY_PLAN"] == "1" {
+                    variant["editor_revision_number"] = 1
+                    variant["editor_capabilities"] = ["visual_blocks": ["editable": true], "text_elements": ["editable": true],
+                        "phone_editor_media": ["enabled": true, "source_registration": true, "visual_kinds": ["image"]]]
+                }
+                return response(["variants": [variant]])
             }
             if parts.last == "timeline", let projectID = UUID(uuidString: parts[1]),
                let source = SongTimelineFixture.clipURL(mediaID: "fixture-clip", force: true) {
@@ -688,6 +695,15 @@ final class CreationChatFixture: @unchecked Sendable {
             let photo = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""
             return response(["assets": [["id": Self.poolPhotoAssetID, "kind": "image", "status": "ready", "media_status": "available",
                                          "source_filename": "N1_09_visual.jpg", "display_url": photo]], "max_assets": 10])
+        }
+        // KRIA_CHAT_EDITOR_OVERLAY_PLAN=1: the editor's Generate media panel plans one text overlay (offline; no spend).
+        if parts.count == 3, parts[0] == "plan-items", parts[2] == "overlay-plan", request.httpMethod == "POST",
+           ProcessInfo.processInfo.environment["KRIA_CHAT_EDITOR_OVERLAY_PLAN"] == "1" {
+            return response(["document_fingerprint": body["document_fingerprint"] ?? "", "base_generation": body["base_generation"] ?? "",
+                             "message": "Synthetic offline overlay plan.",
+                             "overlays": [["id": "DCC14763-5702-4AE3-8510-8C72845E6B15", "kind": "text", "title": "Synthetic graphic",
+                                           "prompt": "A synthetic image for native UI testing", "text": "10", "start_s": 0.2, "end_s": 0.8,
+                                           "x_frac": 0.2, "y_frac": 0.3, "scale": 0.2, "reason": "Synthetic placement at 0.2 seconds."]]])
         }
         if parts.first == "plan-items", parts.count >= 3, parts[2] == "generated-media",
            ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA"] == "1" {
@@ -862,6 +878,10 @@ final class CreationChatFixture: @unchecked Sendable {
             append("song_range_set", role: "user", payload: ["start_s": start.map { $0 as Any } ?? NSNull(), "end_s": end.map { $0 as Any } ?? NSNull()], clientEventID: body["client_event_id"] as? String)
             thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
             return response(thread)
+        }
+        if let reply = OverlaySetUITestFixture.respond(method: request.httpMethod, parts: parts, body: body, thread: &thread, operations: &generatedMediaOperations) {
+            threads[id] = thread
+            return response(reply.1, status: reply.0)
         }
         if reviewEnabled {
             // An update render advances one step per read of the plan or the delta (like the staged feed).

@@ -21,7 +21,7 @@ struct AskCardState<Answer, Submit> {
 }
 
 enum AskKind: String, CaseIterable, Hashable {
-    case clip, songOrder, songRange, region, moment, choice, research
+    case clip, songOrder, songRange, region, moment, choice, research, overlay
 }
 
 /// Folds the ordered transcript into which ask the creator sees. Asks come one after the other: the oldest

@@ -659,6 +659,9 @@ private struct CreationWorkspaceView: View {
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// CA-8: overlay sets asked for, answered and made in this chat, and the review sheet opened from a finished one.
+    @StateObject private var overlaySets = OverlaySetCoordinator()
+    @State private var reviewOverlaySet: GeneratedOverlaySet?
     /// The creator's own re-record steps; the rest of the flow is read from uploads and the thread (`rerecordPhase`).
     @State private var rerecordLocal: RerecordPhase.Local = .none
     /// The camera for a re-record. Open independently of `rerecordLocal` so it is not torn down by the flow moving on.
@@ -845,6 +848,12 @@ private struct CreationWorkspaceView: View {
         return ids
     }
 
+    private var showsOverlaySets: Bool { capabilities?.overlaySetsEnabled == true }
+
+    private var overlaySetEntries: [OverlaySetEntry] {
+        timeline.compactMap { entry in if case .overlaySet(let set) = entry.content { set } else { nil } }
+    }
+
     /// The merged, sorted, parsed transcript. Building it parses every event, and one redraw reads it several times
     /// (the body, the scroll token, each question card), so the result is kept until one of its inputs changes.
     private var timeline: [ChatTimelineEntry] {
@@ -861,6 +870,7 @@ private struct CreationWorkspaceView: View {
         }
         hasher.combine(stage?.id); hasher.combine(stage?.afterSequence)
         hasher.combine(waitingClientEventID)
+        hasher.combine(showsOverlaySets)
         for id in suppressed.sorted() { hasher.combine(id) }
         for upload in uploads { hasher.combine(upload.id); hasher.combine(upload.afterSequence); hasher.combine(upload.localOrder) }
         for requestID in completedThoughtSummaries.keys.sorted() {
@@ -878,7 +888,8 @@ private struct CreationWorkspaceView: View {
         Perf.event("timeline.build")
         let built = ChatTimeline.build(
             events: events, pending: pendingMessages.filter { $0.clientEventID != waitingClientEventID }, stage: stage,
-            suppressedMessageIDs: suppressed, uploads: uploads, thoughtSummaries: completedThoughtSummaries
+            suppressedMessageIDs: suppressed, uploads: uploads, thoughtSummaries: completedThoughtSummaries,
+            showsOverlaySets: showsOverlaySets
         )
         derived.timelineKey = cacheable ? key : nil
         derived.timeline = built
@@ -945,28 +956,36 @@ private struct CreationWorkspaceView: View {
         if capabilities?.momentOrderQuestions == true { kinds.insert(.moment) }
         if capabilities?.choiceQuestionsEnabled == true { kinds.insert(.choice) }
         if capabilities?.researchSelectionsEnabled == true { kinds.insert(.research) }
+        if capabilities?.overlaySetsEnabled == true { kinds.insert(.overlay) }
         return kinds
     }
 
     /// Which ask is open, folded once per timeline and not once per row.
     private var askFold: AskFold {
-        let messages = timelineMessages
+        let entries = timeline
         let kinds = enabledAskKinds
+        let closed = closedSongRangeQuestions.union(overlaySets.closed)
         var hasher = Hasher()
         hasher.combine(derived.timelineKey)
         hasher.combine(kinds)
-        hasher.combine(closedSongRangeQuestions)
+        hasher.combine(closed)
         let research = kinds.contains(.research) ? researchAsk : nil
         hasher.combine(research?.question.selectionID)
         hasher.combine(research.map { researchSelection.answered[$0.question.selectionID] != nil })
         let key = hasher.finalize()
         if derived.timelineKey != nil, derived.askKey == key { return derived.ask }
-        var entries = messages.map { $0.askEntry(enabled: kinds) }
-        if let research {
-            entries += research.question.foldEntries(proposalID: research.event.id,
-                                                      answeredLocally: researchSelection.answered[research.question.selectionID] != nil)
+        var askEntries = entries.compactMap { entry -> AskFold.Entry? in
+            switch entry.content {
+            case .message(let message): message.askEntry(enabled: kinds)
+            case .overlaySet(let set): set.askEntry(enabled: kinds)
+            default: nil
+            }
         }
-        let folded = AskFold.fold(entries, closed: closedSongRangeQuestions)
+        if let research {
+            askEntries += research.question.foldEntries(proposalID: research.event.id,
+                                                         answeredLocally: researchSelection.answered[research.question.selectionID] != nil)
+        }
+        let folded = AskFold.fold(askEntries, closed: closed)
         if derived.timelineKey != nil { derived.askKey = key; derived.ask = folded }
         return folded
     }
@@ -980,7 +999,8 @@ private struct CreationWorkspaceView: View {
     private var composerAnswering: String? {
         if let answeringQuestion { return answeringQuestion }
         guard pendingMessages.isEmpty, let openID = askFold.openMessageID, openID != dismissedAskMessageID else { return nil }
-        return timelineMessages.first { $0.id == openID }?.displayedContent
+        if let text = timelineMessages.first(where: { $0.id == openID })?.displayedContent { return text }
+        return overlaySetEntries.contains { $0.id == openID } ? String(localized: "Overlay images") : nil
     }
 
     /// The strip sits under the newest message that carries a card and shows the newest card; older carriers draw
@@ -1560,6 +1580,9 @@ private struct CreationWorkspaceView: View {
             Text(mediaRemovalError).kriaType(.label).foregroundStyle(KriaColor.failureText)
                 .accessibilityIdentifier("chat-media-remove-error")
         }
+        if overlaySets.openFailed {
+            KriaInlineFailure(text: String(localized: "Couldn’t make your overlays.")).accessibilityIdentifier("overlay-open-failed")
+        }
         if currentProject.status == .ready {
             FinishedEditSuggestionsView(api: model.api, refreshToken: "\(currentProject.serverRevision):\(finishedEditSuggestionRefresh)") {
                 finishedEditSuggestionUpdate += 1
@@ -1655,6 +1678,8 @@ private struct CreationWorkspaceView: View {
             .id(entry.id)
         case .thoughts(let summaries):
             ThoughtSummaryDisclosure(summaries: summaries).id(entry.id)
+        case .overlaySet(let set):
+            overlaySetRow(set).id(entry.id)
         case .media:
             EmptyView() // Drawn one file per row by `mediaReceipt`.
         }
@@ -2034,6 +2059,7 @@ private struct CreationWorkspaceView: View {
             thread: fullThread,
             capabilities: capabilities,
             capabilitiesLoaded: capabilitiesAreAuthoritative,
+            makeOverlaysInChat: makesOverlaysInChat,
             voiceoverScript: rerecordTarget == nil ? attachmentScript : nil,
             launch: rerecordTarget == nil ? attachmentLaunch : nil,
             origin: rerecordTarget == nil ? attachmentOrigin : .addMedia,
@@ -2357,6 +2383,16 @@ private struct CreationWorkspaceView: View {
             attachmentSheet(rerecordTarget: nil)
                 .presentationDetents([.large])
         }
+        .sheet(item: $reviewOverlaySet) { review in
+            if let itemID = fullThread?.activePlanItemID {
+                GeneratedOverlaysSheet(itemID: itemID, overlays: review, ideaTitle: fullThread?.title ?? "") { await refreshNow() }
+                    .onDisappear { review.stopWork() }
+            }
+        }
+        .onAppear { configureOverlaySets() }
+        .onChange(of: capabilities?.overlaySetsEnabled) { _, _ in configureOverlaySets() }
+        .onChange(of: overlaySetEntries) { _, entries in overlaySets.reconcile(entries.map(\.set)) }
+        .onChange(of: editorSession.loadState) { _, _ in overlaySets.reconcile(overlaySetEntries.map(\.set)) }
         .fullScreenCover(item: $rerecordCamera, onDismiss: rerecordCameraClosed) { target in
             attachmentSheet(rerecordTarget: target)
         }
@@ -2910,6 +2946,56 @@ private struct CreationWorkspaceView: View {
         Task {
             try? await Task.sleep(for: .milliseconds(450))
             showsAttachments = true
+        }
+    }
+
+    private func configureOverlaySets() {
+        overlaySets.configure(client: model.api, threadID: project.id, itemID: { fullThread?.activePlanItemID },
+                              planRequest: { overlaySetPlanRequest() }, refresh: { await refreshNow() })
+        overlaySets.reconcile(overlaySetEntries.map(\.set))
+    }
+
+    private func overlaySetPlanRequest() -> OverlayPlanRequest? {
+        #if DEBUG
+        if let fixture = OverlaySetUITestFixture.planRequest { return fixture }
+        #endif
+        return editorSession.overlaySetPlanRequest()
+    }
+
+    private var canPlanOverlaySet: Bool {
+        #if DEBUG
+        if OverlaySetUITestFixture.planRequest != nil { return true }
+        #endif
+        return editorSession.loadState == .loaded && editorSession.canGenerateOverlayPlan
+    }
+
+    /// The tray starts the chat flow only when the server offers it and this edit can be planned from.
+    /// Otherwise it opens the six-screen sheet exactly as before. The editor always opens its own Generate media panel.
+    private var makesOverlaysInChat: (() -> Void)? {
+        guard capabilities?.overlaySetsEnabled == true, canPlanOverlaySet else { return nil }
+        return { startOverlaysInChat() }
+    }
+
+    private func startOverlaysInChat() {
+        configureOverlaySets()
+        scrollRequest += 1
+        overlaySets.openNew()
+    }
+
+    /// The finished images open in the same sheet "Add media" uses, at its results.
+    private func reviewOverlays(_ set: OverlaySet) {
+        guard let accountID = auth.localStorageIdentity, let itemID = fullThread?.activePlanItemID else { return }
+        let review = GeneratedOverlaySet()
+        review.openResults(of: set.reviewItems, api: model.api, itemID: itemID, accountID: accountID)
+        reviewOverlaySet = review
+    }
+
+    @ViewBuilder private func overlaySetRow(_ entry: OverlaySetEntry) -> some View {
+        let set = overlaySets.shown(entry.set)
+        let phase = set.askPhase(standing: askFold.standing(entry.id, set.id), isSending: overlaySets.isSending(set.id),
+                                 failed: overlaySets.failure(for: set.id) == .answer, isClosed: overlaySets.closed.contains(set.id))
+        if let phase {
+            OverlaySetRow(current: set, phase: phase, coordinator: overlaySets, review: reviewOverlays)
         }
     }
 

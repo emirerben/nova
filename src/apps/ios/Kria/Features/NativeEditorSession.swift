@@ -7326,6 +7326,14 @@ enum EditorOpenIntent { case warm, open }
         try OverlayPlanFingerprint.make(document.encodeSnapshot())
     }
 
+    /// The body a chat overlay set plans from; nil until this edit is loaded on a phone that can make overlays.
+    func overlaySetPlanRequest() -> OverlayPlanRequest? {
+        guard loadState == .loaded, !isSaving, let jobID, let variantKey, canGenerateOverlayPlan,
+              let fingerprint = try? overlayDocumentFingerprint() else { return nil }
+        return OverlayPlanRequest(jobID: jobID.uuidString, variantID: variantKey, baseGeneration: document.revision.baseGeneration,
+                                  documentFingerprint: fingerprint, mode: .automatic, prompt: "", tasteNotes: "", editorSnapshot: document.encodeSnapshot())
+    }
+
     func requestOverlayPlan(mode: OverlayGenerationMode, prompt: String, tasteNotes: String) async throws -> OverlayPlan {
         guard loadState == .loaded, !isSaving, let api, let itemID, let jobID, let variantKey,
               canGenerateOverlayPlan else { throw APIError.unsupported }

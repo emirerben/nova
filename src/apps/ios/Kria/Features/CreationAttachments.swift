@@ -44,6 +44,8 @@ struct AttachmentSheet: View {
     let capabilities: CreationCapabilities?
     /// False until the account's capabilities have loaded; uploads wait for them.
     var capabilitiesLoaded = true
+    /// CA-8: set when the chat can make overlays itself. The Generate tile then closes this sheet and asks there.
+    var makeOverlaysInChat: (() -> Void)? = nil
     /// KRI-815: opened from a script card: the sheet starts on the voiceover step (any format) and shows this
     /// script to read while recording. Nil = the sheet as before.
     var voiceoverScript: VoiceoverScript? = nil
@@ -120,6 +122,7 @@ struct AttachmentSheet: View {
         thread: CreationThread?,
         capabilities: CreationCapabilities?,
         capabilitiesLoaded: Bool = true,
+        makeOverlaysInChat: (() -> Void)? = nil,
         voiceoverScript: VoiceoverScript? = nil,
         launch: AttachmentLaunch? = nil,
         origin: AttachmentOrigin = .addMedia,
@@ -137,6 +140,7 @@ struct AttachmentSheet: View {
         self.thread = thread
         self.capabilities = capabilities
         self.capabilitiesLoaded = capabilitiesLoaded
+        self.makeOverlaysInChat = makeOverlaysInChat
         self.refresh = refresh
         // A script is for a recording: never on a Visuals-only (slide) project.
         let script = format?.usesVisualPool == true ? nil : voiceoverScript
@@ -765,6 +769,12 @@ struct AttachmentSheet: View {
         overlaySet.configure(api: model.api, itemID: itemID, accountID: accountID)
     }
 
+    private func openGenerateEntry() {
+        guard let makeOverlaysInChat else { return openOverlaySet() }
+        dismiss()
+        makeOverlaysInChat()
+    }
+
     private func openOverlaySet() {
         configureOverlaySet()
         overlaySet.resumeScreen()
@@ -783,7 +793,7 @@ struct AttachmentSheet: View {
                 FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: mediaLimit(for: .visual), destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true,
                                   controls: .tiles(record: nil, third: capabilitiesLoaded && capabilities?.generatedImages == true && itemID != nil
                                     ? KriaSourceOption(id: "generate", symbol: "sparkles", title: String(localized: "Generate"), caption: String(localized: "Make with AI"), identifier: "generate-image") {
-                                        openOverlaySet()
+                                        openGenerateEntry()
                                     } : nil),
                                   launchSource: $pickerLaunch, onLaunchedSourceCancelled: launchedPickerCancelled)
                     .id(AttachmentStep.overlays)

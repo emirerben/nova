@@ -74,6 +74,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
+    /// CA-8: overlays are asked for, answered and made in the chat (`overlay_set` events). Off = the six-screen sheet.
+    var overlaySets: Bool? = nil
     /// The feedback route accepts the `wrong_facts` reason (an idea's researched facts were wrong). Nil/false (older
     /// server) = no such choice: the older route rejects the whole judgment for an unknown reason.
     var wrongFactFeedback: Bool? = nil
@@ -130,6 +132,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     }
     var choiceQuestionsEnabled: Bool { choiceQuestions == true }
     var researchSelectionsEnabled: Bool { researchSelections == true }
+    var overlaySetsEnabled: Bool { overlaySets == true }
     var voiceoverScriptCardsEnabled: Bool { voiceoverScriptCards == true }
     var wrongFactFeedbackEnabled: Bool { wrongFactFeedback == true }
     var ideaExampleFeedbackEnabled: Bool { ideaExampleFeedback == true }
@@ -171,6 +174,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case clipOrderCards = "clip_order_cards"
         case researchSelections = "research_selections"
         case choiceQuestions = "choice_questions"
+        case overlaySets = "overlay_sets"
         case voiceoverScriptCards = "voiceover_script_cards"
         case wrongFactFeedback = "wrong_fact_feedback", ideaExampleFeedback = "idea_example_feedback"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
@@ -222,6 +226,7 @@ extension CreationCapabilities {
         clipOrderCards = try? container.decodeIfPresent(Bool.self, forKey: .clipOrderCards)
         researchSelections = try? container.decodeIfPresent(Bool.self, forKey: .researchSelections)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
+        overlaySets = try container.decodeIfPresent(Bool.self, forKey: .overlaySets)
         voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
         wrongFactFeedback = try container.decodeIfPresent(Bool.self, forKey: .wrongFactFeedback)
         ideaExampleFeedback = try container.decodeIfPresent(Bool.self, forKey: .ideaExampleFeedback)
