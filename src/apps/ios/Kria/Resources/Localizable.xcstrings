@@ -7027,6 +7027,22 @@
         }
       }
     },
+    "Applying %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ wird angewendet"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ uygulanıyor"
+          }
+        }
+      }
+    },
     "Applying it to your video on this iPhone…" : {
       "localizations" : {
         "de" : {
@@ -12068,6 +12084,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu çekim eklenemedi. Kaydın duruyor; tekrar dene."
+          }
+        }
+      }
+    },
+    "Couldn’t apply that style." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Stil konnte nicht angewendet werden."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu stil uygulanamadı."
           }
         }
       }
@@ -45227,6 +45259,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dik"
+          }
+        }
+      }
+    },
+    "Use %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ verwenden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ kullan"
           }
         }
       }

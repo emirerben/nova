@@ -27,7 +27,33 @@ enum DesignPickerUITestFixture {
         return object
     }()
 
-    static var question: [String: Any] { fixture["question"] as? [String: Any] ?? [:] }
+    /// CA-4 (`KRIA_CHAT_DESIGN_PICKER_OPTIONS`): `3` keeps A1, A2 and B1; `3tr` is those three in long Turkish labels;
+    /// `5` adds a fifth style; `rows` takes the previews off so the question draws plain rows.
+    static var question: [String: Any] {
+        var question = fixture["question"] as? [String: Any] ?? [:]
+        guard let variant = env["KRIA_CHAT_DESIGN_PICKER_OPTIONS"], var options = question["options"] as? [[String: Any]] else {
+            return question
+        }
+        func labeled(_ key: String, _ label: String) -> [String: Any]? {
+            options.first { $0["key"] as? String == key }.map { $0.merging(["label": label]) { _, new in new } }
+        }
+        switch variant {
+        case "3": options = options.filter { ["A1", "A2", "B1"].contains($0["key"] as? String) }
+        case "3tr":
+            options = [("A1", "Düzenleyici serif başlık"), ("A2", "Yumuşak zeminde kalın yazı"), ("B1", "Akışı izleyen rehber satır")]
+                .compactMap { labeled($0.0, $0.1) }
+        case "5":
+            if var extra = labeled("A1", "Large centred title") {
+                extra["key"] = "B2"
+                extra["recommended"] = false
+                options.append(extra)
+            }
+        case "rows": options = options.map { $0.filter { $0.key != "preview" } }
+        default: break
+        }
+        question["options"] = options
+        return question
+    }
     static var questionText: String { fixture["text"] as? String ?? "" }
 
     static func recordPick(_ key: String?) {
