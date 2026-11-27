@@ -161,6 +161,37 @@
   ],
   "variant_id": "subtitled"
  },
+ "editor_talking_stickers": {
+  "base_generation": "first",
+  "editor_capabilities": {
+   "intro_styles": true,
+   "overlays": true,
+   "text_elements": true
+  },
+  "text_elements": [
+   {
+    "alignment": "center",
+    "behind_subject": false,
+    "effect": "fade-in",
+    "end_s": 2.5,
+    "font_family": "Playfair Display",
+    "id": "opening-title",
+    "position": "custom",
+    "removed": false,
+    "role": "generative_intro",
+    "size_class": "large",
+    "size_px": 117.0,
+    "source_params": {
+     "source": "opening_title"
+    },
+    "start_s": 0.0,
+    "text": "the biggest design trend right now",
+    "x_frac": 0.5,
+    "y_frac": 0.15
+   }
+  ],
+  "variant_id": "subtitled"
+ },
  "offer_montage_tr": {
   "available": true,
   "language": "tr",
@@ -9659,6 +9690,2727 @@
       "text": "now",
       "x_frac": 0.5,
       "y_frac": 0.2391
+     }
+    ]
+   },
+   {
+    "current": true,
+    "key": "none",
+    "preview": {
+     "at_s": 1.2,
+     "fonts": {
+      "font-PlayfairDisplay-Bold.ttf": "PlayfairDisplay-Bold.ttf"
+     },
+     "media_id": "clip-0",
+     "media_kind": "video",
+     "text_layers": [
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 288.0,
+       "effect": "fade-in",
+       "end": 2.5,
+       "id": "preview-0",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 247.59408569335938,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.6274509803921569,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 6.0,
+           "sigma": 12.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 1.0,
+          "green": 1.0,
+          "red": 1.0
+         },
+         "font_asset_id": "font-PlayfairDisplay-Bold.ttf",
+         "font_size": 117.0,
+         "glyphs": [
+          {
+           "glyph_id": 334,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 255,
+           "x": 41.183998107910156,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 225,
+           "x": 112.31999969482422,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 633,
+           "x": 171.2879981994629,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 214,
+           "x": 198.54899787902832,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 259,
+           "x": 267.11099433898926,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 247,
+           "x": 303.9659938812256,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 247,
+           "x": 368.66699028015137,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 225,
+           "x": 433.36798667907715,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 326,
+           "x": 492.3359851837158,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 334,
+           "x": 546.389986038208,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 633,
+           "x": 587.5739841461182,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 614.8349838256836,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 225,
+           "x": 684.8009872436523,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 326,
+           "x": 743.768985748291,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 259,
+           "x": 797.8229866027832,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 247,
+           "x": 834.6779861450195,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 287,
+           "x": 899.3789825439453,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "the biggest design",
+         "x": 54.391510009765625
+        },
+        {
+         "baseline_y": 426.5940856933594,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.6274509803921569,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 6.0,
+           "sigma": 12.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 1.0,
+          "green": 1.0,
+          "red": 1.0
+         },
+         "font_asset_id": "font-PlayfairDisplay-Bold.ttf",
+         "font_size": 117.0,
+         "glyphs": [
+          {
+           "glyph_id": 334,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 322,
+           "x": 41.183998107910156,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 225,
+           "x": 95.822998046875,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 287,
+           "x": 154.79099655151367,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 226.6289939880371,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 633,
+           "x": 296.59499740600586,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 322,
+           "x": 323.8559970855713,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 259,
+           "x": 378.49499702453613,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 247,
+           "x": 415.34999656677246,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 255,
+           "x": 480.05099296569824,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 334,
+           "x": 551.1869945526123,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 633,
+           "x": 592.3709926605225,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 287,
+           "x": 619.6319923400879,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 294,
+           "x": 691.4699897766113,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 360,
+           "x": 757.5749931335449,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "trend right now",
+         "x": 115.17300415039062
+        }
+       ],
+       "start": 0.0
+      }
+     ],
+     "time_s": 1.2
+    },
+    "recommended": false,
+    "rows": [
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "effect": "fade-in",
+      "end_s": 2.5,
+      "font_family": "Playfair Display",
+      "id": "opening-title",
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "size_class": "large",
+      "size_px": 117.0,
+      "source_params": {
+       "source": "opening_title"
+      },
+      "start_s": 0.0,
+      "text": "the biggest design trend right now",
+      "x_frac": 0.5,
+      "y_frac": 0.15
+     }
+    ]
+   }
+  ],
+  "reason": null,
+  "replace_ids": [
+   "opening-title"
+  ],
+  "route": "talking",
+  "title_family": "opening-title",
+  "version": 1
+ },
+ "offer_talking_stickers": {
+  "available": true,
+  "language": null,
+  "offer_id": "is1-2e708b72df3028c1",
+  "options": [
+   {
+    "current": false,
+    "key": "young_serif",
+    "preview": {
+     "at_s": 1.2,
+     "fonts": {
+      "font-YoungSerif-Regular.ttf": "YoungSerif-Regular.ttf"
+     },
+     "media_id": "clip-0",
+     "media_kind": "video",
+     "text_layers": [
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 256.512,
+       "effect": "ink-reveal",
+       "end": 2.5,
+       "id": "preview-0",
+       "reveal_bounds": {
+        "bottom": 371.012,
+        "left": 253.1420135498047,
+        "right": 826.8579864501953,
+        "top": 150.012
+       },
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 288.24448291015625,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.6588235294117647,
+          "green": 0.9058823529411765,
+          "red": 0.9647058823529412
+         },
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 92.0,
+         "glyphs": [
+          {
+           "glyph_id": 314,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 228,
+           "x": 37.720001220703125,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 100.37200164794922,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 451,
+           "x": 147.75200271606445,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 190,
+           "x": 170.75200271606445,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 233,
+           "x": 226.78000259399414,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 258.7040023803711,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 306.72800064086914,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 354.7519989013672,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 302,
+           "x": 402.1319999694824,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 314,
+           "x": 451.99599838256836,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "the biggest",
+         "x": 295.1420135498047
+        }
+       ],
+       "start": 0.0
+      },
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 477.504,
+       "effect": "fade-in",
+       "end": 2.5,
+       "id": "preview-1",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 441.23648291015627,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.6588235294117647,
+          "green": 0.9058823529411765,
+          "red": 0.9647058823529412
+         },
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 92.0,
+         "glyphs": [
+          {
+           "glyph_id": 198,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 56.948001861572266,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 302,
+           "x": 104.3280029296875,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 233,
+           "x": 154.19200134277344,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 186.1160011291504,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 264,
+           "x": 234.13999938964844,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 451,
+           "x": 296.79199981689453,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 314,
+           "x": 319.79199981689453,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 296,
+           "x": 357.51200103759766,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 406.27199935913086,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 264,
+           "x": 453.6520004272461,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 198,
+           "x": 516.3040008544922,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 451,
+           "x": 573.2520027160645,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 296,
+           "x": 596.2520027160645,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 233,
+           "x": 645.0120010375977,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 676.9360008239746,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 228,
+           "x": 724.9599990844727,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 314,
+           "x": 787.6119995117188,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "design trend right",
+         "x": 127.333984375
+        },
+        {
+         "baseline_y": 577.2364829101563,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.6588235294117647,
+          "green": 0.9058823529411765,
+          "red": 0.9647058823529412
+         },
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 92.0,
+         "glyphs": [
+          {
+           "glyph_id": 264,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 275,
+           "x": 62.652000427246094,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 337,
+           "x": 115.45999908447266,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "now",
+         "x": 439.3979949951172
+        }
+       ],
+       "start": 0.0
+      }
+     ],
+     "time_s": 1.2
+    },
+    "recommended": true,
+    "rows": [
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#F6E7A8",
+      "effect": "ink-reveal",
+      "end_s": 2.5,
+      "font_family": "Young Serif",
+      "id": "opening-title",
+      "line_spacing": 1.05,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 92.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "ink",
+         "font_pair": "young_serif",
+         "ink": "butter",
+         "key": "young_serif",
+         "offer_id": "is1-2e708b72df3028c1",
+         "restore": [
+          {
+           "alignment": "center",
+           "behind_subject": false,
+           "effect": "fade-in",
+           "end_s": 2.5,
+           "font_family": "Playfair Display",
+           "id": "opening-title",
+           "position": "custom",
+           "removed": false,
+           "role": "generative_intro",
+           "size_class": "large",
+           "size_px": 117.0,
+           "source_params": {
+            "source": "opening_title"
+           },
+           "start_s": 0.0,
+           "text": "the biggest design trend right now",
+           "x_frac": 0.5,
+           "y_frac": 0.15
+          }
+         ],
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 1,
+        "lines": 2,
+        "style": "intro_accent"
+       }
+      },
+      "start_s": 0.0,
+      "text": "the biggest",
+      "x_frac": 0.5,
+      "y_frac": 0.1336
+     },
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#F6E7A8",
+      "effect": "fade-in",
+      "end_s": 2.5,
+      "font_family": "Young Serif",
+      "id": "opening-title-line-2",
+      "line_spacing": 1.05,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 92.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "ink",
+         "font_pair": "young_serif",
+         "ink": "butter",
+         "key": "young_serif",
+         "offer_id": "is1-2e708b72df3028c1",
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 2,
+        "lines": 2,
+        "style": "intro_solid"
+       }
+      },
+      "start_s": 0.0,
+      "text": "design trend right now",
+      "x_frac": 0.5,
+      "y_frac": 0.2487
+     }
+    ]
+   },
+   {
+    "current": false,
+    "key": "grotesk_pen",
+    "preview": {
+     "at_s": 1.74,
+     "fonts": {
+      "font-HankenGrotesk-ExtraBold.ttf": "HankenGrotesk-ExtraBold.ttf",
+      "font-PatrickHand-Regular.ttf": "PatrickHand-Regular.ttf"
+     },
+     "media_id": "clip-0",
+     "media_kind": "video",
+     "text_layers": [
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 336.576,
+       "effect": "slide-up",
+       "end": 2.5,
+       "id": "preview-0",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 302.076,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.8470588235294118,
+          "green": 0.9450980392156862,
+          "red": 0.984313725490196
+         },
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 110.0,
+         "glyphs": [
+          {
+           "glyph_id": 143,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 65,
+           "x": 64.12999725341797,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 38,
+           "x": 140.90999603271484,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 515,
+           "x": 204.15999603271484,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 27,
+           "x": 232.75999641418457,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 68,
+           "x": 300.4099979400635,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 58,
+           "x": 329.99999809265137,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 58,
+           "x": 411.0699977874756,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 38,
+           "x": 492.1399974822998,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 136,
+           "x": 555.3899974822998,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 143,
+           "x": 619.0799961090088,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "THE BIGGEST",
+         "x": 198.39498901367188
+        },
+        {
+         "baseline_y": 448.076,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.8470588235294118,
+          "green": 0.9450980392156862,
+          "red": 0.984313725490196
+         },
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 110.0,
+         "glyphs": [
+          {
+           "glyph_id": 34,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 38,
+           "x": 73.80999755859375,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 136,
+           "x": 137.05999755859375,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 68,
+           "x": 200.74999618530273,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 58,
+           "x": 230.33999633789062,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 94,
+           "x": 311.40999603271484,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 515,
+           "x": 387.74999237060547,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 143,
+           "x": 416.3499927520752,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 132,
+           "x": 480.47999000549316,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 38,
+           "x": 548.2399921417236,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 94,
+           "x": 611.4899921417236,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 34,
+           "x": 687.8299884796143,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "DESIGN TREND",
+         "x": 159.18002319335938
+        }
+       ],
+       "start": 0.0
+      },
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 576.0,
+       "effect": "fade-in",
+       "end": 2.5,
+       "id": "preview-1",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 614.4107818603516,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.8470588235294118,
+          "green": 0.9450980392156862,
+          "red": 0.984313725490196
+         },
+         "font_asset_id": "font-PatrickHand-Regular.ttf",
+         "font_size": 105.0,
+         "glyphs": [
+          {
+           "glyph_id": 86,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 77,
+           "x": 40.42499923706055,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 75,
+           "x": 63.94499969482422,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 76,
+           "x": 110.66999816894531,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 88,
+           "x": 154.7699966430664,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "right",
+         "x": 444.5550079345703
+        }
+       ],
+       "start": 0.6
+      },
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 742.4639999999999,
+       "effect": "slide-up",
+       "end": 2.5,
+       "id": "preview-2",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 780.9639999999999,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.8470588235294118,
+          "green": 0.9450980392156862,
+          "red": 0.984313725490196
+         },
+         "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+         "font_size": 110.0,
+         "glyphs": [
+          {
+           "glyph_id": 94,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 102,
+           "x": 76.33999633789062,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 169,
+           "x": 158.50999450683594,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "NOW",
+         "x": 406.4600067138672
+        }
+       ],
+       "start": 0.0
+      }
+     ],
+     "time_s": 1.74
+    },
+    "recommended": false,
+    "rows": [
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#FBF1D8",
+      "effect": "slide-up",
+      "end_s": 2.5,
+      "font_family": "Hanken Grotesk",
+      "id": "opening-title",
+      "line_spacing": 1.02,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 110.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "rise",
+         "font_pair": "grotesk_pen",
+         "ink": "cream",
+         "key": "grotesk_pen",
+         "offer_id": "is1-2e708b72df3028c1",
+         "restore": [
+          {
+           "alignment": "center",
+           "behind_subject": false,
+           "effect": "fade-in",
+           "end_s": 2.5,
+           "font_family": "Playfair Display",
+           "id": "opening-title",
+           "position": "custom",
+           "removed": false,
+           "role": "generative_intro",
+           "size_class": "large",
+           "size_px": 117.0,
+           "source_params": {
+            "source": "opening_title"
+           },
+           "start_s": 0.0,
+           "text": "the biggest design trend right now",
+           "x_frac": 0.5,
+           "y_frac": 0.15
+          }
+         ],
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 1,
+        "lines": 3,
+        "stagger": "accent_after",
+        "style": "intro_solid"
+       }
+      },
+      "start_s": 0.0,
+      "text": "the biggest design trend",
+      "text_case": "upper",
+      "x_frac": 0.5,
+      "y_frac": 0.1753
+     },
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#FBF1D8",
+      "effect": "fade-in",
+      "end_s": 2.5,
+      "font_family": "Patrick Hand",
+      "id": "opening-title-line-2",
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 105.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "rise",
+         "font_pair": "grotesk_pen",
+         "ink": "cream",
+         "key": "grotesk_pen",
+         "offer_id": "is1-2e708b72df3028c1",
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 2,
+        "lines": 3,
+        "stagger": "accent_after",
+        "style": "intro_accent"
+       }
+      },
+      "start_s": 0.6,
+      "text": "right",
+      "x_frac": 0.5,
+      "y_frac": 0.3
+     },
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#FBF1D8",
+      "effect": "slide-up",
+      "end_s": 2.5,
+      "font_family": "Hanken Grotesk",
+      "id": "opening-title-line-3",
+      "line_spacing": 1.02,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 110.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "rise",
+         "font_pair": "grotesk_pen",
+         "ink": "cream",
+         "key": "grotesk_pen",
+         "offer_id": "is1-2e708b72df3028c1",
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 3,
+        "lines": 3,
+        "stagger": "accent_after",
+        "style": "intro_solid"
+       }
+      },
+      "start_s": 0.0,
+      "text": "now",
+      "text_case": "upper",
+      "x_frac": 0.5,
+      "y_frac": 0.3867
+     }
+    ]
+   },
+   {
+    "current": false,
+    "key": "serif_italic",
+    "preview": {
+     "at_s": 1.2,
+     "fonts": {
+      "font-InstrumentSerif-Italic.ttf": "InstrumentSerif-Italic.ttf",
+      "font-InstrumentSerif-Regular.ttf": "InstrumentSerif-Regular.ttf"
+     },
+     "media_id": "clip-0",
+     "media_kind": "video",
+     "text_layers": [
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 283.008,
+       "effect": "ink-reveal",
+       "end": 2.5,
+       "id": "preview-0",
+       "reveal_bounds": {
+        "bottom": 424.008,
+        "left": 421.2799987792969,
+        "right": 658.7200012207031,
+        "top": 150.00799999999998
+       },
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 330.60876904296873,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.0,
+          "green": 1.0,
+          "red": 0.9019607843137255
+         },
+         "font_asset_id": "font-InstrumentSerif-Italic.ttf",
+         "font_size": 140.0,
+         "glyphs": [
+          {
+           "glyph_id": 202,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 151,
+           "x": 38.08000183105469,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 137,
+           "x": 104.72000122070312,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "the",
+         "x": 463.2799987792969
+        }
+       ],
+       "start": 0.0
+      },
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 593.088,
+       "effect": "fade-in",
+       "end": 2.5,
+       "id": "preview-1",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 546.5888239746093,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.0,
+          "green": 1.0,
+          "red": 0.9019607843137255
+         },
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 150.0,
+         "glyphs": [
+          {
+           "glyph_id": 127,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 153,
+           "x": 66.44999694824219,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 147,
+           "x": 99.89999771118164,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 147,
+           "x": 160.1999969482422,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 137,
+           "x": 220.49999618530273,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 196,
+           "x": 273.74999618530273,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 202,
+           "x": 319.9499969482422,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 282,
+           "x": 358.7999954223633,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 133,
+           "x": 384.2999954223633,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 137,
+           "x": 452.8499984741211,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 196,
+           "x": 506.0999984741211,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 153,
+           "x": 552.2999992370605,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 147,
+           "x": 585.75,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 173,
+           "x": 646.0499992370605,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "biggest design",
+         "x": 181.7249755859375
+        },
+        {
+         "baseline_y": 741.5888239746093,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.0,
+          "green": 1.0,
+          "red": 0.9019607843137255
+         },
+         "font_asset_id": "font-InstrumentSerif-Regular.ttf",
+         "font_size": 150.0,
+         "glyphs": [
+          {
+           "glyph_id": 202,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 192,
+           "x": 38.849998474121094,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 137,
+           "x": 86.54999923706055,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 173,
+           "x": 139.79999923706055,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 133,
+           "x": 210.29999923706055,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 282,
+           "x": 278.85000228881836,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 192,
+           "x": 304.35000228881836,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 153,
+           "x": 352.0500030517578,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 147,
+           "x": 385.50000381469727,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 151,
+           "x": 445.8000030517578,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 202,
+           "x": 516.3000030517578,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 282,
+           "x": 555.1500015258789,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 173,
+           "x": 580.6500015258789,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 179,
+           "x": 651.1500015258789,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 216,
+           "x": 712.3500022888184,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "trend right now",
+         "x": 139.04998779296875
+        }
+       ],
+       "start": 0.0
+      }
+     ],
+     "time_s": 1.2
+    },
+    "recommended": false,
+    "rows": [
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#E6FF00",
+      "effect": "ink-reveal",
+      "end_s": 2.5,
+      "font_family": "Instrument Serif Italic",
+      "id": "opening-title",
+      "line_spacing": 1.0,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 140.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "ink",
+         "font_pair": "serif_italic",
+         "ink": "chartreuse",
+         "key": "serif_italic",
+         "offer_id": "is1-2e708b72df3028c1",
+         "restore": [
+          {
+           "alignment": "center",
+           "behind_subject": false,
+           "effect": "fade-in",
+           "end_s": 2.5,
+           "font_family": "Playfair Display",
+           "id": "opening-title",
+           "position": "custom",
+           "removed": false,
+           "role": "generative_intro",
+           "size_class": "large",
+           "size_px": 117.0,
+           "source_params": {
+            "source": "opening_title"
+           },
+           "start_s": 0.0,
+           "text": "the biggest design trend right now",
+           "x_frac": 0.5,
+           "y_frac": 0.15
+          }
+         ],
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 1,
+        "lines": 2,
+        "style": "intro_accent"
+       }
+      },
+      "start_s": 0.0,
+      "text": "the",
+      "x_frac": 0.5,
+      "y_frac": 0.1474
+     },
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#E6FF00",
+      "effect": "fade-in",
+      "end_s": 2.5,
+      "font_family": "Instrument Serif",
+      "id": "opening-title-line-2",
+      "line_spacing": 1.0,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 150.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "ink",
+         "font_pair": "serif_italic",
+         "ink": "chartreuse",
+         "key": "serif_italic",
+         "offer_id": "is1-2e708b72df3028c1",
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 2,
+        "lines": 2,
+        "style": "intro_solid"
+       }
+      },
+      "start_s": 0.0,
+      "text": "biggest design trend right now",
+      "x_frac": 0.5,
+      "y_frac": 0.3089
+     }
+    ]
+   },
+   {
+    "current": false,
+    "key": "script_serif",
+    "preview": {
+     "at_s": 1.2,
+     "fonts": {
+      "font-GreatVibes-Regular.ttf": "GreatVibes-Regular.ttf",
+      "font-Newsreader-Medium.ttf": "Newsreader-Medium.ttf"
+     },
+     "media_id": "clip-0",
+     "media_kind": "video",
+     "text_layers": [
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 331.968,
+       "effect": "slide-up",
+       "end": 2.5,
+       "id": "preview-0",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 294.86808544921877,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 1.0,
+          "green": 1.0,
+          "red": 1.0
+         },
+         "font_asset_id": "font-Newsreader-Medium.ttf",
+         "font_size": 140.0,
+         "glyphs": [
+          {
+           "glyph_id": 223,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 211,
+           "x": 50.400001525878906,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 208,
+           "x": 130.76000213623047,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 3,
+           "x": 196.70000457763672,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 205,
+           "x": 228.1300048828125,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 212,
+           "x": 306.0400085449219,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 210,
+           "x": 346.7800102233887,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 210,
+           "x": 417.76001358032227,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 208,
+           "x": 488.74001693725586,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 222,
+           "x": 554.6800193786621,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 223,
+           "x": 610.2600212097168,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "the biggest",
+         "x": 209.66995239257812
+        },
+        {
+         "baseline_y": 434.86808544921877,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 1.0,
+          "green": 1.0,
+          "red": 1.0
+         },
+         "font_asset_id": "font-Newsreader-Medium.ttf",
+         "font_size": 140.0,
+         "glyphs": [
+          {
+           "glyph_id": 207,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 208,
+           "x": 79.30999755859375,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 222,
+           "x": 145.25,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 212,
+           "x": 200.8300018310547,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 210,
+           "x": 241.57000350952148,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 217,
+           "x": 312.5500068664551,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "design",
+         "x": 342.739990234375
+        }
+       ],
+       "start": 0.0
+      },
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 614.592,
+       "effect": "fade-in",
+       "end": 2.5,
+       "id": "preview-1",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 657.7816057128906,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 1.0,
+          "green": 1.0,
+          "red": 1.0
+         },
+         "font_asset_id": "font-GreatVibes-Regular.ttf",
+         "font_size": 190.0,
+         "glyphs": [
+          {
+           "glyph_id": 919,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 893,
+           "x": 38.189998626708984,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 708,
+           "x": 87.39999771118164,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 829,
+           "x": 136.03999710083008,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 696,
+           "x": 200.2599983215332,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 1755,
+           "x": 270.939998626709,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 893,
+           "x": 303.4300003051758,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 770,
+           "x": 352.63999938964844,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 744,
+           "x": 386.0799980163574,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 758,
+           "x": 461.31999588012695,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 919,
+           "x": 525.1599960327148,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 1755,
+           "x": 563.3499946594238,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 829,
+           "x": 595.8399963378906,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 843,
+           "x": 660.0599975585938,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 969,
+           "x": 724.2799987792969,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "trend right now",
+         "x": 130.83505249023438
+        }
+       ],
+       "start": 0.0
+      }
+     ],
+     "time_s": 1.2
+    },
+    "recommended": false,
+    "rows": [
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#FFFFFF",
+      "effect": "slide-up",
+      "end_s": 2.5,
+      "font_family": "Newsreader",
+      "id": "opening-title",
+      "line_spacing": 1.0,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 140.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "rise",
+         "font_pair": "script_serif",
+         "ink": "white",
+         "key": "script_serif",
+         "offer_id": "is1-2e708b72df3028c1",
+         "restore": [
+          {
+           "alignment": "center",
+           "behind_subject": false,
+           "effect": "fade-in",
+           "end_s": 2.5,
+           "font_family": "Playfair Display",
+           "id": "opening-title",
+           "position": "custom",
+           "removed": false,
+           "role": "generative_intro",
+           "size_class": "large",
+           "size_px": 117.0,
+           "source_params": {
+            "source": "opening_title"
+           },
+           "start_s": 0.0,
+           "text": "the biggest design trend right now",
+           "x_frac": 0.5,
+           "y_frac": 0.15
+          }
+         ],
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 1,
+        "lines": 2,
+        "style": "intro_solid"
+       }
+      },
+      "start_s": 0.0,
+      "text": "the biggest design",
+      "x_frac": 0.5,
+      "y_frac": 0.1729
+     },
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#FFFFFF",
+      "effect": "fade-in",
+      "end_s": 2.5,
+      "font_family": "Great Vibes",
+      "id": "opening-title-line-2",
+      "line_spacing": 1.0,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 190.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "entrance": "rise",
+         "font_pair": "script_serif",
+         "ink": "white",
+         "key": "script_serif",
+         "offer_id": "is1-2e708b72df3028c1",
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 2,
+        "lines": 2,
+        "style": "intro_accent"
+       }
+      },
+      "start_s": 0.0,
+      "text": "trend right now",
+      "x_frac": 0.5,
+      "y_frac": 0.3201
+     }
+    ]
+   },
+   {
+    "cards": [
+     {
+      "caption_clear": true,
+      "end_s": 2.5,
+      "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/sticker-0.png",
+      "generation": "7",
+      "id": "intro-card-sticker-1",
+      "media_id": "00000000-0000-0000-0000-000000000065",
+      "scale": 0.3,
+      "slot": "sticker_1",
+      "start_s": 0.0,
+      "x_frac": 0.07499999999999998,
+      "y_frac": 0.41708541666666665,
+      "z": 10
+     },
+     {
+      "caption_clear": true,
+      "end_s": 2.5,
+      "gcs_path": "users/6f1c0d52-4a4e-4f6e-9b7c-0d6a3c5f1a11/plan/intro-cards-verify/pool/sticker-1.png",
+      "generation": "7",
+      "id": "intro-card-sticker-2",
+      "media_id": "00000000-0000-0000-0000-000000000066",
+      "scale": 0.30000000000000004,
+      "slot": "sticker_2",
+      "start_s": 0.0,
+      "x_frac": 0.9249999999999999,
+      "y_frac": 0.4002104166666667,
+      "z": 11
+     }
+    ],
+    "current": false,
+    "key": "young_serif+stickers_edge",
+    "preview": {
+     "at_s": 1.2,
+     "cards": [
+      {
+       "box": {
+        "bottom": 0.5014604166666666,
+        "left": -0.075,
+        "right": 0.22499999999999998,
+        "top": 0.3327104166666667
+       },
+       "media_id": "00000000-0000-0000-0000-000000000065",
+       "media_kind": "image",
+       "z": 10
+      },
+      {
+       "box": {
+        "bottom": 0.4677104166666667,
+        "left": 0.7749999999999999,
+        "right": 1.075,
+        "top": 0.3327104166666667
+       },
+       "media_id": "00000000-0000-0000-0000-000000000066",
+       "media_kind": "image",
+       "z": 11
+      }
+     ],
+     "fonts": {
+      "font-YoungSerif-Regular.ttf": "YoungSerif-Regular.ttf"
+     },
+     "media_id": "clip-0",
+     "media_kind": "video",
+     "text_layers": [
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 256.512,
+       "effect": "ink-reveal",
+       "end": 2.5,
+       "id": "preview-0",
+       "reveal_bounds": {
+        "bottom": 371.012,
+        "left": 253.1420135498047,
+        "right": 826.8579864501953,
+        "top": 150.012
+       },
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 288.24448291015625,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.6588235294117647,
+          "green": 0.9058823529411765,
+          "red": 0.9647058823529412
+         },
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 92.0,
+         "glyphs": [
+          {
+           "glyph_id": 314,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 228,
+           "x": 37.720001220703125,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 100.37200164794922,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 451,
+           "x": 147.75200271606445,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 190,
+           "x": 170.75200271606445,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 233,
+           "x": 226.78000259399414,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 258.7040023803711,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 306.72800064086914,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 354.7519989013672,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 302,
+           "x": 402.1319999694824,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 314,
+           "x": 451.99599838256836,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "the biggest",
+         "x": 295.1420135498047
+        }
+       ],
+       "start": 0.0
+      },
+      {
+       "anchor_x": 540.0,
+       "anchor_y": 477.504,
+       "effect": "fade-in",
+       "end": 2.5,
+       "id": "preview-1",
+       "rotation_degrees": 0.0,
+       "runs": [
+        {
+         "baseline_y": 441.23648291015627,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.6588235294117647,
+          "green": 0.9058823529411765,
+          "red": 0.9647058823529412
+         },
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 92.0,
+         "glyphs": [
+          {
+           "glyph_id": 198,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 56.948001861572266,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 302,
+           "x": 104.3280029296875,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 233,
+           "x": 154.19200134277344,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 186.1160011291504,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 264,
+           "x": 234.13999938964844,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 451,
+           "x": 296.79199981689453,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 314,
+           "x": 319.79199981689453,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 296,
+           "x": 357.51200103759766,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 204,
+           "x": 406.27199935913086,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 264,
+           "x": 453.6520004272461,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 198,
+           "x": 516.3040008544922,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 451,
+           "x": 573.2520027160645,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 296,
+           "x": 596.2520027160645,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 233,
+           "x": 645.0120010375977,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 221,
+           "x": 676.9360008239746,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 228,
+           "x": 724.9599990844727,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 314,
+           "x": 787.6119995117188,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "design trend right",
+         "x": 127.333984375
+        },
+        {
+         "baseline_y": 577.2364829101563,
+         "blur_layers": [
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.45098039215686275,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 8.0,
+           "sigma": 14.0
+          },
+          {
+           "alpha_power": 1,
+           "color": {
+            "alpha": 0.7843137254901961,
+            "blue": 0.0,
+            "green": 0.0,
+            "red": 0.0
+           },
+           "dx": 0.0,
+           "dy": 2.0,
+           "sigma": 3.0
+          }
+         ],
+         "fill": {
+          "alpha": 1.0,
+          "blue": 0.6588235294117647,
+          "green": 0.9058823529411765,
+          "red": 0.9647058823529412
+         },
+         "font_asset_id": "font-YoungSerif-Regular.ttf",
+         "font_size": 92.0,
+         "glyphs": [
+          {
+           "glyph_id": 264,
+           "x": 0.0,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 275,
+           "x": 62.652000427246094,
+           "y": 0.0
+          },
+          {
+           "glyph_id": 337,
+           "x": 115.45999908447266,
+           "y": 0.0
+          }
+         ],
+         "letter_spacing": 0.0,
+         "shaped": false,
+         "stroke": {
+          "alpha": 0.9019607843137255,
+          "blue": 0.0,
+          "green": 0.0,
+          "red": 0.0
+         },
+         "stroke_width": 0.0,
+         "text": "now",
+         "x": 439.3979949951172
+        }
+       ],
+       "start": 0.0
+      }
+     ],
+     "time_s": 1.2
+    },
+    "recommended": false,
+    "rows": [
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#F6E7A8",
+      "effect": "ink-reveal",
+      "end_s": 2.5,
+      "font_family": "Young Serif",
+      "id": "opening-title",
+      "line_spacing": 1.05,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 92.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "arrangement": "stickers_edge",
+         "card_mode": "sticker",
+         "entrance": "ink",
+         "font_pair": "young_serif",
+         "ink": "butter",
+         "key": "young_serif+stickers_edge",
+         "offer_id": "is1-2e708b72df3028c1",
+         "restore": [
+          {
+           "alignment": "center",
+           "behind_subject": false,
+           "effect": "fade-in",
+           "end_s": 2.5,
+           "font_family": "Playfair Display",
+           "id": "opening-title",
+           "position": "custom",
+           "removed": false,
+           "role": "generative_intro",
+           "size_class": "large",
+           "size_px": 117.0,
+           "source_params": {
+            "source": "opening_title"
+           },
+           "start_s": 0.0,
+           "text": "the biggest design trend right now",
+           "x_frac": 0.5,
+           "y_frac": 0.15
+          }
+         ],
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 1,
+        "lines": 2,
+        "style": "intro_accent"
+       }
+      },
+      "start_s": 0.0,
+      "text": "the biggest",
+      "x_frac": 0.5,
+      "y_frac": 0.1336
+     },
+     {
+      "alignment": "center",
+      "behind_subject": false,
+      "color": "#F6E7A8",
+      "effect": "fade-in",
+      "end_s": 2.5,
+      "font_family": "Young Serif",
+      "id": "opening-title-line-2",
+      "line_spacing": 1.05,
+      "max_width_frac": 0.88,
+      "position": "custom",
+      "removed": false,
+      "role": "generative_intro",
+      "shadow_style": "high_visibility",
+      "size_class": "large",
+      "size_px": 92.0,
+      "source_params": {
+       "source": "opening_title",
+       "title_look": {
+        "intro_style": {
+         "arrangement": "stickers_edge",
+         "card_mode": "sticker",
+         "entrance": "ink",
+         "font_pair": "young_serif",
+         "ink": "butter",
+         "key": "young_serif+stickers_edge",
+         "offer_id": "is1-2e708b72df3028c1",
+         "version": 1,
+         "zone": "above_head"
+        },
+        "line": 2,
+        "lines": 2,
+        "style": "intro_solid"
+       }
+      },
+      "start_s": 0.0,
+      "text": "design trend right now",
+      "x_frac": 0.5,
+      "y_frac": 0.2487
      }
     ]
    },

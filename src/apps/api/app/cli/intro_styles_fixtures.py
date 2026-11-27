@@ -93,6 +93,20 @@ def card_photos() -> list[Any]:
     ]
 
 
+# KRI-1616: two of her transparent pictures (a star and a folder), square and landscape.
+STICKER_SHAPES = (1.0, 1.25)
+
+
+def sticker_photos() -> list[Any]:
+    from app.services.intro_card_pool import STICKER, CardPhoto  # noqa: PLC0415
+
+    prefix = f"users/{USER_ID}/plan/{CARD_ITEM}/pool"
+    return [
+        CardPhoto(str(uuid.UUID(int=n + 101)), f"{prefix}/sticker-{n}.png", "7", aspect, STICKER)
+        for n, aspect in enumerate(STICKER_SHAPES)
+    ]
+
+
 def binding(media_id: str, *, duration_s: float = 12.0) -> PhoneSourceBinding:
     return PhoneSourceBinding(
         media_id=media_id,

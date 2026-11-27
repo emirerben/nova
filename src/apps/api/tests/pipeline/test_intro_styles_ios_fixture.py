@@ -30,6 +30,7 @@ from app.pipeline import intro_styles as st
 from app.routes import generative_jobs as gj
 from app.services.client_protocol import (
     INTRO_CARDS_PROTOCOL,
+    INTRO_EDGE_BLEED_PROTOCOL,
     INTRO_STYLES_PROTOCOL,
     _client_protocol,
 )
@@ -138,6 +139,31 @@ def _card_blocks() -> dict:
     }
 
 
+def _sticker_block() -> dict:
+    """KRI-1616: the same roomy Talking edit with two of her transparent pictures, offered to a
+    build that shows stickers and bleed: its sticker look, after the photo looks."""
+    job, _vid, rows = fx.talking_job(fx.EN_TITLE, face=fx.ROOMY_FACE, job_id=_CARD_JOB_ID)
+    saved = job.assembly_plan["variants"][0]
+    saved["output_url"] = f"users/{fx.USER_ID}/plan/{fx.CARD_ITEM}/out.mp4"
+    offer = st.build_offer(
+        st.detach(job),
+        saved["variant_id"],
+        rows,
+        "first",
+        photos=fx.sticker_photos(),
+        save_arguments={"user_id": fx.USER_ID, "plan_item_id": fx.CARD_ITEM},
+        moves=st.CardMoves(stickers=True, bleed=True),
+    )
+    editor = _editor(
+        "talking",
+        job,
+        rows,
+        protocol=INTRO_EDGE_BLEED_PROTOCOL,
+        capabilities=("intro_styles", "text_elements", "overlays"),
+    )
+    return {"editor_talking_stickers": editor, "offer_talking_stickers": offer}
+
+
 def _fresh() -> dict:
     offer_en, talking = _offer("talking", fx.EN_TITLE)
     job = talking["job"]
@@ -160,6 +186,7 @@ def _fresh() -> dict:
             "text_elements": [*pick["rows"], *copy.deepcopy(other_rows)],
         },
         **_card_blocks(),
+        **_sticker_block(),
     }
 
 
@@ -226,6 +253,7 @@ def _shape(fixture: dict) -> dict:
                 "editor_montage_tr",
                 "editor_narrated_en",
                 "editor_talking_cards",
+                "editor_talking_stickers",
             )
         },
         "offers": {
@@ -235,6 +263,7 @@ def _shape(fixture: dict) -> dict:
                 "offer_montage_tr",
                 "offer_narrated_en",
                 "offer_talking_cards",
+                "offer_talking_stickers",
                 "unavailable_nothing_fits",
             )
         },
@@ -280,6 +309,13 @@ def test_the_ios_fixture_is_what_the_server_sends():
             assert [c["media_id"] for c in option["preview"]["cards"]] == [
                 c["media_id"] for c in option["cards"]
             ]
+    # KRI-1616: one sticker look, its stickers hanging past a side of the frame
+    stickers = [o for o in fresh["offer_talking_stickers"]["options"] if o.get("cards")]
+    assert [o["key"].split("+")[1] for o in stickers] == ["stickers_edge"], stickers
+    assert [c["slot"] for c in stickers[0]["cards"]] == ["sticker_1", "sticker_2"]
+    assert any(
+        c["box"]["left"] < 0 or c["box"]["right"] > 1 for c in stickers[0]["preview"]["cards"]
+    )
     if _FIXTURE.exists() and os.environ.get("KRI1633_REGENERATE") != "1":
         stored = json.loads(_FIXTURE.read_text())
         assert _shape(stored) == _shape(fresh), (

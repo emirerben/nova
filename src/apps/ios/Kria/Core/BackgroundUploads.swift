@@ -2244,6 +2244,19 @@ enum CreationUploadError: LocalizedError {
 
     /// A cached thumbnail, or -- when the Caches copy is gone (OS purge, reinstall, another device) -- one
     /// regenerated from the local original and cached again. nil only when nothing local exists to draw from.
+    /// KRI-1616: a sticker's picture with its alpha, downscaled from the original on this iPhone (the cached thumbnail is
+    /// a JPEG, which would draw it as a box). Nil when the original is not here.
+    static func transparentImage(mediaID: String, projectID: UUID?) -> UIImage? {
+        guard let projectID, let original = localOriginal(mediaID: mediaID, projectID: projectID),
+              let source = CGImageSourceCreateWithURL(original as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 320,
+              ] as CFDictionary) else { return nil }
+        return UIImage(cgImage: image)
+    }
+
     static func image(mediaID: String, projectID: UUID?) async -> UIImage? {
         let cached = url(mediaID: mediaID)
         if let image = UIImage(contentsOfFile: cached.path) { return image }

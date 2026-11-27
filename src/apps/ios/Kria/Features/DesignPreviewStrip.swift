@@ -52,12 +52,15 @@ enum DesignPreviewRenderer {
     }
 
     /// The canvas with `picture` filled into it (as `TextLayerStill` would) and each card's photo in its box, in z order:
-    /// the thumbnail this iPhone already has, else a neutral plate. A tile never downloads.
+    /// the thumbnail this iPhone already has (a sticker's with its alpha), else a neutral plate. A tile never downloads; a
+    /// card hanging past the side of the frame is cut by the canvas, as the export cuts it.
     @MainActor
     static func withCards(_ cards: [IntroStylesOffer.PreviewCard], over picture: CGImage?, projectID: UUID?) async -> CGImage? {
         var photos: [String: UIImage] = [:]
         for card in cards where photos[card.mediaID] == nil {
-            photos[card.mediaID] = await CreationMediaPreview.image(mediaID: card.mediaID, projectID: projectID)
+            photos[card.mediaID] = card.isSticker
+                ? CreationMediaPreview.transparentImage(mediaID: card.mediaID, projectID: projectID)
+                : await CreationMediaPreview.image(mediaID: card.mediaID, projectID: projectID)
         }
         let canvas = CGSize(width: 1080, height: 1920)
         let format = UIGraphicsImageRendererFormat.default()
