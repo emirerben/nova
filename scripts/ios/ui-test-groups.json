@@ -3,6 +3,7 @@
     "AccountPrivacyUITests": "projects",
     "AddMediaTrayUITests": "creation",
     "AppleTextAccessibilityUITests": "editor",
+    "AskSequenceUITests": "creation",
     "AttachmentFlowUITests": "creation",
     "BackgroundLaneUITests": "editor",
     "CameraRollBenchmarkUITests": "creation",

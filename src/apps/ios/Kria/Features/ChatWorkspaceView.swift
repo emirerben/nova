@@ -611,6 +611,8 @@ private struct CreationWorkspaceView: View {
     /// The question the creator chose to answer in their own words ("Type my own"): shown above the composer
     /// while they type, and the answer blocks are disabled meanwhile.
     @State private var answeringQuestion: String?
+    /// The open ask whose "Type your answer" lock the creator closed. A new ask locks the composer again.
+    @State private var dismissedAskMessageID: String?
     /// The suggestion chip whose message is on its way (it shows a spinner while the others dim).
     @State private var sendingSuggestionID: String?
     /// KRI-588: song-range questions the server has said are closed (409 `song_range_stale`), and the server's
@@ -926,6 +928,46 @@ private struct CreationWorkspaceView: View {
         derived.clipOrderKey = key
         derived.clipOrder = folded
         return folded
+    }
+
+    /// Only asks that can draw a card join the sequence, so a text-only ask never holds a later card back.
+    private var enabledAskKinds: Set<AskKind> {
+        guard transcriptIsFresh else { return [] }
+        var kinds = Set<AskKind>()
+        if ClipSelectionAvailability.isAvailable(capabilities: capabilities) { kinds.insert(.clip) }
+        if capabilities?.songOrderQuestionsEnabled == true { kinds.insert(.songOrder) }
+        if capabilities?.songRangeQuestionsEnabled == true { kinds.insert(.songRange) }
+        if capabilities?.protectedRegionMarks == true { kinds.insert(.region) }
+        if capabilities?.momentOrderQuestions == true { kinds.insert(.moment) }
+        if capabilities?.choiceQuestionsEnabled == true { kinds.insert(.choice) }
+        return kinds
+    }
+
+    /// Which ask is open, folded once per timeline and not once per row.
+    private var askFold: AskFold {
+        let messages = timelineMessages
+        let kinds = enabledAskKinds
+        var hasher = Hasher()
+        hasher.combine(derived.timelineKey)
+        hasher.combine(kinds)
+        hasher.combine(closedSongRangeQuestions)
+        let key = hasher.finalize()
+        if derived.timelineKey != nil, derived.askKey == key { return derived.ask }
+        let folded = AskFold.fold(messages.map { $0.askEntry(enabled: kinds) }, closed: closedSongRangeQuestions)
+        if derived.timelineKey != nil { derived.askKey = key; derived.ask = folded }
+        return folded
+    }
+
+    /// The message that carried the structured answer to an ask the fold closed.
+    private func answerMessage(of message: ChatTranscriptMessage, askID: String) -> ChatTranscriptMessage? {
+        askFold.answeredBy(message.id, askID).flatMap { id in timelineMessages.first { $0.id == id } }
+    }
+
+    /// "Type your answer" over the composer while an ask is open, until the creator closes it.
+    private var composerAnswering: String? {
+        if let answeringQuestion { return answeringQuestion }
+        guard pendingMessages.isEmpty, let openID = askFold.openMessageID, openID != dismissedAskMessageID else { return nil }
+        return timelineMessages.first { $0.id == openID }?.displayedContent
     }
 
     /// The strip sits under the newest message that carries a card and shows the newest card; older carriers
@@ -1521,6 +1563,8 @@ private struct CreationWorkspaceView: View {
     @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
         let _ = Perf.event("chat.rowBuilt")
         switch entry.content {
+        case .message(let message) where askFold.holdsRow(message.id):
+            EmptyView()
         case .message(let message):
             messageRow(message)
                 .id(entry.id)
@@ -1567,18 +1611,12 @@ private struct CreationWorkspaceView: View {
         if let loaded = try? await model.api.visuals(itemID: itemID) { clipPoolVisuals = loaded.assets }
     }
 
-    /// Picker only when the server advertises `clip_selection_questions`. Interactive on the newest question
-    /// that no later user message has answered; read-only (with the counts, if known) afterwards.
+    /// Picker only when the server advertises `clip_selection_questions`. Interactive while it is the open ask;
+    /// read-only (with the counts, if known) once answered.
     private func clipSelectionMode(for message: ChatTranscriptMessage) -> ClipSelectionCardMode? {
-        // The payload only exists when the server supports it, so an unloaded capability snapshot never hides it.
-        guard transcriptIsFresh, ClipSelectionAvailability.isAvailable(capabilities: capabilities),
-              let question = message.clipQuestion else { return nil }
-        let messages = timelineMessages
-        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
-        let isLatestQuestion = !messages[(index + 1)...].contains { $0.clipQuestion != nil }
-        let isAnswered = messages[(index + 1)...].contains { $0.role == .user }
-        if isAnswered { return .answered(summary: answeredClipSelections[question.questionID]?.summary(question: question)) }
-        if isLatestQuestion {
+        guard let question = message.clipQuestion else { return nil }
+        switch askFold.standing(message.id, question.questionID) {
+        case .open:
             return .active(isSending: isSending || isActing || isThinking) { submission, text in
                 if asksTogether(message) {
                     holdBatchAnswer(for: message) { $0.hold(clips: submission, text: text) }
@@ -1588,9 +1626,11 @@ private struct CreationWorkspaceView: View {
                 // A rejected send removes the pending message, which reopens the card for a retry.
                 Task { await send(message: text, clipSelection: submission) }
             }
+        case .answered:
+            return .answered(summary: answeredClipSelections[question.questionID]?.summary(question: question))
+        default:
+            return nil
         }
-        // Not the newest clip question and nothing answered it: a newer one replaced it.
-        return .superseded
     }
 
     /// The song timeline (instead of the vertical order list) when the server also advertises
@@ -1605,129 +1645,111 @@ private struct CreationWorkspaceView: View {
         }
     }
 
-    /// Order card only when the server advertises `song_order_questions`. Interactive on the newest question
-    /// that no later user message has answered; read-only afterwards; a quiet "replaced" line once a newer question replaced it.
+    /// Order card only when the server advertises `song_order_questions`. Interactive while it is the open ask;
+    /// read-only afterwards.
     private func songOrderMode(for message: ChatTranscriptMessage) -> SongOrderCardMode? {
-        guard transcriptIsFresh, capabilities?.songOrderQuestionsEnabled == true,
-              let question = message.songOrderQuestion else { return nil }
-        let entries = timeline.compactMap { entry -> SongOrderFold.Entry? in
-            guard case .message(let message) = entry.content else { return nil }
-            return SongOrderFold.Entry(messageID: message.id, question: message.songOrderQuestion, isUser: message.role == .user, answer: message.songOrderAnswer)
-        }
-        switch SongOrderFold.phases(entries)[message.id] {
-        case .active:
+        guard let question = message.songOrderQuestion else { return nil }
+        switch askFold.standing(message.id, question.questionID) {
+        case .open:
             return .active(isSending: isSending || isActing || isThinking) { submission, text in
                 // A rejected send removes the pending message, which reopens the card for a retry.
                 Task { await send(message: text, songOrder: submission) }
             }
-        case .answered(let submission):
+        case .answered:
+            guard let submission = answerMessage(of: message, askID: question.questionID)?.songOrderAnswer else { return nil }
             let positions = SongOrderPositions.map(media: CreationAttachedMedia.parse(threadState), question: question)
             let summary = submission.summary(positions: positions)
             return .answered(summary: summary.isEmpty ? nil : summary)
-        case .superseded: return .superseded
-        case nil: return nil
+        default:
+            return nil
         }
     }
 
     /// KRI-588: the "which part of the song did you film?" card, only when the server advertises
-    /// `song_range_questions` (and the song affordance). Interactive on the newest question no `song_range`
-    /// has answered; read-only once answered; a quiet "replaced" line once a newer question replaced it or the server closed it.
+    /// `song_range_questions` (and the song affordance). Interactive while it is the open ask; read-only once a
+    /// `song_range` answered it.
     private func songRangeMode(for message: ChatTranscriptMessage) -> SongRangeCardMode? {
-        guard transcriptIsFresh, capabilities?.songRangeQuestionsEnabled == true,
-              let question = message.songRangeQuestion else { return nil }
-        let entries = timeline.compactMap { entry -> SongRangeFold.Entry? in
-            guard case .message(let message) = entry.content else { return nil }
-            return SongRangeFold.Entry(messageID: message.id, question: message.songRangeQuestion,
-                                       isUser: message.role == .user, answer: message.songRangeAnswer)
-        }
-        switch SongRangeFold.phases(entries, closed: closedSongRangeQuestions)[message.id] {
-        case .active:
+        guard let question = message.songRangeQuestion else { return nil }
+        switch askFold.standing(message.id, question.questionID) {
+        case .open:
             let problem = songRangeProblem?.questionID == question.questionID ? songRangeProblem?.message : nil
             return .active(isSending: isSending || isActing || isThinking, problem: problem) { answer, text in
                 // A rejected send removes the pending message, which reopens the card for a retry.
                 Task { await send(message: text, songRange: answer) }
             }
-        case .answered(let answer):
+        case .answered:
+            guard let answer = answerMessage(of: message, askID: question.questionID)?.songRangeAnswer else { return nil }
             return .answered(summary: answer.summary, spoken: answer.spokenSummary)
-        case .superseded: return .superseded
-        case nil: return nil
+        default:
+            return nil
         }
     }
 
-    /// KRI-901: the "Mark the plate" card, only when the server advertises `protected_region_marks`. Interactive on
-    /// the newest question no mark of that object has answered; read-only once answered; a quiet "replaced" line once replaced.
+    /// KRI-901: the "Mark the plate" card, only when the server advertises `protected_region_marks`. Interactive
+    /// while it is the open ask; read-only once a mark of that object answered it.
     private func objectMarkMode(for message: ChatTranscriptMessage) -> ObjectMarkCardMode? {
-        guard transcriptIsFresh, capabilities?.protectedRegionMarks == true,
-              let question = message.protectedRegionQuestion else { return nil }
-        let entries = timeline.compactMap { entry -> ProtectedRegionFold.Entry? in
-            guard case .message(let message) = entry.content else { return nil }
-            return ProtectedRegionFold.Entry(messageID: message.id, question: message.protectedRegionQuestion,
-                                             isUser: message.role == .user, answer: message.protectedRegionAnswer)
-        }
-        switch ProtectedRegionFold.phases(entries)[message.id] {
-        case .active:
+        guard let question = message.protectedRegionQuestion else { return nil }
+        switch askFold.standing(message.id, question.questionID) {
+        case .open:
             let problem = protectedRegionProblem?.questionID == question.questionID ? protectedRegionProblem?.message : nil
             return .active(isSending: isSending || isActing || isThinking, problem: problem) { answer in
                 // A refused send removes the pending message, which reopens the card (the box is kept).
                 protectedRegionProblem = nil
                 Task { await send(message: answer.message, protectedRegion: answer, markQuestionID: question.questionID) }
             }
-        case .answered(let answer):
+        case .answered:
+            guard let answer = answerMessage(of: message, askID: question.questionID)?.protectedRegionAnswer else { return nil }
             return .answered(summary: answer.message)
-        case .superseded: return .superseded
-        case nil: return nil
+        default:
+            return nil
         }
     }
 
     /// KRI-723: the "show me your moments" card, only when the server advertises `moment_order_questions`.
-    /// Interactive on the newest question no answer has closed; read-only once answered; a quiet "replaced" line once replaced.
+    /// Interactive while it is the open ask; read-only once an answer to it landed.
     private func momentOrderMode(for message: ChatTranscriptMessage) -> MomentOrderCardMode? {
-        guard transcriptIsFresh, capabilities?.momentOrderQuestions == true,
-              let question = message.momentOrderQuestion else { return nil }
-        let entries = timeline.compactMap { entry -> MomentOrderFold.Entry? in
-            guard case .message(let message) = entry.content else { return nil }
-            return MomentOrderFold.Entry(messageID: message.id, question: message.momentOrderQuestion,
-                                         isUser: message.role == .user, answer: message.momentOrderAnswer)
-        }
+        guard let question = message.momentOrderQuestion else { return nil }
         let language = ClipAnswerLanguage(threadState: threadState)
-        switch MomentOrderFold.phases(entries)[message.id] {
-        case .active:
+        switch askFold.standing(message.id, question.questionID) {
+        case .open:
             let problem = momentOrderProblem?.questionID == question.questionID ? momentOrderProblem?.message : nil
             return .active(isSending: isSending || isActing || isThinking, problem: problem) { answer in
                 // A refused send removes the pending message, which reopens the card (the choices are kept).
                 momentOrderProblem = nil
                 Task { await send(message: MomentOrderAnswer.message(language: language), momentOrder: answer) }
             }
-        case .answered(let answer):
+        case .answered:
+            guard let answer = answerMessage(of: message, askID: question.questionID)?.momentOrderAnswer else { return nil }
             return .answered(summary: MomentOrderStrings(language).answered(count: answer.answers.count))
-        case .superseded: return .superseded
-        case nil: return nil
+        default:
+            return nil
         }
     }
 
-    /// Options only when the server advertises `choice_questions`. Interactive on the newest question that no
-    /// later user message has answered; read-only (with the choice made, if known) afterwards.
+    /// Options only when the server advertises `choice_questions`. Interactive while it is the open ask; read-only
+    /// (with the choice made, if known) afterwards.
     private func choiceQuestionMode(for message: ChatTranscriptMessage) -> ChoiceQuestionCardMode? {
-        guard transcriptIsFresh, capabilities?.choiceQuestionsEnabled == true,
-              let question = message.choiceQuestion else { return nil }
+        guard let question = message.choiceQuestion else { return nil }
         let messages = timelineMessages
-        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
-        let later = messages[(index + 1)...]
-        if let answer = later.first(where: { $0.role == .user }) {
+        switch askFold.standing(message.id, question.questionID) {
+        case .open:
             // The answer's message is still pending: the card stays open so a refused send reopens it with a reason.
-            if answer.isPending { return .active(isSending: true) { _, _ in } }
-            let chosen = answeredChoices[question.questionID].flatMap { question.option(key: $0.optionKey)?.label }
-            return .answered(summary: chosen ?? answer.content)
-        }
-        guard !later.contains(where: { $0.choiceQuestion != nil }) else { return .superseded }
-        return .active(isSending: isSending || isActing || isThinking) { submission, text in
-            if asksTogether(message) {
-                holdBatchAnswer(for: message) { $0.hold(choice: submission, text: text) }
-                return
+            if messages.contains(where: { $0.role == .user && $0.isPending }) { return .active(isSending: true) { _, _ in } }
+            return .active(isSending: isSending || isActing || isThinking) { submission, text in
+                if asksTogether(message) {
+                    holdBatchAnswer(for: message) { $0.hold(choice: submission, text: text) }
+                    return
+                }
+                answeredChoices[question.questionID] = submission
+                // A rejected send removes the pending message, which reopens the card for a retry.
+                Task { await send(message: text, choiceSelection: submission) }
             }
-            answeredChoices[question.questionID] = submission
-            // A rejected send removes the pending message, which reopens the card for a retry.
-            Task { await send(message: text, choiceSelection: submission) }
+        case .answered:
+            let answer = answerMessage(of: message, askID: question.questionID)
+            let chosen = answeredChoices[question.questionID].flatMap { question.option(key: $0.optionKey)?.label }
+            return .answered(summary: chosen ?? answer?.content ?? "")
+        default:
+            return nil
         }
     }
 
@@ -2387,9 +2409,9 @@ private struct CreationWorkspaceView: View {
                     canSendWithoutText: readyMediaCount > 0,
                     // be99a3f12 (origin/main): a failed attach never blocks Send.
                     blocksSubmission: (isThinking && !steerNowEnabled) || sendReceipt != nil || pendingUploadCount > 0,
-                    placeholder: answeringQuestion != nil ? String(localized: "Type your answer") : (readyMediaCount > 0 ? String(localized: "Add instructions (optional)") : String(localized: "Tell Kria what you want…")),
-                    answering: answeringQuestion,
-                    cancelAnswering: { answeringQuestion = nil },
+                    placeholder: composerAnswering != nil ? String(localized: "Type your answer") : (readyMediaCount > 0 ? String(localized: "Add instructions (optional)") : String(localized: "Tell Kria what you want…")),
+                    answering: composerAnswering,
+                    cancelAnswering: { answeringQuestion = nil; dismissedAskMessageID = askFold.openMessageID },
                     isFocused: $composerFocused,
                     dictation: dictationForComposer,
                     dictationTerms: dictationContextTerms,
@@ -3954,6 +3976,8 @@ final class ChatDerivedMemo {
     var clipQuestionID: String?
     var clipOrderKey: Int?
     var clipOrder: ClipOrderThread = .empty
+    var askKey: Int?
+    var ask = AskFold()
 }
 
 /// Cheap identity of a transcript: events are append-only, so id and revision say whether any of them changed.
@@ -4100,6 +4124,38 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     /// True only with receipts AND a lead: an old server (no lead) or a reply without receipts renders `content`.
     var usesReplyLead: Bool { !receipts.isEmpty && !(replyLead ?? "").isEmpty }
     var displayedContent: String { usesReplyLead ? (replyLead ?? content) : content }
+
+    /// What the ask sequence reads of this message. Only kinds in `enabled` can draw a card.
+    func askEntry(enabled: Set<AskKind>) -> AskFold.Entry {
+        if role == .user {
+            var answers = Set<AskFold.AnswerKey>()
+            if let answer = songOrderAnswer { answers.insert(.init(kind: .songOrder, value: answer.questionID)) }
+            if let answer = songRangeAnswer { answers.insert(.init(kind: .songRange, value: answer.questionID)) }
+            if let answer = protectedRegionAnswer { answers.insert(.init(kind: .region, value: ProtectedRegionAnswer.labelKey(answer.label))) }
+            if let answer = momentOrderAnswer { answers.insert(.init(kind: .moment, value: answer.questionID)) }
+            return AskFold.Entry(messageID: id, isUser: true, isPending: isPending, answers: answers)
+        }
+        var asks: [AskFold.Ask] = []
+        if enabled.contains(.clip), let question = clipQuestion {
+            asks.append(.init(id: question.questionID, kind: .clip, closer: .anyReply))
+        }
+        if enabled.contains(.songOrder), let question = songOrderQuestion {
+            asks.append(.init(id: question.questionID, kind: .songOrder, closer: .answer(question.questionID)))
+        }
+        if enabled.contains(.songRange), let question = songRangeQuestion {
+            asks.append(.init(id: question.questionID, kind: .songRange, closer: .answer(question.questionID)))
+        }
+        if enabled.contains(.region), let question = protectedRegionQuestion {
+            asks.append(.init(id: question.questionID, kind: .region, closer: .answer(ProtectedRegionAnswer.labelKey(question.label))))
+        }
+        if enabled.contains(.moment), let question = momentOrderQuestion {
+            asks.append(.init(id: question.questionID, kind: .moment, closer: .answer(question.questionID)))
+        }
+        if enabled.contains(.choice), let question = choiceQuestion {
+            asks.append(.init(id: question.questionID, kind: .choice, closer: .confirmedReply))
+        }
+        return AskFold.Entry(messageID: id, asks: asks)
+    }
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)

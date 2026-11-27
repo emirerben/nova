@@ -160,54 +160,8 @@ final class SongOrderTests: XCTestCase {
         XCTAssertEqual(SongOrderSubmission(questionID: "q1", orderedMediaIDs: ["zzz"]).message(positions: positions), "Use this order")
     }
 
-    // MARK: transcript fold
-
     private func answer(_ questionID: String, _ ids: [String] = ["b", "a", "c"]) -> SongOrderSubmission {
         SongOrderSubmission(questionID: questionID, orderedMediaIDs: ids)
-    }
-
-    func testOnlyTheNewestUnansweredQuestionIsInteractive() throws {
-        let q1 = try question(), q2 = try question(id: "q2")
-        typealias E = SongOrderFold.Entry
-        let entries = [
-            E(messageID: "m1", question: q1, isUser: false),
-            E(messageID: "m2", question: nil, isUser: true, answer: answer("q1")),   // a song_order for q1
-            E(messageID: "m3", question: q2, isUser: false),
-            E(messageID: "m4", question: nil, isUser: false),      // a plain assistant reply does not answer it
-        ]
-        XCTAssertEqual(SongOrderFold.phases(entries), ["m1": .answered(answer("q1")), "m3": .active])
-    }
-
-    func testAPlainUserMessageNeverClosesTheQuestion() throws {
-        // The server keeps a question open until a matching song_order arrives, so chatting must not
-        // collapse the card into "Order confirmed".
-        let q = try question()
-        typealias E = SongOrderFold.Entry
-        let entries = [
-            E(messageID: "m1", question: q, isUser: false),
-            E(messageID: "m2", question: nil, isUser: true),                        // "make it faster"
-            E(messageID: "m3", question: nil, isUser: true, answer: answer("other")), // an answer to a DIFFERENT question
-        ]
-        XCTAssertEqual(SongOrderFold.phases(entries), ["m1": .active])
-    }
-
-    func testAnswerBeforeTheQuestionOrFromAnAssistantDoesNotCount() throws {
-        let q = try question()
-        typealias E = SongOrderFold.Entry
-        let entries = [
-            E(messageID: "m0", question: nil, isUser: true, answer: answer("q1")),   // earlier than the question
-            E(messageID: "m1", question: q, isUser: false),
-            E(messageID: "m2", question: nil, isUser: false, answer: answer("q1")),  // not a user message
-        ]
-        XCTAssertEqual(SongOrderFold.phases(entries), ["m1": .active])
-    }
-
-    func testAQuestionReplacedBeforeAnyAnswerIsSuperseded() throws {
-        let q = try question()
-        typealias E = SongOrderFold.Entry
-        let entries = [E(messageID: "m1", question: q, isUser: false), E(messageID: "m2", question: q, isUser: false)]
-        XCTAssertEqual(SongOrderFold.phases(entries), ["m1": .superseded, "m2": .active])
-        XCTAssertTrue(SongOrderFold.phases([]).isEmpty)
     }
 
     func testAnswerIsReadFromTheStoredUserEventPayload() throws {

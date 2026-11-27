@@ -85,47 +85,8 @@ struct ProtectedRegionAnswer: Encodable, Equatable, Sendable {
     var message: String { "Marked the \(label)" }
 
     /// Labels match the way the server folds them: case and spacing do not matter.
-    static func sameLabel(_ a: String, _ b: String) -> Bool {
-        let fold: (String) -> String = { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() }
-        return fold(a) == fold(b)
-    }
-}
-
-/// How a mark question in the transcript is presented.
-enum ProtectedRegionPhase: Equatable {
-    /// The newest question no mark has answered: interactive.
-    case active
-    /// A later user message carried a mark of this object: read-only.
-    case answered(ProtectedRegionAnswer)
-    /// A newer question replaced it unanswered: hidden.
-    case superseded
-}
-
-/// Folds the transcript into per-question phases, like `SongRangeFold`. Only a user message carrying a mark of the
-/// SAME object closes a card, so a plain reply about something else leaves it open.
-enum ProtectedRegionFold {
-    struct Entry: Equatable {
-        let messageID: String
-        let question: ProtectedRegionQuestion?
-        let isUser: Bool
-        var answer: ProtectedRegionAnswer? = nil
-    }
-
-    static func phases(_ entries: [Entry]) -> [String: ProtectedRegionPhase] {
-        var result: [String: ProtectedRegionPhase] = [:]
-        for (index, entry) in entries.enumerated() {
-            guard let question = entry.question else { continue }
-            let later = entries[(index + 1)...]
-            if let answer = later.lazy.compactMap({ $0.isUser ? $0.answer : nil })
-                .first(where: { ProtectedRegionAnswer.sameLabel($0.label, question.label) }) {
-                result[entry.messageID] = .answered(answer)
-            } else if later.contains(where: { $0.question != nil }) {
-                result[entry.messageID] = .superseded
-            } else {
-                result[entry.messageID] = .active
-            }
-        }
-        return result
+    static func labelKey(_ label: String) -> String {
+        label.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
     }
 }
 

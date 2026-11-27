@@ -276,6 +276,7 @@ final class CreationChatFixture: @unchecked Sendable {
     private var markRejected = false
     /// KRIA_CHAT_MOMENT_ORDER (KRI-723): the open moments question, and whether the first answer was refused / staled.
     private var momentQuestionID: String?
+    private var askSequenceAsked = false
     private var momentRefused = false
     /// KRIA_CHAT_CLIP_ORDER (KRI-1591): the order the server holds, the order its last card showed, whether the creator
     /// confirmed it, the bodies it has seen per client event id (a reused id with another body is a 409, like the
@@ -546,6 +547,12 @@ final class CreationChatFixture: @unchecked Sendable {
             // advertises moment_order_questions; "off" = an older server (text only, no card); "reject" = the first answer
             // is refused (422 moment_order_overlap); "stale" = the first answer meets a replaced question (409).
             if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_MOMENT_ORDER"], mode != "off" {
+                capabilities["moment_order_questions"] = true
+            }
+            // KRIA_CHAT_ASK_SEQUENCE (CA-1): the first turn is answered with a choice ask and then a moment ask, both
+            // unanswered. Later turns (a choice answer, a moment answer or typed text) are answered with a plain reply.
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_ASK_SEQUENCE"] == "1" {
+                capabilities["choice_questions"] = true
                 capabilities["moment_order_questions"] = true
             }
             // KRIA_CHAT_CLIP_ORDER (KRI-1591): the first turn is answered with a draft whose message carries the clip-order
@@ -1342,6 +1349,26 @@ final class CreationChatFixture: @unchecked Sendable {
                 append("draft_applied", text: "I put your clips in the order you uploaded them.",
                        payload: ["turn_id": turnID, "draft_id": id, "clip_order_card": ClipOrderFixture.card(ids: ids, previous: [], mode: clipOrderMode, confirmed: false, editable: clipOrderMode != "locked", rebased: false)])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_ASK_SEQUENCE"] == "1" {
+                if askSequenceAsked {
+                    let received = body["choice_selection"] != nil ? "choice" : body["moment_order"] != nil ? "moments" : "text"
+                    append("assistant_response", text: "Got it. received[\(received)]", payload: ["turn_id": turnID, "turn_value": "response"])
+                } else {
+                    askSequenceAsked = true
+                    append("assistant_response", text: "Which title wording do you want?", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "choice_question": [
+                            "version": 1, "question_id": "sequence-choice-q", "allow_free_text": true,
+                            "options": [
+                                ["key": "short", "label": "Short and plain", "recommended": true],
+                                ["key": "long", "label": "Long and descriptive", "recommended": false],
+                            ],
+                        ] as [String: Any],
+                    ])
+                    momentQuestionID = "sequence-moments-q"
+                    append("assistant_response", text: "Put your moments in order and show me where each one is.",
+                           payload: ["turn_id": turnID, "turn_value": "question", "moment_order_question": MomentOrderFixture.question(id: "sequence-moments-q")])
+                }
             } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_MOMENT_ORDER"] != nil {
                 if let answer = body["moment_order"] as? [String: Any] {
                     // Echo exactly what the server received, in the creator's order (the wire shape the UI test pins).
