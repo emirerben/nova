@@ -40,3 +40,13 @@ The first hosted run, 46023454235 (head 5417af7d33), found stale prompt/version,
 The creator chose the permanent bottom editor rail instead of the playback row. The existing rail now offers Text, Captions, Visuals, Reorder, and Sounds for eligible montages. The Reorder item opens the same numbered sheet; there is no transport duplicate. The eligibility check still requires reorder capability and two included clip occurrences. The five core tools fit the narrow viewport without scrolling; optional-tool overflow retains its existing layout.
 
 The updated native UI test failed against the previous toolbar placement. On the revised editor, all 11 focused native tests passed: the actual bottom toolbar tap and confirmation/Undo, the 320-point viewport, the one-clip gate, both optional-tool overflow cases, connected panels, layout metrics, clip-local lanes, and the native six-frame export. Screenshots were captured before tapping the toolbar and after opening the sheet using the account-free fixture; the images remain local rather than being committed.
+
+## Distributed singular photo-duration follow-up
+
+The existing mixed-media length reader already classified "Set each photo to 0.2 seconds", "Show each photo for 0.2 seconds", and "Her fotoğraf 0,2 saniye olsun" as per-photo holds. The post-creation standalone guard missed them because its noun had to be plural. A recorded whole-video answer for each request therefore reached the compiler and failed.
+
+The guard now permits singular photo nouns only after the distributive `each`, `every` or Turkish `her`. The full-utterance anchors, overlay/timeline distinction, and duration limits remain in place. Replay uses the shared `run_copilot_turn` request path with only provider transport scripted, then compiles the returned draft. Both image occurrences are 0.2 seconds; both videos stay 2.0 seconds. The selected-photo, mixed-instruction, whole-video, and full-screen overlay floor controls stay intact.
+
+- Red: `bash scripts/check-api.sh test tests/services/test_photo_timeline_duration.py -q` — 9 failed, 22 passed.
+- Green: same command — 31 passed. The adjacent copilot, compiler, length-policy, bilingual guard and offline eval suite passed all 681 cases.
+- No live provider, production project, or device rollout was exercised in this follow-up.

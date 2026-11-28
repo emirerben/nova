@@ -3201,12 +3201,15 @@ _DURATION_ANSWER_RE = _BilingualPattern(
     r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b|sekunde\w*|sek\b)",
 )
 _EXACT_PHOTO_DURATION_RE = _BilingualPattern(
-    r"^\s*(?:please\s+)?(?:make|set|keep|show|hold)\s+(?:(?:all|each|every|the|my|of)\s+)*"
-    r"(?:(overlay)\s+)?(?:photos|images|pictures|stills)\s+"
+    r"^\s*(?:please\s+)?(?:make|set|keep|show|hold)\s+"
+    r"(?:(?:(?:all|each|every|the|my|of)\s+)*(?:(overlay)\s+)?(?:photos|images|pictures|stills)"
+    r"|(?:each|every)\s+(?:(overlay)\s+)?(?:photo|image|picture|still))\s+"
     r"(?:(?:show|play|last|stay|be|on screen|only|just|for|to)\s+)*"
     r"(\d+(?:[.,]\d+)?)\s*(?:seconds?|secs?|s)\s*(?:each|apiece|only)?[.!?]?\s*$",
-    r"^\s*(?:lutfen\s+)?(?:(?:tum|butun|her)\s+)*(?:(overlay)\s+)?"
-    r"(?:foto|resim|resm|gorsel)\w*l[ae]r\w*\s+(?:(?:sadece|yalnizca)\s+)?"
+    r"^\s*(?:lutfen\s+)?"
+    r"(?:(?:(?:tum|butun|her)\s+)*(?:(overlay)\s+)?(?:foto|resim|resm|gorsel)\w*l[ae]r\w*"
+    r"|her\s+(?:(overlay)\s+)?(?:foto(?:graf(?:i)?|yu)?|resim|resmi|gorsel(?:i)?))\s+"
+    r"(?:(?:sadece|yalnizca)\s+)?"
     r"(\d+(?:[.,]\d+)?)\s*(?:saniye|sn)\s*(?:yap|olsun|kalsin|goster)?[.!?]?\s*$",
 )
 
@@ -3217,7 +3220,11 @@ def recognize_standalone_photo_hold(
     match = _EXACT_PHOTO_DURATION_RE.search(text)
     if match is None:
         return None
-    return ("overlay" if match.group(1) else "timeline", float(match.group(2).replace(",", ".")))
+    plural_overlay, singular_overlay, seconds = match.groups()
+    return (
+        "overlay" if plural_overlay or singular_overlay else "timeline",
+        float(seconds.replace(",", ".")),
+    )
 
 
 def _exact_native_photo_timing(input: EditCopilotInput) -> dict[str, Any] | None:
