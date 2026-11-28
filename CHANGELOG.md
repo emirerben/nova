@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.19.0] - 2026-11-28
+
+### Changed
+- fix(kria): preserve Visuals order identities on mixed-media Save (KRI-1651) (#2550) <!-- release-pr: 2550 -->
+
 ## [0.91.18.0] - 2026-11-28
 
 ### Changed
