@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.18.0] - 2026-11-28
+
+### Changed
+- fix(kria): recognize distributed singular photo timing (KRI-1651) (#2544) <!-- release-pr: 2544 -->
+
 ## [0.91.17.0] - 2026-11-28
 
 ### Added
