@@ -35,14 +35,14 @@ For each idea:
    - Look at the code only enough to name the right files. Do not design the solution.
 4. **Create it:**
    - Project: `save_project` with `addTeams: ["Kria"]`, `lead: "me"`, `state: "backlog"`, `summary` (max 255 chars), `labels` = one `Theme` label (Creation, Editing, AI quality, Platform, Growth) plus a `Stage` label (Stage 1 to 4) if it serves a roadmap stage.
-   - Issue: `save_issue` with `team: "Kria"`, `project`, exactly one `Domain` label (AI, iOS, Editing, Web, Content, Other) and one type label (Bug, Improvement, Feature), `priority`, and `parentId` if it is a follow-up inside a train. Leave `state` at Backlog unless Emir says to start now.
+   - Issue: `save_issue` with `team: "Kria"`, `project`, exactly one `Domain` label (AI, iOS, Editing, Web, Content, Other) and one type label (Bug, Improvement, Feature), `priority`, an `assignee` (never leave it empty: `"me"` by default; bug-focused or no-taste work goes to Yasin Berk, taste and decision work stays with Emir; see `docs/runbooks/linear-workflow.md` rule 8), and `parentId` if it is a follow-up inside a train. Leave `state` at Backlog unless Emir says to start now.
 5. **Report back** in a short list: each item, what you created (link), and anything you assumed. Do not ask for approval before creating Backlog items; the cost of a wrong guess is a quick move in Linear.
 
 If Emir pastes feedback from a user rather than his own idea, keep the user's words in the description and note the source.
 
 ## Mode: triage
 
-1. `list_issues` for non-Done issues; find ones with no project, no `Domain` label, or no type label.
+1. `list_issues` for non-Done issues; find ones with no project, no `Domain` label, no type label, or no assignee (assign per rule 8 of the runbook).
 2. `list_projects` with `state: "backlog"`; find projects with no description, no `Theme` label, or no `Stage` label where one clearly applies.
 3. Propose fixes in one table, apply the clear ones, ask about the rest in a single `AskUserQuestion`.
 4. Never change status, assignee or priority on issues assigned to someone else. Project and labels only.

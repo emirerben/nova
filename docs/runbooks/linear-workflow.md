@@ -50,7 +50,8 @@ The roadmap is the Projects view grouped by `Theme` or filtered by `Stage`. Ther
 5. **Priority** follows `TODOS.md` conventions: Urgent = broken in prod or blocks a named launch; High = needed before a named event; Medium = planned work; Low = polish.
 6. **Rollout-pending work** (code merged dark behind a flag): one issue titled `Rollout: <FLAG_NAME>` in the feature project, listing the flag, the Fly and Vercel steps, and the verification. Close it when the flag is on and verified in prod. This replaces tracking rollouts only in `plans/README.md`.
 7. **Description format for engineering issues:** What / Why / How / Effort / Done when. Same content `TODOS.md` used.
-8. Do not change status, assignee or priority on issues assigned to someone else. Comment instead.
+8. **Every issue gets an owner at creation.** Pass `assignee` to `save_issue`; never leave it empty. Default is the creator (`"me"`). Routing: bug-focused or no-taste work (bugs, test and CI fixes, device verification passes, mechanical follow-ups) goes to Yasin Berk; work that needs product taste or decisions (design, copy, rollout approvals, new features) stays with Emir Erben, who leads the product. Triage: `list_issues` with `assignee: null` should return nothing.
+9. Do not change status, assignee or priority on issues assigned to someone else. Comment instead.
 
 ## Status hygiene (unchanged, see `~/.claude/CLAUDE.md`)
 
