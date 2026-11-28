@@ -99,9 +99,16 @@ def is_native_cloud_only_path(path: str) -> bool:
         # sub-route) has no device contract; unknown sub-routes stay refused.
         return parts[4:] not in ([], ["propose"], ["chat-edit"])
     if len(parts) >= 6 and parts[1] == "plan-items" and parts[3] == "variants":
-        # The native editor has exactly two state-changing contracts beneath a
-        # variant. Everything else is a cloud reburn/retry surface.
-        return parts[5] not in {"editor-commit", "editor-sources"}
+        # The native editor has two state-changing contracts beneath a variant, plus two
+        # POST helpers that persist nothing and render nothing (the editor applies their answer
+        # and its own Save writes it): intro-styles (KRI-1633) and caption-translation.
+        # Everything else is a cloud reburn/retry surface.
+        return parts[5] not in {
+            "editor-commit",
+            "editor-sources",
+            "intro-styles",
+            "caption-translation",
+        }
     return any(
         path == prefix or path.startswith(f"{prefix}/") for prefix in _NATIVE_CLOUD_ONLY_PREFIXES
     )

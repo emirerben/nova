@@ -285,6 +285,8 @@ def test_manual_draft_admission_does_not_catch_near_matches(client: TestClient, 
         ("DELETE", "/generative-jobs/uploads/reservation-id"),
         ("POST", "/plan-items/item-id/variants/variant-id/editor-commit"),
         ("POST", "/plan-items/item-id/variants/variant-id/editor-sources"),
+        ("POST", "/plan-items/item-id/variants/variant-id/intro-styles"),
+        ("POST", "/plan-items/item-id/variants/variant-id/caption-translation"),
         ("POST", "/me/jobs/job-id/device-render/retry"),
     ],
 )
