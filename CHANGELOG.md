@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.17.0] - 2026-11-28
+
+### Added
+- feat(intro): sticker looks and edge bleed in Try intro styles (KRI-1616) (#2548) <!-- release-pr: 2548 -->
+
 ## [0.91.16.0] - 2026-11-27
 
 ### Added
