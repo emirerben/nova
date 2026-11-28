@@ -85,6 +85,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "agents/narrated_clip_alignment.py": ("agent_prompt", "alignment input/prompt", None),
     "agents/narrated_storyboard.py": ("agent_prompt", "storyboard input/prompt", None),
     "agents/narration_annotations.py": ("agent_prompt", "annotation input/prompt", None),
+    "agents/overlay_placement.py": (
+        "agent_prompt",
+        "KRI-1556: placement agent input/prompt. The creator's request is context for which "
+        "picture fits a passage and never a branch condition",
+        None,
+    ),
     "agents/semantic_edit_proposal.py": ("agent_prompt", "semantic proposal prompt", None),
     "agents/speech_excerpt_planner.py": ("agent_prompt", "excerpt planner input/prompt", None),
     "services/suggestion_serve.py": (
@@ -188,6 +194,19 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "routes/plan_items.py": ("plan_time", "item copilot / edit-proposal turns", None),
     "schemas/clip_intents.py": ("plan_time", "caption grounding of clip intents", None),
     "schemas/edit_proposal.py": ("plan_time", "proposal brief schema", None),
+    "services/passage_placement.py": (
+        "content_only",
+        "KRI-1556: forwards the creator's request to the placement agent as context. It never "
+        "picks the route, duration, voice or order, and a slideshow is built only from an "
+        "explicit typed order or pace",
+        None,
+    ),
+    "services/phone_overlay_grounding.py": (
+        "content_only",
+        "KRI-1556: carries the creator's request to the placement agent as context for which "
+        "picture fits a passage. It never picks the route, duration, voice or order",
+        None,
+    ),
     "services/clip_intent_planning.py": ("plan_time", "clip-intent planning", None),
     "services/choice_questions.py": (
         "plan_time",
@@ -337,6 +356,12 @@ WORKER_FUNCTIONS: dict[str, tuple[str, str]] = {
         "It only decides whether to ADD the uploaded song's own lyrics as captions (content "
         "from the song, never creator-required text); it never picks the route, duration, "
         "voice or order.",
+    ),
+    "_run_phone_subtitled_job": (
+        "content_only",
+        "KRI-1556: passes the creator's request to the picture placement agent as context, "
+        "only when PASSAGE_PLACEMENT_ENABLED is on. It never decides route, duration, voice "
+        "or order",
     ),
     "_grounded_context_labels": ("content_only", "grounds context-label wording"),
     "_guided_execution_plan": ("content_only", "guided plan label wording"),
