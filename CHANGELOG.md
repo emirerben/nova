@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.21.0] - 2026-11-28
+
+### Changed
+- feat(kria): passage selector for spoken takes, with the length enforced (KRI-1555 C1) (#2552) <!-- release-pr: 2552 -->
+
 ## [0.91.20.0] - 2026-11-28
 
 ### Fixed
