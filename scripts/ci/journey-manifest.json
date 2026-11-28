@@ -2647,6 +2647,7 @@
         "src/apps/api/app/agents/speech_excerpt_planner.py",
         "src/apps/api/app/agents/passage_selector.py",
         "src/apps/api/prompts/passage_selector.txt",
+        "src/apps/api/tests/fixtures/passage_selector_labeled_talks.json",
         "src/apps/api/app/agents/narrated_clip_alignment.py",
         "src/apps/api/app/agents/slide_post_composer.py",
         "src/apps/api/tests/evals/test_phone_editorial_skills.py",
