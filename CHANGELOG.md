@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.22.0] - 2026-11-28
+
+### Changed
+- feat(ios): backgrounds are trimmable timeline bars; Crop replaces Aim (KRI-1656) (#2556) <!-- release-pr: 2556 -->
+
 ## [0.91.21.0] - 2026-11-28
 
 ### Changed
