@@ -89,6 +89,7 @@ from app.services.creator_render_contract import (
     TextRequirement,
     decline_payload,
     read_render_contract,
+    visual_contract_media_id,
 )
 from app.services.device_render import (
     CONTRACT_REVISIONS_FIELD,
@@ -100,6 +101,7 @@ from app.services.phone_editor_sources import (
     editor_source_bindings,
     editor_sources_for_variant,
     editor_visual_bindings,
+    phone_editor_source_revision,
 )
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
@@ -596,17 +598,35 @@ def _rebind_editor_render_contract(
             and duration > 0
         ):
             changes["duration_s"] = float(duration)
-        slots = (prep.get("guided_revision") or {}).get("segments") or []
+        revision = prep.get("guided_revision") or {}
         order = tuple(
-            str(row["media_id"]) for row in slots if isinstance(row, dict) and row.get("media_id")
+            str(row["media_id"])
+            for row in revision.get("segments") or []
+            if isinstance(row, dict) and row.get("media_id")
         )
         if not order and contract.order_required:
             # Authored cut (a deleted/trimmed/reordered guided story): the
             # resolved slots, not a client index, name each source.
             order = _authored_timeline_order(variant, prep)
+            if order:
+                revision = phone_editor_source_revision(staged, variant) or {}
         if order:
+            # The order contract names Visuals by their asset-prefixed identity,
+            # not the raw media id used by guided/authored editor slots.
+            source_order_ids = {
+                source["media_id"]: (
+                    visual_contract_media_id(source["media_id"])
+                    if source["lane"] == "asset"
+                    else source["media_id"]
+                )
+                for source in revision.get("sources") or []
+            }
             changes.update(
-                order_ids=_collapse_adjacent(order), order_required=True, order_basis="editor"
+                order_ids=_collapse_adjacent(
+                    tuple(source_order_ids[media_id] for media_id in order)
+                ),
+                order_required=True,
+                order_basis="editor",
             )
         elif contract.order_required:
             # The legacy slot form uses clip indices.  Mapping those indices

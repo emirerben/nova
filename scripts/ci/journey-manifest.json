@@ -4,7 +4,7 @@
     {
       "id": "kri-1651-montage-photo-timeline",
       "needs_native": true,
-      "api_tests": "tests/services/test_photo_timeline_duration.py tests/services/test_kria_editor_ops.py tests/services/test_kria_editor_guided_timeline.py",
+      "api_tests": "tests/services/test_photo_timeline_duration.py tests/services/test_kria_editor_ops.py tests/services/test_kria_editor_guided_timeline.py tests/routes/test_phone_guided_photo_order_commit.py",
       "xctests": [
         "KriaTests/NativeSplitScreenRowsTests/testSerialReorderMovesClipLocalLanesButKeepsSongAndSpanningOverlay",
         "KriaUITests/NativeEditorInspectorUITests/testReorderSheetAppliesTheWholeOrderInOneUndoStep",
@@ -17,8 +17,11 @@
         "src/apps/api/app/kria/brief_checks.py",
         "src/apps/api/app/kria/freeze_ask.py",
         "src/apps/api/app/kria/copy/de.json",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/app/services/phone_editor.py",
         "src/apps/api/app/services/kria_editor_ops.py",
         "src/apps/api/prompts/edit_copilot.txt",
+        "src/apps/api/tests/routes/test_phone_guided_photo_order_commit.py",
         "src/apps/api/tests/services/test_photo_timeline_duration.py",
         "src/apps/ios/Kria/Core/NativeSplitTimelineRebase.swift",
         "src/apps/ios/Kria/Features/ClipOrderCardView.swift",
