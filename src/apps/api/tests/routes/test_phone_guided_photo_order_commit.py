@@ -8,6 +8,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.config import settings
 from app.kria.device_render import make_device_request
@@ -22,6 +23,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
 )
+from app.services.authored_editor import prepare_authored_editor_commit
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     CreatorRenderContractError,
@@ -30,7 +32,9 @@ from app.services.creator_render_contract import (
     verify_phone_recipe,
 )
 from app.services.device_render import CONTRACT_REVISIONS_FIELD, device_status, pin_device_request
+from app.services.editor_empty_drafts import editor_sections, stage_saved_draft_baseline
 from app.services.kria_editor_ops import build_editor_snapshot, compile_editor_ops
+from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD
 from app.services.phone_sources import (
     PHONE_SOURCES_FIELD,
     PHONE_VISUALS_FIELD,
@@ -439,7 +443,6 @@ def _recipe_order(recipe):
 
 
 async def test_authored_mixed_photo_order_commits(monkeypatch):
-    from app.services.authored_editor import prepare_authored_editor_commit
     from app.services.editor_empty_drafts import stage_initial_authored_baseline
 
     job, variant, revision = mixed_montage(monkeypatch, contract=True)
@@ -472,3 +475,149 @@ async def test_authored_mixed_photo_order_commits(monkeypatch):
         for clip in recipe.tracks[0].clips
         if clip.source_asset_id.startswith("visual-")
     ] == pytest.approx([0.3] * 13)
+
+
+@pytest.mark.parametrize(
+    "photo_change, video_change, refusal",
+    [
+        ({}, {}, None),
+        (
+            {"source_end_s": 3.0},
+            {},
+            {"code": "phone_edit_unsupported", "reason": "image_source_clock"},
+        ),
+        (
+            {"freeze_hold_s": 0.5, "freeze_frame_s": 1.0},
+            {},
+            {"code": "phone_edit_unsupported", "reason": "image_source_clock"},
+        ),
+        ({"playback_rate": 2.0}, {}, {"code": "phone_playback_rate_unsupported"}),
+        (
+            {"look_preset": "olive_film"},
+            {},
+            {"code": "phone_edit_unsupported", "reason": "authored_clip_look"},
+        ),
+        ({}, {"source_end_s": 20.0}, {"code": "TIMELINE_INVALID_WINDOW"}),
+    ],
+)
+async def test_chat_native_save_add_and_remove_native_save(
+    monkeypatch, photo_change, video_change, refusal
+):
+    from app.services.editor_empty_drafts import stage_initial_authored_baseline
+
+    job, variant, revision = mixed_montage(monkeypatch, contract=True)
+    response = await _photo_chat_turn(
+        monkeypatch,
+        (job, variant, revision),
+        "Make the photos 0.3 seconds",
+        [{"op": "set_total_duration", "target_s": 0.3, "strategy": "proportional"}],
+    )
+    assert response.outcome == "proposed"
+    compiled = compile_editor_ops(job, variant, response.ops)
+    staged = stage_initial_authored_baseline(
+        job, "guided_story", gj.editor_deletion_timeline(job, variant)
+    )
+    payload = compiled.payload.model_copy(update={"editor_state_version": 2})
+    prep = prepare_authored_editor_commit(staged, "guided_story", payload, validation_arguments={})
+    assert prep["render_destination"] == "device"
+    job.assembly_plan = staged.assembly_plan
+    variant = job.assembly_plan["variants"][0]
+    before = _recipe_order(device_status(job, "guided_story").request.recipe)
+    assert len(before) == 25
+    sections = editor_sections(job, "guided_story")
+    saved = copy.deepcopy(sections["timeline_slots"])
+    assert len(saved) == 25
+    variant["editor_state_version"] = 2
+    job._saved_editor_drafts = {
+        "guided_story": SimpleNamespace(snapshot={"editor_payload": {"sections": sections}})
+    }
+    photo_binding = copy.deepcopy(job.assembly_plan[PHONE_VISUALS_FIELD][0])
+    photo_binding.update(media_id="new-photo", gcs_path="users/photos/new-photo.jpg")
+    video_binding = copy.deepcopy(job.assembly_plan[PHONE_SOURCES_FIELD][0])
+    video_binding.update(
+        media_id="new-video",
+        proxy_path=f"generative-jobs/{job.id}/sources/analysis-proxy-new-video.mp4",
+    )
+    variant[EDITOR_SOURCES_FIELD] = {
+        "imports": {},
+        "sources": [
+            {
+                "status": "ready",
+                "source_index": 25,
+                "media_id": "new-photo",
+                "kind": "image",
+                "lane": "asset",
+                "gcs_path": photo_binding["gcs_path"],
+                "generation": photo_binding["generation"],
+                "duration_s": None,
+                "visual_binding": photo_binding,
+            },
+            {
+                "status": "ready",
+                "source_index": 26,
+                "media_id": "new-video",
+                "kind": "video",
+                "lane": "clip",
+                "gcs_path": video_binding["proxy_path"],
+                "generation": video_binding["generation"],
+                "duration_s": 10,
+                "source_binding": video_binding,
+            },
+        ],
+    }
+    deleted = saved.pop(-1)
+    for row in saved:
+        row.setdefault("look_adjustments", None)
+    body = gj.EditorCommitRequest.model_validate(
+        {
+            "base_generation": gj.variant_render_baseline(variant),
+            "editor_state_version": 2,
+            "deletions": [{"kind": "clip", "id": deleted["slot_id"]}],
+            "timeline_slots": saved
+            + [
+                {
+                    "slot_id": str(uuid.uuid4()),
+                    "clip_index": 25,
+                    "media_kind": "image",
+                    "in_s": 0,
+                    "duration_s": 3,
+                    **photo_change,
+                },
+                {
+                    "slot_id": str(uuid.uuid4()),
+                    "clip_index": 26,
+                    "media_kind": "video",
+                    "in_s": 0,
+                    "duration_s": 3,
+                    "source_duration_s": 10,
+                    **video_change,
+                },
+            ],
+            "split_screen_sections": [],
+            "text_elements": sections["text_elements"],
+        }
+    )
+    baseline = stage_saved_draft_baseline(job, "guided_story", body)
+    normalized = gj.normalize_editor_deletion_request(baseline, "guided_story", body)
+    if refusal:
+        with pytest.raises(HTTPException) as refused:
+            gj.require_guided_story_editor_commit(baseline, "guided_story", normalized)
+            prepare_authored_editor_commit(
+                baseline, "guided_story", normalized, validation_arguments={}
+            )
+        assert refused.value.status_code == 422
+        assert refused.value.detail == refusal
+        assert _recipe_order(device_status(job, "guided_story").request.recipe) == before
+        return
+    gj.require_guided_story_editor_commit(baseline, "guided_story", normalized)
+    prep = prepare_authored_editor_commit(
+        baseline, "guided_story", normalized, validation_arguments={}
+    )
+    recipe = device_status(baseline, "guided_story").request.recipe
+    assert _recipe_order(recipe) == (*before[:-1], "asset-new-photo", "new-video")
+    reopened = copy.deepcopy(editor_sections(baseline, "guided_story"))
+    assert [row["media_id"] for row in reopened["timeline_slots"]][-2:] == [
+        "new-photo",
+        "new-video",
+    ]
+    assert reopened["text_elements"] == sections["text_elements"]
