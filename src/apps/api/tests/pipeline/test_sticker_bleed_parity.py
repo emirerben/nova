@@ -134,6 +134,25 @@ def render_cloud(tmp: Path, *, alpha: bool) -> list[dict]:
         return measure(rgb.load(), *rgb.size)
 
 
+def _assert_same_drawing(recorded: list[dict], measured: list[dict]) -> None:
+    """The ffmpeg build and its scaler differ a little between machines (a macOS run and CI's Linux
+    differ by 0.3 per colour channel and 1e-4 coverage), so the fixture pins what must not move:
+    which card, where it is cut, and roughly how much of its box is ink and in which colour."""
+    assert [c["id"] for c in recorded] == [c["id"] for c in measured]
+    for want, got in zip(recorded, measured, strict=True):
+        assert all(abs(a - b) <= 2 for a, b in zip(want["ink_box"], got["ink_box"], strict=True)), (
+            want,
+            got,
+        )
+        assert abs(want["coverage"] - got["coverage"]) <= 0.01, (want, got)
+        assert all(
+            abs(a - b) <= 3 for a, b in zip(want["mean_rgb"], got["mean_rgb"], strict=True)
+        ), (
+            want,
+            got,
+        )
+
+
 def test_the_cloud_draws_a_bled_sticker_with_its_alpha_as_the_fixture_records(tmp_path):
     regenerate = os.environ.get("KRI1616_REGENERATE") == "1"
     if regenerate:
@@ -156,7 +175,11 @@ def test_the_cloud_draws_a_bled_sticker_with_its_alpha_as_the_fixture_records(tm
     }
     if regenerate:
         FIXTURE.write_text(json.dumps(record, indent=2) + "\n")
-    assert json.loads(FIXTURE.read_text()) == record
+    recorded = json.loads(FIXTURE.read_text())
+    assert {k: v for k, v in recorded.items() if k != "cloud"} == {
+        k: v for k, v in record.items() if k != "cloud"
+    }
+    _assert_same_drawing(recorded["cloud"], measured)
 
 
 def test_a_sticker_flattened_to_a_box_is_caught(tmp_path):

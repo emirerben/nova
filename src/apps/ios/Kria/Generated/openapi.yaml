@@ -16660,8 +16660,8 @@
           },
           "x_fraction": {
             "default": 0.5,
-            "maximum": 1,
-            "minimum": 0,
+            "maximum": 1.25,
+            "minimum": -0.25,
             "title": "X Fraction",
             "type": "number"
           },
