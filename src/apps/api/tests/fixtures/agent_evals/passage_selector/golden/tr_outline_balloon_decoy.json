@@ -1,0 +1,97 @@
+{
+  "agent": "nova.plan.passage_selector",
+  "prompt_version": "2026-11-28-passages-v1",
+  "input": {
+    "mode": "pick",
+    "request": "notlarımı izle",
+    "target_s": null,
+    "target_is_ceiling": false,
+    "candidate_budget_s": null,
+    "outline": "Kapadokya gezisi: balon turu ve manzara",
+    "drop_topics": [],
+    "language": "tr",
+    "window_index": 0,
+    "window_count": 1,
+    "units": [
+      {
+        "id": 0,
+        "s": 0.5,
+        "e": 2.9,
+        "text": "Geçen yaz ailemle birlikte Kapadokya'ya gittik."
+      },
+      {
+        "id": 1,
+        "s": 3.45,
+        "e": 5.85,
+        "text": "Sabah erkenden balonlara binmek için kalktık."
+      },
+      {
+        "id": 2,
+        "s": 6.4,
+        "e": 10.06,
+        "text": "Bu arada şirketimizin yeni fatura yazılımı çok iyi gidiyor."
+      },
+      {
+        "id": 3,
+        "s": 10.61,
+        "e": 12.59,
+        "text": "Yatırımcılar aylık gelirimizi sürekli soruyor."
+      },
+      {
+        "id": 4,
+        "s": 13.14,
+        "e": 15.96,
+        "text": "Balondan gördüğüm manzara hayatımın en güzel anıydı."
+      },
+      {
+        "id": 5,
+        "s": 16.51,
+        "e": 19.75,
+        "text": "İstanbul'a dönünce bu kadar mutlu olduğumu kimseye anlatamadım."
+      },
+      {
+        "id": 6,
+        "s": 20.3,
+        "e": 23.96,
+        "text": "Kapadokya balon şirketlerinin hisse senedi manzarası çok riskli görünüyor."
+      }
+    ]
+  },
+  "raw_text": "{\"passages\": [{\"first\": 0, \"last\": 1, \"quote\": \"Geçen yaz ailemle birlikte Kapadokya'ya gittik. ... Sabah erkenden balonlara binmek için kalktık.\", \"reason\": \"geziye başlangıç\", \"strength\": 4}, {\"first\": 4, \"last\": 5, \"quote\": \"Balondan gördüğüm manzara hayatımın en güzel anıydı. ... İstanbul'a dönünce bu kadar mutlu olduğumu kimseye anlatamadım.\", \"reason\": \"manzara ve dönüş\", \"strength\": 5}], \"dropped\": [{\"first\": 2, \"last\": 3, \"reason\": \"off_topic\"}, {\"first\": 6, \"last\": 6, \"reason\": \"off_topic\"}]}",
+  "output": {
+    "passages": [
+      {
+        "first": 0,
+        "last": 1,
+        "quote": "Geçen yaz ailemle birlikte Kapadokya'ya gittik. ... Sabah erkenden balonlara binmek için kalktık.",
+        "reason": "geziye başlangıç",
+        "strength": 4
+      },
+      {
+        "first": 4,
+        "last": 5,
+        "quote": "Balondan gördüğüm manzara hayatımın en güzel anıydı. ... İstanbul'a dönünce bu kadar mutlu olduğumu kimseye anlatamadım.",
+        "reason": "manzara ve dönüş",
+        "strength": 5
+      }
+    ],
+    "dropped": [
+      {
+        "first": 2,
+        "last": 3,
+        "reason": "off_topic"
+      },
+      {
+        "first": 6,
+        "last": 6,
+        "reason": "off_topic"
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Turkish talk with a Turkish outline and a keyword-sharing finance decoy.",
+    "expect": "passages"
+  },
+  "prompt_sha": "5aaaadc5eb901e50"
+}

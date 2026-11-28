@@ -1,0 +1,74 @@
+{
+  "agent": "nova.plan.passage_selector",
+  "prompt_version": "2026-11-28-passages-v1",
+  "input": {
+    "mode": "pick",
+    "request": "follow my trip notes",
+    "target_s": null,
+    "target_is_ceiling": false,
+    "candidate_budget_s": null,
+    "outline": "My trip to Lisbon: the espresso at the hostel, the tram ride, the guitar.",
+    "drop_topics": [],
+    "language": "en",
+    "window_index": 0,
+    "window_count": 1,
+    "units": [
+      {
+        "id": 0,
+        "s": 0.5,
+        "e": 7.1,
+        "text": "Last summer in Lisbon I tasted the best espresso at a hostel by the tram line."
+      },
+      {
+        "id": 1,
+        "s": 7.65,
+        "e": 12.99,
+        "text": "My cousin runs a Lisbon startup that sells espresso machines to every hostel."
+      },
+      {
+        "id": 2,
+        "s": 13.54,
+        "e": 19.3,
+        "text": "Its investors ride the tram of venture hype and want the hostel market first."
+      },
+      {
+        "id": 3,
+        "s": 19.85,
+        "e": 25.61,
+        "text": "The tram then carried us uphill while a stranger played guitar for the street."
+      }
+    ]
+  },
+  "raw_text": "{\"passages\": [{\"first\": 0, \"last\": 0, \"quote\": \"Last summer in Lisbon I tasted the best espresso at a hostel by the tram line.\", \"reason\": \"the espresso\", \"strength\": 5}, {\"first\": 3, \"last\": 3, \"quote\": \"The tram then carried us uphill while a stranger played guitar for the street.\", \"reason\": \"the tram\", \"strength\": 4}], \"dropped\": [{\"first\": 1, \"last\": 2, \"reason\": \"off_topic\"}]}",
+  "output": {
+    "passages": [
+      {
+        "first": 0,
+        "last": 0,
+        "quote": "Last summer in Lisbon I tasted the best espresso at a hostel by the tram line.",
+        "reason": "the espresso",
+        "strength": 5
+      },
+      {
+        "first": 3,
+        "last": 3,
+        "quote": "The tram then carried us uphill while a stranger played guitar for the street.",
+        "reason": "the tram",
+        "strength": 4
+      }
+    ],
+    "dropped": [
+      {
+        "first": 1,
+        "last": 2,
+        "reason": "off_topic"
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "A fluent passage about a Lisbon espresso-machine startup shares the outline's keywords and is off topic.",
+    "expect": "passages"
+  },
+  "prompt_sha": "dd4359ce4cb7ba99"
+}

@@ -1,0 +1,81 @@
+{
+  "agent": "nova.plan.passage_selector",
+  "prompt_version": "2026-11-28-passages-v1",
+  "input": {
+    "mode": "pick",
+    "request": "",
+    "target_s": null,
+    "target_is_ceiling": false,
+    "candidate_budget_s": null,
+    "outline": "Merhaba arkadaşlar bugün size yeni telefonumu tanıtacağım.\nÖnce ekranına ve kamerasına birlikte bakalım.\nPil ömrü gerçekten bütün gün dayanıyor.",
+    "drop_topics": [],
+    "language": "tr",
+    "window_index": 0,
+    "window_count": 1,
+    "units": [
+      {
+        "id": 0,
+        "s": 0.5,
+        "e": 3.32,
+        "text": "Merhaba arkadaşlar bugün size yeni şey, pardon."
+      },
+      {
+        "id": 1,
+        "s": 5.82,
+        "e": 8.64,
+        "text": "Merhaba arkadaşlar bugün size yeni telefonumu tanıtacağım."
+      },
+      {
+        "id": 2,
+        "s": 9.54,
+        "e": 12.36,
+        "text": "Önce ekranına ve ııı kamerasına birlikte bakalım."
+      },
+      {
+        "id": 3,
+        "s": 15.36,
+        "e": 17.76,
+        "text": "Önce ekranına ve kamerasına birlikte bakalım."
+      },
+      {
+        "id": 4,
+        "s": 18.31,
+        "e": 20.71,
+        "text": "Pil ömrü gerçekten bütün gün dayanıyor."
+      }
+    ]
+  },
+  "raw_text": "{\"passages\": [{\"first\": 1, \"last\": 1, \"quote\": \"Merhaba arkadaşlar bugün size yeni telefonumu tanıtacağım.\", \"reason\": \"line 1\", \"strength\": 5}, {\"first\": 3, \"last\": 3, \"quote\": \"Önce ekranına ve kamerasına birlikte bakalım.\", \"reason\": \"line 2, clean retake\", \"strength\": 5}, {\"first\": 4, \"last\": 4, \"quote\": \"Pil ömrü gerçekten bütün gün dayanıyor.\", \"reason\": \"line 3\", \"strength\": 5}], \"dropped\": []}",
+  "output": {
+    "passages": [
+      {
+        "first": 1,
+        "last": 1,
+        "quote": "Merhaba arkadaşlar bugün size yeni telefonumu tanıtacağım.",
+        "reason": "line 1",
+        "strength": 5
+      },
+      {
+        "first": 3,
+        "last": 3,
+        "quote": "Önce ekranına ve kamerasına birlikte bakalım.",
+        "reason": "line 2, clean retake",
+        "strength": 5
+      },
+      {
+        "first": 4,
+        "last": 4,
+        "quote": "Pil ömrü gerçekten bütün gün dayanıyor.",
+        "reason": "line 3",
+        "strength": 5
+      }
+    ],
+    "dropped": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Teleprompter take with two stumbles; the clean retakes are kept once each.",
+    "expect": "passages"
+  },
+  "prompt_sha": "c5be3c4b038acd2b"
+}

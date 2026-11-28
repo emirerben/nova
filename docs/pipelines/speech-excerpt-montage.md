@@ -72,6 +72,43 @@ clip has speech, or what extra footage is needed. A quote that cannot be grounde
 reported (`planned.dropped`, `adjustments`) while the remaining excerpts render; only when none
 ground does the job ask.
 
+## Passage selector (KRI-1555, not wired to a render yet)
+
+`services/passage_selector.select_passages(words, SelectionAsk(request, target_s,
+target_is_ceiling, outline, drop_topics, keep_whole))` decides which sentences of ONE spoken
+take stay. It returns `PassageSelection(kept, left_out)`: `kept` is `KeptPassage(start_s, end_s,
+quote, reason)` in source order and never overlapping, `left_out` is `LeftOutPassage(start_s,
+end_s, quote, reason)` with `reason` one of `off_topic`, `requested_drop`, `over_length`,
+`not_selected`, `ungrounded`.
+
+- **Model call.** `agents/passage_selector.py` (`nova.plan.passage_selector`, prompt
+  `prompts/passage_selector.txt`) is shown EVERY timed sentence (no 40-sentence cut), each with an
+  integer id, and answers in inclusive id ranges with a verbatim quote, a `strength` 1-5 and a
+  reason. It never writes seconds. Mode `drop` (a drop request with no length or outline, or
+  `keep_whole` plus `drop_topics`) returns only the ranges to remove. `keep_whole` with no drop
+  topic makes no model call.
+- **Windows.** A transcript over `WINDOW_CHARS` (9,000) is read in windows split at sentence
+  boundaries and merged by global id inside the selector; adjacent kept sentences across a seam
+  become one passage. A window with nothing on topic may answer with no passage. `MAIN_CREATOR_FULL_CLIP_EVIDENCE_ENABLED` is untouched.
+- **Checks in code.** Each passage's quote is re-grounded (`ground_passage`) against the words of
+  its own id range and must touch the range's first and last sentence; otherwise it is left out as
+  `ungrounded`. Every range starts and ends on a sentence, padded into the silence beside it
+  (`safe_window`, at most 45% of the gap), never inside a word.
+- **Length.** The model returns candidates (about 1.5x the target); plain code keeps the strongest
+  that land in 90-110% of the target, or at or under a ceiling, and lists the rest as
+  `over_length`. No grounded passage, or a ceiling shorter than any sentence, raises
+  `PassageSelectionError` so a caller keeps the whole take instead of cutting on a guess.
+  `PassageSelection.fits_target` reports a shortfall; the selector never invents speech.
+- **Shared grounding.** `plan_speech_montage` grounds its planner quotes through the same
+  `ground_passage` (too short, too long, not said), so the montage output is unchanged.
+
+Fitting pads up to the target with the model's weakest nominated passages, and a ceiling fills to
+the cap. `keep_whole` ignores `target_s`. A caller must catch `PassageSelectionError` and the
+agent's terminal errors and keep the whole take.
+
+Not proven offline: that the live model rejects a fluent passage that shares the outline's
+keywords (the matrix replays recorded answers). Live check is pending under KRI-1555.
+
 ## Request following
 
 `kria/brief_checks.py`: `plan_facts_from_speech_montage` + `_check_speech_excerpts` (excerpts

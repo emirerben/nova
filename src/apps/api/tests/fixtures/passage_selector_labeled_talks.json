@@ -1,0 +1,138 @@
+{
+  "trip": [
+    {
+      "text": "So last spring I finally flew to Lisbon with my sister.",
+      "topic": "trip"
+    },
+    {
+      "text": "The first morning we found a tiny cafe near the tram stop.",
+      "topic": "trip"
+    },
+    {
+      "text": "They pulled the best espresso I have ever tasted in my life.",
+      "topic": "trip"
+    },
+    {
+      "text": "By the way the weather has been strange all week back home.",
+      "topic": "weather"
+    },
+    {
+      "text": "It rained on Monday and then it was sunny again on Tuesday.",
+      "topic": "weather"
+    },
+    {
+      "text": "Anyway my friend Marco is building a startup about invoices.",
+      "topic": "startup"
+    },
+    {
+      "text": "He told me investors only care about monthly recurring revenue.",
+      "topic": "startup"
+    },
+    {
+      "text": "We rode the old yellow tram up the steepest hill in the city.",
+      "topic": "trip"
+    },
+    {
+      "text": "At the top a stranger played the guitar and nobody wanted to leave.",
+      "topic": "trip"
+    },
+    {
+      "text": "Marco says the seed round closes in March if the numbers hold.",
+      "topic": "startup"
+    },
+    {
+      "text": "That night we ate grilled sardines by the river and laughed for hours.",
+      "topic": "trip"
+    },
+    {
+      "text": "Honestly I should check the forecast before I plan the weekend.",
+      "topic": "weather"
+    },
+    {
+      "text": "The hostel owner gave us a map with her favorite hidden places.",
+      "topic": "trip"
+    },
+    {
+      "text": "My sister cried a little when the plane took off to bring us home.",
+      "topic": "trip"
+    },
+    {
+      "text": "Marco also wants me to join as an advisor which is flattering.",
+      "topic": "startup"
+    },
+    {
+      "text": "I would go back tomorrow and take the same tram to the same hill.",
+      "topic": "trip"
+    }
+  ],
+  "decoy": [
+    {
+      "text": "Last summer in Lisbon I tasted the best espresso at a hostel by the tram line.",
+      "topic": "trip"
+    },
+    {
+      "text": "My cousin runs a Lisbon startup that sells espresso machines to every hostel.",
+      "topic": "pitch"
+    },
+    {
+      "text": "Its investors ride the tram of venture hype and want the hostel market first.",
+      "topic": "pitch"
+    },
+    {
+      "text": "The tram then carried us uphill while a stranger played guitar for the street.",
+      "topic": "trip"
+    }
+  ],
+  "turkish": [
+    {
+      "text": "Geçen yaz ailemle birlikte Kapadokya'ya gittik.",
+      "topic": "trip"
+    },
+    {
+      "text": "Sabah erkenden balonlara binmek için kalktık.",
+      "topic": "trip"
+    },
+    {
+      "text": "Bu arada şirketimizin yeni fatura yazılımı çok iyi gidiyor.",
+      "topic": "startup"
+    },
+    {
+      "text": "Yatırımcılar aylık gelirimizi sürekli soruyor.",
+      "topic": "startup"
+    },
+    {
+      "text": "Balondan gördüğüm manzara hayatımın en güzel anıydı.",
+      "topic": "trip"
+    },
+    {
+      "text": "İstanbul'a dönünce bu kadar mutlu olduğumu kimseye anlatamadım.",
+      "topic": "trip"
+    },
+    {
+      "text": "Kapadokya balon şirketlerinin hisse senedi manzarası çok riskli görünüyor.",
+      "topic": "pitch"
+    }
+  ],
+  "teleprompter": [
+    {
+      "text": "Merhaba arkadaşlar bugün size yeni şey, pardon.",
+      "topic": "stumble"
+    },
+    {
+      "text": "Merhaba arkadaşlar bugün size yeni telefonumu tanıtacağım.",
+      "topic": "line1"
+    },
+    {
+      "text": "Önce ekranına ve ııı kamerasına birlikte bakalım.",
+      "topic": "stumble"
+    },
+    {
+      "text": "Önce ekranına ve kamerasına birlikte bakalım.",
+      "topic": "line2"
+    },
+    {
+      "text": "Pil ömrü gerçekten bütün gün dayanıyor.",
+      "topic": "line3"
+    }
+  ]
+}
