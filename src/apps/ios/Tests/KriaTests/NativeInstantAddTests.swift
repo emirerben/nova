@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import Kria
 
 /// KRI-1419: a picked photo or video shows in the timeline and the preview at once, played from the local file,
@@ -73,6 +74,82 @@ final class NativeInstantAddTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(20))
         }
         return condition()
+    }
+
+    @MainActor private final class ReadGate {
+        private var continuation: CheckedContinuation<Void, Never>?
+        var isWaiting: Bool { continuation != nil }
+        func wait() async { await withCheckedContinuation { continuation = $0 } }
+        func open() { continuation?.resume(); continuation = nil }
+    }
+
+    private func serialFixture() async throws -> Fixture {
+        let f = try await splitFixture()
+        var document = f.session.document
+        document.clips = [EditorTimelineSlot(id: "lead", clipIndex: 0, inS: 0, durationS: 2)]
+        document.splitScreenSections = []
+        f.session.replaceDocumentForTesting(document)
+        return f
+    }
+
+    private func pickedPhoto() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString)-picked.png")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 20)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 20, height: 20))
+        }
+        try XCTUnwrap(image.pngData()).write(to: url)
+        return url
+    }
+
+    // Failure modes: a canceled picker changes the cut; a failed pick drops later picks; the faster upload wins
+    // the first timeline position; Save sees a provisional index or forgets a later pick still being read.
+    func testOrderedMixedBatchKeepsSuccessfulPicksAndSavesInSelectionOrder() async throws {
+        let f = try await serialFixture()
+        let before = f.session.document
+        await f.session.addClips(sources: [], uploadSource: .photos)
+        XCTAssertEqual(f.session.document, before)
+        XCTAssertNil(f.session.addClipError)
+
+        let photo = try pickedPhoto()
+        let video = try pickedVideo()
+        let latch = ReadGate()
+        let adding = Task { @MainActor in
+            await f.session.addClips(sources: [
+                { photo },
+                { throw AddClipSourceUnreadable() },
+                { await latch.wait(); return video },
+            ], uploadSource: .photos)
+        }
+        while !latch.isWaiting { await Task.yield() }
+        XCTAssertTrue(f.session.isAddingClip)
+        XCTAssertNil(f.session.addClipError, "A partial failure is reported after the other selections are processed")
+        let first = try placementID(of: XCTUnwrap(pendingSlots(f.session).first))
+        let saving = Task { await f.session.save() }
+        let savingWaits = await poll { f.session.finishingUploadCount > 0 }
+        XCTAssertTrue(savingWaits)
+        XCTAssertEqual(f.spy.commitCount, 0)
+        latch.open()
+        await adding.value
+        let pending = pendingSlots(f.session)
+        XCTAssertEqual(pending.map { $0.raw["media_kind"] }, [.string("image"), .string("video")])
+        XCTAssertNotNil(f.session.addClipError)
+        let second = try placementID(of: XCTUnwrap(pending.last))
+        let admissionsStarted = await poll { f.gate.isWaiting(first) && f.gate.isWaiting(second) }
+        XCTAssertTrue(admissionsStarted)
+        f.gate.land(second, index: 9, sourceID: "proxy")
+        let secondLanded = await poll { f.session.document.clips.last?.clipIndex == 9 }
+        XCTAssertTrue(secondLanded)
+        XCTAssertEqual(f.spy.commitCount, 0)
+        f.gate.land(first, index: 4, sourceID: "photo")
+        await saving.value
+        XCTAssertEqual(f.spy.commitCount, 1)
+        let request = try XCTUnwrap(f.spy.lastRequest)
+        let rows = try XCTUnwrap(request.timelineSlots)
+        XCTAssertEqual(rows.compactMap { $0.objectValue?["clip_index"]?.numberValue }, [0, 4, 9])
+        XCTAssertFalse(rows.contains { $0.objectValue?["pending_local"] != nil })
+        let reopened = EditorDocument(snapshot: f.session.document.encodeSnapshot())
+        XCTAssertEqual(reopened.clips.map(\.clipIndex), [0, 4, 9])
     }
 
     // Failure mode: the block only appears after the upload and the server probe finish (the founder's complaint).

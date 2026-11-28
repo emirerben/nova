@@ -93,6 +93,52 @@ final class NativeQuickAddMenuUITests: XCTestCase {
         add(after)
     }
 
+    /// The editor's real entry point opens the shared Photos picker. Selecting two items doesn't start
+    /// either import until confirmation; cancel clears the picks and returns to the source sheet.
+    func testTimelinePhotosPickerConfirmsTwoSelectionsOnce() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launch()
+        app.buttons["native-editor-add-clip"].tap()
+        app.descendants(matching: .any)["native-editor-add-menu-video"].tap()
+        app.buttons["native-editor-add-clip-upload"].tap()
+        let photos = app.buttons["native-editor-add-clip-photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        let done = app.buttons["photos-picker-done"]
+        let prompt = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        let deadline = Date().addingTimeInterval(30)
+        while !done.exists && Date() < deadline {
+            if prompt.exists && prompt.buttons.count == 3 { prompt.buttons.element(boundBy: 1).tap() }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(done.exists, app.debugDescription)
+        let first = app.buttons["gallery-tile-0"], second = app.buttons["gallery-tile-1"]
+        XCTAssertTrue(first.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(second.exists)
+        XCTAssertFalse(done.isEnabled)
+        first.tap()
+        XCTAssertTrue(done.label.hasPrefix("Add 1 "), done.label)
+        app.buttons["gallery-cancel"].tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5), "Cancel does not dismiss the add sheet")
+        photos.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertFalse(done.isEnabled, "Cancel does not leave an item selected")
+        second.tap()
+        first.tap()
+        XCTAssertEqual(done.label, "Add 2 items")
+        XCTAssertEqual(second.value as? String, "Selected, 1")
+        XCTAssertEqual(first.value as? String, "Selected, 2")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Ordered timeline Photos selection"
+        screenshot.lifetime = .keepAlways
+        self.add(screenshot)
+        done.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: photos)
+        waitForExpectations(timeout: 8)
+    }
+
     /// Video routes to the add-clip sheet; Visual opens the same panel the tool rail opens.
     func testVideoAndVisualOptionsRouteToTheirSurfaces() {
         let app = XCUIApplication()
