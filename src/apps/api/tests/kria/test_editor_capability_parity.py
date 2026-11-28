@@ -57,6 +57,7 @@ SWIFT_FILES = (
     "NativeTextEditing.swift",
     "NativeEditorSession+CaptionTranslation.swift",
     "NativeEditorSession+IntroStyles.swift",
+    "NativeEditorSession+BackgroundBars.swift",
 )
 _SESSION_DECL = re.compile(r"^extension NativeEditorSession\b", re.M)
 _FUNC = re.compile(
