@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-15-research-22",
+  "version": "2026-11-22-research-23",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. CONTENT_PLAN_PROMPT_VERSION is a fingerprint of this file, so an edit needs no prompt-version bump.",
   "ideas": [
     {
@@ -444,6 +444,34 @@
         "engagement_rate": 0.042,
         "view_index": 3.99,
         "sampled_at": "2026-11-15"
+      }
+    },
+    {
+      "id": "lifestyle-ritual-tutorial-01",
+      "niche": "lifestyle & taste education",
+      "pillar": "lifestyle ritual how-tos",
+      "idea": "a methodical, step-by-step tutorial that teaches the viewer how to do a familiar everyday ritual the right way — the emphasis is on expertise and guidance, not on assessing a product",
+      "hook_pattern": "[ritual] 101: how to actually [action] it right",
+      "filming_context": "60-130s, ingredient or tool close-ups in natural light — hands-on demonstration of technique, calm pacing with a satisfying payoff shot at the end (the finished bowl, the styled result, the completed habit)",
+      "source": "tiktok:@nermozdemir (2026-11)",
+      "performance": {
+        "engagement_rate": 0.015,
+        "view_index": 2.0,
+        "sampled_at": "2026-11-22"
+      }
+    },
+    {
+      "id": "iceberg-reveal-subtext-01",
+      "niche": "lifestyle & introspection",
+      "pillar": "subtext and implication",
+      "idea": "show only the visible tip of a larger personal story — the finished result, the candid moment, the quiet emotion — and let the caption name the hidden dimension without explaining it",
+      "hook_pattern": "the visible part of [the thing you're really talking about]",
+      "filming_context": "7-15s of a single calm moment — the morning scene, the outfit, the finished plate — no context given on screen; the caption carries the subtext",
+      "source": "tiktok:@nermozdemir (2026-11)",
+      "performance": {
+        "engagement_rate": 0.015,
+        "view_index": 2.3,
+        "sampled_at": "2026-11-22"
       }
     }
   ]

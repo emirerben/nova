@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-15-research-22",
+  "version": "2026-11-22-research-23",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -413,6 +413,19 @@
       "highlight_color": "#A3E635",
       "niche": "wellness & lifestyle rituals",
       "source": "tiktok market research 2026-11-15"
+    },
+    {
+      "id": "lifestyle-tutorial-reveal-popin-01",
+      "content_profile": "step-by-step lifestyle tutorial — food prep, wellness habit, style technique — at the payoff moment when the finished result appears on screen",
+      "effect": "pop-in",
+      "text": "how to actually do it right",
+      "highlight_word": "right",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A3E635",
+      "niche": "lifestyle & taste education",
+      "source": "tiktok market research 2026-11-22"
     }
   ]
 }
