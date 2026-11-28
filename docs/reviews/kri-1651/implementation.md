@@ -50,3 +50,15 @@ The guard now permits singular photo nouns only after the distributive `each`, `
 - Red: `bash scripts/check-api.sh test tests/services/test_photo_timeline_duration.py -q` — 9 failed, 22 passed.
 - Green: same command — 31 passed. The adjacent copilot, compiler, length-policy, bilingual guard and offline eval suite passed all 681 cases.
 - No live provider, production project, or device rollout was exercised in this follow-up.
+
+## Mixed-media Save order identity follow-up
+
+A later 422 `unsupported_phone_edit` was traced to the native Save rebind/compile stage. The exact production exception reason was not available. This synthetic replay independently reproduces a defect at that stage; it does not establish the production exception's cause.
+
+The account-free fixture starts with 12 videos and 13 one-second Visuals photos, an approved guided plan, pinned source receipts, and a 66.56-second native recipe. The shared chat request path replies with 0.3-second photo holds. The actual compiler builds 25 slots totaling 57.53 seconds. Without a creator contract, Save succeeds. With a valid creator contract, the old Save rebind copied raw guided/authored media IDs into `order_ids`; the phone verifier correctly compared Visuals against `asset-<id>`. This rejected the valid edit as `CreatorRenderContractError: This edit couldn't keep the confirmed clip order.` The same failure occurred even when the initial contract did not require order, because the timeline Save rebinds the creator's new order.
+
+The correction derives the order identities from the validated source catalog, using the same Visuals identity convention as the verifier. It leaves the actual source ids and render recipe unchanged and retains strict order verification. The authored sibling uses its server-resolved source catalog. A wrong-order recipe with the same duration and clip count still fails; an intentional reorder persists.
+
+- Red against the unmodified base: `bash scripts/check-api.sh test tests/routes/test_phone_guided_photo_order_commit.py -q` — 8 failed with the same typed 422 / ordering-choice refusal, 5 passed.
+- Green: same command — 13 passed. The recipe and reopened slots retain all 13 photos at 0.3 seconds, 12 video occurrences with unchanged durations within one frame, correct order, existing text/overlay, and pinned background song in the applicable cases. The neighboring guided/authored Save, photo, song, contract, and order test suites returned 439 passed, 1 expected failure.
+- No paid model call, original project retry, actual device export, or production change was performed. To confirm the production cause, recover the original Save's exception reason or its typed refusal fields and independently verify the affected job's creator contract and canonical photo-source identities.

@@ -2948,13 +2948,18 @@ def creator_length_note(
     return f"The video runs about {actual} seconds; you asked for {requested:g}"
 
 
+def visual_contract_media_id(visual_id: str) -> str:
+    """The creator order contract's identity for a Visuals-pool source."""
+    return f"asset-{visual_id}"
+
+
 def _contract_media_id(asset: object) -> str | None:
     """The contract's id for a recipe source: an original's media id, or ``asset-<id>`` for
     a Visuals photo or video (KRI-1069, KRI-1102). ``None`` for anything else."""
     if isinstance(asset, OriginalRenderAsset):
         return asset.media_id
     if isinstance(asset, VisualRenderAsset):
-        return f"asset-{asset.visual_id}"
+        return visual_contract_media_id(asset.visual_id)
     return None
 
 
