@@ -3789,6 +3789,36 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(cloud.addClipUnavailableReason)
     }
 
+    func testMultiAddHonorsRemainingTimelineCapacity() async throws {
+        let (session, spy) = await Self.footageSession(destination: "cloud", operationsEditable: true)
+        let template = try XCTUnwrap(session.document.clips.first)
+        session.transactDocument(section: .timeline) { document in
+            document.clips = (0..<49).map { _ in
+                var slot = template
+                slot.id = UUID().uuidString
+                return slot
+            }
+        }
+        XCTAssertEqual(session.remainingTimelineClipCapacity, 1)
+        let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        spy.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/signed-put")!,
+            gcsPath: "users/u/generative/clip.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:],
+            purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        spy.addClipResult = AddClipResult(jobID: UUID().uuidString, clipIndex: 1, kind: "video")
+        var readCount = 0
+        await session.addClips(sources: [
+            { readCount += 1; return url },
+            { readCount += 1; return url },
+        ], uploadSource: .photos)
+        XCTAssertEqual(readCount, 1)
+        XCTAssertEqual(session.document.clips.count, 50)
+        XCTAssertEqual(session.remainingTimelineClipCapacity, 0)
+        XCTAssertFalse(session.canAddTimelineMedia)
+        XCTAssertNotNil(session.addClipError)
+    }
+
     func testCloudVariantKeepsCropSpeedAndLookEditable() async throws {
         let (session, _) = await Self.footageSession(destination: "cloud", operationsEditable: true)
         XCTAssertFalse(session.rendersOnDevice)

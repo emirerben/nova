@@ -5032,6 +5032,22 @@
         }
       }
     },
+    "Add clips or photos" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clips oder Fotos hinzufügen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Klip veya fotoğraf ekle"
+          }
+        }
+      }
+    },
     "Add composition" : {
       "localizations" : {
         "de" : {
@@ -24736,6 +24752,22 @@
         }
       }
     },
+    "None of the selected media could be added. Try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine der ausgewählten Dateien konnte hinzugefügt werden. Versuche es erneut."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seçtiğin medyaların hiçbiri eklenemedi. Tekrar dene."
+          }
+        }
+      }
+    },
     "None of these" : {
       "localizations" : {
         "de" : {
@@ -36134,6 +36166,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bazı katmanlar senin dikkatini bekliyor"
+          }
+        }
+      }
+    },
+    "Some selected media couldn’t be added. The other clips are still in your edit." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einige ausgewählte Dateien konnten nicht hinzugefügt werden. Die anderen Clips sind weiterhin in deinem Video."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seçtiğin medyalardan bazıları eklenemedi. Diğer klipler düzenlemende duruyor."
           }
         }
       }

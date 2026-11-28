@@ -17,7 +17,9 @@ struct NativeEditorAddClipSheet: View {
     var launch: AddClipLaunch = .choose
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var photoItem: PhotosPickerItem?
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var galleryItems: [PhotosPickerItem] = []
+    @State private var showingGallery = false
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
     @State private var showsCamera = false
@@ -37,7 +39,7 @@ struct NativeEditorAddClipSheet: View {
                     .buttonStyle(.kriaIcon).accessibilityLabel("Close").accessibilityIdentifier("native-editor-add-clip-close")
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(choosingSource ? String(localized: "Upload from") : String(localized: "Add a clip or photo")).kriaType(.heading).foregroundStyle(KriaColor.ink)
+                Text(choosingSource ? String(localized: "Upload from") : String(localized: "Add clips or photos")).kriaType(.heading).foregroundStyle(KriaColor.ink)
                     .accessibilityAddTraits(.isHeader)
                 if !choosingSource {
                     Text("Adds to the end of your video.")
@@ -67,10 +69,26 @@ struct NativeEditorAddClipSheet: View {
         }
         .padding(.horizontal, 24).padding(.top, 12)
         .background(KriaColor.paper)
-        .photosPicker(isPresented: $showingPhotosPicker, selection: $photoItem, matching: .any(of: [.videos, .images]))
-        .onChange(of: photoItem) { _, item in
-            guard let item else { return }
-            importPhotoItem(item)
+        .sheet(isPresented: $showingGallery) {
+            LibraryPhotosPickerSheet(
+                heading: String(localized: "Choose photos and videos"), offersSaved: false,
+                selection: $galleryItems, limit: session.remainingTimelineClipCapacity,
+                filter: session.canAddTimelinePhotos ? .any(of: [.videos, .images]) : .videos,
+                kinds: session.canAddTimelinePhotos ? [.images, .videos] : .videos,
+                onRecord: nil, onSwitch: nil, cancel: { showingGallery = false }
+            ) { _ in
+                let items = galleryItems
+                showingGallery = false
+                importPhotoItems(items)
+            }
+        }
+        .photosPicker(isPresented: $showingPhotosPicker, selection: $photoItems,
+                      maxSelectionCount: max(1, session.remainingTimelineClipCapacity),
+                      selectionBehavior: .ordered,
+                      matching: session.canAddTimelinePhotos ? .any(of: [.videos, .images]) : .videos)
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            importPhotoItems(items)
         }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.movie, .image], onCompletion: importFile)
         .fullScreenCover(isPresented: $showsCamera, onDismiss: {
@@ -104,7 +122,13 @@ struct NativeEditorAddClipSheet: View {
 
     private var sourceRows: some View {
         VStack(spacing: 4) {
-            sourceRow("photo.on.rectangle.angled", String(localized: "Photos"), String(localized: "Pick photos and videos from your library"), id: "native-editor-add-clip-photos") { showingPhotosPicker = true }
+            sourceRow("photo.on.rectangle.angled", String(localized: "Photos"), String(localized: "Pick photos and videos from your library"), id: "native-editor-add-clip-photos") {
+                Task { @MainActor in
+                    galleryItems = []
+                    if await LibraryPhotosPickerSheet.hasFullAccess() { showingGallery = true }
+                    else { showingPhotosPicker = true }
+                }
+            }
             sourceRow("folder", String(localized: "Files"), String(localized: "From Files or iCloud"), id: "native-editor-add-clip-files") { showingFileImporter = true }
         }
         .disabled(session.isAddingClip)
@@ -140,14 +164,20 @@ struct NativeEditorAddClipSheet: View {
         }
     }
 
-    private func importPhotoItem(_ item: PhotosPickerItem) {
+    private func importPhotoItems(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
         let session = session
-        photoItem = nil
+        photoItems = []; galleryItems = []
         dismissAfterPickerCloses()
         Task { @MainActor in
-            await session.addClip(source: {
-                guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
-                return media.url
+            await session.addClips(sources: items.map { item in
+                {
+                    if let identifier = item.itemIdentifier {
+                        return try await PhotoItemFileLoader().load(item: item, identifier: identifier)
+                    }
+                    guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw AddClipSourceUnreadable() }
+                    return media.url
+                }
             }, uploadSource: .photos)
         }
     }

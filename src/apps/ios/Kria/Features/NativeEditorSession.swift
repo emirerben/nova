@@ -6302,19 +6302,57 @@ enum EditorOpenIntent { case warm, open }
     /// keeps `isAddingClip` true throughout, so the editor can show progress after the picker sheet
     /// has already dismissed instead of holding the user on it.
     func addClip(source: @MainActor () async throws -> URL, uploadSource: UploadSource = .files, replacingSlotID: String? = nil) async {
-        // 20 mirrors the server's `_MAX_CLIPS` pool cap — an early, friendly
-        // no-op instead of a round trip that would 422 anyway.
         guard !isAddingClip else { return }
+        isAddingClip = true
+        defer { isAddingClip = false }
+        await importTimelineClip(source: source, uploadSource: uploadSource, replacingSlotID: replacingSlotID)
+    }
+
+    /// Photos supplies ordered selections only after confirmation. Prepare each local copy in that order;
+    /// its upload may finish independently, but admission updates the existing occurrence in place.
+    func addClips(sources: [@MainActor () async throws -> URL], uploadSource: UploadSource = .photos) async {
+        guard !sources.isEmpty, !isAddingClip else { return }
+        if sources.count == 1 {
+            await addClip(source: sources[0], uploadSource: uploadSource)
+            return
+        }
+        let identity = editorOperationIdentity
+        isAddingClip = true
+        addClipError = nil
+        defer { isAddingClip = false }
+        var failureCount = 0
+        for source in sources {
+            guard identity == editorOperationIdentity, editorImportsActive, !Task.isCancelled else { return }
+            guard remainingTimelineClipCapacity > 0 else {
+                failureCount += 1
+                continue
+            }
+            await importTimelineClip(source: source, uploadSource: uploadSource, replacingSlotID: nil)
+            guard identity == editorOperationIdentity, editorImportsActive, !Task.isCancelled else { return }
+            if addClipError != nil {
+                failureCount += 1
+                addClipError = nil
+            }
+        }
+        if failureCount == sources.count {
+            addClipError = String(localized: "None of the selected media could be added. Try again.")
+        } else if failureCount > 0 {
+            addClipError = String(localized: "Some selected media couldn’t be added. The other clips are still in your edit.")
+        }
+    }
+
+    private func importTimelineClip(source: @MainActor () async throws -> URL, uploadSource: UploadSource, replacingSlotID: String?) async {
+        addClipError = nil
+        let identity = editorOperationIdentity
         if let cloudEditorUnavailableMessage {
             addClipError = cloudEditorUnavailableMessage
             return
         }
         // The sheet is already gone by now, so a silent return would drop the user's pick with no signal.
         guard !rendersOnDevice else {
-            isAddingClip = true
-            defer { isAddingClip = false }
             do {
                 let url = try await source()
+                guard identity == editorOperationIdentity, editorImportsActive, !Task.isCancelled else { return }
                 await addDeviceTimelineMedia(fileURL: url, source: uploadSource, alreadyPreparing: true, replacingSlotID: replacingSlotID)
             } catch {
                 addClipError = String(localized: "This file couldn’t be read. Try Files or choose it again.")
@@ -6329,9 +6367,6 @@ enum EditorOpenIntent { case warm, open }
             addClipError = String(localized: "This edit already has the maximum number of clips.")
             return
         }
-        isAddingClip = true
-        addClipError = nil
-        defer { isAddingClip = false }
         // With the sheet gone the user will background the app while this uploads, and `uploadFile`
         // is a foreground request, so ask for time to finish. If that time runs out the handler MUST end
         // the assertion: iOS terminates an app whose expiration handler doesn't, taking the editor's
@@ -6344,12 +6379,14 @@ enum EditorOpenIntent { case warm, open }
         defer { handle.end(using: activity) }
         do {
             let fileURL = try await source()
+            guard identity == editorOperationIdentity, editorImportsActive, !Task.isCancelled else { return }
             let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
             guard let size = values.fileSize, size > 0 else { throw APIError.invalidResponse }
             let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
             let reservation = try await api.reserveUpload(filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), purpose: nil)
             try await api.uploadFile(to: reservation, fileURL: fileURL)
             let result = try await api.addClip(jobID: jobID, gcsPath: reservation.gcsPath)
+            guard identity == editorOperationIdentity, editorImportsActive, !Task.isCancelled else { return }
             guard canEditTimeline || document.editorState == "empty" else {
                 // The clip uploaded and was minted into the job's pool, but the timeline is no longer
                 // editable (a save or render began). Say so rather than silently discarding it.
@@ -6884,8 +6921,11 @@ enum EditorOpenIntent { case warm, open }
         return rendersOnDevice && !canRegisterPhoneSources ? String(localized: "Adding media isn’t available for this edit on this iPhone.") : nil
     }
 
+    var remainingTimelineClipCapacity: Int { max(0, Self.maxTimelineClips - draft.clips.count) }
+    var canAddTimelinePhotos: Bool { !rendersOnDevice || phoneAllowsVisualKind("image") }
+
     var canAddTimelineMedia: Bool {
-        cloudEditorUnavailableMessage == nil && (canEditTimeline || document.editorState == "empty") && draft.clips.count < Self.maxTimelineClips && (!rendersOnDevice || canRegisterPhoneSources)
+        cloudEditorUnavailableMessage == nil && (canEditTimeline || document.editorState == "empty") && remainingTimelineClipCapacity > 0 && (!rendersOnDevice || canRegisterPhoneSources)
     }
     /// KRI-166: why `canAddTimelineMedia` is false, for the quick-add menu's
     /// Video row (which otherwise just greys out). Mirrors the three
@@ -7164,13 +7204,13 @@ enum EditorOpenIntent { case warm, open }
             return
         }
         guard !isAddingClip || alreadyPreparing else { return }
+        if !alreadyPreparing { isAddingClip = true }
+        addClipError = nil
+        defer { if !alreadyPreparing { isAddingClip = false } }
         if replacingSlotID == nil {
             await addPendingTimelineMedia(fileURL: fileURL, splitPanel: splitPanel)
             return
         }
-        if !alreadyPreparing { isAddingClip = true }
-        addClipError = nil
-        defer { if !alreadyPreparing { isAddingClip = false } }
         var importID: UUID?
         do {
             let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -7222,9 +7262,6 @@ enum EditorOpenIntent { case warm, open }
     /// The pick goes into the timeline at once, played from a copy the editor keeps; upload and admission run behind
     /// it and `landPendingTimelineAdd` swaps in the server's index. Only a video's length is read before the insert.
     private func addPendingTimelineMedia(fileURL: URL, splitPanel: (sectionID: String, panel: Int, offset: Double)?) async {
-        isAddingClip = true
-        defer { isAddingClip = false }
-        addClipError = nil
         let id = UUID()
         do {
             let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
@@ -7421,11 +7458,11 @@ enum EditorOpenIntent { case warm, open }
 
     /// Save never sends a provisional index: it waits for adds still uploading, then refuses a block whose upload failed.
     private func finishPendingAddsBeforeSave() async -> Bool {
-        guard !pendingTimelineAdds.isEmpty || document.clips.contains(where: { $0.raw["pending_local"] == .bool(true) }) else { return true }
+        guard isAddingClip || !pendingTimelineAdds.isEmpty || document.clips.contains(where: { $0.raw["pending_local"] == .bool(true) }) else { return true }
         let identity = editorOperationIdentity
         defer { finishingUploadCount = 0 }
-        while uploadingAddCount > 0 {
-            finishingUploadCount = uploadingAddCount
+        while isAddingClip || uploadingAddCount > 0 {
+            finishingUploadCount = max(isAddingClip ? 1 : 0, uploadingAddCount)
             try? await Task.sleep(for: .milliseconds(100))
             guard !Task.isCancelled, identity == editorOperationIdentity else { return false }
         }
