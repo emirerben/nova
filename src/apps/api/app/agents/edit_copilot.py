@@ -4415,10 +4415,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 'Return intent="describe", ops=[], claimed_ops=[] '
                 "and put the suggestions in reply.\n"
                 "Use the current timeline's numbering and media descriptions: give short distinct "
-                "options for each requested video or photo, including later items. If the footage "
-                "is not understood, say which item lacks a description instead of inventing "
-                "details. Do not research, add, stage, save or render anything, and do not claim "
-                "that you did.\n"
+                "options for each timeline occurrence requested, even if the same video or photo "
+                "appears twice. Include later items, and do not group repeated assets. "
+                "If the footage is not understood, say which item lacks a description instead of "
+                "inventing details. Do not research, add, stage, save or render anything, "
+                "and do not claim that you did.\n"
             )
         return prompt
 

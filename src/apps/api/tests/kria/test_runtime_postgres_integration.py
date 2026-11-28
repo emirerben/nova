@@ -4065,8 +4065,10 @@ async def test_kri793_t1_every_row_gets_a_line_before_approval(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_assets", [False, True], ids=["unique", "repeated"])
 async def test_mixed_editor_text_preview_survives_chat_delivery_without_draft_or_render(
     monkeypatch,
+    repeat_assets,
 ):
     import json
     from types import SimpleNamespace
@@ -4075,11 +4077,46 @@ async def test_mixed_editor_text_preview_survives_chat_delivery_without_draft_or
     from app.agents._runtime import ModelInvocation
     from app.kria import planner
     from app.routes import _copilot
+    from app.routes import generative_jobs as gj
+    from app.services.authored_editor import prepare_authored_editor_commit
+    from app.services.editor_empty_drafts import stage_initial_authored_baseline
+    from app.services.kria_editor_ops import build_editor_snapshot
     from tests.kria.test_creative_brief import _MANIFEST
     from tests.routes.test_phone_guided_photo_order_commit import mixed_montage
 
     fixture, variant, revision = mixed_montage(monkeypatch)
+    expected_order = [m for i in range(12) for m in (f"v{i}", f"p{i}")] + ["p12"]
+    if repeat_assets:
+        rows = gj.editor_deletion_timeline(fixture, variant)
+        baseline = stage_initial_authored_baseline(fixture, "guided_story", rows)
+        new_rows = [
+            rows[0],
+            {**rows[0], "slot_id": None, "parent_segment_id": None},
+            rows[1],
+            {**rows[1], "slot_id": None, "parent_segment_id": None},
+            *rows[2:],
+        ]
+        body = gj.EditorCommitRequest.model_validate(
+            {
+                "base_generation": gj.variant_render_baseline(variant),
+                "editor_state_version": 1,
+                "timeline_slots": new_rows,
+            }
+        )
+        prepared = prepare_authored_editor_commit(
+            baseline, "guided_story", body, validation_arguments={}
+        )
+        assert prepared["render_destination"] == "device"
+        fixture.assembly_plan = baseline.assembly_plan
+        variant = fixture.assembly_plan["variants"][0]
+        expected_order = ["v0", "v0", "p0", "p0", *expected_order[2:]]
     variant["render_status"] = "ready"
+    slots = build_editor_snapshot(fixture, variant)["slots"]
+    assert [slot["media_id"] for slot in slots] == expected_order
+    assert [slot["media_kind"] for slot in slots] == [
+        "video" if media.startswith("v") else "image" for media in expected_order
+    ]
+    assert len({slot["slot_id"] for slot in slots}) == len(expected_order)
     user_id, thread_id, session_id = _seed_runtime_project()
     with sync_session() as db:
         thread = db.get(CreationThread, thread_id)
@@ -4132,8 +4169,9 @@ async def test_mixed_editor_text_preview_survives_chat_delivery_without_draft_or
         Mock(side_effect=AssertionError("read-only options must not enter the rebuild planner")),
     )
     reply = "Here are two options for each item.\n" + "\n".join(
-        f"{i + 1}. Section {i + 1} comes into view / The match-day scene in section {i + 1}"
-        for i in range(25)
+        f"{i + 1}. {'Video' if media.startswith('v') else 'Photo'} {i + 1} comes into view "
+        f"/ The match-day scene in section {i + 1}"
+        for i, media in enumerate(expected_order)
     )
     assert len(reply) > 1200
     scope = "preview"
@@ -4183,6 +4221,10 @@ async def test_mixed_editor_text_preview_survives_chat_delivery_without_draft_or
             )
         result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
         assert result == {"turn_id": accepted.turn_id, "status": "completed"}
+        assert "each timeline occurrence" in prompts[0]
+        for index, media in enumerate(expected_order):
+            kind = "video" if media.startswith("v") else "image"
+            assert f"{index}. media_id={media!r} media_kind={kind!r}" in prompts[0]
 
         with sync_session() as db:
             turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
@@ -4190,6 +4232,13 @@ async def test_mixed_editor_text_preview_survives_chat_delivery_without_draft_or
             assert plan.editor_advice and plan.response == reply and not plan.intents
             event = db.get(CreationThreadEvent, turn.observed_event_id)
             assert event.content == reply and event.payload["editor_advice"] is True
+            assert (
+                not db.execute(
+                    select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
+                )
+                .scalars()
+                .all()
+            )
             assert (
                 not db.execute(
                     select(CreatorAgentExecution).where(CreatorAgentExecution.turn_id == turn.id)
@@ -4224,7 +4273,7 @@ async def test_mixed_editor_text_preview_survives_chat_delivery_without_draft_or
         # Explicit wording approval remains an ordinary editor request. A choice for the final
         # item requires the actual persisted options, not an invented answer to truncated history.
         scope = "edit"
-        selected = "The match-day scene in section 25"
+        selected = f"The match-day scene in section {len(expected_order)}"
         model_output = {
             "intent": "edit",
             "ops": [
