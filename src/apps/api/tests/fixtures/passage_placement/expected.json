@@ -1,0 +1,10 @@
+{
+  "_meta": {
+    "source": "hand_authored_expectation",
+    "keys": "start of the sentence the picture must sit on (seconds on the take)",
+    "why": "What each passage is about is read off the sentences in the test, not off the matcher's output. null means the speaker stays on screen."
+  },
+  "match": {"3.0": "asset_tahini", "12.0": "asset_cookies", "21.0": null},
+  "none": {"3.0": null, "12.0": null, "21.0": null},
+  "paraphrase": {"3.0": "asset_tahini", "12.0": "asset_cookies", "21.0": null}
+}

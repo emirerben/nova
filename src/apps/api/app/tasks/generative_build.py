@@ -13162,6 +13162,11 @@ def _run_phone_subtitled_job(
                                 video_supported=video_overlays_enabled,
                                 spoken_language=overlay_spoken_lang,
                                 **(
+                                    {"creator_request": _creator_request_text(all_candidates)}
+                                    if settings.passage_placement_enabled
+                                    else {}
+                                ),
+                                **(
                                     {
                                         "layout": overlay_layout,
                                         "chronological": overlay_chronological,

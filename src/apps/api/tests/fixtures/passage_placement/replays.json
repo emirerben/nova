@@ -1,0 +1,160 @@
+{
+  "_meta": {
+    "source": "hand_authored_contract",
+    "kind": "contract",
+    "pins": "what the card matcher does with a well-formed answer: parse, compile, and the cards that result. It does not pin what the real model answers.",
+    "unproven": "Whether the real model gives these answers on these transcripts is NOT measured here; only a paid live run measures it.",
+    "cases": {
+      "match": "each real picture on the passage it is about; the decoy and the third passage get nothing",
+      "none": "no picture in the pool is about any passage, so nothing is placed and the wishlist says what to add",
+      "paraphrase": "the speech says 'sesame paste', the picture is labelled 'tahini'; the model places it on that passage by meaning",
+      "decoy_placed": "a WRONG answer: the decoy that only shares the word 'brown' is placed. The matrix oracle must reject it"
+    }
+  },
+  "en": {
+    "match": {
+      "placements": [
+        {
+          "asset_id": "asset_tahini",
+          "slot": "top",
+          "start_s": 3.8,
+          "end_s": 6.15,
+          "confidence_tier": "confident",
+          "reason": "You say \"mix the tahini\" - this jar shows it.",
+          "transcript_anchor": "mix the tahini",
+          "sfx_intent": "none"
+        },
+        {
+          "asset_id": "asset_cookies",
+          "slot": "top",
+          "start_s": 12.8,
+          "end_s": 14.75,
+          "confidence_tier": "confident",
+          "reason": "You say \"the cookies bake\" - this tray shows it.",
+          "transcript_anchor": "the cookies bake",
+          "sfx_intent": "none"
+        }
+      ],
+      "wishlist": []
+    },
+    "none": {
+      "placements": [],
+      "wishlist": [
+        "Add a photo of the tahini jar you mention"
+      ]
+    },
+    "paraphrase": {
+      "placements": [
+        {
+          "asset_id": "asset_tahini",
+          "slot": "top",
+          "start_s": 3.8,
+          "end_s": 6.15,
+          "confidence_tier": "confident",
+          "reason": "You say \"whisk sesame paste\" - that is the tahini in this jar.",
+          "transcript_anchor": "whisk sesame paste",
+          "sfx_intent": "none"
+        },
+        {
+          "asset_id": "asset_cookies",
+          "slot": "top",
+          "start_s": 12.8,
+          "end_s": 14.75,
+          "confidence_tier": "confident",
+          "reason": "You say \"the cookies bake\" - this tray shows it.",
+          "transcript_anchor": "the cookies bake",
+          "sfx_intent": "none"
+        }
+      ],
+      "wishlist": []
+    },
+    "decoy_placed": {
+      "placements": [
+        {
+          "asset_id": "asset_decoy",
+          "slot": "top",
+          "start_s": 5.4,
+          "end_s": 6.15,
+          "confidence_tier": "confident",
+          "reason": "You say \"brown sugar\" - this sofa is brown.",
+          "transcript_anchor": "brown sugar",
+          "sfx_intent": "none"
+        }
+      ],
+      "wishlist": []
+    }
+  },
+  "tr": {
+    "match": {
+      "placements": [
+        {
+          "asset_id": "asset_tahini",
+          "slot": "top",
+          "start_s": 3.4,
+          "end_s": 5.1,
+          "confidence_tier": "confident",
+          "reason": "\"tahini\" diyorsun - bu kavanoz onu gosteriyor.",
+          "transcript_anchor": "tahini esmer",
+          "sfx_intent": "none"
+        },
+        {
+          "asset_id": "asset_cookies",
+          "slot": "top",
+          "start_s": 12.4,
+          "end_s": 14.75,
+          "confidence_tier": "confident",
+          "reason": "\"kurabiyeler\" diyorsun - bu tepsi onu gosteriyor.",
+          "transcript_anchor": "kurabiyeler on iki dakika",
+          "sfx_intent": "none"
+        }
+      ],
+      "wishlist": []
+    },
+    "none": {
+      "placements": [],
+      "wishlist": [
+        "Bahsettigin tahini kavanozunun fotografini ekle"
+      ]
+    },
+    "paraphrase": {
+      "placements": [
+        {
+          "asset_id": "asset_tahini",
+          "slot": "top",
+          "start_s": 3.4,
+          "end_s": 5.1,
+          "confidence_tier": "confident",
+          "reason": "\"susam ezmesi\" diyorsun - bu tahini kavanozu.",
+          "transcript_anchor": "susam ezmesini",
+          "sfx_intent": "none"
+        },
+        {
+          "asset_id": "asset_cookies",
+          "slot": "top",
+          "start_s": 12.4,
+          "end_s": 14.75,
+          "confidence_tier": "confident",
+          "reason": "\"kurabiyeler\" diyorsun - bu tepsi onu gosteriyor.",
+          "transcript_anchor": "kurabiyeler on iki dakika",
+          "sfx_intent": "none"
+        }
+      ],
+      "wishlist": []
+    },
+    "decoy_placed": {
+      "placements": [
+        {
+          "asset_id": "asset_decoy",
+          "slot": "top",
+          "start_s": 3.4,
+          "end_s": 5.1,
+          "confidence_tier": "confident",
+          "reason": "\"esmer\" diyorsun - bu koltuk esmer.",
+          "transcript_anchor": "esmer",
+          "sfx_intent": "none"
+        }
+      ],
+      "wishlist": []
+    }
+  }
+}

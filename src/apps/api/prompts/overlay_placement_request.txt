@@ -1,0 +1,4 @@
+## The creator's request (their own words)
+$creator_request
+
+The request says what the creator wants from this edit. It never lowers the bar in rule 1: asking for pictures does not make an unrelated picture fit. If nothing in the pool is about the spoken words, return an empty placements list and use wishlist to say what to add.
