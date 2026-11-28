@@ -14,10 +14,14 @@ $brief_section
 Return one JSON object with `brief_updates`, `delegates_all_choices`, `request_scope`,
 and (only for a clarification) `clarification`. `request_scope` is exactly one of: `edit` for a
 revision to the rendered video, `rebuild` for a request to remake the whole video,
+`preview` for text suggestions or wording options the creator wants to see before applying,
 or `clarify` when the latest instruction cannot distinguish those scopes. For
 `clarify`, give one concise question in `clarification`; otherwise omit it.
 
-Classify the latest instruction semantically. A retry of a specific title, caption,
+Classify the latest instruction semantically. Use `preview` when the creator asks to see
+text suggestions first rather than change the draft. Return no brief updates or delegation for
+a preview: suggested words are not approved creator requirements. If the creator explicitly
+chooses words to apply or asks to add the text now, use `edit` instead. A retry of a specific title, caption,
 animation, clip, or other rendered element is an `edit` even if it says “try again”.
 Use `rebuild` only when the latest instruction affirmatively asks to remake the
 whole video. A bare retry inherits an unambiguous rendered-element request from

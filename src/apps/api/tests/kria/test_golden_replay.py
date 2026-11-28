@@ -270,3 +270,25 @@ def test_paraphrase_only_guard_accepts_editorial_value() -> None:
         user_message="Make a fast matcha launch video",
         assistant_message="Open on the whisking close-up; it creates immediate movement.",
     )
+
+
+def test_only_read_only_editor_advice_accepts_a_long_response() -> None:
+    from app.kria.contracts import MAX_EDITOR_ADVICE_CHARS, MAX_PLAN_RESPONSE_CHARS
+
+    reply = "x" * (MAX_PLAN_RESPONSE_CHARS + 1)
+    with pytest.raises(ValidationError):
+        KriaTurnPlan(mode="respond", turn_value="decision", response=reply)
+    plan = KriaTurnPlan(mode="respond", turn_value="decision", response=reply, editor_advice=True)
+    assert KriaTurnPlan.model_validate(plan.model_dump(mode="json")) == plan
+    with pytest.raises(ValidationError):
+        KriaTurnPlan(mode="respond", turn_value="recovery", response=reply, editor_advice=True)
+    with pytest.raises(ValidationError):
+        KriaTurnPlan(
+            mode="respond",
+            turn_value="decision",
+            response="x" * (MAX_EDITOR_ADVICE_CHARS + 1),
+            editor_advice=True,
+        )
+    schema = KriaTurnPlan.model_json_schema()["properties"]
+    assert "editor_advice" not in schema
+    assert schema["response"]["anyOf"][0]["maxLength"] == MAX_PLAN_RESPONSE_CHARS

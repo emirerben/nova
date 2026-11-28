@@ -110,15 +110,15 @@ _FENCE = re.compile(r"```+")
 _MAX_FIELD_CHARS = 400
 
 
-def _sanitize_text(s: str) -> str:
+def _sanitize_text(s: str, *, max_chars: int = _MAX_FIELD_CHARS) -> str:
     if not s:
         return ""
     s = _CONTROL_CHARS.sub(" ", s)
     s = _ROLE_MARKERS.sub("[role-marker-stripped] ", s)
     s = _FENCE.sub("'''", s)
     s = re.sub(r"\s+", " ", s).strip()
-    if len(s) > _MAX_FIELD_CHARS:
-        s = s[: _MAX_FIELD_CHARS - 1].rstrip() + "…"
+    if len(s) > max_chars:
+        s = s[: max_chars - 1].rstrip() + "…"
     return s
 
 

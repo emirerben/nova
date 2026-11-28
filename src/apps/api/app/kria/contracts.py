@@ -6,7 +6,7 @@ Private checkpoints retain source identity and are never copied into chat events
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
@@ -15,6 +15,8 @@ from app.schemas.order_replacement import OrderReplacementProposal
 from app.schemas.user_song import SongOrderQuestion, SongRangeQuestion
 
 KRIA_SCHEMA_VERSION = 2
+MAX_PLAN_RESPONSE_CHARS = 1_200
+MAX_EDITOR_ADVICE_CHARS = 12_000
 
 
 class _KriaModel(BaseModel):
@@ -55,7 +57,14 @@ class KriaTurnPlan(_KriaModel):
     schema_version: Literal[2] = KRIA_SCHEMA_VERSION
     mode: Literal["respond", "act"]
     turn_value: Literal["decision", "question", "action", "progress", "review", "recovery"]
-    response: str | None = Field(default=None, max_length=1200)
+    response: (
+        Annotated[str, Field(max_length=MAX_PLAN_RESPONSE_CHARS)]
+        | SkipJsonSchema[Annotated[str, Field(max_length=MAX_EDITOR_ADVICE_CHARS)]]
+        | None
+    ) = None
+    # Server-owned, read-only copilot answers can list wording for a full montage. Keep
+    # the ordinary plan limit and model-visible schema unchanged.
+    editor_advice: SkipJsonSchema[bool] = Field(default=False, exclude_if=lambda value: not value)
     evidence_ids: list[str] = Field(default_factory=list, max_length=24)
     intents: list[KriaToolIntent] = Field(default_factory=list, max_length=8)
     # KRI-282: redacted reason code + counts/latencies for a degraded turn
@@ -127,6 +136,16 @@ class KriaTurnPlan(_KriaModel):
 
     @model_validator(mode="after")
     def _mode_has_one_authority_path(self) -> KriaTurnPlan:
+        if self.editor_advice and (
+            self.mode != "respond" or self.turn_value not in {"decision", "question"}
+        ):
+            raise ValueError("editor advice must be a read-only response")
+        if (
+            self.response is not None
+            and len(self.response) > MAX_PLAN_RESPONSE_CHARS
+            and not self.editor_advice
+        ):
+            raise ValueError("ordinary plan response exceeds its length limit")
         if self.mode == "respond":
             if not self.response or not self.response.strip():
                 raise ValueError("respond plans require a direct response")

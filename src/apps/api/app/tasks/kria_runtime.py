@@ -940,6 +940,7 @@ def _complete_response_turn(
                 "receipt_ids": [],
                 "next_actions": [],
                 "schema_version": plan.schema_version,
+                **({"editor_advice": True} if plan.editor_advice else {}),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
                 **({"brief_coverage": brief_coverage} if brief_coverage is not None else {}),
                 **_clip_order_payload(clip_order_entries, turn.id),

@@ -40,6 +40,7 @@ from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
 from app.kria.clip_dim import stored_row_dim
 from app.kria.clip_tilt import ClipTilt
+from app.kria.contracts import MAX_EDITOR_ADVICE_CHARS
 from app.kria.reply_language import prompt_language_line, say
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
@@ -167,7 +168,7 @@ log = structlog.get_logger()
 # retime_background_window and the SECTIONS + LAYOUT WINDOWS lines (prompts/edit_copilot_ops/
 # speaker_sections.txt), printed only where the sections gate is open (a protocol 59 build with
 # speakerSections verified), so every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-27-v135"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-28-v136"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -975,6 +976,7 @@ class EditCopilotInput(BaseModel):
     reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
     # KRI-1387: set only on a repair call, so a first ask's prompt and input dump are unchanged.
     repair: CopilotRepair | None = Field(default=None, exclude_if=lambda v: v is None)
+    preview_only: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class EditCopilotOutput(BaseModel):
@@ -1078,8 +1080,15 @@ def _original_request_block(value: str | None) -> str:
     )
 
 
-def _clean_prompt_data(value: object, *, max_chars: int | None = 220) -> str:
-    clean = _sanitize_text(str(value or ""))
+def _clean_prompt_data(
+    value: object, *, max_chars: int | None = 220, preserve_advice: bool = False
+) -> str:
+    raw = str(value or "")
+    clean = (
+        _sanitize_text(raw, max_chars=MAX_EDITOR_ADVICE_CHARS)
+        if preserve_advice
+        else _sanitize_text(raw)
+    )
     # Preserve line boundaries for the role-marker pass below.  Collapsing a
     # newline first would make an embedded ``system:`` marker look like prose.
     clean = re.sub(r"[\x00-\x09\x0b-\x1f\x7f]+", " ", clean)
@@ -1434,10 +1443,24 @@ def _format_prior_turns(turns: list[dict]) -> str:
         return "(no prior turns)"
     visible_turns = turns[:12]
     latest_assistant_index = _latest_assistant_turn_index(visible_turns)
+    advice_index = next(
+        (
+            index
+            for index in range(len(visible_turns) - 1, -1, -1)
+            if isinstance(visible_turns[index], dict)
+            and visible_turns[index].get("role") == "assistant"
+            and visible_turns[index].get("editor_advice") is True
+        ),
+        None,
+    )
     lines: list[str] = []
     for index, turn in enumerate(visible_turns):
         role = _clean_prompt_data(turn.get("role", "unknown"), max_chars=30).upper()
-        content = _clean_prompt_data(turn.get("content", ""), max_chars=350)
+        content = _clean_prompt_data(
+            turn.get("content", ""),
+            max_chars=MAX_EDITOR_ADVICE_CHARS if index == advice_index else 350,
+            preserve_advice=index == advice_index,
+        )
         if content:
             lines.append(f"{role}: {content}")
         applied = turn.get("applied") or []
@@ -4385,7 +4408,20 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         prompt = _with_scope_fragment(prompt, input.variant_snapshot)
-        return _with_direction_fragment(prompt, input.variant_snapshot)
+        prompt = _with_direction_fragment(prompt, input.variant_snapshot)
+        if input.preview_only:
+            prompt += (
+                "\n\nThis turn is read-only. The creator wants wording options before any edit.\n"
+                'Return intent="describe", ops=[], claimed_ops=[] '
+                "and put the suggestions in reply.\n"
+                "Use the current timeline's numbering and media descriptions: give short distinct "
+                "options for each timeline occurrence requested, even if the same video or photo "
+                "appears twice. Include later items, and do not group repeated assets. "
+                "If the footage is not understood, say which item lacks a description instead of "
+                "inventing details. Do not research, add, stage, save or render anything, "
+                "and do not claim that you did.\n"
+            )
+        return prompt
 
     def turn_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
         """This turn's message, draft and history."""

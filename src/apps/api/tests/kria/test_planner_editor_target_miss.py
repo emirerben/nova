@@ -877,3 +877,174 @@ async def test_missing_variant_never_looks_up_an_editor_head(monkeypatch, compos
     assert target is None
     assert [row["reason"] for row in logs] == ["no_render"]
     db.execute.assert_not_awaited()
+
+
+async def test_editor_planning_validation_failure_logs_only_the_contract_field(monkeypatch):
+    from pydantic import ValidationError
+
+    from app.routes._copilot import CopilotTurnBody
+
+    private_marker = "SYNTHETIC_PRIVATE_TEXT" * 1000
+    with pytest.raises(ValidationError) as error:
+        CopilotTurnBody(message=private_marker)
+    copilot = AsyncMock(side_effect=error.value)
+    db, item, creator_id, _, _ = _wire_real(
+        monkeypatch, render_status="ready", copilot=copilot, extracted_updates=[]
+    )
+    with capture_logs() as logs:
+        result = await _ask(db, item, creator_id, "Show me wording options.")
+    assert result.brief_coverage["reason"] == "editor_planning_failed"
+    (event,) = [log for log in logs if log["event"] == "kria_request_recovery_cause"]
+    assert event["error_class"] == "message:string_too_long"
+    assert "error" not in event and "exc_info" not in event
+    assert "SYNTHETIC_PRIVATE_TEXT" not in str(result.plan.diagnostics)
+
+
+@pytest.mark.parametrize(
+    ("scope", "case", "language"),
+    [
+        ("edit", "advice", "en"),  # Reproduced failure on the deployed extractor contract.
+        ("preview", "advice", "en"),
+        ("preview", "advice", "tr"),
+        ("preview", "unapproved_edit", "en"),
+        ("edit", "explicit_apply", "en"),
+    ],
+)
+async def test_mixed_montage_editor_options_only_delivers_every_item(
+    monkeypatch, scope, case, language
+):
+    import copy
+    import json
+
+    from app.agents._runtime import ModelInvocation
+    from app.agents.brief_extractor import BriefExtractorAgent
+    from app.kria.contracts import KriaTurnPlan
+    from app.routes import _copilot
+    from app.services.kria_editor_ops import build_editor_snapshot
+    from tests.routes.test_phone_guided_photo_order_commit import mixed_montage
+
+    mixed_job, variant, _revision = mixed_montage(monkeypatch)
+    db, item, creator_id, runs, _ = _wire_real(
+        monkeypatch, render_status="ready", extracted_updates=[]
+    )
+    variant["render_status"] = "ready"
+    mixed_job.user_id = creator_id
+    mixed_job.status = "variants_ready"
+    item._fields["current_job_id"] = mixed_job.id
+    saved_get = db.get.side_effect
+
+    async def get(model, identifier, **kwargs):
+        if model is Job:
+            return mixed_job
+        row = await saved_get(model, identifier, **kwargs)
+        if model is CreatorAgentSession:
+            row.target_job_id = mixed_job.id
+            row.target_variant_id = variant["variant_id"]
+        return row
+
+    db.get = AsyncMock(side_effect=get)
+    seen = {
+        f"v{i}": f"Supporters waving a scarf in section {i + 1} at a stadium" for i in range(12)
+    } | {f"p{i}": f"A still photo of a red and blue flag in section {i + 1}" for i in range(13)}
+    monkeypatch.setattr(planner, "build_editor_snapshot", build_editor_snapshot)
+    monkeypatch.setattr(planner, "_copilot_clip_context", AsyncMock(return_value={"seen": seen}))
+    monkeypatch.setattr(planner, "run_copilot_turn", _copilot.run_copilot_turn)
+    monkeypatch.setattr(planner, "BriefExtractorAgent", BriefExtractorAgent)
+    extractor_raw = json.dumps(
+        {"brief_updates": [], "request_scope": scope, "conversation_language": language}
+    )
+    extractor = SimpleNamespace(invoke=lambda **_: ModelInvocation(raw_text=extractor_raw))
+    monkeypatch.setattr(planner, "default_client", lambda: extractor)
+
+    snapshot = build_editor_snapshot(mixed_job, variant, clip_context={"seen": seen})
+    assert [row["media_id"] for row in snapshot["slots"]] == [
+        item for i in range(12) for item in (f"v{i}", f"p{i}")
+    ] + ["p12"]
+    expected_rows = [
+        (
+            f"{i + 1}. Video: The stands come alive in section {i // 2 + 1} / A sea of supporters"
+            if i % 2 == 0 and i < 24
+            else f"{i + 1}. Photo: Match day flag in section {i // 2 + 1} / Colors in the stands"
+        )
+        if language == "en"
+        else (
+            f"{i + 1}. Video: {i // 2 + 1}. tribünde coşku / Taraftarların yükselen sesi"
+            if i % 2 == 0 and i < 24
+            else f"{i + 1}. Fotoğraf: {i // 2 + 1}. tribünde bayrak / Maç gününün renkleri"
+        )
+        for i in range(25)
+    ]
+    reply = (
+        "Here are two possible lines for every item.\n"
+        if language == "en"
+        else "İşte her çekim için iki yazı seçeneği.\n"
+    ) + "\n".join(expected_rows)
+    assert len(reply) > 1200
+    if case == "advice":
+        raw = {
+            "intent": "describe",
+            "ops": [],
+            "confidence": 0.99,
+            "reply": reply,
+            "claimed_ops": [],
+        }
+    else:
+        raw = {
+            "intent": "edit",
+            "ops": [
+                {
+                    "op": "edit_text",
+                    "bar_index": 0,
+                    "text": "Match-day energy",
+                }
+            ],
+            "confidence": 0.99,
+            "reply": "I changed the title.",
+            "claimed_ops": ["edit_text"],
+        }
+    prompts = []
+
+    def invoke(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return ModelInvocation(raw_text=json.dumps(raw))
+
+    provider = SimpleNamespace(invoke=invoke)
+    monkeypatch.setattr(_copilot, "default_client", lambda: provider)
+    original_plan = copy.deepcopy(mixed_job.assembly_plan)
+    message = (
+        "Change the opening title to 'Match-day energy'."
+        if case == "explicit_apply"
+        else (
+            "Come up with suggestions for each text we can write to each video or image. "
+            "Don’t add directly, show me options first."
+        )
+        if language == "en"
+        else (
+            "Her video ve fotoğraf için iki yazı seçeneği öner. "
+            "Şimdilik ekleme, önce seçenekleri göster."
+        )
+    )
+    with capture_logs() as logs:
+        result = await _ask(db, item, creator_id, message)
+    if case == "advice":
+        assert result.plan.mode == "respond", result
+        assert result.plan.response == reply, [
+            event for event in logs if event["event"] == "kria_request_recovery_cause"
+        ]
+        assert result.plan.editor_advice
+        assert KriaTurnPlan.model_validate(result.plan.model_dump(mode="json")) == result.plan
+        assert not result.plan.intents
+    elif case == "unapproved_edit":
+        assert result.plan.mode == "respond" and not result.plan.intents
+        assert "unchanged" in result.plan.response
+        assert not result.plan.editor_advice
+    else:
+        assert result.plan.mode == "act", result.plan
+        assert [intent.tool_name for intent in result.plan.intents] == ["draft.apply_editor_ops"]
+        assert result.plan.intents[0].arguments["operations"][0]["text"] == "Match-day energy"
+    assert not result.brief_updates
+    assert not runs
+    assert mixed_job.assembly_plan == original_plan
+    assert all(("This turn is read-only" in prompt) == (scope == "preview") for prompt in prompts)
+    assert prompts
+    assert "A still photo of a red and blue flag in section 13" in prompts[0]

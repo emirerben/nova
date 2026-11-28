@@ -44,7 +44,7 @@ class BriefExtractionOutput(BaseModel):
     delegates_all_choices: bool = False
     # KRI-816: typed "start fresh": the server withdraws every saved requirement.
     starts_fresh: bool = False
-    request_scope: Literal["edit", "rebuild", "clarify"] | None = None
+    request_scope: Literal["edit", "rebuild", "preview", "clarify"] | None = None
     clarification: str | None = Field(default=None, max_length=1_000)
     # The language the creator writes to Kria in, read from their own words (never the video's
     # text). None = could not tell or not offered now: the chat keeps its stored language.

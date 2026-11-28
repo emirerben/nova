@@ -87,6 +87,8 @@ class CopilotTurnResponse(BaseModel):
     # KRI-738: tappable lengths for a "how short/long?" question. Read by the chat planner only;
     # kept out of the HTTP body so the legacy routes' JSON is unchanged.
     length_options: list[dict] = Field(default_factory=list, exclude=True)
+    # A successful informational answer, as opposed to a refused or unapplied edit.
+    advice: bool = Field(default=False, exclude=True)
 
 
 # Edit verbs a reply uses to claim the draft changed. Stem-based so past and
@@ -428,6 +430,7 @@ async def run_copilot_turn(
     timeout_override_s: float | None = 40.0,
     compile_check: CompileCheck | None = None,
     text_design: str | None = None,
+    preview_only: bool = False,
 ) -> CopilotTurnResponse:
     """Run one stateless edit-copilot turn.
 
@@ -451,6 +454,7 @@ async def run_copilot_turn(
         prior_turns=body.turns[:12],
         variant_snapshot=body.snapshot,
         original_request=body.original_request,
+        preview_only=preview_only,
         # KRI-520: bound per Kria turn; None (unchanged prompt) everywhere else.
         reply_language=current_reply_language(),
     )
@@ -461,7 +465,7 @@ async def run_copilot_turn(
     )
 
     agent = configure_creator_agent(ChatEditCopilotAgent(default_client()), "edit_copilot")
-    agent.compile_check = compile_check
+    agent.compile_check = None if preview_only else compile_check
     request_id = _paid_request_id(body, job_id=job_id)
 
     def run_context(suffix: str = "") -> RunContext:
@@ -491,14 +495,35 @@ async def run_copilot_turn(
             detail="edit_copilot_failed",
         ) from exc
 
-    output = await _repaired(
-        agent,
-        agent_input,
-        output,
-        run_context,
-        deadline_monotonic=deadline_monotonic,
-        timeout_override_s=timeout_override_s,
-    )
+    if preview_only:
+        if (
+            output.intent not in {"describe", "clarify"}
+            or output.research_request is not None
+            or _reply_claims(output, output.reply)
+        ):
+            output = EditCopilotOutput(
+                intent="clarify",
+                ops=[],
+                confidence=1,
+                needs_clarification=True,
+                claimed_ops=[],
+                reply=say(
+                    en=(
+                        "I couldn't prepare text options this time. "
+                        "Your edit is unchanged. Try again."
+                    ),
+                    tr="Bu kez yazı seçenekleri hazırlayamadım. Düzenlemen değişmedi. Tekrar dene.",
+                ),
+            )
+    else:
+        output = await _repaired(
+            agent,
+            agent_input,
+            output,
+            run_context,
+            deadline_monotonic=deadline_monotonic,
+            timeout_override_s=timeout_override_s,
+        )
 
     if output.research_request is not None:
         from app.services.researched_text import ResearchUnavailable, run_researched_revision
@@ -574,4 +599,13 @@ async def run_copilot_turn(
         unmet_requests=output.unmet_requests,
         reply_notes=output.reply_notes,
         length_options=output.length_options if outcome == "clarification" else [],
+        advice=(
+            output.intent == "describe"
+            and outcome == "no_effect"
+            and not ops
+            and not output.rejection_reasons
+            and not output.unmet_requests
+            and output.reply.strip() == reply
+            and not _reply_claims(output, reply)
+        ),
     )

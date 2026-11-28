@@ -372,6 +372,10 @@ def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, A
         # job's clip paths so kind selectors and still-image rules see photos.
         paths = list((getattr(job, "all_candidates", None) or {}).get("clip_paths") or [])
         for row in rows:
+            # Authored Save persists its resolved source kind, and its source indexes
+            # are not necessarily indexes into the older clip_paths list.
+            if row.get("media_kind") is None and row.get("source_kind") in {"image", "video"}:
+                row["media_kind"] = row["source_kind"]
             index = row.get("clip_index")
             if (
                 row.get("media_kind") is None
