@@ -339,18 +339,23 @@ def card_problems(
     captions: list[NormalizedBox],
     inks: list,
     card_mode: str = "clean",
+    bleed: bool = False,
 ) -> list[str]:
     """Why these card boxes may not be drawn: measured here, not with the layout's own rule. A
-    pop card may cover her face."""
+    pop card (or a sticker in ``sticker_pop``) may cover her face; with ``bleed`` (KRI-1616) a
+    pop card or sticker may hang past a side by up to 0.35 of its width."""
     from app.services.phone_card_layout import WATERMARK_BOX, boxes_intersect  # noqa: PLC0415
 
+    side = 0.35 if bleed and card_mode != "clean" else 0.0
     rows = [NormalizedBox(0.0, c.top, 1.0, c.bottom) for c in captions]  # the caption row
     problems = []
     for n, box in enumerate(boxes, start=1):
-        if min(box.left, box.top, 1 - box.right, 1 - box.bottom) < 0.02 - 1e-6:
+        past = max(-box.left, box.right - 1.0, 0.0)
+        inset = min(box.left, 1 - box.right) if not past else 1.0
+        if min(box.top, 1 - box.bottom, inset) < 0.02 - 1e-6 or past > side * box.width + 1e-6:
             problems.append(f"card {n} leaves the frame")
         for what, others in (
-            ("face", [] if card_mode == "pop" else [face]),
+            ("face", [] if card_mode in ("pop", "sticker_pop") else [face]),
             ("caption row", rows),
             ("wordmark", [WATERMARK_BOX]),
             ("title ink", inks),
@@ -365,16 +370,84 @@ def card_problems(
 
 
 def _card_offer(
-    lang: str, index: int, face: tuple = ROOMY_FACE
+    lang: str,
+    index: int,
+    face: tuple = ROOMY_FACE,
+    *,
+    moves: st.CardMoves = st.CardMoves(),
+    photos: list | None = None,
 ) -> tuple[Any, str, list[dict], dict]:
     job, vid, rows = fx.talking_job(
         CARD_TITLES[lang], face=face, job_id=uuid.UUID(int=_SEED_JOB.int + 500 + index)
     )
     arguments = {"user_id": fx.USER_ID, "plan_item_id": CARD_ITEM}
     offer = st.build_offer(
-        st.detach(job), vid, rows, "first", photos=card_photos(), save_arguments=arguments
+        st.detach(job),
+        vid,
+        rows,
+        "first",
+        photos=card_photos() if photos is None else photos,
+        save_arguments=arguments,
+        moves=moves,
     )
     return job, vid, rows, offer
+
+
+STICKERS = st.CardMoves(stickers=True, bleed=True)
+
+
+def sticker_cases() -> list[dict[str, Any]]:
+    """KRI-1616: her two transparent pictures on a build that shows stickers and bleed, on the
+    roomy and the close framing, EN and TR: one sticker look, measured like the card looks,
+    hanging past a side no further than 0.35 of its width, and the dry-run Save takes it."""
+    from app.cli.verify_intro_scenes import card_time_reasons  # noqa: PLC0415
+    from app.services.intro_card_pool import card_box  # noqa: PLC0415
+
+    cases = []
+    stickers = fx.sticker_photos()
+    aspects = {photo.media_id: photo.aspect for photo in stickers}
+    for (framing, face_box), (index, lang) in itertools.product(
+        (("roomy", ROOMY_FACE), ("close", CLOSE_FACE)), enumerate(CARD_TITLES)
+    ):
+        job, vid, rows, offer = _card_offer(
+            lang, 40 + index, face_box, moves=STICKERS, photos=stickers
+        )
+        probe = st.read_title_rows(rows, "talking")
+        captions = caption_boxes(job.assembly_plan, vid, probe)
+        face = NormalizedBox(*face_box)
+        looks = [o for o in offer.get("options", []) if o.get("cards")]
+        case: dict[str, Any] = {
+            "route": "talking",
+            "language": lang,
+            "title_kind": f"stickers_{framing}",
+            "title": CARD_TITLES[lang],
+            "available": offer["available"],
+            "reason": offer["reason"],
+            "looks": len(looks),
+            "total_ms": 0,
+            "options": [],
+            "problems": [] if len(looks) == 1 else [f"{len(looks)} sticker looks on {framing}"],
+            "_frames": [],
+        }
+        for option in looks:
+            cards = [st.IntroCard.model_validate(c) for c in option["cards"]]
+            boxes = [card_box(c.x_frac, c.y_frac, c.scale, aspects[c.media_id]) for c in cards]
+            inks, frame = _ink_boxes(option["rows"], face, boxes)
+            mode = card_mode_of(option)
+            problems = card_problems(boxes, face, captions, inks, mode, bleed=True)
+            problems += card_time_reasons(
+                [(c.start_s, c.end_s) for c in cards], option["rows"], mode
+            )
+            if not all(c.slot.startswith("sticker_") and c.z >= 10 for c in cards):
+                problems.append("not stickers drawn over photo cards")
+            case["options"].append(
+                {"key": option["key"], "card_mode": mode, "card_problems": problems,
+                 "cards": [c.model_dump(mode="json") for c in cards], "clean": not problems}
+            )  # fmt: skip
+            case["_frames"].append((option["key"], frame, not problems))
+            case["problems"] += [f"{option['key']}: {p}" for p in problems]
+        cases.append(case)
+    return cases
 
 
 def card_mode_of(option: dict[str, Any]) -> str:
@@ -754,6 +827,38 @@ def controls() -> list[dict[str, Any]]:
         )
     else:
         add("N11_a_pop_card_held_2s_is_caught", False, "no pop look on the close framing")
+    # N12-N14 (KRI-1616): a build before stickers, or a phone that would flatten them, is never
+    # offered one; a sticker hung half its width past the frame is caught.
+    stickers = fx.sticker_photos()
+    old = _card_offer("en", 40, moves=st.CardMoves(bleed=True), photos=stickers)[3]
+    add(
+        "N12_a_build_before_stickers_gets_no_sticker_look",
+        not [o for o in old.get("options", []) if o.get("cards")],
+        f"{len([o for o in old.get('options', []) if o.get('cards')])} sticker looks",
+    )
+    from app.config import settings  # noqa: PLC0415
+    from app.services.client_protocol import INTRO_EDGE_BLEED_PROTOCOL  # noqa: PLC0415
+
+    verified, switch = settings.phone_render_verified_features, settings.intro_cards_enabled
+    settings.intro_cards_enabled = True
+    try:
+        able = st.card_moves(INTRO_EDGE_BLEED_PROTOCOL)
+        settings.phone_render_verified_features = [f for f in verified if f != "alphaOverlay"]
+        flattening = st.card_moves(INTRO_EDGE_BLEED_PROTOCOL)
+    finally:
+        settings.phone_render_verified_features, settings.intro_cards_enabled = verified, switch
+    add(
+        "N13_no_sticker_look_where_the_phone_would_flatten_it",
+        able.stickers and not flattening.stickers,
+        f"with alphaOverlay {able}, without {flattening}",
+    )
+    hung = [card_box(1.0, 0.3, 0.26, 1.0)]
+    caught = card_problems(hung, face, [], [], "sticker", bleed=True)
+    add(
+        "N14_a_sticker_half_past_the_frame_is_caught",
+        bool(caught),
+        "; ".join(caught[:1]) or "clean",
+    )
     return out
 
 
@@ -803,6 +908,7 @@ def run(*, out_dir: str) -> dict[str, Any]:
                 index += 1
                 cases.append(run_case(route, lang, name, title, index))
     cases += card_cases()
+    cases += sticker_cases()
     parity = face_parity()
     ctl = controls()
     build_montage(cases, os.path.join(out_dir, "montage.png"))

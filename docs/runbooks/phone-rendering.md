@@ -4340,6 +4340,16 @@ Simulator before/after: `scripts/ios/qendresa-card-layout-e2e.py prepare OUT --f
 passes on a misread dimmed caption) must flip, `full_speaker` stays, and the rendered-frame face
 check plus its negative control and the watermark check must hold.
 
+## Cards past the frame edge and stickers (KRI-1616)
+
+A placed card may hang past the side of the frame while a quarter of its width stays on the
+canvas (`portable_visual.EDGE_BLEED_KEEP_ON_CANVAS`, Swift `VisualMediaPlacement.edgeBleedKeepOnCanvas`;
+shared fixture `tests/fixtures/edge-bleed-bound/v1.json`). A build below
+`INTRO_EDGE_BLEED_PROTOCOL` (64) refuses a placement centred outside [0, 1], so it gets 426
+`client_update_required` `edge_bleed` for such a recipe and for a Save of such a card. Intro
+stickers are ordinary overlay stills: the export keeps their alpha and needs no capability token.
+Details, gates and parity: `docs/pipelines/intro-scene.md` ("Stickers and edge bleed").
+
 ## Talking card strip (KRI-1478)
 
 A wide (landscape) layout card is cut to its measured text column (`source_crop` on the card

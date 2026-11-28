@@ -178,7 +178,10 @@ struct NativeVideoPreview: View {
     /// follow, and a drag stops there. Cloud variants are not clamped.
     private func renderedCardPosition(_ overlay: EditorTimedEffect) -> CGPoint {
         let raw = nativeVisualPosition(overlay.raw, fallback: CGPoint(x: 0.78, y: 0.25))
-        return CGPoint(x: raw.x, y: clampedCardY(raw.y, raw: overlay.raw))
+        // KRI-1616: a card hanging past the side of the frame keeps its centre, so the handle sits on it.
+        let across = session.mediaOverlayXRange(overlay.raw)
+        let x = nativeRawNumber(overlay.raw, "x_frac").map { min(max($0, across.lowerBound), across.upperBound) } ?? Double(raw.x)
+        return CGPoint(x: x, y: clampedCardY(raw.y, raw: overlay.raw))
     }
 
     private func clampedCardY(_ y: CGFloat, raw: [String: JSONValue]) -> CGFloat {
@@ -830,6 +833,12 @@ struct NativeVideoPreview: View {
             if object.item.kind == .mediaOverlay,
                let raw = session.document.mediaOverlays.first(where: { $0.id == object.item.id })?.raw {
                 landed.y = clampedCardY(landed.y, raw: raw)
+                // KRI-1616: past the side of the frame a drag carries on to the engine's bound, where the card stops.
+                let across = session.mediaOverlayXRange(raw)
+                let free = Double(baseline.x + value.translation.width / size.width)
+                if across != 0...1, !(0...1).contains(free) {
+                    landed.x = CGFloat(min(max(free, across.lowerBound), across.upperBound))
+                }
             }
             let target = landed
             stageMedia(object, scale: 1, rotation: 0, translation: CGPoint(x: landed.x - baseline.x, y: landed.y - baseline.y)) {

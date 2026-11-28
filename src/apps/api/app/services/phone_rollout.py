@@ -1593,6 +1593,40 @@ def clip_dim_client_supported(*, require_client: bool | None = None) -> bool:
     return protocol is not None and protocol >= settings.clip_dim_min_client_protocol
 
 
+def recipe_has_edge_bleed(recipe: Any) -> bool:
+    """Is any placed card centred past the frame (KRI-1616)? An older build refuses it."""
+    from app.kria.portable_visual import is_bled  # noqa: PLC0415
+
+    return any(
+        is_bled(clip.visual_placement.x_fraction)
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+        if getattr(clip, "visual_placement", None) is not None
+    )
+
+
+def edge_bleed_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting build draw, and let her drag, a card centred past the frame?
+
+    The build's capability (`INTRO_EDGE_BLEED_PROTOCOL`), never the offer's kill switch, so
+    turning bleed looks off never locks her out of an edit she saved. ``require_client`` follows
+    `clip_dim_client_supported` (outside a request: True, so the 426 fires only for a request);
+    the Save passes True to read the request's or a worker's bound sending build.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        INTRO_EDGE_BLEED_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= INTRO_EDGE_BLEED_PROTOCOL
+
+
 def clip_dim_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may a phone edit's clips be dimmed right now".
 

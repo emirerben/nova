@@ -145,6 +145,20 @@ OVERLAY_SET_PROTOCOL = 61
 # sent a card option.
 INTRO_CARDS_PROTOCOL = 62
 
+# KRI-1616: the first build whose "Try intro styles" reads a card on a sticker slot (`sticker_N`,
+# one of her own transparent images) and draws it with its alpha in the tile and the live
+# preview. The export needs nothing new (overlay stills keep their alpha since KRI-174); a 62
+# build would drop the look (its card parser takes `prop_N` slots only), so it is never sent one.
+INTRO_STICKERS_PROTOCOL = 63
+
+# KRI-1616: the first build that reads intro cards and preview boxes hanging past the frame
+# edge, lets her drag a card's centre past the frame within the bleed bound
+# (`portable_visual.EDGE_BLEED_KEEP_ON_CANVAS`) and whose engine draws such a placement. An older
+# build refuses a preview box outside the frame (every tile loses its preview) and a placement
+# centred outside [0, 1] (`invalidTimeline`), so it gets no bleed look, its Saves keep centres
+# in [0, 1] and a bled recipe answers it 426.
+INTRO_EDGE_BLEED_PROTOCOL = 64
+
 
 def caption_style_scope_supported() -> bool:
     protocol = current_client_protocol()

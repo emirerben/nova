@@ -487,7 +487,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "overlay_planning_and_queries": _g(
         "not_an_edit",
         "requestOverlayPlan overlaySetPlanRequest containsOverlayProposal overlayBaseTime "
-        "overlayOutputTime overlayDocumentFingerprint",
+        "overlayOutputTime overlayDocumentFingerprint mediaOverlayXRange",
         reason="Read-only proposal planning, identity checks and editor clock conversion.",
     ),
     # ----------------------------------------------------------- not an edit

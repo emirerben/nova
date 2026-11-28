@@ -723,4 +723,98 @@ final class IntroStylesOfferTests: XCTestCase {
         XCTAssertTrue(session.applyIntroStyle(plain), "a plain look touches no card")
         XCTAssertEqual(overlayIDs(session), ["her-card"])
     }
+
+    // MARK: Stickers and edge bleed (KRI-1616)
+
+    private func stickerLook(_ offer: IntroStylesOffer) throws -> IntroStylesOffer.Option {
+        try XCTUnwrap(offer.options.first(where: \.isStickerLook))
+    }
+
+    func testAStickerLookParsesHerTransparentPicturesHangingPastTheFrame() throws {
+        let offer = try offer("offer_talking_stickers")
+        let look = try stickerLook(offer)
+        XCTAssertEqual(look.cards.map(\.kind), [.sticker, .sticker])
+        XCTAssertEqual(look.cards.map(\.id), ["intro-card-sticker-1", "intro-card-sticker-2"])
+        XCTAssertTrue(look.cards.allSatisfy { $0.z >= 10 }, "stickers draw over any photo card")
+        XCTAssertEqual(look.previewCards.map(\.isSticker), [true, true], "the tile draws them from a picture that keeps its alpha")
+        XCTAssertTrue(look.previewCards.contains { $0.box.minX < 0 || $0.box.maxX > 1 }, "a sticker hangs past the side of the frame")
+        XCTAssertTrue(offer.hasPreviews, "a bled preview box is still a tile this build draws")
+        XCTAssertTrue(IntroStyleLabels.name(forKey: look.key, position: 1).hasSuffix("+ stickers"))
+        XCTAssertEqual(offer.options.last?.key, "none")
+    }
+
+    func testAStickerThisBuildCannotPlaceExactlyDropsOnlyItsLook() throws {
+        let good = try XCTUnwrap(try fixture()["offer_talking_stickers"]?.objectValue)
+        let expected = try offer("offer_talking_stickers")
+        let target = try stickerLook(expected).key
+        func parse(cards edit: (inout [[String: JSONValue]]) -> Void = { _ in }, preview: (inout [JSONValue]) -> Void = { _ in }) -> IntroStylesOffer.Parsed {
+            var copy = good
+            copy["options"] = .array((good["options"]?.arrayValue ?? []).map { entry in
+                guard var option = entry.objectValue, option["key"] == .string(target),
+                      var cards = option["cards"]?.arrayValue?.compactMap(\.objectValue),
+                      var drawn = option["preview"]?.objectValue else { return entry }
+                edit(&cards)
+                var boxes = drawn["cards"]?.arrayValue ?? []
+                preview(&boxes)
+                drawn["cards"] = .array(boxes)
+                option["cards"] = .array(cards.map(JSONValue.object))
+                option["preview"] = .object(drawn)
+                return .object(option)
+            })
+            return IntroStylesOffer.parse(.object(copy))
+        }
+        let malformed: [(String, (inout [[String: JSONValue]]) -> Void)] = [
+            ("a sticker id on a photo slot (what a 62 build reads)", { $0[0]["slot"] = .string("prop_1") }),
+            ("a photo id on a sticker slot", { $0[0]["id"] = .string("intro-card-1") }),
+            ("a centre past the engine's bound", { $0[0]["x_frac"] = .number(-0.2) }),
+        ]
+        for (name, edit) in malformed {
+            guard case .offer(let parsed) = parse(cards: edit) else { XCTFail("\(name): the other looks stay"); continue }
+            XCTAssertNil(parsed.options.first { $0.key == target }, name)
+            XCTAssertEqual(parsed.options, expected.options.filter { $0.key != target }, name)
+        }
+        guard case .offer(let unbounded) = parse(preview: { boxes in
+            guard var card = boxes.first?.objectValue, var box = card["box"]?.objectValue else { return }
+            box["left"] = .number(-0.4); box["right"] = .number(-0.1)
+            card["box"] = .object(box); boxes[0] = .object(card)
+        }) else { return XCTFail("still an offer") }
+        XCTAssertFalse(unbounded.hasPreviews, "a preview box the engine would never draw turns every tile into a label tile")
+    }
+
+    func testAStickerLookAppliesInOneStepAndHerDragFurtherOffStopsAtTheEnginesBound() throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.introStyles(variant: try editorVariant("editor_talking_cards")),
+                                          operations: LocalEditorOperations())
+        func variant(_ archetype: String) -> [String: JSONValue] {
+            ["render_destination": .string("device"), "resolved_archetype": .string(archetype)]
+        }
+        session.configureClipAudioForTesting(variant: variant("subtitled"), pinnedNarrationPresent: nil, resolvedNarration: nil)
+        let offer = try offer("offer_talking_stickers")
+        session.introStylesState = .ready(offer)
+        session.introStylesOfferContext = session.introStylesContext()
+        let original = session.document
+        let look = try stickerLook(offer)
+        XCTAssertTrue(session.applyIntroStyle(look))
+        XCTAssertEqual(overlayIDs(session), ["her-card"] + look.cards.map(\.id))
+        let photoCard = ["display_mode": JSONValue.string("pip"), "scale": .number(0.3)]
+        session.configureClipAudioForTesting(variant: variant("guided_story"), pinnedNarrationPresent: nil, resolvedNarration: nil)
+        XCTAssertEqual(session.mediaOverlayXRange(photoCard), 0...1, "a phone montage's renderer keeps 0...1")
+        session.configureClipAudioForTesting(variant: variant("subtitled"), pinnedNarrationPresent: nil, resolvedNarration: nil)
+        XCTAssertEqual(session.mediaOverlayXRange(photoCard), VisualMediaPlacement.edgeBleedXRange(width: 0.3), "a phone Talking card")
+
+        let sticker = look.cards[0]
+        let bound = VisualMediaPlacement.edgeBleedXRange(width: sticker.scale)
+        func x(_ id: String) -> Double? { session.document.mediaOverlays.first { $0.id == id }?.raw["x_frac"]?.numberValue }
+        session.setMediaOverlayPosition(id: sticker.id, x: -0.5, y: sticker.y)
+        XCTAssertEqual(try XCTUnwrap(x(sticker.id)), bound.lowerBound, accuracy: 1e-9,
+                       "further off than the look put it, stopping with a quarter of it on the frame; never refused")
+        session.setMediaOverlayPosition(id: sticker.id, x: 0.4, y: sticker.y)
+        XCTAssertEqual(x(sticker.id), 0.4, "and back")
+        session.setMediaOverlayScale(id: sticker.id, scale: 0.6)
+        session.setMediaOverlayTiming(id: sticker.id, startS: 0.3, endS: 5)
+        XCTAssertEqual(session.document.mediaOverlays.first { $0.id == sticker.id }?.raw["scale"]?.numberValue, 0.6)
+        session.removeMediaOverlay(id: look.cards[1].id)
+        XCTAssertEqual(overlayIDs(session), ["her-card", sticker.id])
+        while session.canUndo { session.undo() }
+        XCTAssertEqual(session.document, original)
+    }
 }

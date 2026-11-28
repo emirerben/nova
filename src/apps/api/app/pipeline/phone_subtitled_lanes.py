@@ -57,6 +57,7 @@ from pydantic import (
 )
 
 from app.agents._schemas.visual_editor import VisualAnimation, VisualEditorStyle
+from app.kria.portable_visual import EDGE_BLEED_MAX_REACH, within_edge_bleed
 from app.kria.render_assets import LibraryRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.silence_cut import CutPlan  # noqa: TCH001
@@ -126,7 +127,9 @@ class SubtitledOverlayCard(_LaneModel):
     generation: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
     start_s: float = Field(ge=0)
     end_s: float = Field(gt=0)
-    x_frac: float = Field(default=0.5, ge=0, le=1)
+    # KRI-1616: a pip card may hang past the side of the canvas, within the renderer bound
+    # (`portable_visual.edge_bleed_x_range` of its `scale`); a full-screen card ignores it.
+    x_frac: float = Field(default=0.5, ge=-EDGE_BLEED_MAX_REACH, le=1 + EDGE_BLEED_MAX_REACH)
     y_frac: float = Field(default=0.4, ge=0, le=1)
     # Width fraction of the canvas the card occupies.
     scale: float = Field(default=0.35, ge=0.05, le=1)
@@ -173,6 +176,8 @@ class SubtitledOverlayCard(_LaneModel):
             raise ValueError("a full-screen overlay card cannot be tilted")
         if self.placement_style() is not None and self.display_mode == "fullscreen":
             raise ValueError("a full-screen overlay card cannot be zoomed or animated")
+        if not within_edge_bleed(self.x_frac, self.scale):
+            raise ValueError("a card keeps a quarter of its width on the canvas")
         return self
 
     def placement_style(self) -> VisualEditorStyle | None:

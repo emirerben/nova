@@ -1,0 +1,25 @@
+{
+  "comment": "KRI-1616: the renderer-safety bound for a placed card hanging past the side of the frame. A card keeps a quarter of its own width on the canvas, so its centre x lies in [-0.25 * width, 1 + 0.25 * width]; with no width (a full-frame picture) in [0, 1]. Python: app/kria/portable_visual.py (tests/kria/test_edge_bleed_bound.py). Swift: VisualMediaPlacement.validate() and edgeBleedXRange (EdgeBleedBoundTests). Expected values are worked by hand from that rule.",
+  "keep_on_canvas": 0.25,
+  "placements": [
+    {"name": "inside", "width": 0.3, "x": 0.5, "valid": true},
+    {"name": "on the left edge", "width": 0.3, "x": 0.0, "valid": true},
+    {"name": "three quarters off the left", "width": 0.3, "x": -0.075, "valid": true},
+    {"name": "past the bound on the left", "width": 0.3, "x": -0.0751, "valid": false},
+    {"name": "three quarters off the right", "width": 0.3, "x": 1.075, "valid": true},
+    {"name": "past the bound on the right", "width": 0.3, "x": 1.08, "valid": false},
+    {"name": "a full-width card", "width": 1.0, "x": -0.25, "valid": true},
+    {"name": "a full-width card past the bound", "width": 1.0, "x": -0.26, "valid": false},
+    {"name": "the smallest card", "width": 0.05, "x": -0.0125, "valid": true},
+    {"name": "the smallest card past the bound", "width": 0.05, "x": -0.02, "valid": false},
+    {"name": "a full-frame picture inside", "width": null, "x": 1.0, "valid": true},
+    {"name": "a full-frame picture past the frame", "width": null, "x": -0.01, "valid": false}
+  ],
+  "drags": [
+    {"name": "far off the left", "width": 0.3, "x": -0.5, "kept": -0.075},
+    {"name": "far off the right", "width": 0.3, "x": 2.0, "kept": 1.075},
+    {"name": "inside", "width": 0.3, "x": 0.42, "kept": 0.42},
+    {"name": "a little off the left", "width": 0.22, "x": -0.03, "kept": -0.03},
+    {"name": "a full-width card far off", "width": 1.0, "x": -3.0, "kept": -0.25}
+  ]
+}

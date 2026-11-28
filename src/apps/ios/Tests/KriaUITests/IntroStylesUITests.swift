@@ -216,4 +216,41 @@ final class IntroStylesUITests: XCTestCase {
                        "No intro style takes the look's cards away and keeps hers")
         app.terminate()
     }
+
+    /// KRI-1616: a sticker look (two of her transparent pictures hanging past the sides of the frame) is named and drawn as
+    /// one, and its Save carries the stickers exactly where the server placed them, past the frame included.
+    func testAStickerLookHangingPastTheFrameSavesWhereTheServerPlacedIt() throws {
+        executionTimeAllowance = 300
+        let capture = FileManager.default.temporaryDirectory.appendingPathComponent("kri1616-commits-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: capture) }
+        let option = try XCTUnwrap(try options("offer_talking_stickers").first { ($0["key"] as? String)?.hasSuffix("+stickers_edge") == true })
+        let key = try XCTUnwrap(option["key"] as? String)
+        let stickers = try XCTUnwrap(option["cards"] as? [[String: Any]])
+        let app = launch(["-ui-testing-editor-intro-styles-stickers"], capture: capture)
+        XCTAssertTrue(element(app, "native-editor-preview").waitForExistence(timeout: 30))
+
+        openPanel(app)
+        let look = app.buttons["intro-style-option-\(key)"]
+        XCTAssertTrue(look.waitForExistence(timeout: 15), "the offer shows the sticker look")
+        XCTAssertTrue(look.label.hasSuffix("sticker look"), "VoiceOver says it adds her stickers; reads \(look.label)")
+        XCTAssertTrue(waitFor(look, "value == %@", "Preview drawn over your clip", timeout: 20),
+                      "the tile is drawn over her clip, the stickers cut by its edge; reads \(look.value ?? "nil")")
+        for _ in 0..<4 where !look.isHittable { element(app, "intro-styles-strip").swipeLeft() }
+        attach(app, "Intro styles panel with a sticker look")
+        look.tap()
+        XCTAssertTrue(waitFor(look, "selected == true", timeout: 10), "the tapped sticker look is marked")
+        app.buttons["native-editor-intro-styles-done"].tap()
+        save(app)
+        let sent = try XCTUnwrap(commits(capture).last?["media_overlays"] as? [[String: Any]])
+        XCTAssertEqual(sent.compactMap { $0["id"] as? String }, stickers.compactMap { $0["id"] as? String })
+        for (row, sticker) in zip(sent, stickers) {
+            for field in ["x_frac", "y_frac", "scale", "z", "start_s", "end_s"] {
+                XCTAssertEqual(row[field] as? Double, sticker[field] as? Double, "\(row["id"] ?? ""): \(field) as the server placed it")
+            }
+            XCTAssertEqual(row["src_gcs_path"] as? String, sticker["gcs_path"] as? String)
+            XCTAssertNil(row["caption_clear"], "the server decides the caption mark again")
+        }
+        attach(app, "Editor after saving a sticker look")
+        app.terminate()
+    }
 }

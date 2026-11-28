@@ -214,6 +214,23 @@
         }
       }
     },
+    "%@ + stickers" : {
+      "comment" : "Intro style name: the look's fonts (the argument) with her own transparent pictures beside the title",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ + Sticker"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ + çıkartmalar"
+          }
+        }
+      }
+    },
     "%@ / %@" : {
       "localizations" : {
         "de" : {
@@ -51521,6 +51538,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ konumunda başlar"
+          }
+        }
+      }
+    },
+    "sticker look" : {
+      "comment" : "VoiceOver: this intro style puts her own transparent pictures beside the title",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Look mit Stickern"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "çıkartmalı görünüm"
           }
         }
       }

@@ -702,3 +702,134 @@ C); the preview frame is taken after the title's last entrance and draws every c
 short title cuts the last ones before that moment. On a host (local Skia and fonts) the pop sweep
 lists two `grotesk_loop` titles the squeeze presses into each other on the close face, with or
 without cards (the plain offer's own placement measures the same); the prod image lists none.
+
+## Stickers and edge bleed (KRI-1616)
+
+For the creator: on a Talking edit, "Try intro styles" may add one sticker look that puts one or
+two of her own transparent pictures beside the title, and photo cards and stickers may hang past
+the side of the frame (refs 2, 3 and 4). A sticker look is offered only when she already has
+transparent pictures in her Visuals; an overlay she made with the existing generate-overlay flow
+counts. Nothing is generated for the offer and nothing is paid. Once the look is in her edit she
+drags, resizes, retimes or deletes a sticker like any card. For the next engineer: the failure
+modes M60-M66 are in `services/intro_props_layout.py`, the Save and recipe ones in
+`tests/routes/test_edge_bleed.py` (B1-B9) and the offer ones in
+`tests/routes/test_intro_stickers_e2e.py` (S1-S8).
+
+**Data shape.** Two arrangements in `intro_scene.ARRANGEMENTS` hold `StickerAnchor`s instead of
+photo rows: `sticker_edge` (one sticker, top right) and `stickers_edge` (top left and bottom
+right). An anchor names a side of the frame and the title's top or bottom line. Two card modes in
+`intro_props_layout.CARD_MODES` place them spot by spot like pop cards. `sticker` keeps every face
+out for the title's whole window. `sticker_pop` may cover her for a pop card's window, and it is
+asked only when no spot off her face exists. Every sticker of a look takes one width, the widest
+of `STICKER_WIDTHS` (0.30 to 0.18 of the frame) at which each finds a spot. Stickers keep off the
+title block, the caption row, the watermark and each other, and take z from `STICKER_Z` (10), over
+any photo card. `CardMode.bleed` (0.35 for `pop`, `sticker`, `sticker_pop`; 0 for `clean`) is how
+far past a side of the frame a card may hang, as a share of its width, and only where the layout
+is asked with `bleed`. A sticker's home hangs `BLEED_HOME` (0.25) past. Nothing hangs past the top
+or bottom.
+
+**Which pictures.** `intro_card_pool.card_photo` decides the kind with one rule for the offer and
+the Save. `analysis.has_alpha` false means a photo card. True means a sticker, which must also be
+a PNG or WebP (a HEIC's browser-safe preview is a JPEG). `has_alpha` comes from `image_has_alpha`:
+a pixel under full opacity, so an opaque RGBA screenshot stays a photo. The generate-overlay
+admission (`generated_media_admission`) now records `has_alpha` and `dims_upright` from the bytes
+it stores. Before, a generated picture qualified as neither, and the alpha-aware matchers
+(`phone_overlay_grounding`, `overlay_autoplace`) now see a generated transparent overlay as the
+alpha sticker it is. Generated pictures admitted before this keep no `has_alpha`, so they are not
+stickers until analysed again. A picture whose only transparent pixels are rounded corners counts
+as a sticker, because the measure is any pixel under full opacity.
+
+**Gates, one protocol each.**
+
+| Move | Protocol | Why a number | Kill switch |
+| --- | --- | --- | --- |
+| Sticker looks | `INTRO_STICKERS_PROTOCOL` = 63 | The 62 build's card parser takes `prop_N` slots only, and its tile draws the cached JPEG thumbnail (a box). The export needs nothing new: overlay stills keep their alpha (`Composition.swift`, flattened only on video tracks). | `INTRO_STICKERS_MIN_CLIENT_PROTOCOL=999` |
+| Edge bleed in the offer | `INTRO_EDGE_BLEED_PROTOCOL` = 64 | A 62 or 63 build refuses a preview box outside the frame, and one such box turns every tile into a label tile. | `INTRO_EDGE_BLEED_MIN_CLIENT_PROTOCOL=999` |
+| Her drag past the frame | `INTRO_EDGE_BLEED_PROTOCOL` = 64 (the constant) | An older engine throws `invalidTimeline` for a placement centred outside [0, 1]. | none: the build's capability |
+
+`intro_styles.card_moves(protocol)` resolves the offer's `CardMoves` from the two config fields, on
+top of `cards_allowed` (`INTRO_CARDS_ENABLED`). No new boolean flag: each `=999` turns its move off
+for every build. The offer's bleed (at most 0.35 of a card's width) keeps every card centre inside
+[0, 1], so a recipe from the offer is one every build draws. Only her own drag can put a centre
+outside [0, 1]. The renderer's bound and the 426 therefore read the constant, never the kill
+switch, so turning bleed looks off never locks her out of an edit she saved.
+
+**Cloud alpha.** A sticker look is offered only where the phone keeps its alpha. The offer reaches
+only phone renders (`route_of`: `not_phone_render` otherwise), and `alphaOverlay` must be in
+`PHONE_RENDER_VERIFIED_FEATURES` (`card_moves`). No code moves a `render_destination: device`
+variant to the cloud: every writer sets it to `device`, and `phone_editor` keeps it. The cloud
+card pass (`pipeline/media_overlay.py`) flattens a picture to JPEG unless
+`MEDIA_OVERLAY_ALPHA_ENABLED`, so it never draws one of these stickers. With that flag on it
+draws one as the phone does (parity below). Guards: S2 in the e2e, `test_s2_*`, and N13 in
+`make verify-intro-styles`.
+
+**The renderer bound** (`portable_visual.EDGE_BLEED_KEEP_ON_CANVAS` = 0.25, Swift
+`VisualMediaPlacement.edgeBleedKeepOnCanvas`, both reading `tests/fixtures/edge-bleed-bound/v1.json`).
+A placed card keeps a quarter of its own width on the canvas, so the part she can touch never goes.
+Its centre's x lies in `[-0.25 * width, 1 + 0.25 * width]`. A card's height is its picture's,
+which the recipe does not know, so y keeps [0, 1]. It is the only limit on her drag, which every
+offer preference above leaves alone:
+
+* `VisualMediaPlacement` (Python and Swift) and `SubtitledOverlayCard` accept exactly that range.
+* The Save (`generative_jobs._keep_edge_bleed`) keeps a phone Talking pip card's centre past the
+  frame, clamped to the bound, when the sending build is at 64: the request's, or the one a worker
+  binds (`bind_sending_build`). With no sending build (the approval task) it keeps only a card's
+  stored centre, so a chat move from an older build cannot write one and lock her out.
+* An older build that posts a bled card (an edit it opened) gets 426 `client_update_required`
+  `edge_bleed` instead of a card pulled back onto the frame. So does an older build that polls a
+  bled recipe (`device_render._client_update_detail`), instead of failing it as
+  `invalidTimeline`.
+* The shared card schema (`MediaOverlay`) still clamps to [0, 1] for agents, the web and cloud
+  renders.
+* The editor's drag (`NativeEditorSession.mediaOverlayXRange`) stops at the bound on a phone
+  Talking pip card: she sees the card stop with a quarter of it on the frame. The handle keeps the
+  card's real centre. The live preview's selection box is the card's visible part (unchanged), so
+  a card at the bound can still be grabbed.
+
+**The wire.** No new field. A sticker is a card with id `intro-card-sticker-N` and slot
+`sticker_N`. The prefix is the one every apply replaces, so applying any look converges, on every
+build. A bled card is a card whose preview box crosses a side. `IntroStyleCard.kind`
+(`IntroStyles.swift`) is read from the id. The tile draws a sticker from the original on the
+iPhone through `CreationMediaPreview.transparentImage` (the cached thumbnail is a JPEG), else the
+neutral plate, cut by the tile's canvas. The live preview marks a sticker from her Visuals library
+`preserveAlpha` before the Save, as the saved card's pool asset does after it. The strip names the
+look "<pair> + stickers", and VoiceOver says "sticker look".
+
+**Parity, cloud and phone.** `tests/pipeline/test_sticker_bleed_parity.py` runs the real
+`build_media_overlay_command` with alpha kept on a flat base. It draws one star 25% past the left
+edge and one 35% past the right, measures each sticker's ink box, its share of its card box and
+its colour, and writes `tests/fixtures/sticker-bleed-parity/v1.json` (`KRI1616_REGENERATE=1`).
+`StickerBleedParityTests` (KriaMediaEngine) draws the same recipe through the phone compositor.
+Measured: ink boxes within 2 px (cloud `[0, 335, 225, 625]`, phone `[0, 334, 226, 625]`; both cut
+at the frame edge), box coverage 0.372 against 0.374 and 0.370 against 0.364. Colour is within 11
+a channel, because the cloud's 4:2:0 H.264 path darkens the star. Tolerances: 2 px (ffmpeg's even
+`-2` height and chroma blocks), 0.03 coverage, 12 a channel. The negative control renders the
+cloud's JPEG path and must be caught (coverage over 0.9: a box).
+
+**Measured on the five real stills (2026-11-27, offline, stand-in stickers).** 3 of 5 get a
+sticker look, all in the calm `sticker` mode (off her face for the title's window). With bleed the
+stickers hang 25-30% past the side on all three; without bleed (a 63 build) they sit inside the
+frame, 0.22-0.30 wide. The other two are stage B's: one title cannot sit clean alone, one take has
+no saved face (M45). Pop photo cards with bleed hang 35% past the side at 0.45 of the frame wide.
+The top anchor often lands beside her head, because the title fills the room above it.
+
+**Checks.** `tests/pipeline/test_intro_stickers_layout.py` (M60-M66),
+`tests/routes/test_intro_stickers_e2e.py` (real PostgreSQL, the real routes and Save),
+`tests/routes/test_edge_bleed.py`, `tests/services/test_generated_media_admission.py` (a generated
+transparent overlay is a sticker, an opaque RGBA one a photo),
+`tests/pipeline/test_sticker_bleed_parity.py` with `StickerBleedParityTests`,
+`IntroStylesOfferTests` (sticker looks, bounds, apply, her drag), `IntroStylesUITests`
+(`testAStickerLookHangingPastTheFrameSavesWhereTheServerPlacedIt`). `make verify-intro-scenes`
+adds ref 4's stickers (two and one) and ref 3's bled pop cards in EN and TR. It has three controls
+that must fail: a sticker on the title, a sticker half its width past the frame, and stickers
+flattened to boxes. `make verify-intro-styles` adds the sticker look on the roomy and close
+framings in EN and TR, plus N12 (a 62 build gets none), N13 (none without `alphaOverlay`) and N14
+(a sticker half past the frame is caught).
+
+**Rollback.** `INTRO_STICKERS_MIN_CLIENT_PROTOCOL=999` or `INTRO_EDGE_BLEED_MIN_CLIENT_PROTOCOL=999`
+(Fly secret, api restart) removes that move from every offer. Stickers and bled cards she saved
+stay, and her drag past the frame stays on 64 builds.
+
+Not covered: a label written on a sticker (ref 2), tilted or overlapping stickers (refs 3, 4), a
+sticker beside a photo card in one look, a vertical bleed, and a phone check of the tile's alpha
+on a real device.

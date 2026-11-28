@@ -489,6 +489,10 @@
       "source": "default",
       "value": 62
     },
+    "intro_edge_bleed_min_client_protocol": {
+      "source": "default",
+      "value": 64
+    },
     "intro_scene_enabled": {
       "source": "default",
       "value": false
@@ -504,6 +508,10 @@
     "intro_scene_user_ids": {
       "source": "default",
       "value": []
+    },
+    "intro_stickers_min_client_protocol": {
+      "source": "default",
+      "value": 63
     },
     "intro_styles_min_client_protocol": {
       "source": "default",

@@ -4994,8 +4994,12 @@ enum EditorOpenIntent { case warm, open }
                         resolved.preserveAlpha = asset.preserveAlpha == true
                         introCardMedia[path(card)] = resolved
                     } else if let visual = photo(at: path(card)), let url = visual.originalMediaURL {
-                        introCardMedia[path(card)] = try await resolver.resolveMedia(id: visual.id, url: url,
+                        var resolved = try await resolver.resolveMedia(id: visual.id, url: url,
                             generation: visual.sourceGeneration ?? document.revision.baseGeneration)
+                        // KRI-1616: the export keeps every card picture's alpha, so a sticker is drawn over her before
+                        // the Save as after it (the saved card's pool asset says `preserve_alpha`).
+                        resolved.preserveAlpha = true
+                        introCardMedia[path(card)] = resolved
                     } else {
                         introCardMediaUnreadable.insert(path(card))
                     }
@@ -9270,8 +9274,19 @@ enum EditorOpenIntent { case warm, open }
     }
     func setMediaOverlayPosition(id: String, x: Double, y: Double) {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.position", "overlays.position", "media_overlays.position", "lanes.overlays"]) { effect in
-            effect.raw["x_frac"] = .number(min(max(0, x), 1)); effect.raw["y_frac"] = .number(min(max(0, y), 1))
+            let across = mediaOverlayXRange(effect.raw)
+            effect.raw["x_frac"] = .number(min(max(across.lowerBound, x), across.upperBound)); effect.raw["y_frac"] = .number(min(max(0, y), 1))
         }
+    }
+    /// KRI-1616: where a card's centre may go across. A pip card on a phone Talking edit may hang past the side of the frame
+    /// up to the engine's bound (a quarter of it stays on, so she can still grab it), which is where a drag further off
+    /// stops; every other card keeps 0...1, as its renderer does.
+    func mediaOverlayXRange(_ raw: [String: JSONValue]) -> ClosedRange<Double> {
+        // The server's own test for a phone Talking edit (`is_phone_subtitled_editor_variant`): a device render of the
+        // `subtitled` archetype.
+        guard rendersOnDevice, previewVariant["resolved_archetype"] == .string("subtitled"),
+              raw["display_mode"]?.stringValue != "fullscreen" else { return 0...1 }
+        return VisualMediaPlacement.edgeBleedXRange(width: min(max(raw["scale"]?.numberValue ?? 0.35, 0.05), 1))
     }
     func setMediaOverlayScale(id: String, scale: Double) {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.scale", "overlays.scale", "media_overlays.scale", "lanes.overlays"]) { $0.raw["scale"] = .number(min(max(0.05, scale), 1)) }

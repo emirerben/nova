@@ -147,13 +147,28 @@ def _px(fraction: float, size: int) -> int:
     return int(round(fraction * size, 6))
 
 
+def _sticker_art(width: int, height: int) -> Image.Image:
+    """A stand-in transparent sticker (a five-point star) the size of its box."""
+    big = Image.new("RGBA", (width * 2, height * 2), (0, 0, 0, 0))
+    w, h = big.size
+    star = [(0.5, 0.03), (0.62, 0.37), (0.97, 0.39), (0.69, 0.6), (0.79, 0.96), (0.5, 0.75),
+            (0.21, 0.96), (0.31, 0.6), (0.03, 0.39), (0.38, 0.37)]  # fmt: skip
+    ImageDraw.Draw(big).polygon([(x * w, y * h) for x, y in star], fill=(250, 204, 46, 255))
+    return big.resize((width, height), Image.LANCZOS)
+
+
 def plate(
     kind: str = "light_wall",
     face: NormalizedBox = FACE_BOX,
     cards: Sequence[NormalizedBox] = (),
+    *,
+    stickers: bool = False,
+    flattened: bool = False,
 ) -> Image.Image:
     """A wall and a head-and-shoulders silhouette inside ``face``, 1080x1920, and a neutral
-    plate where each of her photo cards would be (KRI-1615)."""
+    plate where each of her photo cards would be (KRI-1615). ``stickers`` (KRI-1616): a
+    transparent star in each box instead, cut by the frame where it hangs past it;
+    ``flattened`` mattes it over black first, as a JPEG card pass would (the control)."""
     w, h = PORTRAIT.width, PORTRAIT.height
     wall, ceiling, shoulders = PLATES[kind]
     im = Image.new("RGBA", (w, h), (*wall, 255))
@@ -173,7 +188,16 @@ def plate(
     box = [face.left * w, face.top * h, face.right * w, face.bottom * h]
     draw.ellipse(box, fill=(214, 168, 140, 255))
     label = ImageFont.truetype(str(_FONTS / "Inter-Bold.ttf"), 34)
-    for slot, card in enumerate(cards, start=1):
+    for card in cards if stickers else ():
+        left, top = round(card.left * w), round(card.top * h)
+        art = _sticker_art(round(card.right * w) - left, round(card.bottom * h) - top)
+        if flattened:
+            art = Image.alpha_composite(Image.new("RGBA", art.size, (0, 0, 0, 255)), art)
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        layer.paste(art, (left, top), art)
+        im = Image.alpha_composite(im, layer)
+    draw = ImageDraw.Draw(im)
+    for slot, card in enumerate(() if stickers else cards, start=1):
         rect = [card.left * w, card.top * h, card.right * w, card.bottom * h]
         draw.rectangle(rect, fill=(*_CARD_FILL, 255), outline=(*_CARD_EDGE, 255), width=4)
         centre = ((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2)
@@ -220,9 +244,12 @@ def verify_rows(
     footage: str = "light_wall",
     cards: Sequence[NormalizedBox] = (),
     card_mode: str = props_mod.CLEAN,
+    bleed: bool = False,
+    flattened: bool = False,
 ) -> tuple[str, list[str], Image.Image]:
     """Draw ``rows`` over the plate (her ``cards`` drawn under them) and measure them. Returns
-    (verdict, reasons, the frame)."""
+    (verdict, reasons, the frame). Stickers (KRI-1616) are drawn with their alpha (or matted,
+    ``flattened``) and must not cover their whole box."""
     from app.pipeline import phone_subtitled_title as title_mod  # noqa: PLC0415
     from app.pipeline import text_overlay_skia as tos  # noqa: PLC0415
     from app.pipeline.phone_title_look import (  # noqa: PLC0415
@@ -253,7 +280,10 @@ def verify_rows(
     if any(str(r.get("color")).upper() != ink_hex for r in rows):
         reasons.append(f"a row is not in the scene's ink {ink_hex}")
 
-    backdrop = plate(footage, face, cards)
+    stickers = card_mode in props_mod.STICKER_MODES
+    backdrop = plate(footage, face, cards, stickers=stickers, flattened=flattened)
+    if stickers:
+        reasons.extend(_sticker_alpha_reasons(backdrop, plate(footage, face), cards))
     frame = backdrop.copy()
     inks: list[NormalizedBox] = []
     drawn: list[tuple[Image.Image, tuple[int, int, int, int]] | None] = []
@@ -316,8 +346,25 @@ def verify_rows(
         if line_gap < tightest - _LINE_GAP_SLACK_PX:
             reasons.append(f"{lines}, plain stacks keep {tightest:.0f}): rows overlap undeclared")
     if cards:
-        reasons.extend(card_reasons(cards, face=face, inks=inks, card_mode=card_mode))
+        reasons.extend(card_reasons(cards, face=face, inks=inks, card_mode=card_mode, bleed=bleed))
     return ("FAIL" if reasons else "PASS"), reasons, frame
+
+
+def _sticker_alpha_reasons(
+    drawn: Image.Image, bare: Image.Image, cards: Sequence[NormalizedBox]
+) -> list[str]:
+    """A sticker whose drawn pixels fill its whole box (on the frame) lost its alpha."""
+    w, h = PORTRAIT.width, PORTRAIT.height
+    changed = ImageChops.difference(drawn.convert("RGB"), bare.convert("RGB")).convert("L")
+    reasons = []
+    for n, card in enumerate(cards, start=1):
+        box = (max(0, round(card.left * w)), max(0, round(card.top * h)),
+               min(w, round(card.right * w)), min(h, round(card.bottom * h)))  # fmt: skip
+        region = changed.crop(box).point(lambda p: 255 if p > 24 else 0)
+        area = max(1, (box[2] - box[0]) * (box[3] - box[1]))
+        if region.histogram()[255] / area > 0.9:
+            reasons.append(f"sticker {n} is drawn as a box: its alpha was flattened")
+    return reasons
 
 
 def card_reasons(
@@ -326,34 +373,39 @@ def card_reasons(
     face: NormalizedBox,
     inks: Sequence[NormalizedBox],
     card_mode: str = props_mod.CLEAN,
+    bleed: bool = False,
 ) -> list[str]:
     """KRI-1615: why her cards may not be drawn with this title, measured against the plate's
     own face, the caption row across the frame, the Kria wordmark and the title's drawn ink. A
     pop card may cover her face and body, is at most 0.45 of the frame wide, and needs no rows
-    around the title."""
+    around the title. KRI-1616: a sticker is at most 0.30 wide and only ``sticker_pop`` covers
+    her; with ``bleed`` a pop card or sticker may hang past a side of the frame by its mode's
+    allowance of its width, never past the top or bottom."""
     captions = NormalizedBox(0.0, CAPTION_BOX.top, 1.0, CAPTION_BOX.bottom)
-    pop = card_mode == props_mod.POP
+    rules = props_mod.CARD_MODES[card_mode]
+    spot = bool(rules.widths)
     reasons = []
     for n, card in enumerate(cards, start=1):
+        reach = props_mod.side_reach(card_mode, card.width, bleed=bleed)
         if (
-            card.left < EDGE_INSET - 1e-6
+            card.left < -reach - 1e-6
             or card.top < EDGE_INSET - 1e-6
-            or card.right > 1 - EDGE_INSET + 1e-6
+            or card.right > 1 + reach + 1e-6
             or card.bottom > 1 - EDGE_INSET + 1e-6
         ):
             reasons.append(f"card {n} leaves the frame {card.as_dict()}")
         keep_off = (("caption row", captions), ("watermark", WATERMARK_BOX))
-        for what, box in keep_off if pop else (("face", face), *keep_off):
+        for what, box in keep_off if rules.over_her else (("face", face), *keep_off):
             if boxes_intersect(card, box):
                 reasons.append(f"card {n} is on the {what}")
         if any(boxes_intersect(card, ink) for ink in inks):
             reasons.append(f"card {n} touches the title's ink")
-        if pop and card.width > 0.45 + 1e-6:
-            reasons.append(f"pop card {n} is {card.width:.2f} of the frame wide")
+        if spot and card.width > rules.max_width + 1e-6:
+            reasons.append(f"{card_mode} card {n} is {card.width:.2f} of the frame wide")
     for (a, first), (b, second) in itertools.combinations(enumerate(cards, start=1), 2):
         if boxes_intersect(first, second):
             reasons.append(f"cards {a} and {b} overlap")
-    if inks and not pop:
+    if inks and not spot:
         title_top, title_bottom = min(i.top for i in inks), max(i.bottom for i in inks)
         middle = (face.top + face.bottom) / 2
         above = [c for c in cards if (c.top + c.bottom) / 2 < middle]
@@ -372,7 +424,7 @@ def card_time_reasons(
     from app.pipeline.title_family import title_window  # noqa: PLC0415
 
     start, end = title_window(rows)
-    if card_mode != props_mod.POP:
+    if props_mod.CARD_MODES[card_mode].hold_s is None:
         return [
             f"card {n} shows {w}, the title {start}-{end}"
             for n, w in enumerate(windows, start=1)
@@ -1046,6 +1098,7 @@ def _with_props(
     photos: Sequence[float],
     stage: props_mod.Stage | None = ROOMY_STAGE,
     card_mode: str = props_mod.CLEAN,
+    bleed: bool = False,
 ) -> tuple[scene_mod.IntroScene, scene_mod.IntroCompile]:
     scene = scene_mod.IntroScene.model_validate({**example["scene"], "arrangement": arrangement})
     out = scene_mod.compile_intro_scene(
@@ -1057,6 +1110,7 @@ def _with_props(
         photo_aspects=photos,
         stage=stage,
         card_mode=card_mode,
+        bleed=bleed,
     )
     return scene, out
 
@@ -1074,10 +1128,16 @@ def _props_case(
     control: str | None = None,
     face: NormalizedBox = ROOMY_FACE,
     card_mode: str = props_mod.CLEAN,
+    bleed: bool = False,
+    flattened: bool = False,
 ) -> dict[str, Any]:
+    name = {props_mod.POP: "KRI-1615 pop cards", props_mod.STICKER: "KRI-1616 stickers"}.get(
+        card_mode,
+        "KRI-1616 pop stickers" if card_mode == props_mod.STICKER_POP else "KRI-1615 cards",
+    )
     base: dict[str, Any] = {
         "id": case_id,
-        "name": "KRI-1615 pop cards" if card_mode == props_mod.POP else "KRI-1615 cards",
+        "name": f"{name}, bleed" if bleed else name,
         "language": language,
         "control": control,
         "expressible": "yes",
@@ -1102,6 +1162,8 @@ def _props_case(
         footage=footage,
         cards=boxes,
         card_mode=card_mode,
+        bleed=bleed,
+        flattened=flattened,
     )
     reasons = [*reasons, *card_time_reasons(shown, out.rows, card_mode)]
     if out.props.mode != card_mode:
@@ -1115,13 +1177,17 @@ def _props_case(
             "reasons": reasons,
             "rows": _row_summary(out.rows),
             "cards": [
-                {"slot": f"prop_{n}", **box.as_dict(), "start_s": w[0], "end_s": w[1]}
-                for n, (box, w) in enumerate(zip(boxes, shown, strict=True), start=1)
+                {"slot": card.slot, **box.as_dict(), "start_s": w[0], "end_s": w[1]}
+                for card, box, w in zip(out.props.cards, boxes, shown, strict=True)
             ],
         },
         frame,
         _face=face,
-        **({"_centre": props_mod.face_centre(face)} if card_mode == props_mod.POP else {}),
+        **(
+            {"_centre": props_mod.face_centre(face)}
+            if props_mod.CARD_MODES[card_mode].over_her
+            else {}
+        ),
     )
 
 
@@ -1234,6 +1300,86 @@ def pop_cases(teardowns: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             windows=held,
             control="pop_card_held_2s",
             **checks,
+        )
+    )
+    return cases
+
+
+# KRI-1616: ref 4's craft stars as two stickers, and as one (ref 2's folder has no title of its own:
+# the label written on it is still missing), on the roomy speaker; ref 3's cards running past the
+# frame edge as pop cards with bleed on the close speaker.
+STICKER_CASES = (
+    ("ref4", "stickers_edge", (1.0, 1.0), props_mod.STICKER, ROOMY_STAGE),
+    ("ref4", "sticker_edge", (1.25,), props_mod.STICKER, ROOMY_STAGE),
+    ("ref3", "around_speaker", (4 / 3, 3 / 4), props_mod.POP, CLOSE_STAGE),
+)
+
+
+def sticker_cases(teardowns: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Stickers and bleed (KRI-1616) in English and Turkish, the build allowing bleed, then
+    controls that MUST fail, each on ref 4's English stickers: one moved onto the title, one
+    hung half its width past the frame (past the 0.35 allowance), and both flattened to boxes."""
+    from app.pipeline.phone_title_look import title_block_box  # noqa: PLC0415
+
+    cases: list[dict[str, Any]] = []
+    for ref, arrangement, aspects, mode, stage in STICKER_CASES:
+        face = stage.faces[0]
+        for language in LANGUAGES:
+            example = teardowns[ref]["examples"][language]
+            scene, out = _with_props(
+                example, language, arrangement, aspects, stage=stage, card_mode=mode, bleed=True
+            )
+            cases.append(
+                _props_case(
+                    f"{ref}+{arrangement}+bleed",
+                    language,
+                    example["title"],
+                    scene,
+                    out,
+                    teardowns[ref]["footage_plate"],
+                    face=face,
+                    card_mode=mode,
+                    bleed=True,
+                )
+            )
+    example = teardowns["ref4"]["examples"]["en"]
+    scene, out = _with_props(
+        example, "en", "stickers_edge", (1.0, 1.0), card_mode=props_mod.STICKER, bleed=True
+    )
+    assert out.props is not None and out.rows is not None, out.card_layout
+    boxes = [card.box for card in out.props.cards]
+    title = title_block_box(out.rows, canvas=PORTRAIT)
+    common = {"card_mode": props_mod.STICKER, "bleed": True}
+    for control, index, moved in (
+        ("sticker_over_title", 0, lambda b: _moved(b, x=(title.left + title.right) / 2,
+                                                   y=(title.top + title.bottom) / 2)),
+        ("sticker_past_the_bleed", 1, lambda b: _moved(b, x=1.0)),
+    ):  # fmt: skip
+        mutated = [moved(box) if n == index else box for n, box in enumerate(boxes)]
+        cases.append(
+            _props_case(
+                "ref4+stickers_edge+bleed",
+                "en",
+                example["title"],
+                scene,
+                out,
+                "dark_room",
+                cards=mutated,
+                control=control,
+                **common,
+            )
+        )
+    cases.append(
+        _props_case(
+            "ref4+stickers_edge+bleed",
+            "en",
+            example["title"],
+            scene,
+            out,
+            "dark_room",
+            control="sticker_flattened_to_a_box",
+            flattened=True,
+            **common,
         )
     )
     return cases
@@ -1454,6 +1600,7 @@ def build_cases() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     cases.extend(move_cases())
     cases.extend(props_cases(teardowns))
     cases.extend(pop_cases(teardowns))
+    cases.extend(sticker_cases(teardowns))
     cases.extend(pick_cases())
     from app.cli.verify_intro_scene_model import model_cases  # noqa: PLC0415
 

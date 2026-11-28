@@ -151,7 +151,8 @@ private struct IntroStyleTile: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel([name, option.recommended ? String(localized: "recommended") : nil,
-                             option.isCardLook ? IntroStyleLabels.photoCardLook : nil].compactMap { $0 }.joined(separator: ", "))
+                             option.isStickerLook ? IntroStyleLabels.stickerLook : option.isCardLook ? IntroStyleLabels.photoCardLook : nil]
+                                .compactMap { $0 }.joined(separator: ", "))
         .accessibilityValue(value)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("intro-style-option-\(option.key)")

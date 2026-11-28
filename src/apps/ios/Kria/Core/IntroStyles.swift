@@ -63,11 +63,17 @@ struct IntroStylesResponse: Decodable, Equatable, Sendable {
 /// KRI-1615: one of her own Visuals photos laid out with the title, as a card look's `cards` entry carries it
 /// (`IntroCard` in `app/pipeline/intro_styles.py`). Canvas fractions of 1080x1920: `x`/`y` the centre, `scale` the width;
 /// the photo keeps its own shape. The id is the slot's (`intro-card-N` for `prop_N`), so applying a look twice converges.
+/// KRI-1616: a sticker is one of her transparent pictures (`intro-card-sticker-N` for `sticker_N`), drawn with its alpha
+/// above any photo card; a card may hang past the side of the frame within the engine's bound.
 struct IntroStyleCard: Equatable, Sendable {
+    enum Kind: String, Equatable, Sendable { case photo, sticker }
+
     static let idPrefix = "intro-card-"
     static let maxPerLook = 4
+    private static let slotPrefix: [Kind: (id: String, slot: String)] = [.photo: ("", "prop_"), .sticker: ("sticker-", "sticker_")]
 
     let id: String
+    let kind: Kind
     let gcsPath: String
     let x: Double
     let y: Double
@@ -90,22 +96,24 @@ struct IntroStyleCard: Equatable, Sendable {
 
     private static func card(_ value: JSONValue) -> IntroStyleCard? {
         guard let fields = value.objectValue, let id = fields["id"]?.stringValue, id.hasPrefix(idPrefix) else { return nil }
-        let slot = id.dropFirst(idPrefix.count)
+        let rest = id.dropFirst(idPrefix.count)
+        let kind: Kind = rest.hasPrefix(slotPrefix[.sticker]!.id) ? .sticker : .photo
+        let slot = rest.dropFirst(slotPrefix[kind]!.id.count)
         func number(_ key: String, in range: ClosedRange<Double>) -> Double? {
             guard let value = fields[key]?.numberValue, value.isFinite, range.contains(value) else { return nil }
             return value
         }
         guard !slot.isEmpty, slot.allSatisfy({ $0.isASCII && $0.isNumber }), let n = Int(slot), n > 0,
-              fields["slot"]?.stringValue == "prop_\(n)",
+              fields["slot"]?.stringValue == "\(slotPrefix[kind]!.slot)\(n)",
               fields["media_id"]?.stringValue?.isEmpty == false, fields["generation"]?.stringValue?.isEmpty == false,
               let path = fields["gcs_path"]?.stringValue, !path.isEmpty,
-              let x = number("x_frac", in: 0...1), let y = number("y_frac", in: 0...1),
               let scale = number("scale", in: 0...1), scale > 0,
+              let x = number("x_frac", in: VisualMediaPlacement.edgeBleedXRange(width: scale)), let y = number("y_frac", in: 0...1),
               let captionClear = fields["caption_clear"]?.boolValue,
               let z = number("z", in: 0...Double(Int32.max)), z == z.rounded(),
               let start = number("start_s", in: 0...Double.greatestFiniteMagnitude),
               let end = number("end_s", in: 0...Double.greatestFiniteMagnitude), end > start else { return nil }
-        return IntroStyleCard(id: id, gcsPath: path, x: x, y: y, scale: scale, captionClear: captionClear, z: Int(z),
+        return IntroStyleCard(id: id, kind: kind, gcsPath: path, x: x, y: y, scale: scale, captionClear: captionClear, z: Int(z),
                               startS: start, endS: end)
     }
 
@@ -155,6 +163,7 @@ struct IntroStylesOffer: Equatable, Sendable {
         var id: String { key }
         var isNone: Bool { key == IntroStylesOffer.noneKey }
         var isCardLook: Bool { !cards.isEmpty }
+        var isStickerLook: Bool { cards.contains { $0.kind == .sticker } }
     }
 
     /// A card's photo in a card look's preview: `box` in canvas fractions, drawn in `z` order under the title.
@@ -162,6 +171,8 @@ struct IntroStylesOffer: Equatable, Sendable {
         let mediaID: String
         let box: CGRect
         let z: Int
+        /// KRI-1616: drawn from a picture that keeps its alpha.
+        var isSticker = false
     }
 
     static let noneKey = "none"
@@ -221,7 +232,11 @@ struct IntroStylesOffer: Equatable, Sendable {
             var previewCards: [PreviewCard] = []
             if !cards.isEmpty, preview != nil {
                 if let drawn = PreviewCard.look(object["preview"]?.objectValue?["cards"]), drawn.count == cards.count {
-                    previewCards = drawn
+                    previewCards = zip(drawn, cards).map { drawn, card in
+                        var preview = drawn
+                        preview.isSticker = card.kind == .sticker
+                        return preview
+                    }
                 } else {
                     preview = nil
                 }
@@ -245,14 +260,17 @@ struct IntroStylesOffer: Equatable, Sendable {
 }
 
 extension IntroStylesOffer.PreviewCard {
-    /// `preview.cards`, or nil when one box is not a box inside the canvas.
+    /// `preview.cards`, or nil when one box is not a box on the canvas: inside it, or hanging past a side no further than
+    /// the engine draws a card (`VisualMediaPlacement.edgeBleedXRange`, KRI-1616).
     static func look(_ value: JSONValue?) -> [Self]? {
         guard let entries = value?.arrayValue, !entries.isEmpty else { return nil }
         let cards = entries.compactMap { entry -> Self? in
             guard let fields = entry.objectValue, let mediaID = fields["media_id"]?.stringValue, !mediaID.isEmpty,
                   let box = fields["box"]?.objectValue, let z = fields["z"]?.numberValue, z.isFinite, z >= 0 else { return nil }
-            let edges = ["left", "top", "right", "bottom"].compactMap { box[$0]?.numberValue }.filter { $0.isFinite && (0...1).contains($0) }
-            guard edges.count == 4, edges[0] < edges[2], edges[1] < edges[3] else { return nil }
+            let edges = ["left", "top", "right", "bottom"].compactMap { box[$0]?.numberValue }.filter(\.isFinite)
+            guard edges.count == 4, edges[0] < edges[2], edges[1] < edges[3], edges[1] >= 0, edges[3] <= 1,
+                  VisualMediaPlacement.edgeBleedXRange(width: edges[2] - edges[0]).contains((edges[0] + edges[2]) / 2),
+                  edges[2] - edges[0] <= 1 else { return nil }
             return Self(mediaID: mediaID, box: CGRect(x: edges[0], y: edges[1], width: edges[2] - edges[0], height: edges[3] - edges[1]),
                         z: Int(z))
         }
@@ -298,6 +316,7 @@ enum IntroStyleLabels {
             switch key[key.index(after: plus)...] {
             case "around_speaker": return String(localized: "\(pair) + photos", comment: "Intro style name: the look's fonts (the argument) with two of her photos around her")
             case "grid_2x2": return String(localized: "\(pair) + photo grid", comment: "Intro style name: the look's fonts (the argument) with four of her photos, two above and two below")
+            case "sticker_edge", "stickers_edge": return String(localized: "\(pair) + stickers", comment: "Intro style name: the look's fonts (the argument) with her own transparent pictures beside the title")
             default: return String(localized: "Style \(position)", comment: "Intro style name for a look this build has no name for; the number is its place in the list")
             }
         }
@@ -323,6 +342,10 @@ enum IntroStyleLabels {
 
     static var photoCardLook: String {
         String(localized: "photo card look", comment: "VoiceOver: this intro style lays her own photos out as cards with the title")
+    }
+
+    static var stickerLook: String {
+        String(localized: "sticker look", comment: "VoiceOver: this intro style puts her own transparent pictures beside the title")
     }
 
     static var failureLine: String {
