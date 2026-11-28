@@ -404,7 +404,9 @@ def _source_end_for_authored_slot(
     if source_end is None:
         return duration, None
     if source.get("kind") != "video":
-        raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
+        raise HTTPException(
+            422, detail={"code": "phone_edit_unsupported", "reason": "image_source_clock"}
+        )
     source_end = float(source_end)
     bound = source.get("duration_s")
     if (
@@ -658,7 +660,9 @@ def resolve_authored_phone_slots(
         if source["kind"] == "image" and (
             not math.isclose(rate, 1.0) or slot.source_end_s is not None
         ):
-            raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
+            raise HTTPException(
+                422, detail={"code": "phone_edit_unsupported", "reason": "image_source_clock"}
+            )
         duration, source_end = _source_end_for_authored_slot(
             slot,
             old=old,
@@ -681,7 +685,9 @@ def resolve_authored_phone_slots(
             slot.look_preset not in (None, "none", "golden_hour")
             or slot.look_adjustments is not None
         ):
-            raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
+            raise HTTPException(
+                422, detail={"code": "phone_edit_unsupported", "reason": "authored_clip_look"}
+            )
         total += duration
         tilt = slot.tilt if "tilt" in slot.model_fields_set else old.get("tilt")
         dim = slot.dim if "dim" in slot.model_fields_set else old.get("dim")
