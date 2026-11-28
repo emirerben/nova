@@ -232,8 +232,8 @@ import KriaMediaEngine
         XCTAssertTrue(session.canEditSpeakerBackgroundWindows)
 
         XCTAssertTrue(session.setSpeakerBackground(mediaID: "1a2b", kind: .image))
-        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "3c4d", kind: .video, length: 2.5))
-        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "1a2b", kind: .image, length: 1))
+        XCTAssertTrue(session.appendBackgroundWindowForTest(mediaID: "3c4d", kind: .video, length: 2.5))
+        XCTAssertTrue(session.appendBackgroundWindowForTest(mediaID: "1a2b", kind: .image, length: 1))
         XCTAssertTrue(session.setSpeakerFrame(preset: "small_bottom_right"))
         fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
             sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
@@ -473,19 +473,20 @@ import KriaMediaEngine
         XCTAssertGreaterThanOrEqual(fitted.end - fitted.start, 0.5)
     }
 
-    func testTimelineWithoutWindowsHasNoBackgroundLane() {
-        func windowItems(_ session: NativeEditorSession) -> [NativeEditorTimelineItem] {
+    func testTheLaneListsEveryBackgroundBarTheFillIncluded() {
+        func barItems(_ session: NativeEditorSession) -> [NativeEditorTimelineItem] {
             session.timelineItems.filter { $0.kind == .speakerBackgroundWindow }
         }
-        XCTAssertTrue(windowItems(windowsSession()).isEmpty, "no background at all")
-        XCTAssertTrue(windowItems(windowsSession(lane: windowsLane([]))).isEmpty, "a fill alone has no lane; it is a strip on the lane only while windows exist")
+        XCTAssertTrue(barItems(windowsSession()).isEmpty, "no background at all")
+        let fillOnly = windowsSession(lane: windowsLane([]))
+        XCTAssertEqual(barItems(fillOnly).map(\.id), ["fill-0"], "KRI-1656: a fill alone is one bar over the whole video")
+        XCTAssertEqual(barItems(fillOnly).map(\.start), [0])
         let withWindows = windowsSession(lane: windowsLane([windowRow("a", start: 0, end: 2), windowRow("b", start: 3, end: 5)]))
-        XCTAssertEqual(windowItems(withWindows).map(\.id), ["bg-0", "bg-1"])
-        XCTAssertEqual(windowItems(withWindows).map(\.start), [0, 3])
-        // Every other lane keeps its items: the same session without the lane lists the same non-window items.
-        let plain = windowsSession(lane: windowsLane([]))
-        func shape(_ items: [NativeEditorTimelineItem]) -> [String] { items.map { "\($0.kind.rawValue) \($0.start) \($0.end)" } }
-        XCTAssertEqual(shape(withWindows.timelineItems.filter { $0.kind != .speakerBackgroundWindow }), shape(plain.timelineItems))
+        XCTAssertEqual(barItems(withWindows).map(\.id), ["bg-0", "bg-1", "fill-0", "fill-1"], "the windows, then the pieces of the fill they leave showing")
+        XCTAssertEqual(barItems(withWindows).map(\.start), [0, 3, 2, 5])
+        // Every other lane keeps its items.
+        func shape(_ items: [NativeEditorTimelineItem]) -> [String] { items.filter { $0.kind != .speakerBackgroundWindow }.map { "\($0.kind.rawValue) \($0.start) \($0.end)" } }
+        XCTAssertEqual(shape(withWindows.timelineItems), shape(fillOnly.timelineItems))
     }
 
     func testTheCompilerRegistersTheFillAndEveryWindowAssetOnce() throws {
@@ -555,7 +556,7 @@ import KriaMediaEngine
         XCTAssertTrue(closed.canEditSpeakerBackground, "the single background keeps following speaker_background")
         XCTAssertFalse(closed.canEditSpeakerBackgroundWindows)
         XCTAssertFalse(closed.setSpeakerBackgroundWindows([]))
-        XCTAssertFalse(closed.addSpeakerBackgroundWindow(mediaID: "fixture-bg-photo", kind: .image))
+        XCTAssertFalse(closed.appendBackgroundWindowForTest(mediaID: "fixture-bg-photo", kind: .image))
         XCTAssertFalse(closed.setSpeakerFrame(preset: "small_bottom_right"))
         closed.beginTimedBodyMove(kind: .speakerBackgroundWindow, id: "bg-0")
         closed.updateTimedBodyMove(by: 1)
@@ -564,23 +565,6 @@ import KriaMediaEngine
         XCTAssertFalse(closed.hasUnsavedChanges)
         XCTAssertTrue(closed.setSpeakerBackground(mediaID: "fixture-bg-video", kind: .video))
         XCTAssertEqual(closed.speakerBackgroundWindows.count, 1, "an existing window is carried along, never dropped silently")
-    }
-
-    func testAddingAWindowAppendsItAfterTheLastOneAndClipsItToTheVideo() {
-        let session = windowsSession()
-        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "fixture-bg-photo", kind: .image))
-        XCTAssertEqual(session.speakerBackground?.mediaID, "fixture-bg-photo", "no fill yet: the first tile becomes the fill")
-        XCTAssertEqual(session.speakerBackgroundWindows.map { [$0.startS, $0.endS] }, [[0, 4]])
-        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "fixture-bg-video", kind: .video))
-        XCTAssertEqual(session.speakerBackgroundWindows.map { [$0.startS, $0.endS] }, [[0, 4], [4, 6]], "clipped to the 6 s video")
-        XCTAssertEqual(session.speakerBackgroundWindows[1].sourceStartS, 0, "a video window starts at its own beginning")
-        XCTAssertEqual(Set(session.speakerBackgroundWindows.map(\.localID)).count, 2)
-        XCTAssertFalse(session.addSpeakerBackgroundWindow(mediaID: "fixture-bg-photo", kind: .image), "no room left")
-        XCTAssertTrue(session.removeSpeakerBackgroundWindow(id: session.speakerBackgroundWindows[0].localID))
-        XCTAssertEqual(session.speakerBackgroundWindows.map(\.mediaID), ["fixture-bg-video"])
-        XCTAssertTrue(session.removeSpeakerBackgroundWindow(id: session.speakerBackgroundWindows[0].localID))
-        XCTAssertTrue(session.speakerBackgroundWindows.isEmpty)
-        XCTAssertEqual(session.speakerBackground?.mediaID, "fixture-bg-photo", "taking the last window away keeps the fill")
     }
 
     func testOnlyReadyPhotosAndVideosAreOfferedAsBackgrounds() {
@@ -711,7 +695,7 @@ import KriaMediaEngine
     func testSettingAColourReplacesAMediaFillKeepsWindowsAndFrameAndIsUndoable() {
         let session = colourSession(windows: true)
         XCTAssertTrue(session.setSpeakerBackground(mediaID: "fixture-bg-photo", kind: .image))
-        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "fixture-bg-video", kind: .video, length: 2))
+        XCTAssertTrue(session.appendBackgroundWindowForTest(mediaID: "fixture-bg-video", kind: .video, length: 2))
         XCTAssertTrue(session.setSpeakerFrame(preset: "small_top_left"))
         let windows = session.speakerBackgroundWindows, frame = session.speakerFrame
 
@@ -892,7 +876,7 @@ import KriaMediaEngine
         XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "a colour fill keeps it")
         XCTAssertTrue(session.setSpeakerBackground(mediaID: "fixture-bg-video", kind: .video, sourceStart: 1))
         XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "a video fill keeps it")
-        XCTAssertTrue(session.addSpeakerBackgroundWindow(mediaID: "fixture-bg-photo", kind: .image, length: 2))
+        XCTAssertTrue(session.appendBackgroundWindowForTest(mediaID: "fixture-bg-photo", kind: .image, length: 2))
         XCTAssertEqual(session.speakerBackground?.fullScreenWindows, opening, "adding a window keeps it")
         let id = session.speakerBackgroundWindows[0].localID
         XCTAssertTrue(session.removeSpeakerBackgroundWindow(id: id))
@@ -1034,46 +1018,46 @@ import KriaMediaEngine
         try recipe.validate()
     }
 
-    func testSetSpeakerBackgroundFocusChangesAndDirtiesTheDocument() throws {
+    func testSetSpeakerBackgroundFocusForABarChangesAndDirtiesTheDocument() throws {
         let session = focusSession(lane: focusLane(windows: [focusWindow("a", start: 0, end: 4), focusWindow("b", start: 4, end: 8)]))
         XCTAssertTrue(session.canEditSpeakerBackgroundFocus)
         XCTAssertFalse(session.hasUnsavedChanges)
-        // The fill.
-        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 1, zoom: nil, windowIndex: nil))
-        XCTAssertEqual(session.speakerBackground?.focus, SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 1))
-        XCTAssertTrue(session.hasUnsavedChanges)
-        // A nil part keeps the other part; the zoom is clamped to 0.3...3.
-        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: nil, zoom: 9, windowIndex: nil))
-        XCTAssertEqual(session.speakerBackground?.focus, SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 3))
-        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: nil, zoom: 0.01, windowIndex: nil))
-        XCTAssertEqual(session.speakerBackground?.focus?.zoom, 0.3)
-        // x is clamped to 0...1.
-        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: -4, zoom: nil, windowIndex: nil))
-        XCTAssertEqual(session.speakerBackground?.focus?.x, 0)
-        // One window only.
-        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 0, zoom: 1.5, windowIndex: 1))
+        // One window's own crop.
+        let crop = SpeakerBackgroundFocus(x: 0, y: 0.25, zoom: 1.5)
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(crop, barID: "bg-1"))
         XCTAssertNil(session.speakerBackgroundWindows[0].focus)
-        XCTAssertEqual(session.speakerBackgroundWindows[1].focus, SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5))
-        // The same value again, a missing window, a missing value and non-finite values change nothing.
-        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: 0, zoom: 1.5, windowIndex: 1))
-        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: 0.5, zoom: nil, windowIndex: 7))
-        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: nil, zoom: nil, windowIndex: 0))
-        XCTAssertFalse(session.setSpeakerBackgroundFocus(x: .nan, zoom: nil, windowIndex: 0))
-        // The centre at 1x is today's drawing: the aim goes (key absent).
-        XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 0.5, zoom: 1, windowIndex: 1))
+        XCTAssertEqual(session.speakerBackgroundWindows[1].focus, crop, "the whole focus is written, y included")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        // The same value again, a missing bar and values outside the wire's range change nothing.
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(crop, barID: "bg-1"))
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(crop, barID: "bg-7"))
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 9), barID: "bg-1"))
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 1.5, y: 0.5, zoom: 1), barID: "bg-1"))
+        // nil is "no crop": the key goes.
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(nil, barID: "bg-1"))
         XCTAssertNil(session.speakerBackgroundWindows[1].focus)
         // Undo walks back.
         session.undo()
-        XCTAssertEqual(session.speakerBackgroundWindows[1].focus, SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5))
+        XCTAssertEqual(session.speakerBackgroundWindows[1].focus, crop)
     }
 
-    func testTheAimControlsFollowTheCapabilityAndAColourHasNothingToAim() {
+    func testTheFillBarTakesACropOfItsOwn() throws {
+        let session = focusSession(lane: focusLane())
+        let bars = session.backgroundFillRegions
+        XCTAssertEqual(bars.map(\.id), ["fill-0"], "a lane with only a fill is one bar")
+        let crop = SpeakerBackgroundFocus(x: 1, y: 0.5, zoom: 2)
+        XCTAssertTrue(session.setSpeakerBackgroundFocus(crop, barID: "fill-0"))
+        XCTAssertEqual(session.speakerBackground?.focus, crop)
+        XCTAssertFalse(session.setSpeakerBackgroundFocus(crop, barID: "fill-3"), "no such bar")
+    }
+
+    func testTheCropControlsFollowTheCapabilityAndAColourHasNothingToCrop() {
         let closed = focusSession(lane: focusLane(), focusOpen: false)
         XCTAssertFalse(closed.canEditSpeakerBackgroundFocus)
-        XCTAssertFalse(closed.setSpeakerBackgroundFocus(x: 0, zoom: nil, windowIndex: nil))
+        XCTAssertFalse(closed.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5), barID: "fill-0"))
         XCTAssertNil(closed.speakerBackground?.focus)
         let colour = focusSession(lane: .object(["kind": .string("color"), "color": .string("#112233")]))
-        XCTAssertFalse(colour.setSpeakerBackgroundFocus(x: 0, zoom: nil, windowIndex: nil), "a colour fill has no picture")
+        XCTAssertFalse(colour.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5), barID: "fill-0"), "a colour fill has no picture")
         XCTAssertNil(colour.speakerBackground?.focus)
     }
 

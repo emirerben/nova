@@ -18,6 +18,8 @@ struct NativeVisualPoolPicker: View {
     /// Overrides "None is lit when nothing is selected" for a caller whose fill can be neither a pool visual nor
     /// nothing (the Background tool's solid colour, KRI-1173).
     var noneSelected: Bool?
+    /// KRI-1656: the Background tool removes a bar from the bar's own inspector, so it hides the "None" tile.
+    var showsNone = true
     @State private var showsImporter = false
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top), count: 3)
@@ -28,7 +30,7 @@ struct NativeVisualPoolPicker: View {
     var body: some View {
         VStack(spacing: 12) {
             LazyVGrid(columns: columns, spacing: 10) {
-                noneTile
+                if showsNone { noneTile }
                 ForEach(choices) { asset in visualTile(asset) }
             }
             if preparingCount > 0 {

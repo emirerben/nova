@@ -7419,7 +7419,7 @@ final class NativeEditorSessionTests: XCTestCase {
         session.selectClip(session.draft.clips[0].id)
         if focusOnly {
             XCTAssertFalse(session.hasUnsavedChanges, "The initial background is already saved")
-            XCTAssertTrue(session.setSpeakerBackgroundFocus(x: 0.2, zoom: 0.5))
+            XCTAssertTrue(session.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0.2, y: 0.5, zoom: 0.5), barID: "fill-0"))
             fake.authoritativeVariant?["render_generation_id"] = .string("next")
             fake.authoritativeVariant?["speaker_background"] = session.speakerBackground?.json
         } else {
@@ -7489,7 +7489,7 @@ final class NativeEditorSessionTests: XCTestCase {
     func testNewerFocusSurvivesSuccessfulAndFailedSuspendedSaveReads() async throws {
         for fails in [false, true] {
             let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
-            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.4))
+            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0.4, y: 0.5, zoom: 0.5), barID: "fill-0"))
             var response = try XCTUnwrap(edit.fake.authoritativeVariant)
             response["render_generation_id"] = .string("next")
             response["speaker_background"] = edit.session.speakerBackground?.json
@@ -7502,7 +7502,7 @@ final class NativeEditorSessionTests: XCTestCase {
             let saving = Task { await edit.session.save() }
             let held = await waitUntil(timeout: .seconds(5)) { edit.fake.editorVariantIsSuspended }
             XCTAssertTrue(held)
-            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.8))
+            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0.8, y: 0.5, zoom: 0.5), barID: "fill-0"))
             if fails { edit.fake.editorVariantError = .requestFailed(status: 503) }
             edit.fake.resumeEditorVariant()
             await saving.value
@@ -7521,7 +7521,7 @@ final class NativeEditorSessionTests: XCTestCase {
     func testFocusSaveReadCannotMutateReplacementEditorOnSuccessOrFailure() async throws {
         for (fails, sameTarget, renderStarted) in [false, true].flatMap({ fails in [false, true].flatMap { same in [false, true].map { (fails, same, $0) } } }) {
             let edit = try await savedPhoneEditWithFinishedRender(focusOnly: true)
-            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(x: 0.4))
+            XCTAssertTrue(edit.session.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0.4, y: 0.5, zoom: 0.5), barID: "fill-0"))
             var response = try XCTUnwrap(edit.fake.authoritativeVariant)
             response["render_generation_id"] = .string("next")
             response["speaker_background"] = edit.session.speakerBackground?.json

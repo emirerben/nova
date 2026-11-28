@@ -3533,6 +3533,7 @@
       }
     },
     "%lld, %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -4733,6 +4734,7 @@
       }
     },
     "Add %@ to the sequence" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6170,6 +6172,7 @@
       }
     },
     "Aim" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6186,6 +6189,7 @@
       }
     },
     "Aim %@" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6202,6 +6206,7 @@
       }
     },
     "Aimed at the text" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -7753,6 +7758,7 @@
       }
     },
     "Background fill" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -9110,6 +9116,7 @@
     },
     "Centre" : {
       "comment" : "Aim the background at the centre",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -12411,6 +12418,22 @@
         }
       }
     },
+    "Couldn’t load this picture to crop." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Bild konnte zum Zuschneiden nicht geladen werden."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu görsel kırpmak için yüklenemedi."
+          }
+        }
+      }
+    },
     "Couldn’t make this one" : {
       "localizations" : {
         "de" : {
@@ -13191,6 +13214,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Kırpma alanı"
+          }
+        }
+      }
+    },
+    "Crop is locked for this render." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zuschneiden ist für dieses Erstellen gesperrt."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kırpma bu oluşturma için kilitli."
           }
         }
       }
@@ -14686,6 +14725,22 @@
         }
       }
     },
+    "Drag to move, pinch to zoom. What you see is what shows." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zieh zum Verschieben, zieh mit zwei Fingern zum Zoomen. Was du siehst, erscheint im Video."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Taşımak için sürükle, yakınlaştırmak için iki parmakla aç. Gördüğün, videoda görünür."
+          }
+        }
+      }
+    },
     "Drag to position. Use the corner to resize or rotate." : {
       "localizations" : {
         "de" : {
@@ -16117,6 +16172,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Etkinlikler"
+          }
+        }
+      }
+    },
+    "Every colour part of the video uses the same colour." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alle Farbbereiche des Videos haben dieselbe Farbe."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Videonun tüm renkli bölümleri aynı rengi kullanır."
           }
         }
       }
@@ -24464,6 +24535,7 @@
       }
     },
     "No photos or videos in Photos yet." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -24977,6 +25049,7 @@
       }
     },
     "Nothing in the sequence yet." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -25600,6 +25673,7 @@
       }
     },
     "Open Background tool" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -26064,6 +26138,7 @@
       }
     },
     "Opens the Background tool" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -27479,22 +27554,6 @@
         }
       }
     },
-    "Photos play as clips in your montage." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fotos werden in deiner Montage als Clips abgespielt."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fotoğraflar montajında klip olarak oynatılır."
-          }
-        }
-      }
-    },
     "Photos have no range to choose." : {
       "localizations" : {
         "de" : {
@@ -27507,6 +27566,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fotoğraflarda seçilecek aralık yok."
+          }
+        }
+      }
+    },
+    "Photos play as clips in your montage." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotos werden in deiner Montage als Clips abgespielt."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fotoğraflar montajında klip olarak oynatılır."
           }
         }
       }
@@ -31116,6 +31191,7 @@
       }
     },
     "Remove %@ from the sequence" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -34596,6 +34672,7 @@
       }
     },
     "Sequence" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -38359,6 +38436,7 @@
       }
     },
     "Tap a photo or video to add it. Each shows for a few seconds, one after another." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -39636,6 +39714,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu kırpma bu bölmeye uymuyor."
+          }
+        }
+      }
+    },
+    "That’s as many background changes as one video can hold." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mehr Hintergrundänderungen passen nicht in ein Video."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bir videoya bundan fazla arka plan değişikliği sığmaz."
           }
         }
       }
@@ -41096,6 +41190,38 @@
         }
       }
     },
+    "There isn’t room for a colour here. Move the playhead, or make a bar shorter." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hier ist kein Platz für eine Farbe. Verschiebe die Abspielposition oder kürze einen Balken."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Burada renk için yer yok. Oynatma çizgisini kaydır ya da bir çubuğu kısalt."
+          }
+        }
+      }
+    },
+    "There isn’t room for another background here. Move the playhead, or make a bar shorter." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hier ist kein Platz für einen weiteren Hintergrund. Verschiebe die Abspielposition oder kürze einen Balken."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Burada başka bir arka plan için yer yok. Oynatma çizgisini kaydır ya da bir çubuğu kısalt."
+          }
+        }
+      }
+    },
     "These changes cannot be combined safely. Your local edits are still here. Review the post before saving." : {
       "localizations" : {
         "de" : {
@@ -41252,6 +41378,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bu arka plan artık düzenlemede yok."
+          }
+        }
+      }
+    },
+    "This background is zoomed out to show the whole picture. Drag or pinch to fill the frame." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Hintergrund ist herausgezoomt und zeigt das ganze Bild. Zieh oder zieh mit zwei Fingern, um den Rahmen zu füllen."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bu arka plan, görselin tamamını göstermek için uzaklaştırıldı. Kareyi doldurmak için sürükle veya iki parmakla aç."
           }
         }
       }

@@ -59,7 +59,7 @@ final class BackgroundLaneUITests: XCTestCase {
         let app = launch(reset: true)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-lane-background"].firstMatch.waitForExistence(timeout: 10),
                       "a project with windows has the BACKGROUND lane")
-        XCTAssertTrue(app.buttons["native-editor-timeline-background-fill"].exists, "and the fill as a strip on it")
+        XCTAssertTrue(block(app, "fill-0").exists, "KRI-1656: the fill is a bar too, wherever no window covers the video")
         let seeded = readTimes(app, "bg-1")
         XCTAssertEqual(seeded.start, 2.5, accuracy: 0.001)
         XCTAssertEqual(seeded.end, 5.0, accuracy: 0.001)
@@ -85,28 +85,36 @@ final class BackgroundLaneUITests: XCTestCase {
         XCTAssertFalse(reopened.buttons["native-editor-save"].isEnabled, "nothing unsaved after reopening")
     }
 
-    func testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset() {
+    func testTappingAPhotoAddsABarFromThePlayheadAndRemoveTakesItAway() {
         let app = launch(reset: true)
         openBackgroundTool(app)
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-background-sequence-bg-0"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-background-sequence-bg-1"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-background-sequence-bg-0"].exists, "KRI-1656: no separate Sequence row any more")
         XCTAssertTrue(app.buttons["native-editor-background-speaker-full"].isSelected, "no corner frame yet")
 
-        let add = app.buttons["native-editor-background-sequence-add-fixture-bg-photo"]
-        XCTAssertTrue(add.exists, "the pool tiles of the Sequence add a window")
-        add.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-background-sequence-bg-2"].waitForExistence(timeout: 5),
-                      "the new window joins the end of the sequence")
-
-        app.buttons["native-editor-background-sequence-remove-bg-0"].tap()
-        XCTAssertFalse(app.descendants(matching: .any)["native-editor-background-sequence-bg-0"].waitForExistence(timeout: 2), "the x removes its window")
-
+        // The playhead is at 0, inside the first bar: the new bar takes that bar's whole span (closer than a bar to its start).
+        let video = app.buttons["native-editor-background-visual-fixture-bg-video"]
+        XCTAssertTrue(video.waitForExistence(timeout: 5))
+        video.tap()
         let corner = app.buttons["native-editor-background-speaker-small_bottom_right"]
         corner.tap()
         XCTAssertTrue(corner.isSelected)
         XCTAssertFalse(app.buttons["native-editor-background-speaker-full"].isSelected)
-
         app.buttons["native-editor-background-done"].tap()
+
+        let added = block(app, "bg-2")
+        XCTAssertTrue(added.waitForExistence(timeout: 5), "the new bar is on the lane")
+        XCTAssertFalse(block(app, "bg-0").exists, "and it replaced the bar under the playhead")
+        let times = readTimes(app, "bg-2")
+        XCTAssertEqual(times.start, 0, accuracy: 0.001)
+        XCTAssertEqual(times.end, 2, accuracy: 0.001)
+
+        // Its inspector offers Crop, Replace and Remove.
+        added.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-selected-background-crop"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-selected-background-replace"].exists)
+        app.buttons["native-editor-selected-background-remove"].tap()
+        XCTAssertFalse(block(app, "bg-2").waitForExistence(timeout: 2), "Remove takes the bar off the lane")
+
         saveAndWait(app)
         app.terminate()
 
@@ -114,9 +122,6 @@ final class BackgroundLaneUITests: XCTestCase {
         openBackgroundTool(reopened)
         XCTAssertTrue(reopened.buttons["native-editor-background-speaker-small_bottom_right"].waitForExistence(timeout: 5))
         XCTAssertTrue(reopened.buttons["native-editor-background-speaker-small_bottom_right"].isSelected, "the saved corner comes back")
-        XCTAssertTrue(reopened.descendants(matching: .any)["native-editor-background-sequence-bg-1"].exists)
-        XCTAssertTrue(reopened.descendants(matching: .any)["native-editor-background-sequence-bg-2"].exists || reopened.descendants(matching: .any)["native-editor-background-sequence-bg-0"].exists,
-                      "the added window is still there; ids are renumbered at load")
     }
 
     func testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls() {
@@ -128,7 +133,8 @@ final class BackgroundLaneUITests: XCTestCase {
         XCTAssertFalse(closed.buttons["native-editor-background-speaker-full"].exists)
         closed.buttons["native-editor-background-visual-fixture-bg-photo"].tap()
         closed.buttons["native-editor-background-done"].tap()
-        XCTAssertFalse(closed.descendants(matching: .any)["native-editor-lane-background"].exists, "a fill alone has no lane")
+        XCTAssertTrue(closed.descendants(matching: .any)["native-editor-lane-background"].firstMatch.waitForExistence(timeout: 5),
+                      "KRI-1656: a fill alone is one bar, so the lane is there")
         closed.terminate()
 
         // The gate open and windows seeded: now the lane appears.

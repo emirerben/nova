@@ -260,7 +260,10 @@ enum NativeEditorUITestFixtures {
         // KRI-1558: `-ui-testing-editor-speaker-sections` opens the frame controls and the section gate and, until a save has
         // been kept, seeds a colour fill with four sections (own 0-1.5 s, bottom-right corner 1.5-3.5 s, picture 3.5-4.5 s,
         // bottom-left corner 4.5-6 s) and no whole-video frame, as the planner's arrangement writes them.
-        let sectionsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-sections")
+        // KRI-1656: `-ui-testing-editor-speaker-background-bars` opens the same gates over a lane made of one photo fill and nothing
+        // else (a whole-video background: one bar on the BACKGROUND lane), so the bars flows start from the common case.
+        let barsOn = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-bars")
+        let sectionsOn = barsOn || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-sections")
         let windowsOn = sectionsOn || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-windows")
         if windowsOn { caps["speaker_background_windows"] = .object(["editable": .bool(true)]) }
         if sectionsOn { caps["speaker_sections"] = .object(["editable": .bool(true)]) }
@@ -272,6 +275,8 @@ enum NativeEditorUITestFixtures {
         var lane: JSONValue?
         if let data = defaults.data(forKey: savedSpeakerBackgroundKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {
             lane = saved
+        } else if barsOn {
+            lane = seededSpeakerBarsFill
         } else if sectionsOn {
             lane = seededSpeakerSections
         } else if windowsOn, ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-frame") {
@@ -294,6 +299,11 @@ enum NativeEditorUITestFixtures {
     static let seededSpeakerFrame: JSONValue = .object([
         "kind": .string("color"), "color": .string("#2B6CB0"),
         "speaker_frame": .object(["width_fraction": .number(0.42), "x_fraction": .number(0.76), "y_fraction": .number(0.8)]),
+    ])
+
+    /// The lane `-ui-testing-editor-speaker-background-bars` starts from (KRI-1656): one photo behind the speaker, the whole video.
+    static let seededSpeakerBarsFill: JSONValue = .object([
+        "media_id": .string("fixture-bg-photo"), "kind": .string("image"), "source_start_s": .number(0),
     ])
 
     /// The lane `-ui-testing-editor-speaker-sections` starts from (KRI-1558).

@@ -2133,7 +2133,7 @@ struct NativeMiniStrip: View {
             ("TEXT", textItems), ("CAPTIONS", captionItems), ("TRANSLATION", translationItems), ("MUSIC", musicItems),
             ("SFX", soundEffectItems), ("OVERLAY", mediaOverlayItems),
             ("VISUAL", visualBlockItems),
-            // KRI-1162: present only while the edit has timed backgrounds, so every other edit keeps its lane list.
+            // KRI-1162 / KRI-1656: present while the edit has a background (every bar of it, the fill's pieces included), so every other edit keeps its lane list.
             ("BACKGROUND", backgroundWindowItems), ("MOTION", motionSceneItems),
             ("CAMERA", cameraEffectItems), ("DRAW", drawingItems), ("CAROUSEL", carouselItems)
         ]
@@ -3093,8 +3093,11 @@ struct NativeMiniStrip: View {
             let count = session.document.drawings.first { $0.id == item.id }?.strokes.count ?? 0
             return count > 0 ? String(localized: "Drawing · \(count) strokes") : laneTitle
         case .speakerBackgroundWindow:
-            guard let window = session.speakerBackgroundWindows.first(where: { $0.localID == item.id }) else { return laneTitle }
-            return session.visualLibrary.first { $0.id == window.mediaID }?.sourceFilename ?? (window.kind == .video ? String(localized: "Video") : String(localized: "Photo"))
+            // KRI-1656: a window, or a visible piece of the fill (a colour piece has no media: it is the colour).
+            guard let media = session.backgroundBarMedia(id: item.id) else {
+                return session.speakerBackground?.color != nil ? String(localized: "Colour", comment: "Background: a plain colour") : laneTitle
+            }
+            return session.visualLibrary.first { $0.id == media.mediaID }?.sourceFilename ?? (media.kind == .video ? String(localized: "Video") : String(localized: "Photo"))
         case .carousel:
             return String(localized: "Carousel: \(item.id)")
         default:
@@ -3137,6 +3140,8 @@ struct NativeMiniStrip: View {
 
     private func canEditTimedOperation(_ item: NativeEditorTimelineItem, operation: String) -> Bool {
         guard let keys = timedOperationKeys(for: item.kind, operation: operation) else { return false }
+        // KRI-1656: a visible piece of the fill moves and trims only in bars mode; a window follows the timed-background gate.
+        if item.kind == .speakerBackgroundWindow { return session.canEditBackgroundBarTiming(id: item.id) }
         if item.kind == .motionScene, session.isMotionSceneReadOnly(id: item.id) { return false }
         if item.kind == .visualBlock,
            session.document.visualBlocks.first(where: { $0.id == item.id })?.kind == "montage" {
@@ -3288,35 +3293,12 @@ struct NativeMiniStrip: View {
                     onDragXChange: { x in updateAutoScrollX(x) }
                 )
             }
-            if title == "BACKGROUND" { backgroundFillStrip(playheadX: playheadX) }
         }
         .frame(height: CGFloat(count) * secondaryLaneHeight + CGFloat(count - 1) * rowGap)
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(String(localized: "\(Self.laneDisplayName(title)) lane"))
         .accessibilityIdentifier("native-editor-lane-\(title.lowercased())")
-    }
-
-    /// KRI-1162: the whole-edit fill, drawn faintly along the top of the BACKGROUND lane. A tap opens the Background
-    /// tool; it has no edges to trim (the fill always spans the video).
-    private func backgroundFillStrip(playheadX: CGFloat) -> some View {
-        let origin = playheadX - CGFloat(clock.currentTime) * pixelsPerSecond
-        let left = max(origin, -12)
-        let right = min(origin + CGFloat(timelineDuration) * pixelsPerSecond, max(viewportWidth, 1) + 12)
-        let width = max(1, right - left)
-        return Button { session.requestBackgroundTool() } label: {
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(KriaColor.mutedInk.opacity(0.22))
-                .frame(width: width, height: 6)
-                .frame(width: width, height: 14, alignment: .top)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(width: width, height: 14)
-        .position(x: left + width / 2, y: 7)
-        .accessibilityLabel(String(localized: "Background fill"))
-        .accessibilityHint("Opens the Background tool")
-        .accessibilityIdentifier("native-editor-timeline-background-fill")
     }
 
     private func captionDensityLane(width: CGFloat, playheadX: CGFloat) -> some View {

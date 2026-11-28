@@ -3346,13 +3346,15 @@
         "KriaTests/SpeakerBackgroundEditorTests/testWindowsAndTheSpeakerFrameRoundTripAndLocalIDsNeverReachTheWire",
         "KriaTests/SpeakerBackgroundEditorTests/testALaneWithoutWindowsOrFrameEncodesByteIdenticallyToToday",
         "KriaTests/SpeakerBackgroundEditorTests/testWindowsCannotOverlapOrShrinkBelowHalfASecond",
-        "KriaTests/SpeakerBackgroundEditorTests/testTimelineWithoutWindowsHasNoBackgroundLane",
+        "KriaTests/SpeakerBackgroundEditorTests/testTheLaneListsEveryBackgroundBarTheFillIncluded",
         "KriaTests/SpeakerBackgroundEditorTests/testTheCompilerRegistersTheFillAndEveryWindowAssetOnce",
         "KriaTests/SpeakerBackgroundEditorTests/testSpeakerFramePresetsAreDetectedWithinAThousandth",
         "KriaTests/SpeakerBackgroundEditorTests/testSpeakerFramePresetsAreSetClearedAndACustomFrameIsKeptUntilAPresetIsPicked",
-        "KriaTests/SpeakerBackgroundEditorTests/testAddingAWindowAppendsItAfterTheLastOneAndClipsItToTheVideo",
+        "KriaTests/BackgroundBarsTests/testTappingInsideABarSplitsItAtThePlayhead",
+        "KriaTests/BackgroundBarsTests/testRandomEditsKeepTheLaneSound",
         "KriaUITests/BackgroundLaneUITests/testDraggingAWindowMovesTheInspectorAndTheSave",
-        "KriaUITests/BackgroundLaneUITests/testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset",
+        "KriaUITests/BackgroundLaneUITests/testTappingAPhotoAddsABarFromThePlayheadAndRemoveTakesItAway",
+        "KriaUITests/BackgroundBarsUITests/testTrimmingTheBarShortensItAndTheFreedSpanSavesAsHerOwnTake",
         "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls"
       ],
       "paths": [

@@ -1,3 +1,4 @@
+import KriaMediaEngine
 import SwiftUI
 
 // Shared with NativeVisualPanel's whole-video transition picker -- one label
@@ -83,7 +84,7 @@ struct NativeSelectionInspector: View {
         case .soundEffect, .mediaOverlay, .visualBlock, .motionScene, .cameraEffect, .carousel, .drawing:
             NativeSelectedEffectInspector(selection: selection, session: session)
         case .speakerBackgroundWindow:
-            NativeSelectedBackgroundWindowInspector(selection: selection, session: session)
+            NativeSelectedBackgroundBarInspector(selection: selection, session: session)
         case .speaker:
             // The speaker opens its own bottom panel (`NativeSpeakerPanel`); this sheet is only a fallback.
             Form { Section { Text("Drag yourself on the video to move. Pinch to resize.").foregroundStyle(KriaColor.zinc) } }
@@ -91,17 +92,19 @@ struct NativeSelectionInspector: View {
     }
 }
 
-/// KRI-1162: one timed Talk-to-camera background picked on the BACKGROUND lane. Its span is edited by dragging the
-/// block, so the times here are read-only text; the Background tool owns picking and ordering.
-private struct NativeSelectedBackgroundWindowInspector: View {
+/// KRI-1162 / KRI-1656: one Talk-to-camera background bar picked on the BACKGROUND lane: a timed window, or a visible piece of the
+/// fill. Its span is edited by dragging the bar, so the times here are read-only text. Crop and Replace edit the picture,
+/// Remove takes the bar away (the span then shows her own take).
+private struct NativeSelectedBackgroundBarInspector: View {
     let selection: EditorSelection
     @ObservedObject var session: NativeEditorSession
     @Environment(\.dismiss) private var dismiss
 
-    private var window: EditorSpeakerBackgroundWindow? { session.speakerBackgroundWindows.first { $0.localID == selection.id } }
+    private var span: EditorBackgroundSpan? { session.speakerBackground?.barSpan(id: selection.id, duration: session.backgroundBarDuration) }
+    private var media: (mediaID: String, kind: VisualMediaKind)? { session.backgroundBarMedia(id: selection.id) }
 
-    private func name(_ window: EditorSpeakerBackgroundWindow) -> String {
-        session.visualLibrary.first { $0.id == window.mediaID }?.sourceFilename ?? (window.kind == .video ? String(localized: "Video") : String(localized: "Photo"))
+    private func name(_ media: (mediaID: String, kind: VisualMediaKind)) -> String {
+        session.visualLibrary.first { $0.id == media.mediaID }?.sourceFilename ?? (media.kind == .video ? String(localized: "Video") : String(localized: "Photo"))
     }
 
     private func timeRow(_ title: String, seconds: Double, id: String) -> some View {
@@ -117,37 +120,88 @@ private struct NativeSelectedBackgroundWindowInspector: View {
 
     var body: some View {
         Form {
-            if let window {
-                Section("Background") {
-                    LabeledContent("Shows", value: name(window))
-                    LabeledContent("Kind", value: window.kind == .video ? String(localized: "Video") : String(localized: "Photo"))
-                    timeRow("Starts", seconds: window.startS, id: "native-editor-selected-\(selection.kind.rawValue)-start")
-                    timeRow("Ends", seconds: window.endS, id: "native-editor-selected-\(selection.kind.rawValue)-end")
+            if let span {
+                // The sheet opens at half height: what the creator does here (Crop, Replace, Remove) has to be on screen without a
+                // scroll, so this section is the name and the span, nothing more.
+                Section {
+                    if let media {
+                        LabeledContent(media.kind == .video ? String(localized: "Video") : String(localized: "Photo"), value: name(media))
+                    } else {
+                        LabeledContent("Shows", value: String(localized: "Colour", comment: "Background: a plain colour"))
+                    }
+                    timeRow("Starts", seconds: span.start, id: "native-editor-selected-\(selection.kind.rawValue)-start")
+                    timeRow("Ends", seconds: span.end, id: "native-editor-selected-\(selection.kind.rawValue)-end")
                 }
-                if let index = session.speakerBackgroundWindows.firstIndex(where: { $0.localID == selection.id }),
-                   session.canEditSpeakerBackgroundFocus || session.speakerBackgroundWindows[index].focus != nil {
-                    // Qendresa item 18: aim this window's picture at its text (read-only while the server does not open it).
-                    Section { NativeBackgroundAimControls(session: session, windowIndex: index) }
+                if media != nil {
+                    mediaActions
+                } else if let hex = session.speakerBackgroundColor {
+                    colourActions(current: hex)
                 }
                 Section {
-                    Button("Open Background tool") {
-                        dismiss()
-                        session.requestBackgroundTool()
-                    }
-                    .accessibilityIdentifier("native-editor-selected-background-open-tool")
                     Button("Remove", role: .destructive) {
-                        _ = session.removeSpeakerBackgroundWindow(id: selection.id)
+                        _ = session.removeSpeakerBackgroundBar(id: selection.id)
                         dismiss()
                     }
-                    .disabled(!session.canEditSpeakerBackgroundWindows)
+                    .disabled(!session.canRemoveBackgroundBar(id: selection.id))
                     .accessibilityIdentifier("native-editor-selected-background-remove")
                 }
-                if !session.canEditSpeakerBackgroundWindows {
+                if !session.canEditBackgroundBarTiming(id: selection.id) {
                     Section { Label("Timed backgrounds are locked for this render.", systemImage: "lock") }
                 }
             } else {
                 Section { Text("This background is no longer in the edit.").foregroundStyle(KriaColor.zinc) }
             }
+        }
+    }
+
+    @ViewBuilder private var mediaActions: some View {
+        Section {
+            if session.canEditSpeakerBackgroundFocus || session.speakerBackgroundFocus(barID: selection.id) != nil {
+                NavigationLink {
+                    NativeBackgroundCropView(session: session, barID: selection.id)
+                        .navigationTitle("Crop")
+                        .navigationBarTitleDisplayMode(.inline)
+                } label: {
+                    Label("Crop", systemImage: "crop")
+                }
+                .accessibilityIdentifier("native-editor-selected-background-crop")
+            }
+            NavigationLink {
+                NativeBackgroundReplaceGrid(session: session, barID: selection.id)
+                    .navigationTitle("Replace")
+                    .navigationBarTitleDisplayMode(.inline)
+            } label: {
+                Label("Replace", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(!session.canReplaceBackgroundBar(id: selection.id))
+            .accessibilityIdentifier("native-editor-selected-background-replace")
+        }
+    }
+
+    private func colourActions(current: String) -> some View {
+        Section {
+            HStack(spacing: 8) {
+                ForEach(NativeBackgroundPanel.colorSwatches, id: \.id) { swatch in
+                    Button {
+                        session.endTransaction()
+                        _ = session.setSpeakerBackgroundColor(hex: swatch.hex)
+                    } label: {
+                        Circle().fill(nativeEditorColor(swatch.hex))
+                            .overlay(Circle().stroke(KriaColor.line, lineWidth: 1))
+                            .overlay { if current == swatch.hex { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white).frame(width: 20, height: 20).background(KriaColor.ink, in: Circle()) } }
+                            .frame(width: 32, height: 32)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(swatch.name)
+                    .accessibilityAddTraits(current == swatch.hex ? .isSelected : [])
+                    .accessibilityIdentifier("native-editor-selected-background-color-" + swatch.id)
+                }
+            }
+            .disabled(!session.canEditSpeakerBackgroundColor)
+        } footer: {
+            Text("Every colour part of the video uses the same colour.")
         }
     }
 }

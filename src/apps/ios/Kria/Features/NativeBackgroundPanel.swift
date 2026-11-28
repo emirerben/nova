@@ -2,13 +2,13 @@ import KriaMediaEngine
 import SwiftUI
 import UIKit
 
-/// KRI-1118: the Background tool of a Talk-to-camera edit. One photo or video from the item's Visuals pool sits
-/// behind the speaker for the whole video (the Fill); "None" clears it. The pool grid is the editor's shared
-/// `NativeVisualPoolPicker`; this panel decides what a tap writes: the `speaker_background` lane, never a visual block.
-/// KRI-1162: while the server opens `speaker_background_windows`, a Sequence of pool photos and videos takes turns
-/// over the Fill, and a Speaker control draws the speaker small in a corner (presets; the preview gesture places them freely).
-/// KRI-1173: while the server opens `speaker_background_color`, a Colour section puts a plain colour behind the speaker
-/// instead of a photo or video (five swatches and a custom colour); picking one replaces a media fill and vice versa.
+/// The Background tool of a Talk-to-camera edit. KRI-1656: every background is a bar on the timeline's BACKGROUND lane, so
+/// this panel only adds them. Tapping a photo or video in the pool adds a bar from the playhead (the whole video when there is
+/// none yet); tapping a swatch does the same with a plain colour. Selecting a bar opens its inspector: Crop, Replace, Remove.
+/// Where no bar covers the video, her own take shows. The Speaker section draws the speaker small in a corner (presets; the
+/// preview gesture places them freely).
+/// KRI-1118: the background is the `speaker_background` lane, never a visual block. KRI-1162 added timed windows and the corner
+/// speaker, KRI-1173 a plain colour in place of a photo or video.
 struct NativeBackgroundPanel: View {
     @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
     @State private var lifecycleOwner = UUID()
@@ -27,27 +27,21 @@ struct NativeBackgroundPanel: View {
             VStack(spacing: 12) {
             if let opening = session.speakerFullScreenOpening { fullScreenOpeningRow(opening) }
             if session.canEditSpeakerBackgroundColor { colorSection }
-            if session.canEditSpeakerBackgroundWindows { sectionTitle("Fill", id: "native-editor-background-fill-title") }
-            else if session.canEditSpeakerBackgroundColor { sectionTitle("Photo or video", id: "native-editor-background-media-title") }
+            if session.canEditSpeakerBackgroundColor { sectionTitle("Photo or video", id: "native-editor-background-media-title") }
             NativeVisualPoolPicker(
                 session: session, uploads: uploads, projectID: projectID, idPrefix: "native-editor-background",
-                choices: session.speakerBackgroundChoices, selectedID: session.speakerBackground?.mediaID, noneTitle: String(localized: "None", comment: "Choice: no background"),
+                choices: session.speakerBackgroundChoices, selectedID: session.backgroundMediaAtPlayhead, noneTitle: String(localized: "None", comment: "Choice: no background"),
                 onNone: { session.endTransaction(); _ = session.removeSpeakerBackground() },
                 onSelect: { asset in
                     session.endTransaction()
-                    _ = session.setSpeakerBackground(mediaID: asset.id, kind: VisualMediaKind(rawValue: asset.kind) ?? .image)
+                    _ = session.addSpeakerBackground(mediaID: asset.id, kind: VisualMediaKind(rawValue: asset.kind) ?? .image)
                 },
-                // A colour fill is neither a pool visual nor nothing: no tile is lit for it.
-                noneSelected: session.speakerBackground == nil
+                // A colour is neither a pool visual nor nothing: no tile is lit for it.
+                noneSelected: session.speakerBackground == nil,
+                // With timed backgrounds a bar is removed from its own inspector; without them None is the only way to clear.
+                showsNone: !session.canEditSpeakerBackgroundWindows
             )
-            // Qendresa item 18: aim a photo or video fill at its text. A colour has no picture to aim.
-            if session.canEditSpeakerBackgroundFocus, session.speakerBackground?.mediaID != nil {
-                NativeBackgroundAimControls(session: session, windowIndex: nil)
-            }
-            if session.canEditSpeakerBackgroundWindows {
-                sequenceSection
-                speakerSection
-            }
+            if session.canEditSpeakerBackgroundWindows { speakerSection }
             }
         }
         .onAppear { panelLifecycle?.register(owner: lifecycleOwner) { session.endTransaction() } }
@@ -104,7 +98,7 @@ struct NativeBackgroundPanel: View {
         let selected = currentColor == swatch.hex
         return Button {
             session.endTransaction()
-            _ = session.setSpeakerBackgroundColor(hex: swatch.hex)
+            _ = session.setSpeakerBackgroundColorFromPlayhead(hex: swatch.hex)
         } label: {
             Circle()
                 .fill(nativeEditorColor(swatch.hex))
@@ -134,7 +128,7 @@ struct NativeBackgroundPanel: View {
             get: { nativeEditorColor(currentColor ?? "#FFFFFF") },
             set: { picked in
                 session.beginTransaction()
-                _ = session.setSpeakerBackgroundColor(hex: nativeEditorHex(picked))
+                _ = session.setSpeakerBackgroundColorFromPlayhead(hex: nativeEditorHex(picked))
             }
         ), supportsOpacity: false)
         .labelsHidden()
@@ -146,7 +140,7 @@ struct NativeBackgroundPanel: View {
         .accessibilityIdentifier("native-editor-background-color-custom")
     }
 
-    // MARK: Sequence and Speaker (KRI-1162)
+    // MARK: Speaker (KRI-1162)
 
     private func sectionTitle(_ text: LocalizedStringKey, id: String) -> some View {
         Text(text).font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
@@ -155,97 +149,13 @@ struct NativeBackgroundPanel: View {
             .accessibilityIdentifier(id)
     }
 
-    private func poolName(_ mediaID: String, kind: VisualMediaKind) -> String {
-        session.visualLibrary.first { $0.id == mediaID }?.sourceFilename ?? (kind == .video ? String(localized: "Video", comment: "Media kind") : String(localized: "Photo", comment: "Media kind"))
-    }
-
-    /// Tap a pool tile to add it after the last one; the chosen ones sit below in order, each with its number and an x.
-    private var sequenceSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Sequence", id: "native-editor-background-sequence-title")
-            Text("Tap a photo or video to add it. Each shows for a few seconds, one after another.")
-                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(session.speakerBackgroundChoices) { asset in sequenceAddTile(asset) }
-                }
-            }
-            if session.speakerBackgroundWindows.isEmpty {
-                Text("Nothing in the sequence yet.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("native-editor-background-sequence-empty")
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(session.speakerBackgroundWindows.enumerated()), id: \.element.localID) { index, window in
-                            sequenceTile(window, index: index)
-                        }
-                    }
-                    .padding(.top, 6)
-                }
-            }
-        }
-    }
-
-    private func sequenceAddTile(_ asset: CreationVisual) -> some View {
-        let kind = VisualMediaKind(rawValue: asset.kind) ?? .image
-        let name = asset.sourceFilename ?? (kind == .video ? String(localized: "Video", comment: "Media kind") : String(localized: "Photo", comment: "Media kind"))
-        return Button { session.addSpeakerBackgroundWindow(mediaID: asset.id, kind: kind) } label: {
-            NativeVisualThumbnail(asset: asset)
-                .frame(width: 56, height: 56)
-                .background(KriaColor.softZinc)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "plus").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                        .frame(width: 18, height: 18).background(KriaColor.ink.opacity(0.7), in: Circle()).padding(3)
-                }
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(RoundedRectangle(cornerRadius: 9))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Add \(name) to the sequence")
-        .accessibilityIdentifier("native-editor-background-sequence-add-" + asset.id)
-    }
-
-    private func sequenceTile(_ window: EditorSpeakerBackgroundWindow, index: Int) -> some View {
-        let asset = session.visualLibrary.first { $0.id == window.mediaID }
-        let name = poolName(window.mediaID, kind: window.kind)
-        return ZStack(alignment: .topTrailing) {
-            Group {
-                if let asset { NativeVisualThumbnail(asset: asset) } else { Color.clear }
-            }
-            .frame(width: 64, height: 64)
-            .background(KriaColor.softZinc)
-            .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay(alignment: .topLeading) {
-                Text("\(index + 1)").font(KriaFont.body(11).weight(.bold)).foregroundStyle(.white)
-                    .frame(width: 20, height: 20).background(KriaColor.ink, in: Circle()).padding(4)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(index + 1), \(name)")
-            .accessibilityIdentifier("native-editor-background-sequence-" + window.localID)
-            Button { session.removeSpeakerBackgroundWindow(id: window.localID) } label: {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 20, height: 20).background(KriaColor.ink.opacity(0.8), in: Circle())
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .offset(x: 12, y: -12)
-            .accessibilityLabel("Remove \(name) from the sequence")
-            .accessibilityIdentifier("native-editor-background-sequence-remove-" + window.localID)
-        }
-        .padding(.trailing, 6)
-    }
-
     private static let speakerChoices: [(preset: String, label: String)] = [
         ("full", String(localized: "Full", comment: "Speaker position: whole screen")), ("small_bottom_right", String(localized: "Bottom right")), ("small_bottom_left", String(localized: "Bottom left")),
         ("small_top_right", String(localized: "Top right")), ("small_top_left", String(localized: "Top left")),
     ]
 
     /// KRI-1558: the section under the playhead whose frame the choices show and change, while the section controls are open.
-    private var playheadLayout: EditorLayoutWindow? { playheadSection == nil ? nil : session.speakerLayoutWindowAtPlayhead }
+    private var playheadLayout: EditorLayoutWindow? { playheadSection == nil ? nil : session.speakerControlSection }
 
     /// Which choice is lit: no frame is Full, a preset frame is that preset, anything else is Custom (kept untouched).
     /// KRI-1558: inside a section, that section's frame; an own-take or picture-only section lights none.
@@ -293,124 +203,5 @@ struct NativeBackgroundPanel: View {
                     .accessibilityIdentifier("native-editor-background-speaker-hint")
             }
         }
-    }
-}
-
-/// Qendresa item 18: aim a photo or video background at its readable text. Three buttons pick the side (the picture is
-/// cover-fitted and slid so the left edge, the middle or the right edge of it shows) and a Zoom slider goes from 0.3x
-/// (the whole picture, with black bands) to 3x. `windowIndex` nil aims the fill; otherwise that timed background.
-/// Used by this panel (fill) and by the selected-background inspector (window). Disabled while the server does not
-/// open `background_focus`. The caller hides it for a colour-only background.
-struct NativeBackgroundAimControls: View {
-    @ObservedObject var session: NativeEditorSession
-    let windowIndex: Int?
-
-    /// The buttons: x on the wire. A button is lit only when the current aim is within 0.005 of it.
-    static let sides: [(token: String, label: String, x: Double)] = [("left", String(localized: "Left", comment: "Aim the background at the left"), 0), ("center", String(localized: "Centre", comment: "Aim the background at the centre"), 0.5), ("right", String(localized: "Right", comment: "Aim the background at the right"), 1)]
-    static let litBand = 0.005
-
-    private var idPrefix: String { windowIndex == nil ? "native-editor-background-aim-fill" : "native-editor-background-aim" }
-    private var zoomID: String { windowIndex == nil ? "native-editor-background-fill-zoom" : "native-editor-background-zoom" }
-    private var focus: SpeakerBackgroundFocus? { session.speakerBackgroundFocus(windowIndex: windowIndex) }
-    private var x: Double { focus?.x ?? 0.5 }
-    private var zoom: Double { focus?.zoom ?? 1 }
-
-    /// The lit button for an aim: a never-aimed picture is the centre (today's drawing).
-    static func lit(x: Double) -> String? {
-        sides.first { abs($0.x - x) <= litBand }?.token
-    }
-
-    var body: some View {
-        let lit = Self.lit(x: x)
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Aim").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
-            HStack(spacing: 4) {
-                ForEach(Self.sides, id: \.token) { side in
-                    let selected = lit == side.token
-                    Button { session.endTransaction(); _ = session.setSpeakerBackgroundFocus(x: side.x, windowIndex: windowIndex) } label: {
-                        Text(side.label).font(KriaFont.body(12).weight(selected ? .semibold : .regular))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .foregroundStyle(KriaColor.ink)
-                            .background(selected ? KriaColor.sage : KriaColor.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                            .contentShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!session.canEditSpeakerBackgroundFocus)
-                    .accessibilityLabel(String(localized: "Aim \(side.label)"))
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                    .accessibilityIdentifier("\(idPrefix)-\(side.token)")
-                }
-            }
-            if focus != nil, lit == nil {
-                Text("Aimed at the text").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("\(idPrefix)-custom")
-            }
-            HStack {
-                Text("Zoom").font(KriaFont.body(13)).foregroundStyle(KriaColor.ink)
-                Spacer()
-                Text(BackgroundZoomSlider.readout(zoom)).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                    .accessibilityHidden(true)
-                    .accessibilityIdentifier("\(zoomID)-value")
-            }
-            BackgroundZoomSlider(zoom: zoom, id: zoomID,
-                                 onEditingChanged: { editing in editing ? session.beginTransaction() : session.endTransaction() }) {
-                _ = session.setSpeakerBackgroundFocus(zoom: $0, windowIndex: windowIndex)
-            }
-            .disabled(!session.canEditSpeakerBackgroundFocus)
-        }
-    }
-}
-
-/// `TiltZoomSlider`'s twin for a background's zoom: 0.3x to 3x in hundredths with a detent at 1x (a drag within
-/// `holdBand` of 1x lands on exactly 1x, with a light haptic on entering it).
-struct BackgroundZoomSlider: View {
-    let zoom: Double
-    let id: String
-    var onEditingChanged: (Bool) -> Void = { _ in }
-    let onChange: (Double) -> Void
-    @State private var held = false
-    private let haptic = UISelectionFeedbackGenerator()
-
-    static let range = NativeEditorSession.backgroundFocusZoomRange
-    static let holdBand = 0.05
-    static let step = 0.01
-
-    static func readout(_ zoom: Double) -> String { String(localized: "\((zoom * 100).rounded() / 100, format: .number)x", comment: "Zoom readout, e.g. 1.5x") }
-
-    /// `raw` snapped to the detent at 1x, else clamped and rounded to hundredths.
-    static func snapped(_ raw: Double) -> Double {
-        guard abs(raw - 1) >= holdBand else { return 1 }
-        return min(range.upperBound, max(range.lowerBound, (raw * 100).rounded() / 100))
-    }
-
-    var body: some View {
-        let binding = Binding<Double>(
-            get: { zoom },
-            set: { raw in
-                let next = Self.snapped(raw)
-                if next == 1, !held { haptic.selectionChanged() }
-                held = next == 1
-                onChange(next)
-            }
-        )
-        Slider(value: binding, in: Self.range, step: Self.step) { editing in
-            if editing { haptic.prepare() }
-            onEditingChanged(editing)
-        }
-        .tint(KriaColor.ink)
-        .frame(minHeight: 44)
-        .accessibilityLabel("Zoom")
-        .accessibilityValue(Self.readout(zoom))
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: onChange(Self.snapped(zoom + 0.1))
-            case .decrement: onChange(Self.snapped(zoom - 0.1))
-            @unknown default: break
-            }
-        }
-        .accessibilityIdentifier(id)
     }
 }
