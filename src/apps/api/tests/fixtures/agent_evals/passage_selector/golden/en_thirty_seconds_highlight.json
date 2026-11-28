@@ -197,5 +197,5 @@
     "case": "A 30 second highlight request over a talk that wanders into a startup and the weather.",
     "expect": "passages"
   },
-  "prompt_sha": "08bc32de702e2f46"
+  "prompt_sha": "768d36b409dc7fb8"
 }

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -73,6 +74,14 @@ def build_talk(lines: list[Line], *, gaps: dict[int, float] | None = None, word_
         spans.append((start, clock))
         clock += (gaps or {}).get(index, SENTENCE_GAP_S)
     return Talk(words, spans, lines)
+
+
+LABELED_TALKS = Path(__file__).parents[1] / "fixtures" / "passage_selector_labeled_talks.json"
+
+
+def labeled(name: str) -> list[Line]:
+    """Transcripts whose topic labels were written by hand, apart from any recorded answer."""
+    return [Line(row["text"], row["topic"]) for row in json.loads(LABELED_TALKS.read_text())[name]]
 
 
 class Replay(ModelClient):
@@ -160,24 +169,7 @@ def assert_on_topic(talk: Talk, selection: PassageSelection, allowed: set[str]) 
     assert not off, f"kept off-topic sentences {off}: {[talk.lines[i].text for i in off]}"
 
 
-TRIP = [
-    Line("So last spring I finally flew to Lisbon with my sister.", "trip"),
-    Line("The first morning we found a tiny cafe near the tram stop.", "trip"),
-    Line("They pulled the best espresso I have ever tasted in my life.", "trip"),
-    Line("By the way the weather has been strange all week back home.", "weather"),
-    Line("It rained on Monday and then it was sunny again on Tuesday.", "weather"),
-    Line("Anyway my friend Marco is building a startup about invoices.", "startup"),
-    Line("He told me investors only care about monthly recurring revenue.", "startup"),
-    Line("We rode the old yellow tram up the steepest hill in the city.", "trip"),
-    Line("At the top a stranger played the guitar and nobody wanted to leave.", "trip"),
-    Line("Marco says the seed round closes in March if the numbers hold.", "startup"),
-    Line("That night we ate grilled sardines by the river and laughed for hours.", "trip"),
-    Line("Honestly I should check the forecast before I plan the weekend.", "weather"),
-    Line("The hostel owner gave us a map with her favorite hidden places.", "trip"),
-    Line("My sister cried a little when the plane took off to bring us home.", "trip"),
-    Line("Marco also wants me to join as an advisor which is flattering.", "startup"),
-    Line("I would go back tomorrow and take the same tram to the same hill.", "trip"),
-]
+TRIP = labeled("trip")
 TRIP_PICKS = [
     (0, 0, 4, "opens on the trip"),
     (1, 2, 5, "the espresso moment"),
@@ -327,12 +319,7 @@ def test_a_different_outline_selects_different_passages_and_reaches_the_prompt()
     assert "$" not in first.client.prompts[0].split("=== Transcript")[0]
 
 
-DECOY = [
-    Line("Last summer in Lisbon I tasted the best espresso at a hostel by the tram line.", "trip"),
-    Line("My cousin runs a Lisbon startup that sells espresso machines to every hostel.", "pitch"),
-    Line("Its investors ride the tram of venture hype and want the hostel market first.", "pitch"),
-    Line("The tram then carried us uphill while a stranger played guitar for the street.", "trip"),
-]
+DECOY = labeled("decoy")
 OUTLINE = "My trip to Lisbon: the espresso at the hostel, the tram ride, the guitar."
 
 
@@ -422,7 +409,7 @@ def test_boundaries_stay_between_words_when_whisper_leaves_almost_no_gap():
 
 def test_a_long_talk_is_read_in_windows_and_a_passage_across_the_seam_stays_whole():
     talk = filler_talk(60, 22)
-    ask = SelectionAsk("find the best part", 10.0)
+    ask = SelectionAsk("find the best part", 12.0)
     seen: list[PassageSelectorInput] = []
 
     def probe(selector_input: PassageSelectorInput) -> PassageSelectorOutput:
@@ -436,25 +423,18 @@ def test_a_long_talk_is_read_in_windows_and_a_passage_across_the_seam_stays_whol
     assert sum(windows, []) == list(range(60))
     seam = windows[0][-1]
     assert seam == 22, "the key sentences must straddle the first window seam"
-    answers = [recorded(talk, [(w[0], w[0], 1, "filler")]) for w in windows]
+    answers = [recorded(talk) for _ in windows]
     answers[0] = recorded(talk, [(seam, seam, 5, "the point, first half")])
     answers[1] = recorded(talk, [(seam + 1, seam + 1, 5, "the point, second half")])
     result = run(talk, ask, *answers, window_chars=2400)
     assert [i.window_index for i in result.inputs] == list(range(len(windows)))
     assert kept_sentences(talk, result.selection) == [seam, seam + 1]
     assert len(result.selection.kept) == 1, "the two halves must merge into one passage"
+    assert not result.selection.fits_target, "nothing else on-topic exists to reach 12 seconds"
     assert_boundaries_between_words(talk, result.selection)
 
 
-TURKISH = [
-    Line("Geçen yaz ailemle birlikte Kapadokya'ya gittik.", "trip"),
-    Line("Sabah erkenden balonlara binmek için kalktık.", "trip"),
-    Line("Bu arada şirketimizin yeni fatura yazılımı çok iyi gidiyor.", "startup"),
-    Line("Yatırımcılar aylık gelirimizi sürekli soruyor.", "startup"),
-    Line("Balondan gördüğüm manzara hayatımın en güzel anıydı.", "trip"),
-    Line("İstanbul'a dönünce bu kadar mutlu olduğumu kimseye anlatamadım.", "trip"),
-    Line("Kapadokya balon şirketlerinin hisse senedi manzarası çok riskli görünüyor.", "pitch"),
-]
+TURKISH = labeled("turkish")
 
 
 def test_turkish_talk_with_a_turkish_outline_and_a_keyword_sharing_decoy():
@@ -473,13 +453,7 @@ def test_turkish_talk_with_a_turkish_outline_and_a_keyword_sharing_decoy():
     assert_boundaries_between_words(talk, result.selection)
 
 
-TELEPROMPTER = [
-    Line("Merhaba arkadaşlar bugün size yeni şey, pardon.", "stumble"),
-    Line("Merhaba arkadaşlar bugün size yeni telefonumu tanıtacağım.", "line1"),
-    Line("Önce ekranına ve ııı kamerasına birlikte bakalım.", "stumble"),
-    Line("Önce ekranına ve kamerasına birlikte bakalım.", "line2"),
-    Line("Pil ömrü gerçekten bütün gün dayanıyor.", "line3"),
-]
+TELEPROMPTER = labeled("teleprompter")
 SCRIPT = (
     "Merhaba arkadaşlar bugün size yeni telefonumu tanıtacağım.\n"
     "Önce ekranına ve kamerasına birlikte bakalım.\n"
@@ -535,3 +509,9 @@ def test_max_passage_length_splits_at_sentence_boundaries():
     assert len(result.kept) == 3
     assert all(p.end_s - p.start_s <= 8.0 for p in result.kept)
     assert_boundaries_between_words(talk, result)
+
+
+def test_a_single_window_must_name_a_passage_but_one_window_of_many_may_not():
+    talk = build_talk(DECOY)
+    with pytest.raises(TerminalSchemaError):
+        run(talk, SelectionAsk("notes", outline=OUTLINE), recorded(talk), recorded(talk))

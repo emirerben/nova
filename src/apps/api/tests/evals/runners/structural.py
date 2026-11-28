@@ -1189,7 +1189,7 @@ def check_passage_selector(
     """
     failures: list[str] = []
     units = {unit.id: unit for unit in input.units}
-    if input.mode == "pick" and not output.passages:
+    if input.mode == "pick" and not output.passages and input.window_count == 1:
         failures.append("pick mode returned no passage")
     if input.mode == "drop" and output.passages:
         failures.append("drop mode returned passages")

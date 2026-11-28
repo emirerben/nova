@@ -66,6 +66,8 @@ Mode "pick": return the passages worth keeping.
   dropping the lowest strength first, so do not trim yourself. When it is null,
   return every passage that belongs.
 - Give `reason` as a few plain words saying why it is kept.
+- When the window is only part of a longer talk ("1 of 3") and nothing in it
+  belongs, return `"passages": []`. Never add a weak passage to fill space.
 - Passages must not overlap. Also list in `dropped` any range you left out
   because it is off topic or the creator asked to remove it.
 

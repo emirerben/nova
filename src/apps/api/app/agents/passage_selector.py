@@ -167,7 +167,7 @@ class PassageSelectorAgent(Agent[PassageSelectorInput, PassageSelectorOutput]):
                     f"passage_selector: range {row.first}-{row.last} is not within the "
                     "units you were given"
                 )
-        if input.mode == "pick" and not picked:
+        if input.mode == "pick" and not picked and input.window_count == 1:
             raise SchemaError("passage_selector: pick mode needs at least one passage")
         return PassageSelectorOutput(passages=picked, dropped=removed)
 
@@ -175,7 +175,8 @@ class PassageSelectorAgent(Agent[PassageSelectorInput, PassageSelectorOutput]):
         return (
             "\n\nReturn ONLY the JSON object. Every passage needs first and last copied from "
             "the unit ids you were given (first <= last), a verbatim quote from those units, "
-            "and a strength from 1 to 5. In pick mode return at least one passage."
+            "and a strength from 1 to 5. In pick mode return at least one passage unless you are "
+            "reading one window of a longer talk."
         )
 
     def refusal_clarification(self) -> str:

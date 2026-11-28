@@ -70,5 +70,5 @@
     "case": "A fluent passage about a Lisbon espresso-machine startup shares the outline's keywords and is off topic.",
     "expect": "passages"
   },
-  "prompt_sha": "fc95f72fb306ca53"
+  "prompt_sha": "dd4359ce4cb7ba99"
 }
