@@ -36,10 +36,10 @@ struct NativeSpeakerPanel: View {
         let inPanel = session.document.clips.first { $0.id == selected.id }?.splitSectionID != nil
         let width = session.speakerEditingFrame(for: selected)?.widthFraction ?? 1
         // KRI-1558: the whole-video target with the playhead inside a section offers "This part / Whole video".
-        let inSection = !scoped && playheadSection != nil && session.speakerLayoutWindowAtPlayhead != nil
+        let inSection = !scoped && playheadSection != nil && session.speakerControlSection != nil
         let sectionOnly = inSection && !session.speakerFrameAppliesToWholeVideo
         // An `own` / `picture` section draws no cut-out, so no spot is lit there (Full would claim one).
-        let drawsCutOut = !inSection || session.speakerLayoutWindowAtPlayhead.map { $0.layout == .small || $0.layout == .full } == true
+        let drawsCutOut = !inSection || session.speakerControlSection.map { $0.layout == .small || $0.layout == .full } == true
         NativeEditorLanePanel(title: "You", tabs: [Tab](), tab: $tab, onDone: { session.endTransaction(); onDone() }, heading: String(localized: "You", comment: "Panel title for the speaker (the creator) in the video")) {
             VStack(alignment: .leading, spacing: 12) {
                 if inSection { NativeSpeakerSectionScope(session: session) }

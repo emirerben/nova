@@ -189,11 +189,6 @@ struct NativeEditorView: View {
                 .presentationDragIndicator(.visible)
         }
         .onChange(of: session.selectionRequest) { _, _ in routeSelection() }
-        // KRI-1162: the BACKGROUND lane's fill strip and a window's inspector open the Background tool.
-        .onChange(of: session.backgroundToolRequest) { _, _ in
-            inspector = nil
-            changePanel(to: .background)
-        }
         // A tall panel is a per-session choice: opening a tool later must
         // never start out covering the preview.
         .onChange(of: panel == nil) { _, closed in

@@ -186,25 +186,29 @@ import KriaMediaEngine
         XCTAssertEqual(layouts(editor), original, "a colour fill keeps them")
         XCTAssertTrue(editor.setSpeakerBackground(mediaID: "fixture-bg-video", kind: .video, sourceStart: 1))
         XCTAssertEqual(layouts(editor), original, "a video fill keeps them")
-        XCTAssertTrue(editor.setSpeakerBackgroundFocus(x: 0, zoom: 1.5))
-        XCTAssertEqual(layouts(editor), original, "aiming the fill keeps them")
-        XCTAssertTrue(editor.addSpeakerBackgroundWindow(mediaID: "fixture-bg-photo", kind: .image, length: 2))
+        XCTAssertTrue(editor.appendBackgroundWindowForTest(mediaID: "fixture-bg-photo", kind: .image, length: 2))
         XCTAssertEqual(layouts(editor), original, "adding a timed background keeps them")
+        XCTAssertTrue(editor.setSpeakerBackgroundFocus(SpeakerBackgroundFocus(x: 0, y: 0.5, zoom: 1.5), barID: editor.speakerBackgroundWindows[0].localID))
+        XCTAssertEqual(layouts(editor), original, "cropping a timed background keeps them")
         XCTAssertTrue(editor.removeSpeakerBackgroundWindow(id: editor.speakerBackgroundWindows[0].localID))
-        XCTAssertEqual(layouts(editor), original, "removing it keeps them")
+        // KRI-1656: the span the bar gave up (0 to 2 s) shows her own take; every section after it keeps its layout.
+        let afterRemoval = layouts(editor)
+        XCTAssertEqual(afterRemoval.map(\.layout), [.own, .small, .picture, .small])
+        XCTAssertEqual(afterRemoval.map(\.endS), [2, 3.5, 4.5, 6])
+        XCTAssertEqual(Array(afterRemoval.dropFirst(2)), Array(original.dropFirst(2)), "sections clear of the freed span are untouched")
         XCTAssertTrue(editor.removeFullScreenOpening())
-        XCTAssertEqual(layouts(editor), original, "removing the opening keeps them")
+        XCTAssertEqual(layouts(editor), afterRemoval, "removing the opening keeps them")
         // Outside every section (past the last one) the corner controls act on the whole-video frame as before.
         editor.currentTime = 7
         XCTAssertTrue(editor.setSpeakerFrame(preset: "small_top_left"))
         XCTAssertEqual(editor.speakerFrame, .preset("small_top_left"))
-        XCTAssertEqual(layouts(editor), original, "the whole-video corner keeps them")
+        XCTAssertEqual(layouts(editor), afterRemoval, "the whole-video corner keeps them")
         XCTAssertTrue(editor.clearSpeakerFrame())
-        XCTAssertEqual(layouts(editor), original, "clearing the whole-video corner keeps them")
+        XCTAssertEqual(layouts(editor), afterRemoval, "clearing the whole-video corner keeps them")
         XCTAssertTrue(editor.removeSpeakerBackground())
         XCTAssertNil(editor.speakerBackground, "removing the background takes the sections with it")
         editor.undo()
-        XCTAssertEqual(layouts(editor), original)
+        XCTAssertEqual(layouts(editor), afterRemoval)
     }
 
     func testSaveAfterAColourChangeSendsTheLayoutWindowsUnchanged() async throws {

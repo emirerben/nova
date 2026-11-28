@@ -50,7 +50,8 @@ enum KriaCropGeometry {
 
     /// Drags one corner by (dx, dy). With `lockedRatio` the opposite corner stays put and the shape is kept;
     /// without it the corner moves freely. The result always sits inside [0, 1] and is never below `minimumSize`.
-    static func resized(_ rect: NormalizedSourceRect, corner: Corner, dx: Double, dy: Double, lockedRatio ratio: Double? = nil) -> NormalizedSourceRect {
+    /// `minimumWidth` (KRI-1656) raises the smallest width a locked-shape crop may take, e.g. a zoom ceiling.
+    static func resized(_ rect: NormalizedSourceRect, corner: Corner, dx: Double, dy: Double, lockedRatio ratio: Double? = nil, minimumWidth: Double = 0) -> NormalizedSourceRect {
         let leading = corner == .topLeading || corner == .bottomLeading
         let top = corner == .topLeading || corner == .topTrailing
         guard let ratio, ratio > 0 else {
@@ -68,7 +69,7 @@ enum KriaCropGeometry {
         // Signed, so dragging a corner past the opposite one collapses to the minimum instead of flipping the crop.
         var width = max(leading ? anchorX - pointX : pointX - anchorX, (top ? anchorY - pointY : pointY - anchorY) * ratio)
         let room = min(leading ? anchorX : 1 - anchorX, (top ? anchorY : 1 - anchorY) * ratio)
-        let floor = max(minimumSize, minimumSize * ratio)
+        let floor = max(minimumSize, minimumSize * ratio, minimumWidth)
         width = min(max(width, floor), max(room, floor))
         if width > room { return rect }   // no room to hold even the smallest shape: leave it
         let height = width / ratio
@@ -76,10 +77,10 @@ enum KriaCropGeometry {
     }
 
     /// Pinch: scale about the centre by `factor` (>1 grows the crop), keeping shape, inside the frame.
-    static func scaled(_ rect: NormalizedSourceRect, factor: Double) -> NormalizedSourceRect {
+    static func scaled(_ rect: NormalizedSourceRect, factor: Double, minimumWidth: Double = 0) -> NormalizedSourceRect {
         guard factor.isFinite, factor > 0 else { return rect }
         let ceiling = min(1 / rect.width, 1 / rect.height)
-        let floor = max(minimumSize / rect.width, minimumSize / rect.height)
+        let floor = max(minimumSize / rect.width, minimumSize / rect.height, minimumWidth / rect.width)
         let applied = min(max(factor, floor), max(ceiling, floor))
         let width = rect.width * applied, height = rect.height * applied
         let centreX = rect.x + rect.width / 2, centreY = rect.y + rect.height / 2
@@ -255,6 +256,16 @@ struct KriaCropGestureState {
     }
 }
 
+/// KRI-1656: how a caller narrows the crop editor (a Talk-to-camera background is only ever a canvas-shaped crop).
+struct KriaCropOptions: Equatable {
+    /// Only the canvas-shaped crop: the Fill frame / Free / Original choice is hidden, Reset stays.
+    var lockedToFill = false
+    /// The smallest width a crop may take, as a fraction of the picture (a zoom ceiling).
+    var minimumWidth: Double?
+    /// Replaces the line under the editor.
+    var footnote: String?
+}
+
 /// `crop == nil` preserves the ordinary centered cover fill.
 struct KriaCropEditor: View {
     enum Mode: String, CaseIterable, Identifiable {
@@ -276,6 +287,7 @@ struct KriaCropEditor: View {
     @Binding var crop: NormalizedSourceRect?
     /// True while a gesture is in flight, so an owner can group the edit into one undo step.
     var onEditingChanged: (Bool) -> Void = { _ in }
+    var options = KriaCropOptions()
 
     @State private var mode: Mode = .fill
     @State private var working = KriaCropGeometry.full
@@ -286,7 +298,8 @@ struct KriaCropEditor: View {
     private var gestureBase: NormalizedSourceRect? { gestures.base(for: .drag) }
     private var pinchBase: NormalizedSourceRect? { gestures.base(for: .pinch) }
     private var ratio: Double { KriaCropGeometry.lockedRatio(imageAspect: imageAspect, outputAspect: Double(outputAspect)) }
-    private var lockedRatio: Double? { mode == .fill ? ratio : nil }
+    private var lockedRatio: Double? { mode == .fill || options.lockedToFill ? ratio : nil }
+    private var minimumWidth: Double { options.minimumWidth ?? 0 }
     private var fill: NormalizedSourceRect { KriaCropGeometry.fillCrop(imageAspect: imageAspect, outputAspect: Double(outputAspect)) }
 
     var body: some View {
@@ -315,7 +328,8 @@ struct KriaCropEditor: View {
     }
 
     private var footnote: String {
-        switch mode {
+        if let custom = options.footnote { return custom }
+        return switch mode {
         case .fill: String(localized: "Drag to move, pinch to zoom. What you see is what exports.")
         case .free: String(localized: "Any shape. Kria fits it to the frame, so the edges may trim a little.")
         case .original: String(localized: "Kria centres your media in the frame.")
@@ -337,7 +351,8 @@ struct KriaCropEditor: View {
         adopt(crop)
     }
 
-    private func adopt(_ value: NormalizedSourceRect?, forcing forced: Mode? = nil) {
+    private func adopt(_ value: NormalizedSourceRect?, forcing requested: Mode? = nil) {
+        let forced = options.lockedToFill ? Mode.fill : requested
         if let value, (try? value.validate()) != nil {
             working = value
             mode = forced ?? (KriaCropGeometry.matchesOutput(value, imageAspect: imageAspect, outputAspect: Double(outputAspect)) ? .fill : .free)
@@ -407,7 +422,7 @@ struct KriaCropEditor: View {
         .accessibilityValue(String(localized: "\(Int(working.width * 100)) percent wide, \(Int(working.height * 100)) percent tall"))
         .accessibilityAdjustableAction { direction in
             guard mode != .original else { return }
-            working = KriaCropGeometry.scaled(working, factor: direction == .increment ? 1.1 : 1 / 1.1)
+            working = KriaCropGeometry.scaled(working, factor: direction == .increment ? 1.1 : 1 / 1.1, minimumWidth: minimumWidth)
             commit()
         }
         .accessibilityAction(named: "Move left") { nudge(-0.05, 0) }
@@ -457,7 +472,7 @@ struct KriaCropEditor: View {
                 if gestures.begin(.drag, at: working) { onEditingChanged(true) }
                 guard let base = gestureBase else { return }
                 working = KriaCropGeometry.resized(base, corner: corner, dx: value.translation.width / frame.width,
-                                                   dy: value.translation.height / frame.height, lockedRatio: lockedRatio)
+                                                   dy: value.translation.height / frame.height, lockedRatio: lockedRatio, minimumWidth: minimumWidth)
             }
             .onEnded { _ in finishGesture() })
         .accessibilityLabel("Resize crop")
@@ -480,7 +495,7 @@ struct KriaCropEditor: View {
                 if gestures.begin(.pinch, at: working) { onEditingChanged(true) }
                 guard let base = pinchBase else { return }
                 // Pinching out zooms in, so the crop window shrinks.
-                working = KriaCropGeometry.scaled(base, factor: 1 / Double(max(value.magnification, 0.01)))
+                working = KriaCropGeometry.scaled(base, factor: 1 / Double(max(value.magnification, 0.01)), minimumWidth: minimumWidth)
             }
             .onEnded { _ in finishGesture(.pinch) }
     }
@@ -495,7 +510,7 @@ struct KriaCropEditor: View {
 
     private var presets: some View {
         HStack(spacing: 8) {
-            ForEach(Mode.allCases) { item in
+            ForEach(options.lockedToFill ? [] : Mode.allCases) { item in
                 Button { select(item) } label: {
                     Text(item.title).font(KriaFont.body(14)).lineLimit(1).minimumScaleFactor(0.8)
                         .padding(.horizontal, 14).frame(minHeight: 44)
@@ -526,6 +541,7 @@ struct KriaCropFrameHost: View {
     let outputAspect: CGFloat
     @Binding var crop: NormalizedSourceRect?
     var onEditingChanged: (Bool) -> Void = { _ in }
+    var options = KriaCropOptions()
     /// Changes when the source of the frame does (a re-signed URL), so a failed load is tried again.
     var reloadKey = ""
     @State private var image: UIImage?
@@ -534,7 +550,7 @@ struct KriaCropFrameHost: View {
     var body: some View {
         Group {
             if let image {
-                KriaCropEditor(image: image, outputAspect: outputAspect, crop: $crop, onEditingChanged: onEditingChanged)
+                KriaCropEditor(image: image, outputAspect: outputAspect, crop: $crop, onEditingChanged: onEditingChanged, options: options)
             } else if failed {
                 VStack(spacing: 8) {
                     Image(systemName: "photo").font(.system(size: 28)).foregroundStyle(KriaColor.zinc)

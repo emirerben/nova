@@ -150,8 +150,6 @@ enum EditorOpenIntent { case warm, open }
         }
     }
     @Published private(set) var selectionRequest = 0
-    /// KRI-1162: bumped to ask the editor view to open the Background tool (from the lane or an inspector).
-    @Published private(set) var backgroundToolRequest = 0
     /// KRI-1558: the speaker controls' "This part / Whole video" choice. Read only while the section layouts are editable and
     /// the playhead is inside one: false = a preset, the size or a drag changes that section; true = the whole-video frame
     /// (and every `small` / `full` section goes back to it).
@@ -2619,6 +2617,10 @@ enum EditorOpenIntent { case warm, open }
         items += document.drawings.enumerated().map { index, item in projected(EditorSelection(kind: .drawing, id: item.id), start: item.startS, end: item.endS, zIndex: 270 + index, sourceIndex: index) }
         // KRI-1162: a Talk-to-camera edit's timed backgrounds get their own lane (client-local ids, see `EditorSpeakerBackgroundWindow`).
         items += (document.speakerBackground?.windows ?? []).enumerated().map { index, item in projected(EditorSelection(kind: .speakerBackgroundWindow, id: item.localID), start: item.startS, end: item.endS, zIndex: 20 + index, sourceIndex: index) }
+        // KRI-1656: the visible pieces of the fill are bars too (ids `fill-<n>`), so a background with no timed window still has its bar.
+        items += (document.speakerBackground?.visibleFillRegions(duration: backgroundWindowsCeiling) ?? []).enumerated().map { index, region in
+            projected(EditorSelection(kind: .speakerBackgroundWindow, id: region.id), start: region.span.start, end: region.span.end, zIndex: 19, sourceIndex: (document.speakerBackground?.windows.count ?? 0) + index)
+        }
         if let carousel = projection.carouselItem { items.append(carousel) }
         if let music = document.music {
             items.append(
@@ -7743,6 +7745,14 @@ enum EditorOpenIntent { case warm, open }
     /// window, or while the section controls are closed). The "This part / Whole video" choice shows only while it is set.
     var speakerLayoutWindowAtPlayhead: EditorLayoutWindow? { speakerSectionLayout(at: currentTime) }
 
+    /// KRI-1656: the section the speaker controls edit under the playhead: `speakerLayoutWindowAtPlayhead`, except a gap between
+    /// background bars (an `own` row in a lane made of bars), which shows her own take and is not re-framed.
+    var speakerControlSection: EditorLayoutWindow? {
+        guard let section = speakerLayoutWindowAtPlayhead else { return nil }
+        if section.layout == .own, document.speakerBackground?.isBarsShaped(duration: backgroundWindowsCeiling) == true { return nil }
+        return section
+    }
+
     private func speakerSectionLayout(at time: Double) -> EditorLayoutWindow? {
         guard canEditSpeakerSections, let background = document.speakerBackground,
               let index = background.layoutWindowIndex(at: time) else { return nil }
@@ -7861,7 +7871,7 @@ enum EditorOpenIntent { case warm, open }
     }
 
     /// Where a background window may end: the end of the video, else the wire's own ceiling while it is unknown.
-    private var backgroundWindowsCeiling: Double {
+    var backgroundWindowsCeiling: Double {
         let total = timelineProjection.unprojectOutputTime(timelineProjection.totalDuration)
         return total.isFinite && total > 0 ? min(total, SpeakerBackgroundLimits.maxTimeline) : SpeakerBackgroundLimits.maxTimeline
     }
@@ -7903,30 +7913,11 @@ enum EditorOpenIntent { case warm, open }
         return true
     }
 
-    /// Adds one pool photo or video as a window after the last one (the first window starts at 0), `length`
-    /// seconds long and clipped to the end of the video. A video window plays from its start. False when no
-    /// half second is left or the 40-window cap is reached.
-    @discardableResult
-    func addSpeakerBackgroundWindow(mediaID: String, kind: VisualMediaKind, length: Double = 4) -> Bool {
-        guard canEditSpeakerBackgroundWindows else { return false }
-        let existing = speakerBackgroundWindows
-        let ceiling = backgroundWindowsCeiling
-        let start = existing.last?.endS ?? 0
-        let end = min(start + length, ceiling)
-        guard existing.count < SpeakerBackgroundLimits.maxWindows, end - start >= EditorSpeakerBackgroundWindow.minDuration else { return false }
-        var n = existing.count
-        while existing.contains(where: { $0.localID == EditorSpeakerBackground.localID(n) }) { n += 1 }
-        let window = EditorSpeakerBackgroundWindow(localID: EditorSpeakerBackground.localID(n), mediaID: mediaID, kind: kind,
-                                                   sourceStartS: 0, startS: start, endS: end)
-        guard setSpeakerBackgroundWindows(existing + [window]) else { return false }
-        return true
-    }
-
-    /// Removes one window by its block id. Taking the last one away leaves the fill alone.
+    /// Removes one window by its block id (KRI-1656: the same as removing its bar, so a freed span shows her own take).
     @discardableResult
     func removeSpeakerBackgroundWindow(id: String) -> Bool {
         guard canEditSpeakerBackgroundWindows, speakerBackgroundWindows.contains(where: { $0.localID == id }) else { return false }
-        return setSpeakerBackgroundWindows(speakerBackgroundWindows.filter { $0.localID != id })
+        return removeSpeakerBackgroundBar(id: id)
     }
 
     /// Draws the speaker small in a corner (`small_bottom_right`, `small_bottom_left`, `small_top_right`,
@@ -7936,7 +7927,8 @@ enum EditorOpenIntent { case warm, open }
     @discardableResult
     func setSpeakerFrame(preset: String) -> Bool {
         guard canEditSpeakerBackgroundWindows, var background = document.speakerBackground else { return false }
-        if speakerLayoutWindowAtPlayhead != nil {
+        // KRI-1656: a gap between background bars is her own take, not a section to re-frame: the preset is the whole-video frame.
+        if speakerControlSection != nil {
             if preset == "full" { return writeSpeakerSectionFrame(nil) }
             guard let frame = EditorSpeakerFrame.preset(preset) else { return false }
             return writeSpeakerSectionFrame(frame)
@@ -8017,53 +8009,18 @@ enum EditorOpenIntent { case warm, open }
         return true
     }
 
-    // MARK: Aim the background (Qendresa item 18)
+    // MARK: Crop the background (Qendresa item 18, KRI-1656)
 
-    /// The Aim and Zoom controls exist only while the server advertises `background_focus` (gate open, this build speaks
-    /// protocol 42) and the background itself is editable. A variant that carries an aim without the capability is
-    /// read-only here, never silently edited.
+    /// The Crop control exists only while the server advertises `background_focus` (gate open, this build speaks
+    /// protocol 42) and the background itself is editable. A variant that carries a crop without the capability is
+    /// read-only here, never silently edited. A crop is stored as the wire's `focus {x, y, zoom}` (see `BackgroundCropMapping`);
+    /// the writer is `setSpeakerBackgroundFocus(_:barID:)`.
     var canEditSpeakerBackgroundFocus: Bool {
         canEditSpeakerBackground && document.capabilities["background_focus"]?.editable == true
     }
 
-    /// The editor's bounds on a focus (the wire allows 0.2...4; chat and these controls stay inside 0.3...3).
+    /// The editor's bounds on a focus (the wire allows 0.2...4; chat and Crop stay inside 0.3...3).
     static let backgroundFocusZoomRange: ClosedRange<Double> = 0.3...3.0
-
-    /// The current aim of the fill (`windowIndex` nil) or of one window; nil = never aimed (the centre cover-fit).
-    func speakerBackgroundFocus(windowIndex: Int?) -> SpeakerBackgroundFocus? {
-        guard let background = document.speakerBackground else { return nil }
-        guard let windowIndex else { return background.focus }
-        return background.windows.indices.contains(windowIndex) ? background.windows[windowIndex].focus : nil
-    }
-
-    /// Aims the fill (`windowIndex` nil, a photo or video) or one timed background at its text. `x` is 0 (left edge) to 1
-    /// (right edge), clamped; `zoom` is a multiple of the whole-frame fit, clamped to 0.3...3. A nil part keeps what is
-    /// there, starting from the centre at 1x. The centre at 1x is today's drawing and clears the aim (key absent). False,
-    /// with no change, when the controls are closed, the target does not exist (a colour fill has nothing to aim) or
-    /// nothing would change. One undo step (a drag wraps it in `beginTransaction()` / `endTransaction()`).
-    @discardableResult
-    func setSpeakerBackgroundFocus(x: Double? = nil, zoom: Double? = nil, windowIndex: Int? = nil) -> Bool {
-        guard canEditSpeakerBackgroundFocus, var background = document.speakerBackground, x != nil || zoom != nil else { return false }
-        if let x { guard x.isFinite else { return false } }
-        if let zoom { guard zoom.isFinite else { return false } }
-        let current = speakerBackgroundFocus(windowIndex: windowIndex)
-        let next = SpeakerBackgroundFocus(
-            x: min(1, max(0, x ?? current?.x ?? 0.5)),
-            y: current?.y ?? 0.5,
-            zoom: min(Self.backgroundFocusZoomRange.upperBound, max(Self.backgroundFocusZoomRange.lowerBound, zoom ?? current?.zoom ?? 1)))
-        // Exactly today's drawing is never stored.
-        let stored: SpeakerBackgroundFocus? = next == SpeakerBackgroundFocus(x: 0.5, y: 0.5, zoom: 1) ? nil : next
-        guard stored != current else { return false }
-        if let windowIndex {
-            guard background.windows.indices.contains(windowIndex) else { return false }
-            background.windows[windowIndex].focus = stored
-        } else {
-            guard background.mediaID != nil else { return false }
-            background.focus = stored
-        }
-        transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
-        return true
-    }
 
     // MARK: Full-screen opening (Qendresa item 16)
 
@@ -8088,9 +8045,6 @@ enum EditorOpenIntent { case warm, open }
         transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
         return true
     }
-
-    /// The inspector's and the lane's "open the Background tool": the editor view watches `backgroundToolRequest`.
-    func requestBackgroundTool() { backgroundToolRequest &+= 1 }
 
     /// Clears the background (fill, windows and speaker frame). A no-op (and no unsaved change) when there is none.
     @discardableResult
@@ -8126,6 +8080,16 @@ enum EditorOpenIntent { case warm, open }
         var resolved = try await resolver.resolveMedia(id: asset.id, url: url, generation: asset.sourceGeneration ?? document.revision.baseGeneration)
         resolved.visualGeneration = asset.sourceGeneration ?? "0"
         return resolved
+    }
+
+    /// KRI-1656: the local file behind a background bar's picture or video (what Crop draws on). The preview's prepared media
+    /// is used when it is there; otherwise it is resolved once from the Visuals library.
+    func backgroundSourceURL(forKey key: String, mediaID: String, kind: VisualMediaKind) async -> URL? {
+        if let url = (resolvedMedia[key] ?? authoredVisualSources[key])?.url { return url }
+        guard let resolver = sourceResolver,
+              let resolved = try? await resolveSpeakerBackgroundSource(mediaID: mediaID, kind: kind, resolver: resolver) else { return nil }
+        resolvedMedia[key] = resolved
+        return resolved.url
     }
 
     /// Bytes for a clip's media tilt backdrop (`visual-<pool id>`). Like the speaker background, the library is the
@@ -8577,7 +8541,7 @@ enum EditorOpenIntent { case warm, open }
             }
         case .speakerBackgroundWindow:
             // Not a persisted tombstone: the window just leaves the `speaker_background` object.
-            return removeSpeakerBackgroundWindow(id: selected.id)
+            return removeSpeakerBackgroundBar(id: selected.id)
         case .speaker:
             // The speaker is the take itself: there is nothing to delete. Full screen is a Speaker choice instead.
             return false
@@ -8610,7 +8574,10 @@ enum EditorOpenIntent { case warm, open }
         case .motionScene: return cleanDocument.motionScenes.contains { $0.id == selection.id }
         case .cameraEffect: return cleanDocument.cameraEffects.contains { $0.id == selection.id }
         case .drawing: return cleanDocument.drawings.contains { $0.id == selection.id }
-        case .speakerBackgroundWindow: return cleanDocument.speakerBackground?.windows.contains { $0.localID == selection.id } ?? false
+        case .speakerBackgroundWindow:
+            // A visible fill piece (`fill-<n>`) is part of the saved background; a window is baseline when the saved one has it.
+            return cleanDocument.speakerBackground?.windows.contains { $0.localID == selection.id } ?? false
+                || (EditorSpeakerBackground.isFillRegionID(selection.id) && cleanDocument.speakerBackground != nil)
         case .speaker: return cleanDocument.speakerBackground?.speakerFrame != nil
         case .captionTranslation: return cleanDocument.captionCues.contains { $0.id == selection.id && $0.translation != nil }
         case .carousel: return cleanDocument.carouselMoment?["id"] == .string(selection.id)
@@ -10471,6 +10438,8 @@ enum EditorOpenIntent { case warm, open }
               canEditOperation(section == .drawings ? ["drawings.trim", "drawings.edit"] : ["\(section.rawValue).\(operation)", section.rawValue], section: section),
               // KRI-1162: a background window moves and trims only while the server opens `speaker_background_windows`.
               section != .speakerBackground || canEditSpeakerBackgroundWindows,
+              // KRI-1656: a visible piece of the fill moves and trims only where gaps can show her own take (bars mode).
+              !isUnmaterializedBackgroundPiece(selection) || backgroundBarsMode,
               timedObjectExists(selection),
               supportsTimedGesture(selection) else { return false }
         activeTimedEdit = ActiveTimedEdit(gestureID: gestureID, undoBaseline: undoStack, selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
@@ -10483,6 +10452,15 @@ enum EditorOpenIntent { case warm, open }
         let translation = translation - active.translationOrigin
         var next = active.baseline
         guard let section = section(for: active.selection.kind) else { return }
+        // KRI-1656: a visible piece of a media fill becomes windows the first time it is touched (each keeps its `fill-<n>` id, so
+        // the bar under the finger is the same bar). The baseline stays the saved document, so undo lands on it.
+        var materializedPiece = false
+        if active.selection.kind == .speakerBackgroundWindow, var background = next.speakerBackground, background.mediaID != nil,
+           !background.windows.contains(where: { $0.localID == active.selection.id }) {
+            guard background.materializeMediaFill(duration: backgroundWindowsCeiling) else { return }
+            next.speakerBackground = background
+            materializedPiece = true
+        }
         guard let bounds = timedBounds(active.selection, in: next) else { return }
         let minimum = minimumClipDuration
         let projection = active.projection
@@ -10504,18 +10482,57 @@ enum EditorOpenIntent { case warm, open }
         }
         // KRI-1162: a background window snaps to its neighbours' edges and the video ends, never overlaps a
         // neighbour and never shrinks below half a second.
+        // KRI-1656: where gaps show her own take, none may be shorter than a bar (it could not hold an `own` row), so a drag
+        // snaps to a neighbour's edge rather than leave one.
+        let barsMode = backgroundBarsMode
+        let minGap = barsMode ? EditorSpeakerBackground.barMinSeconds : 0
+        var colourPiece = false
         if active.selection.kind == .speakerBackgroundWindow,
            let windows = next.speakerBackground?.windows, let index = windows.firstIndex(where: { $0.localID == active.selection.id }) {
             let fitted = Self.fittedBackgroundWindow(
                 proposed: (start, end), original: (bounds.start, bounds.end), moving: active.kind == .move, edge: active.edge,
                 previousEnd: index > 0 ? windows[index - 1].endS : 0,
-                nextStart: index + 1 < windows.count ? windows[index + 1].startS : max(totalDuration > 0 ? totalDuration : SpeakerBackgroundLimits.maxTimeline, bounds.end))
+                nextStart: index + 1 < windows.count ? windows[index + 1].startS : max(totalDuration > 0 ? totalDuration : SpeakerBackgroundLimits.maxTimeline, bounds.end),
+                minGap: minGap)
+            start = fitted.start; end = fitted.end
+        } else if active.selection.kind == .speakerBackgroundWindow, let background = next.speakerBackground, background.color != nil {
+            // A colour piece moves inside the gap between its neighbouring windows.
+            colourPiece = true
+            let ceiling = max(totalDuration > 0 ? totalDuration : SpeakerBackgroundLimits.maxTimeline, bounds.end)
+            let gap = EditorSpeakerBackground.subtracting(background.windows.map { EditorBackgroundSpan($0.startS, $0.endS) },
+                                                          from: [EditorBackgroundSpan(0, ceiling)])
+                .first { $0.start <= bounds.start + 1e-6 && bounds.end <= $0.end + 1e-6 }
+            let fitted = Self.fittedBackgroundWindow(
+                proposed: (start, end), original: (bounds.start, bounds.end), moving: active.kind == .move, edge: active.edge,
+                previousEnd: gap?.start ?? bounds.start, nextStart: gap?.end ?? bounds.end, minGap: minGap)
             start = fitted.start; end = fitted.end
         }
-        if active.kind == .trim, active.selection.kind == .soundEffect {
+        if materializedPiece, abs(start - bounds.start) < 1e-9, abs(end - bounds.end) < 1e-9 {
+            // Touched but not moved: nothing to save.
+            next = active.baseline
+        } else if active.kind == .trim, active.selection.kind == .soundEffect {
             setSoundEffectTrimBounds(active.selection.id, edge: active.edge ?? .trailing, translation: baseTranslation, in: &next)
+        } else if colourPiece {
+            guard var background = next.speakerBackground, barsMode else { return }
+            let old = EditorBackgroundSpan(bounds.start, bounds.end), new = EditorBackgroundSpan(start, end)
+            let duration = backgroundWindowsCeiling
+            background.coverWithOwn(EditorSpeakerBackground.subtracting([new], from: [old]), duration: duration)
+            background.uncoverOwn([new])
+            background.normalizeBars(duration: duration)
+            guard background.isWireValid(duration: duration) else { return }
+            next.speakerBackground = background
         } else {
             setTimedBounds(active.selection, start: start, end: end, in: &next)
+            // KRI-1656: the span a window gave up shows her own take; the span it now covers does not.
+            if active.selection.kind == .speakerBackgroundWindow, barsMode, var background = next.speakerBackground,
+               background.windows.contains(where: { $0.localID == active.selection.id }) {
+                let old = EditorBackgroundSpan(bounds.start, bounds.end), new = EditorBackgroundSpan(start, end)
+                let duration = backgroundWindowsCeiling
+                background.coverWithOwn(EditorSpeakerBackground.subtracting([new], from: [old]), duration: duration)
+                background.normalizeBars(duration: duration)
+                guard background.isWireValid(duration: duration) else { return }
+                next.speakerBackground = background
+            }
         }
         guard next != active.baseline else {
             if active.recordedUndo {
@@ -10558,35 +10575,59 @@ enum EditorOpenIntent { case warm, open }
         case .motionScene: guard let item = document.motionScenes.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .cameraEffect: guard let item = document.cameraEffects.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .drawing: guard let item = document.drawings.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
-        case .speakerBackgroundWindow: guard let item = document.speakerBackground?.windows.first(where: { $0.localID == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .speakerBackgroundWindow:
+            if let item = document.speakerBackground?.windows.first(where: { $0.localID == selection.id }) { return (item.startS, item.endS) }
+            // KRI-1656: a visible piece of the fill (`fill-<n>`).
+            guard let region = document.speakerBackground?.visibleFillRegions(duration: backgroundWindowsCeiling).first(where: { $0.id == selection.id }) else { return nil }
+            return (region.span.start, region.span.end)
         default: return nil
         }
+    }
+
+    /// KRI-1656: a `fill-<n>` bar that is still part of the fill (no window carries its id yet).
+    func isUnmaterializedBackgroundPiece(_ selection: EditorSelection) -> Bool {
+        selection.kind == .speakerBackgroundWindow && EditorSpeakerBackground.isFillRegionID(selection.id)
+            && document.speakerBackground?.windows.contains(where: { $0.localID == selection.id }) != true
     }
 
     /// The span a background window takes after a drag sample: inside `previousEnd...nextStart`, snapped to those
     /// edges within 80 ms, keeping its length on a move and at least half a second on a trim, on a millisecond
     /// grid (so the wire never carries a 0.49999 s window).
+    ///
+    /// `minGap` (KRI-1656, bars mode): a gap left against a neighbour or the video's ends must be at least that long, because a
+    /// gap shows her own take and the wire's shortest layout row is half a second. A position that would leave a shorter one
+    /// snaps to the nearer of "touching" and "exactly `minGap` away".
     static func fittedBackgroundWindow(proposed: (start: Double, end: Double), original: (start: Double, end: Double), moving: Bool,
-                                       edge: NativeTrimEdge?, previousEnd: Double, nextStart: Double) -> (start: Double, end: Double) {
+                                       edge: NativeTrimEdge?, previousEnd: Double, nextStart: Double, minGap: Double = 0) -> (start: Double, end: Double) {
         let minLength = EditorSpeakerBackgroundWindow.minDuration
         let tolerance = 0.08
         let lower = max(0, previousEnd), upper = max(nextStart, lower)
         func grid(_ value: Double) -> Double { (value * 1_000).rounded() / 1_000 }
+        /// `value` as a distance from `anchor` (>= 0): inside (0, minGap) it snaps to the nearer of 0 and minGap.
+        func spaced(_ distance: Double) -> Double {
+            guard minGap > 0, distance > 1e-9, distance < minGap else { return distance }
+            return distance < minGap / 2 ? 0 : minGap
+        }
         var start = original.start, end = original.end
         if moving {
             let length = original.end - original.start
             var candidate = proposed.start
             if abs(candidate - lower) <= tolerance { candidate = lower }
             else if abs(candidate + length - upper) <= tolerance { candidate = upper - length }
+            candidate = lower + spaced(candidate - lower)
+            let room = upper - length - candidate
+            if minGap > 0, room > 1e-9, room < minGap { candidate = room < minGap / 2 ? upper - length : upper - length - minGap }
             start = min(max(grid(candidate), lower), max(lower, upper - length))
             end = start + length
         } else if edge == .leading {
             var candidate = proposed.start
             if abs(candidate - lower) <= tolerance { candidate = lower }
+            candidate = lower + spaced(candidate - lower)
             start = min(max(grid(candidate), lower), original.end - minLength)
         } else {
             var candidate = proposed.end
             if abs(candidate - upper) <= tolerance { candidate = upper }
+            candidate = upper - spaced(upper - candidate)
             end = max(min(grid(candidate), upper), original.start + minLength)
         }
         while end - start < minLength { end = end.nextUp }

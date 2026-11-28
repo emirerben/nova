@@ -1261,6 +1261,19 @@ retry is raised. It does not turn the run red by itself yet.
 The performance tests (`KriaPerfUITests`) launch with the guard off, so they
 measure the app as UIKit ships it.
 
+## Background tool: bars on the timeline (KRI-1656)
+
+On a Talk-to-camera edit every background is a bar on the BACKGROUND lane (drag, trim; Crop, Replace and Remove in its
+inspector); tapping a photo or video in the Background tool adds a bar from the playhead, and where no bar covers the video her
+own take shows. Crop replaces Aim and is stored as the existing `focus`, so it needs no protocol. The model, invariants and
+gates are in `docs/pipelines/speaker-background.md` ("Backgrounds as timeline bars").
+
+UI tests start from fixture lanes chosen by launch argument: `-ui-testing-editor-speaker-background-windows` (a photo fill
+with two windows), `-ui-testing-editor-speaker-sections` (a colour fill with four sections) and
+`-ui-testing-editor-speaker-background-bars` (one photo fill over the whole 6 s video, windows and sections gates open),
+each with `-ui-testing-editor-speaker-background-reset` to forget a kept save. A new UI test class needs an entry in
+`scripts/ios/ui-test-groups.json`.
+
 ## Native editor source assets
 
 `GET /generative-jobs/{job_id}/variants/{variant_id}/timeline` exposes additive

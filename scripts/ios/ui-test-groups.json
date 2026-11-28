@@ -5,6 +5,7 @@
     "AppleTextAccessibilityUITests": "editor",
     "AskSequenceUITests": "creation",
     "AttachmentFlowUITests": "creation",
+    "BackgroundBarsUITests": "editor",
     "BackgroundLaneUITests": "editor",
     "CameraRollBenchmarkUITests": "creation",
     "CameraRollCollectionUITests": "creation",

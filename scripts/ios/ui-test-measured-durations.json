@@ -13,7 +13,7 @@
   "KriaUITests/AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice": 28.8,
   "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls": 27.8,
   "KriaUITests/BackgroundLaneUITests/testDraggingAWindowMovesTheInspectorAndTheSave": 48.0,
-  "KriaUITests/BackgroundLaneUITests/testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset": 38.8,
+  "KriaUITests/BackgroundLaneUITests/testTappingAPhotoAddsABarFromThePlayheadAndRemoveTakesItAway": 38.8,
   "KriaUITests/CameraRollCollectionUITests/testDeletingAnIdeaCanBeUndone": 46.7,
   "KriaUITests/CameraRollCollectionUITests/testEveryItemStateIsVisible": 28.3,
   "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas": 37.3,

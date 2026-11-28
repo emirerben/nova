@@ -390,6 +390,38 @@ pieces can be framed piece by piece (the engine plays a split with nothing remov
 `SpeakerLayoutWindowsEditorTests`, `SpeakerBackgroundLivePreviewTests`, `SpeakerSectionsUITests`; engine:
 `SpeakerLayoutWindowsTests`, `SpeakerSectionSplitSeamTests`.
 
+## Backgrounds as timeline bars (KRI-1656, iPhone editor)
+
+Every background is a bar on the editor's BACKGROUND lane that the creator can drag, trim, crop, replace and remove. No wire
+field and no protocol change: the editor writes what it always could (`windows`, `layout_windows`, `focus`), with one
+rule for what an empty stretch means.
+
+| Idea | How it is stored |
+| --- | --- |
+| A bar | A timed `windows` row, or a visible piece of the fill: the part of the video no window, `own` layout row or full-screen window covers (client-local id `fill-<n>`, never on the wire). A fill alone is one bar over the whole video. |
+| Normal video where no bar covers | An `own` layout row (her take, unmasked, full-frame) over every gap. Only with `editor_capabilities.speaker_sections` (protocol 59), called **bars mode**. Without it the older model stays: the fill is a bar that cannot be trimmed, windows sit on top. |
+| Hidden fill | In bars mode the fill is a placeholder that keeps a media id some window uses (nothing shows it). Taking the last bar away removes the background (as None does). |
+| Colour | Still the single fill (the wire has no colour windows), so colour bars are the visible pieces of the fill and one colour serves every colour part. |
+| Crop | The existing `focus {x, y, zoom}` of the bar's window, or of the fill. For zoom 1 to 3 the part of the picture that shows is a rectangle with the canvas's shape, so a crop rectangle and a focus round-trip exactly (`BackgroundCropMapping`): `w = fill.w / zoom`, `x = fx * (1 - w)`. Below 1x (chat can set it) no crop expresses it; the first drag replaces it. |
+
+Invariants the editor keeps after every edit (`EditorSpeakerBackground+Bars.swift`, `normalizeBars`): no window sits under an
+`own` row (the engine draws `own` over any background, so the window would be invisible); no media-fill gap is left shorter
+than a bar, because a gap shows her own take and the wire's shortest layout row is half a second (a drag snaps to a
+neighbour's edge, and the leftover is absorbed by an adjacent bar); only `own` rows are rewritten outside the span an edit
+frees, so planner or chat sections (`full`, `small`, `picture`) elsewhere survive; wire limits hold (sorted, non-overlapping,
+at least 0.5 s, at most 40 rows, layout rows end inside the edit). New spans are a hair over half a second (0.501 s on a
+millisecond grid) because the server compares `end - start < 0.5` in floating point.
+
+Edits: tapping a pool item adds a bar from the playhead (the whole video when there is none; inside a bar it splits that
+bar; in a gap it fills to the gap's end); a bar's inspector has Crop, Replace and Remove; the first drag of a whole-video
+fill turns its pieces into windows (they keep their `fill-<n>` ids and one undo step restores the saved lane). Removing a bar
+covers its span with `own`, even over a planner row inside that span.
+
+**Chat parity** is a separate change (KRI-1658): `set_background_sequence`, `retime_background_window`,
+`remove_background_window`, `set_speaker_frame` and `set_background_color` do not know the bars shape yet.
+Tests: `BackgroundBarsTests` (soundness over random edit sequences, crop round trip), `BackgroundBarsUITests`,
+`BackgroundLaneUITests`; the helpers are pure so a server port can share cases.
+
 ## Rollback
 
 Kill switch, never a code revert: `fly secrets set SPEAKER_BACKGROUND_ENABLED=false

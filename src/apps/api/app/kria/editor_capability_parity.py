@@ -420,8 +420,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     "speaker_background": _g(
         "agent_ops",
         "setSpeakerBackground setSpeakerBackgroundColor removeSpeakerBackground "
-        "setSpeakerBackgroundWindows addSpeakerBackgroundWindow removeSpeakerBackgroundWindow "
-        "setSpeakerFrame clearSpeakerFrame",
+        "setSpeakerBackgroundWindows removeSpeakerBackgroundWindow "
+        "setSpeakerFrame clearSpeakerFrame "
+        # KRI-1656: the editor's bars. Chat adds, recolours, retimes and removes the same lane
+        # through set_background / set_background_sequence / set_background_color /
+        # retime_background_window / remove_background_window; making chat respect a lane made of
+        # bars (own gaps, hidden fill) is KRI-1658.
+        "addSpeakerBackground replaceSpeakerBackground removeSpeakerBackgroundBar "
+        "setSpeakerBackgroundColorFromPlayhead",
         (
             "set_background",
             "set_background_color",
@@ -437,6 +443,13 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
             "retime_background_window",
         ),
         fields=("speaker_layout", "section_numbers", "start_s", "end_s", "window_index"),
+    ),
+    # KRI-1656: read-only lookups behind the background bars (names, editability, the crop frame).
+    "speaker_background_bar_queries": _g(
+        "not_an_edit",
+        "backgroundBarExists backgroundBarMedia backgroundSourceURL canEditBackgroundBarTiming "
+        "canRemoveBackgroundBar canReplaceBackgroundBar isUnmaterializedBackgroundPiece",
+        reason="Read-only lookups the BACKGROUND lane, its inspector and Crop use.",
     ),
     # Qendresa item 16: the speaker full screen in their own take before the background / corner.
     # The planner writes it from the creator's first ask (`background_media.full_screen_opening`);
@@ -516,11 +529,6 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "discardPlaybackForNewJobForTesting finishScrubFramesForTesting "
         "setResolvedSourcesForTesting setPendingAddAdmissionForTesting previewSourceURLForTesting",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
-    ),
-    "background_tool_navigation": _g(
-        "not_an_edit",
-        "requestBackgroundTool",
-        reason="Opens the Background tool panel; the edit itself is the actions in it.",
     ),
     "playback_and_selection": _g(
         "not_an_edit",
