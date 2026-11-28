@@ -89,7 +89,7 @@ end_s, quote, reason)` with `reason` one of `off_topic`, `requested_drop`, `over
   topic makes no model call.
 - **Windows.** A transcript over `WINDOW_CHARS` (9,000) is read in windows split at sentence
   boundaries and merged by global id inside the selector; adjacent kept sentences across a seam
-  become one passage. `MAIN_CREATOR_FULL_CLIP_EVIDENCE_ENABLED` is untouched.
+  become one passage. A window with nothing on topic may answer with no passage. `MAIN_CREATOR_FULL_CLIP_EVIDENCE_ENABLED` is untouched.
 - **Checks in code.** Each passage's quote is re-grounded (`ground_passage`) against the words of
   its own id range and must touch the range's first and last sentence; otherwise it is left out as
   `ungrounded`. Every range starts and ends on a sentence, padded into the silence beside it
@@ -101,6 +101,10 @@ end_s, quote, reason)` with `reason` one of `off_topic`, `requested_drop`, `over
   `PassageSelection.fits_target` reports a shortfall; the selector never invents speech.
 - **Shared grounding.** `plan_speech_montage` grounds its planner quotes through the same
   `ground_passage` (too short, too long, not said), so the montage output is unchanged.
+
+Fitting pads up to the target with the model's weakest nominated passages, and a ceiling fills to
+the cap. `keep_whole` ignores `target_s`. A caller must catch `PassageSelectionError` and the
+agent's terminal errors and keep the whole take.
 
 Not proven offline: that the live model rejects a fluent passage that shares the outline's
 keywords (the matrix replays recorded answers). Live check is pending under KRI-1555.
