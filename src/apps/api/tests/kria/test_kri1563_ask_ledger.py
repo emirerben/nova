@@ -307,3 +307,14 @@ async def test_with_the_switch_off_a_no_op_turn_is_unchanged(monkeypatch) -> Non
     assert plan.response == "No can do." + planner._REDO_OFFER
     assert plan.requirement_receipts is None
     assert "requirement_receipts" not in plan.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_long_ordinary_refusal_without_new_requirements_retains_its_bound(
+    monkeypatch,
+) -> None:
+    reply = "This operation is unavailable. " * 80
+    plan = await _revision(monkeypatch, _copilot("unsupported", reply), requirements=[])
+    assert plan.mode == "respond"
+    assert not plan.editor_advice
+    assert len(plan.response) <= 1200 and plan.response.endswith(planner._REDO_OFFER)

@@ -122,7 +122,7 @@ from app.kria.clip_scope import (
 )
 from app.kria.clip_ties import left_out, tie_question, voiceover_ties, with_tie_categories
 from app.kria.compose_with_ops import compose_unmet_with_ops
-from app.kria.contracts import KriaTurnPlan
+from app.kria.contracts import MAX_EDITOR_ADVICE_CHARS, MAX_PLAN_RESPONSE_CHARS, KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.hidden_parts import carry_hidden_parts, earlier_hidden_parts, hidden_part_question
@@ -3016,9 +3016,24 @@ async def _load_editor_target(
         and not is_removed(getattr(row, "payload", None), removed)
     ]
     rows.reverse()
+    advice_index = next(
+        (
+            index
+            for index in range(len(rows) - 1, -1, -1)
+            if rows[index].role == "assistant"
+            and (getattr(rows[index], "payload", None) or {}).get("editor_advice") is True
+        ),
+        None,
+    )
     conversation = [
-        {"role": row.role, "content": model_text(getattr(row, "payload", None), row.content)[:1000]}
-        for row in rows
+        {
+            "role": row.role,
+            "content": model_text(getattr(row, "payload", None), row.content)[
+                : MAX_EDITOR_ADVICE_CHARS if index == advice_index else 1000
+            ],
+            **({"editor_advice": True} if index == advice_index else {}),
+        }
+        for index, row in enumerate(rows)
         if row.content
     ]
     from app.services import generated_overlay_pool  # noqa: PLC0415
@@ -3152,6 +3167,7 @@ async def _plan_editor_revision(
     original_request: str | None = None,
     requirements: Sequence[BriefRequirement] | None = None,
     title_answer: _TitleAnswer | None = None,
+    preview_only: bool = False,
 ) -> KriaTurnPlan | None:
     if requirements is None:
         requirements = _turn_requirements.get()
@@ -3205,9 +3221,10 @@ async def _plan_editor_revision(
         ),
         timeout_override_s=120.0,
         compile_check=target.compile_check,
-        text_design=_chat_text_design(target, user_message),
+        text_design=None if preview_only else _chat_text_design(target, user_message),
+        **({"preview_only": True} if preview_only else {}),
     )
-    ops = list(response.ops or [])
+    ops = [] if preview_only else list(response.ops or [])
     if title_answer is not None:
         ops = _with_settled_title(ops, title_answer.state)
     if (
@@ -3224,8 +3241,33 @@ async def _plan_editor_revision(
             response=localized_editor_state_reply(SPEECH_CUT_NEEDS_SAVE_REPLY),
             diagnostics=outcome_diagnostics("recovery", SPEECH_CUT_NEEDS_SAVE),
         )
+    if not ops and not requirements and getattr(response, "advice", False):
+        if len(response.reply) <= MAX_EDITOR_ADVICE_CHARS:
+            return KriaTurnPlan(
+                mode="respond",
+                turn_value="decision",
+                editor_advice=True,
+                response=response.reply,
+            )
+        # Do not silently cut the last items off a list that was asked for in full.
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    "The suggestions are too long for one reply. Nothing was changed. "
+                    "Which clips should I suggest text for first?"
+                ),
+                tr=(
+                    "Öneriler tek bir yanıt için fazla uzun. Hiçbir şey değişmedi. "
+                    "Önce hangi klipler için yazı önereyim?"
+                ),
+            ),
+        )
     if target.recovery_basis is not None:
-        draft_plan = adapt_editor_action(reply=_phone_editor_reply(response.reply), ops=ops)
+        draft_plan = (
+            adapt_editor_action(reply=_phone_editor_reply(response.reply), ops=ops) if ops else None
+        )
         unmet = getattr(response, "unmet_requests", None) or ()
         # KRI-1563: a part the copilot could not do no longer throws away the in-place ops it
         # made for the other parts; the ledger declines that part on the receipt instead.
@@ -3273,7 +3315,11 @@ async def _plan_editor_revision(
                 "diagnostics": {**(plan.diagnostics or {}), "editor_last_ready": target.last_ready}
             }
         )
-    if response.outcome in {"unsupported", "no_effect"} and is_overlay_display_ask(user_message):
+    if (
+        not preview_only
+        and response.outcome in {"unsupported", "no_effect"}
+        and is_overlay_display_ask(user_message)
+    ):
         # KRI-297: a display-mode change (full-screen overlays) is not an in-place
         # editor op. Decline the copilot refusal so the planner re-plans it as a
         # fresh edit (strategy.overlay_display) -- or states the real limit.
@@ -3297,11 +3343,15 @@ async def _plan_editor_revision(
             )
             ledger_receipts = [r.model_dump(mode="json") for r in ledger.receipts]
         if (
-            response.outcome == "unsupported"
+            not preview_only
+            and response.outcome == "unsupported"
             and _REDO_OFFER not in reply
             and _REDO_OFFER_TR not in reply
         ):
-            reply = f"{reply}{_redo_offer()}"
+            offer = _redo_offer()
+            reply = f"{trim_at_word(reply, MAX_PLAN_RESPONSE_CHARS - len(offer))}{offer}"
+        else:
+            reply = trim_at_word(reply, MAX_PLAN_RESPONSE_CHARS)
         return KriaTurnPlan(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
@@ -6606,6 +6656,20 @@ def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
     cause: dict[str, str] = {"stage": stage, "error_type": type(exc).__name__}
     if exc.__cause__ is not None:
         cause["cause_type"] = type(exc.__cause__).__name__
+    if isinstance(exc, ValidationError):
+        # Pydantic's exception string includes rejected creator/model content. Only name
+        # fields from known contracts, never arbitrary input keys or values.
+        models = {
+            model.__name__: model.model_fields
+            for model in (KriaTurnPlan, CopilotTurnBody, BriefExtractionOutput)
+        }
+        fields = models.get(exc.title, {})
+        errors = []
+        for error in exc.errors(include_input=False, include_context=False, include_url=False)[:3]:
+            loc = error["loc"]
+            field = loc[0] if loc and loc[0] in fields else None
+            errors.append(f"{field}:{error['type']}" if field else error["type"])
+        cause["error_class"] = ",".join(errors)[:80]
     # KRI-586: a redacted agent failure carries a value-free ``error_class`` (field paths +
     # error types, never values) on some link of the chain; surface it for the admin views.
     link: BaseException | None = exc
@@ -9206,6 +9270,24 @@ async def _plan_live_turn(
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                 )
+            if semantic_request_scope == "preview":
+                extraction_complete = True
+                item = await _refetch_item(db, item_id)
+                editor_plan = await _plan_editor_revision(
+                    db,
+                    thread_id=thread_id,
+                    item=item,
+                    user_message=user_message,
+                    **_state_kw(editor_state),
+                    preview_only=True,
+                )
+                if editor_plan is None:
+                    return _editor_target_recovery(manifest)
+                return PlannedKriaTurn(
+                    plan=editor_plan,
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
             unique_extracted = {
                 json.dumps(update.model_dump(mode="json"), sort_keys=True): update
                 for result in extraction_outputs
@@ -9385,16 +9467,18 @@ async def _plan_live_turn(
                 reason=str(exc),
             )
         except (RuntimeError, ValidationError, BriefUpdateBatchError) as exc:
-            log.warning(
-                "kria_request_recovery_cause",
-                stage="followup_extraction",
-                error_type=type(exc).__name__,
-                error=str(exc)[:500],
-                exc_info=True,
-            )
+            cause = _recovery_cause("followup_extraction", exc)
+            if isinstance(exc, ValidationError):
+                log.warning("kria_request_recovery_cause", **cause)
+            else:
+                log.warning(
+                    "kria_request_recovery_cause",
+                    **cause,
+                    error=str(exc)[:500],
+                    exc_info=True,
+                )
             # `extract_first` implies the brief is on, so the old "brief off: let the copilot
             # serve it" fallback that used to follow was unreachable (KRI-536).
-            cause = _recovery_cause("followup_extraction", exc)
             if not extraction_complete:
                 try:
                     served = await _serve_unextracted_edit(
@@ -9873,7 +9957,7 @@ async def extract_deferred_brief(
         _adopt_read_language(output)
         _note_starts_fresh(output)
     scope, _clarification = _extraction_request_scope(extraction_outputs)
-    if scope == "clarify":
+    if scope in {"clarify", "preview"}:
         return (), None
     updates = carry_moment_ask(
         prior_brief,

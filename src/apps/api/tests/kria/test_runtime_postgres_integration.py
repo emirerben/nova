@@ -4062,3 +4062,198 @@ async def test_kri793_t1_every_row_gets_a_line_before_approval(
         assert card == f"Render this draft: {content}"
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_mixed_editor_text_preview_survives_chat_delivery_without_draft_or_render(
+    monkeypatch,
+):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from app.agents._runtime import ModelInvocation
+    from app.kria import planner
+    from app.routes import _copilot
+    from tests.kria.test_creative_brief import _MANIFEST
+    from tests.routes.test_phone_guided_photo_order_commit import mixed_montage
+
+    fixture, variant, revision = mixed_montage(monkeypatch)
+    variant["render_status"] = "ready"
+    user_id, thread_id, session_id = _seed_runtime_project()
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id)
+        session = db.get(CreatorAgentSession, session_id)
+        item = db.get(PlanItem, session.plan_item_id)
+        item_id = item.id
+        item.edit_format = "montage"
+        ready = Job(
+            id=fixture.id,
+            user_id=user_id,
+            status="variants_ready",
+            mode="content_plan",
+            raw_storage_path="",
+            selected_platforms=["tiktok"],
+            content_plan_item_id=item_id,
+            content_plan_ownership_epoch=0,
+            all_candidates=fixture.all_candidates,
+            assembly_plan=fixture.assembly_plan,
+        )
+        db.add(ready)
+        db.flush()
+        item.current_job_id = ready.id
+        session.target_job_id = ready.id
+        session.target_variant_id = variant["variant_id"]
+        session.target_generation_id = variant["render_generation_id"]
+        session.manifest_hash = "a" * 64
+        thread.state = {**thread.state, "edit_format": "montage", "reply_language": "en"}
+        db.commit()
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(settings, "kria_clip_understanding_enabled", False)
+    monkeypatch.setattr(settings, "clip_intents_enabled", False)
+    monkeypatch.setattr("app.tasks.kria_runtime.nudge_kria_observer", lambda *args: None)
+    monkeypatch.setattr(
+        planner,
+        "resolve_item_creator_context",
+        AsyncMock(return_value=(_MANIFEST.model_copy(update={"item_id": str(item_id)}), [])),
+    )
+    monkeypatch.setattr(planner, "creator_context", lambda *_: ("creator", "item"))
+    seen = {
+        row["media_id"]: f"A synthetic stadium scene in section {index + 1}"
+        for index, row in enumerate(revision["segments"])
+    }
+    monkeypatch.setattr(planner, "_copilot_clip_context", AsyncMock(return_value={"seen": seen}))
+    monkeypatch.setattr(
+        planner,
+        "MainCreatorAgent",
+        Mock(side_effect=AssertionError("read-only options must not enter the rebuild planner")),
+    )
+    reply = "Here are two options for each item.\n" + "\n".join(
+        f"{i + 1}. Section {i + 1} comes into view / The match-day scene in section {i + 1}"
+        for i in range(25)
+    )
+    assert len(reply) > 1200
+    scope = "preview"
+    model_output = {
+        "intent": "describe",
+        "ops": [],
+        "confidence": 0.99,
+        "reply": reply,
+        "claimed_ops": [],
+    }
+    prompts = []
+
+    def extract(**_):
+        return ModelInvocation(
+            raw_text=json.dumps(
+                {
+                    "brief_updates": [],
+                    "request_scope": scope,
+                    "conversation_language": "en",
+                }
+            )
+        )
+
+    def copilot(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return ModelInvocation(raw_text=json.dumps(model_output))
+
+    monkeypatch.setattr(planner, "default_client", lambda: SimpleNamespace(invoke=extract))
+    monkeypatch.setattr(_copilot, "default_client", lambda: SimpleNamespace(invoke=copilot))
+    saved_assembly = copy.deepcopy(fixture.assembly_plan)
+    message = (
+        "Suggest two text options for each photo and video. "
+        "Don't add them now; show me the options first."
+    )
+    try:
+        async with AsyncSessionLocal() as db:
+            thread_revision = (await db.get(CreationThread, thread_id)).revision
+            accepted, _ = await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=SubmitTurnBody(
+                    message=message,
+                    client_event_id=str(uuid.uuid4()),
+                    expected_thread_revision=thread_revision,
+                ),
+            )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result == {"turn_id": accepted.turn_id, "status": "completed"}
+
+        with sync_session() as db:
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            plan = KriaTurnPlan.model_validate(turn.plan_json)
+            assert plan.editor_advice and plan.response == reply and not plan.intents
+            event = db.get(CreationThreadEvent, turn.observed_event_id)
+            assert event.content == reply and event.payload["editor_advice"] is True
+            assert (
+                not db.execute(
+                    select(CreatorAgentExecution).where(CreatorAgentExecution.turn_id == turn.id)
+                )
+                .scalars()
+                .all()
+            )
+            assert (
+                not db.execute(select(CreatorEditDraft).where(CreatorEditDraft.item_id == item_id))
+                .scalars()
+                .all()
+            )
+            assert (
+                not db.execute(
+                    select(CreativeBriefVersion).where(CreativeBriefVersion.thread_id == thread_id)
+                )
+                .scalars()
+                .all()
+            )
+            assert db.get(Job, fixture.id).assembly_plan == saved_assembly
+
+        async with AsyncSessionLocal() as db:
+            delta = await read_delta(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                after_sequence=1,
+                limit=20,
+            )
+            assert delta.events[-1].content == reply
+
+        # Explicit wording approval remains an ordinary editor request. A choice for the final
+        # item requires the actual persisted options, not an invented answer to truncated history.
+        scope = "edit"
+        selected = "The match-day scene in section 25"
+        model_output = {
+            "intent": "edit",
+            "ops": [
+                {
+                    "op": "add_text",
+                    "clip_id": "p12",
+                    "text": selected,
+                    "start_s": variant["duration_s"] - 1,
+                    "end_s": variant["duration_s"],
+                }
+            ],
+            "confidence": 0.99,
+            "reply": "I prepared the selected line.",
+            "claimed_ops": [],
+        }
+        async with AsyncSessionLocal() as db:
+            planned = await planner.plan_live_turn(
+                db,
+                thread_id=thread_id,
+                item_id=item_id,
+                creator_id=user_id,
+                user_message="Use the second option on the last photo.",
+            )
+        assert selected in prompts[-1], (
+            "the final option must be available to the next copilot turn"
+        )
+        assert "This turn is read-only" not in prompts[-1]
+        assert planned.plan.mode == "act", planned.plan
+        assert [intent.tool_name for intent in planned.plan.intents] == ["draft.apply_editor_ops"]
+        assert planned.plan.intents[0].arguments["operations"][0]["text"] == selected
+    finally:
+        await async_engine.dispose()

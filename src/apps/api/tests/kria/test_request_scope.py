@@ -62,7 +62,12 @@ def test_semantic_rebuild_routes_without_an_editor_target() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "scope,has_target,expected",
-    [("edit", True, "editor_ops"), ("rebuild", False, "replan"), ("clarify", True, None)],
+    [
+        ("edit", True, "editor_ops"),
+        ("rebuild", False, "replan"),
+        ("clarify", True, None),
+        ("preview", True, None),
+    ],
 )
 async def test_deferred_extraction_retains_semantic_scope(
     monkeypatch, scope, has_target, expected

@@ -1,12 +1,14 @@
 {
   "source": "German chat copy, AI-drafted 2026-11-10, needs review by a German speaker (docs/reviews/kri-1362-german-copy-review.md)",
   "messages": {
+    "I couldn't prepare text options this time. Your edit is unchanged. Try again.": "Ich konnte diesmal keine Textvorschläge vorbereiten. Dein Video bleibt unverändert. Versuche es erneut.",
     "I don't see any photo overlays. Do you mean the photos on the main timeline?": "Ich sehe keine Foto-Overlays. Meinst du die Fotos auf der Hauptzeitleiste?",
     "Full-screen photo overlays need at least 0.3 seconds. I left the edit unchanged.": "Vollbild-Foto-Overlays brauchen mindestens 0,3 Sekunden. Ich habe den Schnitt unverändert gelassen.",
     "I don't see any photos on the main timeline. Do you mean photo overlays?": "Ich sehe keine Fotos auf der Hauptzeitleiste. Meinst du Foto-Overlays?",
     "Prepared the photo timing change.": "Die Änderung der Fotodauer ist vorbereitet.",
     "That photo duration is outside the supported range. I left the edit unchanged.": "Diese Fotodauer wird nicht unterstützt. Ich habe den Schnitt unverändert gelassen.",
     "I can't change where you are part by part on this edit yet.": "In diesem Video kann ich deinen Platz noch nicht Teil für Teil ändern.",
+    "The suggestions are too long for one reply. Nothing was changed. Which clips should I suggest text for first?": "Die Vorschläge sind zu lang für eine Antwort. Ich habe nichts geändert. Für welche Clips soll ich zuerst Texte vorschlagen?",
     "change where you are in that part": "deinen Platz in diesem Teil ändern",
     "change where you are part by part": "deinen Platz Teil für Teil ändern",
     "move that picture": "dieses Bild verschieben",

@@ -67,6 +67,23 @@ def test_required_scope_rejects_missing_invalid_and_ambiguous_scope_payloads() -
             agent.parse(json.dumps(payload), required)
 
 
+def test_preview_scope_cannot_record_unapproved_words_or_delegation() -> None:
+    agent = BriefExtractorAgent(None)  # type: ignore[arg-type]
+    required = _input().model_copy(update={"require_request_scope": True})
+    preview = agent.parse(json.dumps({"brief_updates": [], "request_scope": "preview"}), required)
+    assert preview.request_scope == "preview"
+    assert preview.brief_updates == []
+    for extra in (
+        {"brief_updates": [{"kind": "text", "scope": "title", "literal": "Unapproved"}]},
+        {"delegates_all_choices": True},
+        {"starts_fresh": True},
+    ):
+        with pytest.raises(SchemaError, match="preview scope cannot change the brief"):
+            agent.parse(
+                json.dumps({"brief_updates": [], "request_scope": "preview", **extra}), required
+            )
+
+
 def test_scope_is_optional_for_legacy_direct_callers() -> None:
     output = BriefExtractorAgent(None).parse(  # type: ignore[arg-type]
         json.dumps({"brief_updates": []}), _input()
