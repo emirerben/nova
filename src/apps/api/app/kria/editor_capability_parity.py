@@ -165,9 +165,12 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "clip_add_remove": _g(
         "agent_ops",
-        "removeClip restoreClip deleteSelectedClip deleteSelection addClip addDeviceTimelineMedia "
-        "addLibraryVisual placeEditorSource removeVisualSelection splitSelectedClip",
+        "removeClip restoreClip deleteSelectedClip deleteSelection addClip addClips "
+        "addDeviceTimelineMedia addLibraryVisual placeEditorSource removeVisualSelection "
+        "splitSelectedClip",
         ("remove_clip", "add_unused_sources", "split_clip", "remove_visual_media"),
+        reason="Chat can append ready, unused sources already in the edit's source pool. "
+        "Only the native editor can pick and import new files from the iPhone Photos library.",
     ),
     "clip_transition": _g(
         "agent_ops", "setClipTransition setTransitionAcrossVideo", ("set_transition",)
