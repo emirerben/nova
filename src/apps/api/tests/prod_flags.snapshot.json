@@ -1053,6 +1053,10 @@
       "source": "default",
       "value": true
     },
+    "passage_placement_enabled": {
+      "source": "default",
+      "value": false
+    },
     "phone_actual_export_verification_enabled": {
       "source": "default",
       "value": false

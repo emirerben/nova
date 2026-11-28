@@ -70,7 +70,7 @@ def _render_1_3_0(prompt_now: str, inp: OverlayPlacementInput) -> str:
 
 
 def test_prompt_version_is_bumped():
-    assert OverlayPlacementAgent.spec.prompt_version == "1.4.0"
+    assert OverlayPlacementAgent.spec.prompt_version == "1.5.0"
 
 
 def test_an_upload_only_prompt_is_byte_identical_to_1_3_0():

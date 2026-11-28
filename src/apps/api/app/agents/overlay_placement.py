@@ -34,6 +34,7 @@ SLOT_NAMES = ("top", "center", "full")
 SFX_INTENTS = ("pop_in", "whoosh", "click", "none")
 MAX_PLACEMENT_ASSETS = 20
 _MAX_WORDS = 1200
+_MAX_REQUEST_CHARS = 600
 
 
 class PlacementAsset(BaseModel):
@@ -69,6 +70,9 @@ class OverlayPlacementInput(BaseModel):
     # The language the creator speaks ("tr", "en", ...), when known. The asset text may be in
     # another language; the prompt matches by meaning across the two.
     spoken_language: str = ""
+    # The creator's own words for this edit ("add pictures", "show my photos"). Empty keeps the
+    # prompt byte-identical to 1.4.0.
+    creator_request: str = Field(default="", max_length=_MAX_REQUEST_CHARS)
 
 
 class RawPlacement(BaseModel):
@@ -115,7 +119,9 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
         # semantic priority over Nova-generated description fields.
         # 1.4.0: speech and asset text may be in different languages (Turkish "alkol" vs a
         # generated image titled "Beer"); match by meaning, and accept a clear topical match.
-        prompt_version="1.4.0",
+        # 1.5.0 (KRI-1556): the creator's request is passed in when there is one. It never
+        # lowers rule 1: asking for pictures does not make an unrelated picture fit.
+        prompt_version="1.5.0",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -171,6 +177,12 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
                 "overlay_placement_generated",
                 spoken_language=_sanitize_text(input.spoken_language) or "unknown",
             ).rstrip("\n")
+        request = _sanitize_text(input.creator_request).strip()
+        creator_request_block = (
+            "\n\n" + load_prompt("overlay_placement_request", creator_request=request).rstrip("\n")
+            if request
+            else ""
+        )
         return load_prompt(
             "overlay_placement",
             words_json=json.dumps(words_payload, ensure_ascii=False),
@@ -181,6 +193,7 @@ class OverlayPlacementAgent(Agent[OverlayPlacementInput, OverlayPlacementOutput]
             duration_s=f"{input.duration_s:.1f}",
             archetype=_sanitize_text(input.archetype) or "talking_head",
             generated_image_rules=generated_rules,
+            creator_request_block=creator_request_block,
         )
 
     def parse(

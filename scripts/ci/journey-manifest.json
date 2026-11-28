@@ -3414,10 +3414,14 @@
     {
       "id": "generated-image-autoplace",
       "needs_native": false,
-      "api_tests": "tests/agents/test_overlay_placement_cross_language.py tests/agents/test_brief_extractor_generated_image.py tests/services/test_generated_image_grounding.py tests/services/test_phone_overlay_grounding.py tests/services/test_generated_media_admission.py tests/tasks/test_phone_overlay_spoken_language_worker.py",
+      "api_tests": "tests/agents/test_overlay_placement_cross_language.py tests/agents/test_brief_extractor_generated_image.py tests/services/test_generated_image_grounding.py tests/services/test_phone_overlay_grounding.py tests/services/test_passage_placement_matrix.py tests/services/test_generated_media_admission.py tests/tasks/test_phone_overlay_spoken_language_worker.py",
       "paths": [
         "src/apps/api/prompts/overlay_placement.txt",
         "src/apps/api/prompts/overlay_placement_generated.txt",
+        "src/apps/api/prompts/overlay_placement_request.txt",
+        "src/apps/api/tests/fixtures/passage_placement/expected.json",
+        "src/apps/api/tests/fixtures/passage_placement/replays.json",
+        "src/apps/api/tests/services/test_passage_placement_matrix.py",
         "src/apps/api/app/services/generated_image_grounding.py",
         "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_cross_language_match.json",
         "src/apps/api/tests/fixtures/agent_evals/overlay_placement/golden/contract_generated_image_unrelated_control_omitted.json",

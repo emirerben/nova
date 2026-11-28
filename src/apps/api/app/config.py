@@ -3670,6 +3670,13 @@ class Settings(BaseSettings):
     # the prompt is byte-identical to 1.3.0 (no origin, no generation_prompt, no extra section).
     # Apply: fly secret OVERLAY_PLACEMENT_CROSS_LANGUAGE_ENABLED=false + restart api + worker.
     overlay_placement_cross_language_enabled: bool = True
+    # KRI-1556: first-draft Visuals cards go through `passage_placement.place_passages`: the model
+    # sees the creator's request, candidates reach it in one stable order, and the receipt records
+    # a decision per passage (a passage with no fitting picture is a decision, not a gap). False:
+    # `phone_overlay_receipt`, the prompt and the cards are byte-identical to before.
+    # Apply: `fly secrets set PASSAGE_PLACEMENT_ENABLED=true --app nova-video` (api + worker) +
+    # restart. Rollback = `...=false` + restart.
+    passage_placement_enabled: bool = False
 
     # General overlay matcher/planner queue. These tasks can use transcript
     # fallback and stay on the media-safe render worker in production.

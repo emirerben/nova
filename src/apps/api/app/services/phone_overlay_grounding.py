@@ -508,6 +508,7 @@ def _match_placements(
     duration_s: float,
     occupied: list[tuple[float, float]],
     spoken_language: str = "",
+    creator_request: str = "",
 ) -> tuple[list, list[str], str]:
     """Agent-first, heuristic-fallback matching -- mirrors
     `app.tasks.autoplace.match_overlay_suggestions`'s own matcher selection.
@@ -558,6 +559,7 @@ def _match_placements(
                     duration_s=duration_s,
                     archetype="talking_head",
                     spoken_language=spoken_language,
+                    creator_request=creator_request,
                 ),
                 ctx=RunContext(job_id=job_id),
             )
@@ -1057,6 +1059,7 @@ def ground_phone_subtitled_overlays(
     card_layout: CardLayoutContext | None = None,
     protected_regions: Sequence[ProtectedRegion] = (),
     shareable: Iterable[tuple[float, float]] = (),
+    creator_request: str = "",
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
@@ -1081,6 +1084,11 @@ def ground_phone_subtitled_overlays(
     asked to keep text and cards off, as canvas boxes in the speaker clip's own seconds. A
     picture-in-picture card allows NO overlap with one while it is on screen; a card with no
     spot clear of it is reported ``no_safe_spot``.
+
+    ``creator_request`` (KRI-1556, read only with ``PASSAGE_PLACEMENT_ENABLED``): the creator's own
+    words for this edit. With the flag on, the matcher sees it, candidates reach it in one stable
+    order, and ``receipt["passage_placement"]`` records a decision and a reason per passage. With
+    the flag off the call and the receipt are what they were.
 
     Fails open at every step: an LLM matcher failure falls back to the
     deterministic heuristic, and a face-sampling failure protects a
@@ -1199,14 +1207,37 @@ def ground_phone_subtitled_overlays(
         for w in words
     ]
 
-    raw, wishlist, matcher = _match_placements(
-        job_id=job_id,
-        words=words_mapped,
-        candidate_assets=candidate_assets,
-        duration_s=duration_s,
-        occupied=occupied_list,
-        spoken_language=spoken_language,
-    )
+    placement = None
+    if settings.passage_placement_enabled:
+        from app.services.passage_placement import (  # noqa: PLC0415
+            PlacementCandidate,
+            PlacementRequest,
+            passages_from_words,
+            place_passages,
+        )
+
+        placement = place_passages(
+            passages_from_words(words_mapped),
+            [PlacementCandidate.from_pool_row(a) for a in candidate_assets],
+            PlacementRequest.meaning(creator_request, spoken_language),
+            job_id=job_id,
+            duration_s=duration_s,
+            occupied=occupied_list,
+        )
+        raw, wishlist, matcher = (
+            list(placement.placements),
+            list(placement.wishlist),
+            placement.matcher,
+        )
+    else:
+        raw, wishlist, matcher = _match_placements(
+            job_id=job_id,
+            words=words_mapped,
+            candidate_assets=candidate_assets,
+            duration_s=duration_s,
+            occupied=occupied_list,
+            spoken_language=spoken_language,
+        )
 
     assets_by_id = {a["id"]: a for a in candidate_assets}
     drop_reasons: dict[str, str] = {}
@@ -1394,6 +1425,10 @@ def ground_phone_subtitled_overlays(
         "unplaced": unplaced,
         "wishlist": list(wishlist)[:_MAX_WISHLIST],
     }
+    if placement is not None:
+        receipt["passage_placement"] = placement.receipt(
+            {u["media_id"]: str(u["reason"]) for u in unplaced}
+        )
     return GroundedOverlayCards(
         cards=cards, receipt=receipt, shared_windows=tuple(sorted(shared_windows))
     )
