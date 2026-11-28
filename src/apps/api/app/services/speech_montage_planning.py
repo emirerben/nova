@@ -41,9 +41,9 @@ from app.schemas.speech_montage import (
     SpeechMontagePlan,
     SpeechSection,
 )
+from app.services.passage_selector import GroundingFailure, ground_passage
 from app.services.speech_segments import (
     MIN_SPEECH_WORDS,
-    ground_excerpt,
     spoken_word_count,
     words_to_segments,
 )
@@ -52,7 +52,6 @@ log = structlog.get_logger()
 
 _MAX_SPEECH_CLIPS = 6
 _MAX_OTHER_CLIPS = 60
-_MIN_EXCERPT_S = 0.8
 # A voice-pinned plan under this share of the target is reported, not passed silently.
 _SHORT_RENDER_RATIO = 0.5
 
@@ -363,21 +362,15 @@ def _ground(
             dropped.append({"quote": section.quote, "reason": "unknown_clip"})
             continue
         key = (clip.media_id, section.quote.casefold())
-        grounded = ground_excerpt(
+        grounded = ground_passage(
             clip.words,
             section.quote,
             duration_s=clip.duration_s,
             min_after_s=last_end.get(key, 0.0),
+            max_s=MAX_EXCERPT_S,
         )
-        if grounded is None:
-            dropped.append({"quote": section.quote, "reason": "not_said"})
-            continue
-        length = grounded.end_s - grounded.start_s
-        if length < _MIN_EXCERPT_S:
-            dropped.append({"quote": section.quote, "reason": "too_short"})
-            continue
-        if length > MAX_EXCERPT_S:
-            dropped.append({"quote": section.quote, "reason": "too_long"})
+        if isinstance(grounded, GroundingFailure):
+            dropped.append({"quote": section.quote, "reason": grounded.reason})
             continue
         last_end[key] = grounded.word_end_s
         visual = section.visual

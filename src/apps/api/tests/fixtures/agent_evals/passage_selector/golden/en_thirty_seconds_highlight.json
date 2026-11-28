@@ -1,0 +1,201 @@
+{
+  "agent": "nova.plan.passage_selector",
+  "prompt_version": "2026-11-28-passages-v1",
+  "input": {
+    "mode": "pick",
+    "request": "make it the best 30 seconds",
+    "target_s": 30.0,
+    "target_is_ceiling": false,
+    "candidate_budget_s": 45.0,
+    "outline": null,
+    "drop_topics": [],
+    "language": "en",
+    "window_index": 0,
+    "window_count": 1,
+    "units": [
+      {
+        "id": 0,
+        "s": 0.5,
+        "e": 5.0,
+        "text": "So last spring I finally flew to Lisbon with my sister."
+      },
+      {
+        "id": 1,
+        "s": 5.55,
+        "e": 10.47,
+        "text": "The first morning we found a tiny cafe near the tram stop."
+      },
+      {
+        "id": 2,
+        "s": 11.02,
+        "e": 15.94,
+        "text": "They pulled the best espresso I have ever tasted in my life."
+      },
+      {
+        "id": 3,
+        "s": 16.49,
+        "e": 21.41,
+        "text": "By the way the weather has been strange all week back home."
+      },
+      {
+        "id": 4,
+        "s": 21.96,
+        "e": 26.88,
+        "text": "It rained on Monday and then it was sunny again on Tuesday."
+      },
+      {
+        "id": 5,
+        "s": 27.43,
+        "e": 31.51,
+        "text": "Anyway my friend Marco is building a startup about invoices."
+      },
+      {
+        "id": 6,
+        "s": 32.06,
+        "e": 36.14,
+        "text": "He told me investors only care about monthly recurring revenue."
+      },
+      {
+        "id": 7,
+        "s": 36.69,
+        "e": 42.03,
+        "text": "We rode the old yellow tram up the steepest hill in the city."
+      },
+      {
+        "id": 8,
+        "s": 42.58,
+        "e": 47.92,
+        "text": "At the top a stranger played the guitar and nobody wanted to leave."
+      },
+      {
+        "id": 9,
+        "s": 48.47,
+        "e": 53.39,
+        "text": "Marco says the seed round closes in March if the numbers hold."
+      },
+      {
+        "id": 10,
+        "s": 53.94,
+        "e": 59.28,
+        "text": "That night we ate grilled sardines by the river and laughed for hours."
+      },
+      {
+        "id": 11,
+        "s": 59.83,
+        "e": 64.33,
+        "text": "Honestly I should check the forecast before I plan the weekend."
+      },
+      {
+        "id": 12,
+        "s": 64.88,
+        "e": 69.8,
+        "text": "The hostel owner gave us a map with her favorite hidden places."
+      },
+      {
+        "id": 13,
+        "s": 70.35,
+        "e": 76.11,
+        "text": "My sister cried a little when the plane took off to bring us home."
+      },
+      {
+        "id": 14,
+        "s": 76.66,
+        "e": 81.58,
+        "text": "Marco also wants me to join as an advisor which is flattering."
+      },
+      {
+        "id": 15,
+        "s": 82.13,
+        "e": 87.89,
+        "text": "I would go back tomorrow and take the same tram to the same hill."
+      }
+    ]
+  },
+  "raw_text": "{\"passages\": [{\"first\": 0, \"last\": 0, \"quote\": \"So last spring I finally flew to Lisbon with my sister.\", \"reason\": \"opens on the trip\", \"strength\": 4}, {\"first\": 1, \"last\": 2, \"quote\": \"The first morning we found a tiny cafe near the tram stop. ... They pulled the best espresso I have ever tasted in my life.\", \"reason\": \"the espresso moment\", \"strength\": 5}, {\"first\": 7, \"last\": 8, \"quote\": \"We rode the old yellow tram up the steepest hill in the city. ... At the top a stranger played the guitar and nobody wanted to leave.\", \"reason\": \"the tram and the guitar\", \"strength\": 5}, {\"first\": 10, \"last\": 10, \"quote\": \"That night we ate grilled sardines by the river and laughed for hours.\", \"reason\": \"the dinner\", \"strength\": 3}, {\"first\": 12, \"last\": 12, \"quote\": \"The hostel owner gave us a map with her favorite hidden places.\", \"reason\": \"the map\", \"strength\": 2}, {\"first\": 13, \"last\": 13, \"quote\": \"My sister cried a little when the plane took off to bring us home.\", \"reason\": \"leaving\", \"strength\": 3}, {\"first\": 15, \"last\": 15, \"quote\": \"I would go back tomorrow and take the same tram to the same hill.\", \"reason\": \"wants to go back\", \"strength\": 4}], \"dropped\": [{\"first\": 3, \"last\": 4, \"reason\": \"off_topic\"}, {\"first\": 5, \"last\": 6, \"reason\": \"off_topic\"}, {\"first\": 9, \"last\": 9, \"reason\": \"off_topic\"}, {\"first\": 11, \"last\": 11, \"reason\": \"off_topic\"}, {\"first\": 14, \"last\": 14, \"reason\": \"off_topic\"}]}",
+  "output": {
+    "passages": [
+      {
+        "first": 0,
+        "last": 0,
+        "quote": "So last spring I finally flew to Lisbon with my sister.",
+        "reason": "opens on the trip",
+        "strength": 4
+      },
+      {
+        "first": 1,
+        "last": 2,
+        "quote": "The first morning we found a tiny cafe near the tram stop. ... They pulled the best espresso I have ever tasted in my life.",
+        "reason": "the espresso moment",
+        "strength": 5
+      },
+      {
+        "first": 7,
+        "last": 8,
+        "quote": "We rode the old yellow tram up the steepest hill in the city. ... At the top a stranger played the guitar and nobody wanted to leave.",
+        "reason": "the tram and the guitar",
+        "strength": 5
+      },
+      {
+        "first": 10,
+        "last": 10,
+        "quote": "That night we ate grilled sardines by the river and laughed for hours.",
+        "reason": "the dinner",
+        "strength": 3
+      },
+      {
+        "first": 12,
+        "last": 12,
+        "quote": "The hostel owner gave us a map with her favorite hidden places.",
+        "reason": "the map",
+        "strength": 2
+      },
+      {
+        "first": 13,
+        "last": 13,
+        "quote": "My sister cried a little when the plane took off to bring us home.",
+        "reason": "leaving",
+        "strength": 3
+      },
+      {
+        "first": 15,
+        "last": 15,
+        "quote": "I would go back tomorrow and take the same tram to the same hill.",
+        "reason": "wants to go back",
+        "strength": 4
+      }
+    ],
+    "dropped": [
+      {
+        "first": 3,
+        "last": 4,
+        "reason": "off_topic"
+      },
+      {
+        "first": 5,
+        "last": 6,
+        "reason": "off_topic"
+      },
+      {
+        "first": 9,
+        "last": 9,
+        "reason": "off_topic"
+      },
+      {
+        "first": 11,
+        "last": 11,
+        "reason": "off_topic"
+      },
+      {
+        "first": 14,
+        "last": 14,
+        "reason": "off_topic"
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "A 30 second highlight request over a talk that wanders into a startup and the weather.",
+    "expect": "passages"
+  },
+  "prompt_sha": "08bc32de702e2f46"
+}

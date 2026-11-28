@@ -78,6 +78,7 @@ from app.agents.overlay_format_matcher import (
     OverlayFormatMatcherOutput,
 )
 from app.agents.overlay_generation import OverlayPlanInput, OverlayPlanOutput
+from app.agents.passage_selector import PassageSelectorInput, PassageSelectorOutput
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.retake_detector import (
     RetakeDetectorInput,
@@ -1173,6 +1174,44 @@ def check_speech_excerpt_planner(
             words = [w for w in part.casefold().split() if w]
             if words and " ".join(words[:3]) not in " ".join(spoken.split()):
                 failures.append(f"quote {part.strip()!r} is not in the clip's segments")
+    return failures
+
+
+def check_passage_selector(
+    output: PassageSelectorOutput,
+    input: PassageSelectorInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.passage_selector (KRI-1555).
+
+    Failure modes: a range outside the units shown; ranges that overlap (the same speech kept
+    twice); a quote that is not said inside its own range; pick mode without a passage; drop
+    mode that keeps passages.
+    """
+    failures: list[str] = []
+    units = {unit.id: unit for unit in input.units}
+    if input.mode == "pick" and not output.passages:
+        failures.append("pick mode returned no passage")
+    if input.mode == "drop" and output.passages:
+        failures.append("drop mode returned passages")
+    previous_last = -1
+    for passage in sorted(output.passages, key=lambda p: p.first):
+        if passage.first <= previous_last:
+            failures.append(f"passage {passage.first}-{passage.last} overlaps an earlier one")
+        previous_last = max(previous_last, passage.last)
+        if passage.first not in units or passage.last not in units:
+            failures.append(f"passage {passage.first}-{passage.last} is outside the units shown")
+            continue
+        spoken = " ".join(
+            " ".join(str(units[i].text).casefold().split())
+            for i in range(passage.first, passage.last + 1)
+            if i in units
+        )
+        for part in passage.quote.replace("…", "...").split("..."):
+            words = [w for w in part.casefold().split() if w]
+            if words and " ".join(words[:3]) not in spoken:
+                failures.append(
+                    f"quote {part.strip()!r} is not in units {passage.first}-{passage.last}"
+                )
     return failures
 
 
@@ -3262,6 +3301,8 @@ def run_structural(
         return check_overlay_generation(output, input)
     if agent_name == "nova.plan.speech_excerpt_planner":
         return check_speech_excerpt_planner(output, input)
+    if agent_name == "nova.plan.passage_selector":
+        return check_passage_selector(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.layout.text_designer":

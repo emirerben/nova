@@ -1,0 +1,143 @@
+{
+  "agent": "nova.plan.passage_selector",
+  "prompt_version": "2026-11-28-passages-v1",
+  "input": {
+    "mode": "drop",
+    "request": "keep the whole talk but drop the part about the startup",
+    "target_s": null,
+    "target_is_ceiling": false,
+    "candidate_budget_s": null,
+    "outline": null,
+    "drop_topics": [
+      "the startup"
+    ],
+    "language": "en",
+    "window_index": 0,
+    "window_count": 1,
+    "units": [
+      {
+        "id": 0,
+        "s": 0.5,
+        "e": 5.0,
+        "text": "So last spring I finally flew to Lisbon with my sister."
+      },
+      {
+        "id": 1,
+        "s": 5.55,
+        "e": 10.47,
+        "text": "The first morning we found a tiny cafe near the tram stop."
+      },
+      {
+        "id": 2,
+        "s": 11.02,
+        "e": 15.94,
+        "text": "They pulled the best espresso I have ever tasted in my life."
+      },
+      {
+        "id": 3,
+        "s": 16.49,
+        "e": 21.41,
+        "text": "By the way the weather has been strange all week back home."
+      },
+      {
+        "id": 4,
+        "s": 21.96,
+        "e": 26.88,
+        "text": "It rained on Monday and then it was sunny again on Tuesday."
+      },
+      {
+        "id": 5,
+        "s": 27.43,
+        "e": 31.51,
+        "text": "Anyway my friend Marco is building a startup about invoices."
+      },
+      {
+        "id": 6,
+        "s": 32.06,
+        "e": 36.14,
+        "text": "He told me investors only care about monthly recurring revenue."
+      },
+      {
+        "id": 7,
+        "s": 36.69,
+        "e": 42.03,
+        "text": "We rode the old yellow tram up the steepest hill in the city."
+      },
+      {
+        "id": 8,
+        "s": 42.58,
+        "e": 47.92,
+        "text": "At the top a stranger played the guitar and nobody wanted to leave."
+      },
+      {
+        "id": 9,
+        "s": 48.47,
+        "e": 53.39,
+        "text": "Marco says the seed round closes in March if the numbers hold."
+      },
+      {
+        "id": 10,
+        "s": 53.94,
+        "e": 59.28,
+        "text": "That night we ate grilled sardines by the river and laughed for hours."
+      },
+      {
+        "id": 11,
+        "s": 59.83,
+        "e": 64.33,
+        "text": "Honestly I should check the forecast before I plan the weekend."
+      },
+      {
+        "id": 12,
+        "s": 64.88,
+        "e": 69.8,
+        "text": "The hostel owner gave us a map with her favorite hidden places."
+      },
+      {
+        "id": 13,
+        "s": 70.35,
+        "e": 76.11,
+        "text": "My sister cried a little when the plane took off to bring us home."
+      },
+      {
+        "id": 14,
+        "s": 76.66,
+        "e": 81.58,
+        "text": "Marco also wants me to join as an advisor which is flattering."
+      },
+      {
+        "id": 15,
+        "s": 82.13,
+        "e": 87.89,
+        "text": "I would go back tomorrow and take the same tram to the same hill."
+      }
+    ]
+  },
+  "raw_text": "{\"passages\": [], \"dropped\": [{\"first\": 5, \"last\": 6, \"reason\": \"requested_drop\"}, {\"first\": 9, \"last\": 9, \"reason\": \"requested_drop\"}, {\"first\": 14, \"last\": 14, \"reason\": \"requested_drop\"}]}",
+  "output": {
+    "passages": [],
+    "dropped": [
+      {
+        "first": 5,
+        "last": 6,
+        "reason": "requested_drop"
+      },
+      {
+        "first": 9,
+        "last": 9,
+        "reason": "requested_drop"
+      },
+      {
+        "first": 14,
+        "last": 14,
+        "reason": "requested_drop"
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Keep everything except the startup tangent.",
+    "expect": "drop"
+  },
+  "prompt_sha": "bed04bda2f6f8ecf"
+}

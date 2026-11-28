@@ -165,6 +165,8 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "app.agents.speech_excerpt_planner",
         "SpeechExcerptPlannerAgent",
     ),
+    # KRI-1555: which passages of one spoken take a video keeps (not wired to a render yet).
+    ("nova.plan.passage_selector", "app.agents.passage_selector", "PassageSelectorAgent"),
     # KRI-189: best-guess landmark for a clip from frames + place (provenance: inferred).
     ("nova.video.landmark_guess", "app.agents.landmark_guess", "LandmarkGuessAgent"),
     # KRI-756 + AI suggestion blocks: pick which improvement cards to offer; the server builds

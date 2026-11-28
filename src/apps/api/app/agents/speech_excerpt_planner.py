@@ -100,7 +100,7 @@ class SpeechExcerptPlannerAgent(Agent[SpeechExcerptPlannerInput, SpeechMontagePl
     def render_prompt(self, input: SpeechExcerptPlannerInput) -> str:  # noqa: A002
         prompt = load_prompt(
             "speech_excerpt_planner",
-            creator_request=_defang(input.creator_request),
+            creator_request=defang(input.creator_request),
             target_duration_s=(
                 "null" if input.target_duration_s is None else f"{input.target_duration_s:g}"
             ),
@@ -187,7 +187,7 @@ class SpeechExcerptPlannerAgent(Agent[SpeechExcerptPlannerInput, SpeechMontagePl
         return self.schema_clarification()
 
 
-def _defang(value: str) -> str:
+def defang(value: str) -> str:
     """Same policy as the other text planners: strip control chars, role markers, fences."""
     import re  # noqa: PLC0415
 
@@ -205,4 +205,5 @@ __all__ = [
     "SpeechClipView",
     "SpeechExcerptPlannerAgent",
     "SpeechExcerptPlannerInput",
+    "defang",
 ]

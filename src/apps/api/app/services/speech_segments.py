@@ -120,7 +120,7 @@ class GroundedExcerpt:
     overlap: float
 
 
-def _safe_window(
+def safe_window(
     stream: list[Any], first: int, last: int, duration_s: float | None
 ) -> tuple[float, float]:
     word_start = stream[first].start_s
@@ -234,7 +234,7 @@ def ground_excerpt(
     if not spans:
         return None
     first, last = spans[0][0], spans[-1][1]
-    start, end = _safe_window(stream, first, last, duration_s)
+    start, end = safe_window(stream, first, last, duration_s)
     return GroundedExcerpt(
         start_s=start,
         end_s=end,
@@ -306,7 +306,7 @@ def ground_line(
     if best is None:
         return None
     ratio, first, last = best
-    start_s, end_s = _safe_window(stream, first, last, duration_s)
+    start_s, end_s = safe_window(stream, first, last, duration_s)
     return GroundedExcerpt(
         start_s=start_s,
         end_s=end_s,
