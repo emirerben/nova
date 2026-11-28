@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.91.20.0] - 2026-11-28
+
+### Fixed
+- fix(api): the iPhone-only fence lets Try intro styles and caption translation through (KRI-1633) (#2551) <!-- release-pr: 2551 -->
+
 ## [0.91.19.0] - 2026-11-28
 
 ### Changed
